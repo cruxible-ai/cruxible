@@ -149,8 +149,6 @@ def delegated_authority_issues(
     eligible. False, missing, conflicting, truncated or ambiguous facts refuse.
     """
 
-    from cruxible_core.query.engine import evaluate_claim_query
-
     mandate = _mandate_by_digest(current_tree, mandate_digest)
     if mandate is None:
         return (
@@ -162,14 +160,45 @@ def delegated_authority_issues(
     evaluated_at = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
         tzinfo=timezone.utc
     )
+    targets, found = mandate_coverage(
+        mandate,
+        scope=scope,
+        current_tree=current_tree,
+        candidate_tree=candidate_tree,
+        evaluated_at=evaluated_at,
+    )
+    if found:
+        return found
+    return condition_issues(
+        mandate,
+        targets=targets,
+        current_tree=current_tree,
+        current=current,
+        evaluated_at=evaluated_at,
+        facts=facts,
+    )
+
+
+def mandate_coverage(
+    mandate: ProcedureMandateV2,
+    *,
+    scope: tuple[str, ...],
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    evaluated_at: datetime,
+) -> tuple[tuple[SettleTarget, ...], tuple[tuple[str, str], ...]]:
+    """Whether a live settle grant covers every changed member, and the targets it binds."""
+
     if mandate.grants != "settle" or mandate.condition is None:
-        return (_issue("mandate_not_settle", "The recorded mandate grants no settle authority."),)
+        return (), (_issue("mandate_not_settle", "The mandate grants no settle authority."),)
     if mandate.lifecycle.state != "live":
-        return (_issue("mandate_retired", "The recorded settle mandate is retired."),)
+        return (), (_issue("mandate_retired", "The settle mandate is retired."),)
     if mandate.suspended:
-        return (_issue("mandate_suspended", "The recorded settle mandate is suspended."),)
+        return (), (_issue("mandate_suspended", "The settle mandate is suspended."),)
     if not (mandate.valid_from <= evaluated_at < mandate.expires_at):
-        return (_issue("mandate_expired", "The settle mandate is outside its validity window."),)
+        return (), (
+            _issue("mandate_expired", "The settle mandate is outside its validity window."),
+        )
     scope_by_type = {item.claim_type.target.qualified: item for item in mandate.scope}
     targets, issues = settle_targets(
         scope=scope,
@@ -199,9 +228,26 @@ def delegated_authority_issues(
             found.append(
                 _issue("scope_uncovered", f"Subject {target.subject_identity} is not in scope.")
             )
-    if found or not targets:
-        return tuple(found) or (_issue("scope_uncovered", "The change set changes no Claim."),)
+    if not found and not targets:
+        found.append(_issue("scope_uncovered", "The change set changes no Claim."))
+    return targets, tuple(found)
 
+
+def condition_issues(
+    mandate: ProcedureMandateV2,
+    *,
+    targets: tuple[SettleTarget, ...],
+    current_tree: Mapping[str, bytes],
+    current: AcceptedProjectionCoordinate,
+    evaluated_at: datetime,
+    facts: ClaimQueryFactsV1 | None,
+) -> tuple[tuple[str, str], ...]:
+    """Evaluate the pinned condition query for every target at the parent state."""
+
+    from cruxible_core.query.engine import evaluate_claim_query
+
+    assert mandate.condition is not None  # mandate_coverage requires a settle grant
+    found: list[tuple[str, str]] = []
     condition = mandate.condition
     query_path = query_definition_path(condition.query.target.name)
     content = current_tree.get(query_path)
@@ -289,6 +335,8 @@ def delegated_authority_issues(
 
 __all__ = [
     "SettleTarget",
+    "condition_issues",
+    "mandate_coverage",
     "delegated_authority_issues",
     "settle_targets",
 ]

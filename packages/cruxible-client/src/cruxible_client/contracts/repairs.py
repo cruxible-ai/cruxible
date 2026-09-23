@@ -126,6 +126,22 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     ),
     "proposal_lowering_refused": "repair_the_proposed_claim_the_lowering_diagnostic_names",
     "proposal_candidate_refused": "repair_the_proposed_member_the_candidate_diagnostic_names",
+    "settle_mandate_missing": (
+        "Accept one live settle ProcedureMandate for this Procedure whose scope covers every "
+        "changed ClaimType and change kind, or use a propose terminal."
+    ),
+    "settle_mandate_ambiguous": (
+        "Narrow or retire all but one of the settle mandates that cover this change; exactly "
+        "one may."
+    ),
+    "settle_condition_refused": (
+        "The mandate's condition did not hold for every target and it declares no proposal "
+        "fallback; change the facts it reads, or govern the change as a proposal."
+    ),
+    "settle_publication_refused": (
+        "Re-run the occurrence: the mandate expired, was suspended, or accepted state moved "
+        "before the settlement published."
+    ),
     "proposal_target_paths_mismatch": "rebind_the_terminal_from_the_exact_admitted_run",
     "proposal_receipt_incomplete": "rebind_the_terminal_from_the_exact_admitted_run",
     # The same operation key names another payload: the run that prepared

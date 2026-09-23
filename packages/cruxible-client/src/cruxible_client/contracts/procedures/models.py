@@ -700,6 +700,12 @@ class ProposeChangeSetNodeV3(_StrictProcedureModel):
         return tuple(normalize_canonical(item) for item in value)
 
 
+class SettleChangeSetNodeV3(ProposeChangeSetNodeV3):
+    """Terminal settle for graph-v4/v5 Procedures; see SettleChangeSetNodeV6."""
+
+    kind: Literal["settle_change_set"] = "settle_change_set"  # type: ignore[assignment]
+
+
 class MandateSettlementNodeV3(_StrictProcedureModel):
     kind: Literal["mandate_settlement"] = "mandate_settlement"
     node_id: str
@@ -750,6 +756,7 @@ ProcedureNodeV4 = Annotated[
     | CaptureEgressNodeV3
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV3
+    | SettleChangeSetNodeV3
     | MandateSettlementNodeV3
     | HaltNodeV3,
     Field(discriminator="kind"),
@@ -767,6 +774,7 @@ ProcedureNodeV5 = Annotated[
     | CaptureEgressNodeV3
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV3
+    | SettleChangeSetNodeV3
     | MandateSettlementNodeV3
     | HaltNodeV3,
     Field(discriminator="kind"),
@@ -776,6 +784,8 @@ TERMINAL_REQUIRED_RUNGS = {
     "emit_capture": 0,
     "post_inbox": 1,
     "propose_change_set": 2,
+    "settle_change_set": 3,
+    # Retained for accepted history only; authoring never emits it.
     "mandate_settlement": 3,
 }
 TERMINAL_NODE_KINDS = frozenset((*TERMINAL_REQUIRED_RUNGS, "halt", "return"))
@@ -1145,6 +1155,17 @@ class ProposeChangeSetNodeV6(ProposeChangeSetNodeV3):
     _result = field_validator("result", mode="before")(normalize_canonical)
 
 
+class SettleChangeSetNodeV6(ProposeChangeSetNodeV6):
+    """Terminal settle: the proposal terminal's Claims, settled under delegated authority.
+
+    It carries no mandate: Core selects the one accepted settle ProcedureMandate
+    that covers the change, evaluates its condition, and falls back as that
+    mandate declares. Compiler revision 31.
+    """
+
+    kind: Literal["settle_change_set"] = "settle_change_set"  # type: ignore[assignment]
+
+
 class InvokeNodeV6(_StrictProcedureModel):
     """A call to an exact accepted Procedure under the enclosing run's limits."""
 
@@ -1172,6 +1193,7 @@ ProcedureNodeV6 = Annotated[
     | CaptureEgressNodeV6
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV6
+    | SettleChangeSetNodeV6
     | MandateSettlementNodeV3
     | HaltNodeV3
     | SelectNodeV6

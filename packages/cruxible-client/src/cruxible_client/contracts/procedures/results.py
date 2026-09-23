@@ -83,6 +83,10 @@ ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "proposal_item_evidence_ambiguous",
     "proposal_lowering_refused",
     "proposal_candidate_refused",
+    "settle_mandate_missing",
+    "settle_mandate_ambiguous",
+    "settle_condition_refused",
+    "settle_publication_refused",
     "proposal_target_paths_mismatch",
     "proposal_receipt_incomplete",
     "effectful_operation_payload_mismatch",
@@ -970,7 +974,13 @@ class ProcedureTerminalEgressV1(_StrictResultModel):
 
     tag: Literal["playbill-procedure-terminal-egress-v1"] = "playbill-procedure-terminal-egress-v1"
     node_id: str
-    kind: Literal["emit_capture", "post_inbox", "propose_change_set", "mandate_settlement"]
+    kind: Literal[
+        "emit_capture",
+        "post_inbox",
+        "propose_change_set",
+        "settle_change_set",
+        "mandate_settlement",
+    ]
     verdict: TerminalEgressVerdictV1
     required_rung: int = Field(ge=0, le=3)
     effective_rung: int | None = Field(default=None, ge=-1, le=3)
@@ -983,6 +993,11 @@ class ProcedureTerminalEgressV1(_StrictResultModel):
     refusal_code: str | None = None
     children: tuple[ProcedureTerminalEgressChildV1, ...] = ()
     journal_coordinate: ProcedureJournalCoordinateV1 | None = None
+    # A delivered settle terminal: settled into accepted_git_oid, or fell back to
+    # the ordinary proposal it names, for fallback_reason.
+    settle_outcome: Literal["settled", "proposed"] | None = None
+    accepted_git_oid: str | None = None
+    fallback_reason: str | None = None
 
     @field_validator("operation_key", "procedure_mandate_digest", "candidate_digest")
     @classmethod
@@ -1005,13 +1020,18 @@ class ProcedureTerminalEgressV1(_StrictResultModel):
 
     @model_validator(mode="after")
     def _delivered_shape(self) -> "ProcedureTerminalEgressV1":
-        if self.verdict == "delivered" and self.kind == "propose_change_set":
+        delivered_settle = self.verdict == "delivered" and self.kind == "settle_change_set"
+        if self.verdict == "delivered" and self.kind in {"propose_change_set", "settle_change_set"}:
             if self.proposal_id is None or self.candidate_digest is None:
                 raise ValueError(
                     "a delivered proposal egress names its proposal and exact candidate"
                 )
         elif self.proposal_id is not None or self.candidate_digest is not None:
             raise ValueError("only a delivered proposal egress names a proposal")
+        if delivered_settle != (self.settle_outcome is not None):
+            raise ValueError("exactly a delivered settle egress reports its outcome")
+        if (self.settle_outcome == "settled") != (self.accepted_git_oid is not None):
+            raise ValueError("only a settled outcome names its accepted generation")
         if (self.verdict in {"refused", "failed"}) != (self.refusal_code is not None):
             raise ValueError("a refused or failed egress carries exactly its refusal code")
         return self

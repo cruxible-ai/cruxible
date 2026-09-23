@@ -1394,6 +1394,10 @@
                   "proposal_item_evidence_ambiguous",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
+                  "settle_mandate_missing",
+                  "settle_mandate_ambiguous",
+                  "settle_condition_refused",
+                  "settle_publication_refused",
                   "proposal_target_paths_mismatch",
                   "proposal_receipt_incomplete",
                   "effectful_operation_payload_mismatch",
@@ -2029,6 +2033,10 @@
                   "proposal_item_evidence_ambiguous",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
+                  "settle_mandate_missing",
+                  "settle_mandate_ambiguous",
+                  "settle_condition_refused",
+                  "settle_publication_refused",
                   "proposal_target_paths_mismatch",
                   "proposal_receipt_incomplete",
                   "effectful_operation_payload_mismatch",
@@ -27554,6 +27562,7 @@
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
                       "provider": "#/$defs/ProviderNodeV4",
                       "repeat": "#/$defs/RepeatNodeV4",
+                      "settle_change_set": "#/$defs/SettleChangeSetNodeV3",
                       "source": "#/$defs/SourceNodeV4",
                       "state_tap": "#/$defs/StateTapNodeV3",
                       "transform": "#/$defs/TransformNodeV3"
@@ -27593,6 +27602,9 @@
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNodeV3"
+                    },
+                    {
+                      "$ref": "#/$defs/SettleChangeSetNodeV3"
                     },
                     {
                       "$ref": "#/$defs/MandateSettlementNodeV3"
@@ -27734,6 +27746,7 @@
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
                       "repeat": "#/$defs/RepeatNodeV5",
+                      "settle_change_set": "#/$defs/SettleChangeSetNodeV3",
                       "source": "#/$defs/SourceNodeV4",
                       "state_tap": "#/$defs/StateTapNodeV3",
                       "transform": "#/$defs/TransformNodeV3"
@@ -27773,6 +27786,9 @@
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNodeV3"
+                    },
+                    {
+                      "$ref": "#/$defs/SettleChangeSetNodeV3"
                     },
                     {
                       "$ref": "#/$defs/MandateSettlementNodeV3"
@@ -27918,6 +27934,7 @@
                       "repeat": "#/$defs/RepeatNodeV5",
                       "return": "#/$defs/ReturnNodeV6",
                       "select": "#/$defs/SelectNodeV6",
+                      "settle_change_set": "#/$defs/SettleChangeSetNodeV6",
                       "source": "#/$defs/SourceNodeV4",
                       "state_claim": "#/$defs/ClaimTapNodeV6",
                       "state_tap": "#/$defs/StateTapNodeV6",
@@ -27964,6 +27981,9 @@
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNodeV6"
+                    },
+                    {
+                      "$ref": "#/$defs/SettleChangeSetNodeV6"
                     },
                     {
                       "$ref": "#/$defs/MandateSettlementNodeV3"
@@ -31295,6 +31315,72 @@
               "value"
             ],
             "title": "SemanticSelector",
+            "type": "object"
+          },
+          "SettleChangeSetNodeV3": {
+            "additionalProperties": false,
+            "description": "Terminal settle for graph-v4/v5 Procedures; see SettleChangeSetNodeV6.",
+            "properties": {
+              "candidate_templates": {
+                "items": {},
+                "title": "Candidate Templates",
+                "type": "array"
+              },
+              "kind": {
+                "const": "settle_change_set",
+                "default": "settle_change_set",
+                "title": "Kind",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "candidate_templates"
+            ],
+            "title": "SettleChangeSetNodeV3",
+            "type": "object"
+          },
+          "SettleChangeSetNodeV6": {
+            "additionalProperties": false,
+            "description": "Terminal settle: the proposal terminal's Claims, settled under delegated authority.\n\nIt carries no mandate: Core selects the one accepted settle ProcedureMandate\nthat covers the change, evaluates its condition, and falls back as that\nmandate declares. Compiler revision 31.",
+            "properties": {
+              "candidate_templates": {
+                "items": {},
+                "title": "Candidate Templates",
+                "type": "array"
+              },
+              "claim_types": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Claim Types",
+                "type": "array"
+              },
+              "kind": {
+                "const": "settle_change_set",
+                "default": "settle_change_set",
+                "title": "Kind",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "result": {
+                "title": "Result"
+              }
+            },
+            "required": [
+              "node_id",
+              "candidate_templates",
+              "result"
+            ],
+            "title": "SettleChangeSetNodeV6",
             "type": "object"
           },
           "SourceClaimType": {
@@ -34857,6 +34943,7 @@
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
                       "provider": "#/$defs/ProviderNodeV4",
                       "repeat": "#/$defs/RepeatNodeV4",
+                      "settle_change_set": "#/$defs/SettleChangeSetNodeV3",
                       "source": "#/$defs/SourceNodeV4",
                       "state_tap": "#/$defs/StateTapNodeV3",
                       "transform": "#/$defs/TransformNodeV3"
@@ -34896,6 +34983,9 @@
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNodeV3"
+                    },
+                    {
+                      "$ref": "#/$defs/SettleChangeSetNodeV3"
                     },
                     {
                       "$ref": "#/$defs/MandateSettlementNodeV3"
@@ -35037,6 +35127,7 @@
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
                       "repeat": "#/$defs/RepeatNodeV5",
+                      "settle_change_set": "#/$defs/SettleChangeSetNodeV3",
                       "source": "#/$defs/SourceNodeV4",
                       "state_tap": "#/$defs/StateTapNodeV3",
                       "transform": "#/$defs/TransformNodeV3"
@@ -35076,6 +35167,9 @@
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNodeV3"
+                    },
+                    {
+                      "$ref": "#/$defs/SettleChangeSetNodeV3"
                     },
                     {
                       "$ref": "#/$defs/MandateSettlementNodeV3"
@@ -35221,6 +35315,7 @@
                       "repeat": "#/$defs/RepeatNodeV5",
                       "return": "#/$defs/ReturnNodeV6",
                       "select": "#/$defs/SelectNodeV6",
+                      "settle_change_set": "#/$defs/SettleChangeSetNodeV6",
                       "source": "#/$defs/SourceNodeV4",
                       "state_claim": "#/$defs/ClaimTapNodeV6",
                       "state_tap": "#/$defs/StateTapNodeV6",
@@ -35267,6 +35362,9 @@
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNodeV6"
+                    },
+                    {
+                      "$ref": "#/$defs/SettleChangeSetNodeV6"
                     },
                     {
                       "$ref": "#/$defs/MandateSettlementNodeV3"
@@ -38573,6 +38671,72 @@
               "value"
             ],
             "title": "SemanticSelector",
+            "type": "object"
+          },
+          "SettleChangeSetNodeV3": {
+            "additionalProperties": false,
+            "description": "Terminal settle for graph-v4/v5 Procedures; see SettleChangeSetNodeV6.",
+            "properties": {
+              "candidate_templates": {
+                "items": {},
+                "title": "Candidate Templates",
+                "type": "array"
+              },
+              "kind": {
+                "const": "settle_change_set",
+                "default": "settle_change_set",
+                "title": "Kind",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "candidate_templates"
+            ],
+            "title": "SettleChangeSetNodeV3",
+            "type": "object"
+          },
+          "SettleChangeSetNodeV6": {
+            "additionalProperties": false,
+            "description": "Terminal settle: the proposal terminal's Claims, settled under delegated authority.\n\nIt carries no mandate: Core selects the one accepted settle ProcedureMandate\nthat covers the change, evaluates its condition, and falls back as that\nmandate declares. Compiler revision 31.",
+            "properties": {
+              "candidate_templates": {
+                "items": {},
+                "title": "Candidate Templates",
+                "type": "array"
+              },
+              "claim_types": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Claim Types",
+                "type": "array"
+              },
+              "kind": {
+                "const": "settle_change_set",
+                "default": "settle_change_set",
+                "title": "Kind",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "result": {
+                "title": "Result"
+              }
+            },
+            "required": [
+              "node_id",
+              "candidate_templates",
+              "result"
+            ],
+            "title": "SettleChangeSetNodeV6",
             "type": "object"
           },
           "SourceClaimType": {
@@ -42041,6 +42205,10 @@
                   "proposal_item_evidence_ambiguous",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
+                  "settle_mandate_missing",
+                  "settle_mandate_ambiguous",
+                  "settle_condition_refused",
+                  "settle_publication_refused",
                   "proposal_target_paths_mismatch",
                   "proposal_receipt_incomplete",
                   "effectful_operation_payload_mismatch",
@@ -44186,6 +44354,18 @@
             "additionalProperties": false,
             "description": "What one terminal node of a run did, reconstructed from its journal.\n\nAdditive and optional: a run with no terminal carries none. A delivered\n`propose_change_set` names the proposal and the exact candidate it produced,\nso a manager can retrieve, review and activate that candidate through the\nexisting proposal doors; producing it never activates it. A refused or\nfailed egress names the code the run refused with, so the run reads as the\nreason it stopped rather than as a bare failure.",
             "properties": {
+              "accepted_git_oid": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Accepted Git Oid"
+              },
               "candidate_digest": {
                 "anyOf": [
                   {
@@ -44220,6 +44400,18 @@
                 "default": null,
                 "title": "Effective Rung"
               },
+              "fallback_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Fallback Reason"
+              },
               "journal_coordinate": {
                 "anyOf": [
                   {
@@ -44236,6 +44428,7 @@
                   "emit_capture",
                   "post_inbox",
                   "propose_change_set",
+                  "settle_change_set",
                   "mandate_settlement"
                 ],
                 "title": "Kind",
@@ -44310,6 +44503,22 @@
                 "minimum": 0,
                 "title": "Required Rung",
                 "type": "integer"
+              },
+              "settle_outcome": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "settled",
+                      "proposed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Settle Outcome"
               },
               "tag": {
                 "const": "playbill-procedure-terminal-egress-v1",
@@ -52397,6 +52606,7 @@
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
                       "provider": "#/$defs/ProviderNodeV4",
                       "repeat": "#/$defs/RepeatNodeV4",
+                      "settle_change_set": "#/$defs/SettleChangeSetNodeV3",
                       "source": "#/$defs/SourceNodeV4",
                       "state_tap": "#/$defs/StateTapNodeV3",
                       "transform": "#/$defs/TransformNodeV3"
@@ -52436,6 +52646,9 @@
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNodeV3"
+                    },
+                    {
+                      "$ref": "#/$defs/SettleChangeSetNodeV3"
                     },
                     {
                       "$ref": "#/$defs/MandateSettlementNodeV3"
@@ -52577,6 +52790,7 @@
                       "project": "#/$defs/ProjectNodeV3",
                       "propose_change_set": "#/$defs/ProposeChangeSetNodeV3",
                       "repeat": "#/$defs/RepeatNodeV5",
+                      "settle_change_set": "#/$defs/SettleChangeSetNodeV3",
                       "source": "#/$defs/SourceNodeV4",
                       "state_tap": "#/$defs/StateTapNodeV3",
                       "transform": "#/$defs/TransformNodeV3"
@@ -52616,6 +52830,9 @@
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNodeV3"
+                    },
+                    {
+                      "$ref": "#/$defs/SettleChangeSetNodeV3"
                     },
                     {
                       "$ref": "#/$defs/MandateSettlementNodeV3"
@@ -52761,6 +52978,7 @@
                       "repeat": "#/$defs/RepeatNodeV5",
                       "return": "#/$defs/ReturnNodeV6",
                       "select": "#/$defs/SelectNodeV6",
+                      "settle_change_set": "#/$defs/SettleChangeSetNodeV6",
                       "source": "#/$defs/SourceNodeV4",
                       "state_claim": "#/$defs/ClaimTapNodeV6",
                       "state_tap": "#/$defs/StateTapNodeV6",
@@ -52807,6 +53025,9 @@
                     },
                     {
                       "$ref": "#/$defs/ProposeChangeSetNodeV6"
+                    },
+                    {
+                      "$ref": "#/$defs/SettleChangeSetNodeV6"
                     },
                     {
                       "$ref": "#/$defs/MandateSettlementNodeV3"
@@ -56892,6 +57113,72 @@
               "value"
             ],
             "title": "SemanticSelector",
+            "type": "object"
+          },
+          "SettleChangeSetNodeV3": {
+            "additionalProperties": false,
+            "description": "Terminal settle for graph-v4/v5 Procedures; see SettleChangeSetNodeV6.",
+            "properties": {
+              "candidate_templates": {
+                "items": {},
+                "title": "Candidate Templates",
+                "type": "array"
+              },
+              "kind": {
+                "const": "settle_change_set",
+                "default": "settle_change_set",
+                "title": "Kind",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "candidate_templates"
+            ],
+            "title": "SettleChangeSetNodeV3",
+            "type": "object"
+          },
+          "SettleChangeSetNodeV6": {
+            "additionalProperties": false,
+            "description": "Terminal settle: the proposal terminal's Claims, settled under delegated authority.\n\nIt carries no mandate: Core selects the one accepted settle ProcedureMandate\nthat covers the change, evaluates its condition, and falls back as that\nmandate declares. Compiler revision 31.",
+            "properties": {
+              "candidate_templates": {
+                "items": {},
+                "title": "Candidate Templates",
+                "type": "array"
+              },
+              "claim_types": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Claim Types",
+                "type": "array"
+              },
+              "kind": {
+                "const": "settle_change_set",
+                "default": "settle_change_set",
+                "title": "Kind",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "result": {
+                "title": "Result"
+              }
+            },
+            "required": [
+              "node_id",
+              "candidate_templates",
+              "result"
+            ],
+            "title": "SettleChangeSetNodeV6",
             "type": "object"
           },
           "SourceClaimType": {
@@ -67833,6 +68120,10 @@
                   "proposal_item_evidence_ambiguous",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
+                  "settle_mandate_missing",
+                  "settle_mandate_ambiguous",
+                  "settle_condition_refused",
+                  "settle_publication_refused",
                   "proposal_target_paths_mismatch",
                   "proposal_receipt_incomplete",
                   "effectful_operation_payload_mismatch",
@@ -69924,6 +70215,10 @@
                   "proposal_item_evidence_ambiguous",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
+                  "settle_mandate_missing",
+                  "settle_mandate_ambiguous",
+                  "settle_condition_refused",
+                  "settle_publication_refused",
                   "proposal_target_paths_mismatch",
                   "proposal_receipt_incomplete",
                   "effectful_operation_payload_mismatch",
@@ -72353,6 +72648,10 @@
                   "proposal_item_evidence_ambiguous",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
+                  "settle_mandate_missing",
+                  "settle_mandate_ambiguous",
+                  "settle_condition_refused",
+                  "settle_publication_refused",
                   "proposal_target_paths_mismatch",
                   "proposal_receipt_incomplete",
                   "effectful_operation_payload_mismatch",
@@ -74886,6 +75185,10 @@
                   "proposal_item_evidence_ambiguous",
                   "proposal_lowering_refused",
                   "proposal_candidate_refused",
+                  "settle_mandate_missing",
+                  "settle_mandate_ambiguous",
+                  "settle_condition_refused",
+                  "settle_publication_refused",
                   "proposal_target_paths_mismatch",
                   "proposal_receipt_incomplete",
                   "effectful_operation_payload_mismatch",
@@ -76316,6 +76619,26 @@
     },
     "ProcedureTerminalEgressV1": {
       "fields": {
+        "accepted_git_oid": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "accepted_git_oid",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Accepted Git Oid"
+          }
+        },
         "candidate_digest": {
           "default": null,
           "default_json_serializable": true,
@@ -76374,6 +76697,26 @@
             "title": "Effective Rung"
           }
         },
+        "fallback_reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "fallback_reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fallback Reason"
+          }
+        },
         "journal_coordinate": {
           "default": null,
           "default_json_serializable": true,
@@ -76403,6 +76746,7 @@
               "emit_capture",
               "post_inbox",
               "propose_change_set",
+              "settle_change_set",
               "mandate_settlement"
             ],
             "title": "Kind",
@@ -76529,6 +76873,30 @@
             "minimum": 0,
             "title": "Required Rung",
             "type": "integer"
+          }
+        },
+        "settle_outcome": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "settle_outcome",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "settled",
+                  "proposed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Settle Outcome"
           }
         },
         "tag": {
@@ -76688,6 +77056,18 @@
         "additionalProperties": false,
         "description": "What one terminal node of a run did, reconstructed from its journal.\n\nAdditive and optional: a run with no terminal carries none. A delivered\n`propose_change_set` names the proposal and the exact candidate it produced,\nso a manager can retrieve, review and activate that candidate through the\nexisting proposal doors; producing it never activates it. A refused or\nfailed egress names the code the run refused with, so the run reads as the\nreason it stopped rather than as a bare failure.",
         "properties": {
+          "accepted_git_oid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Accepted Git Oid"
+          },
           "candidate_digest": {
             "anyOf": [
               {
@@ -76722,6 +77102,18 @@
             "default": null,
             "title": "Effective Rung"
           },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fallback Reason"
+          },
           "journal_coordinate": {
             "anyOf": [
               {
@@ -76738,6 +77130,7 @@
               "emit_capture",
               "post_inbox",
               "propose_change_set",
+              "settle_change_set",
               "mandate_settlement"
             ],
             "title": "Kind",
@@ -76812,6 +77205,22 @@
             "minimum": 0,
             "title": "Required Rung",
             "type": "integer"
+          },
+          "settle_outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "settled",
+                  "proposed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Settle Outcome"
           },
           "tag": {
             "const": "playbill-procedure-terminal-egress-v1",

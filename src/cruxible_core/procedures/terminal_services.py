@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
     CandidateMemberLawEvidenceV2,
+    CandidateRecordAnyVersion,
     canonical_candidate_timestamp,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
@@ -21,6 +22,7 @@ from cruxible_core.procedures.egress import (
     TerminalEgressError,
     TerminalEgressReceiptV2,
     TerminalEgressReceiptV3,
+    TerminalEgressReceiptV4,
     TerminalEgressRequestV2,
     require_procedure_mandate,
     require_procedure_mandate_at_head,
@@ -129,8 +131,40 @@ class ProposalTerminalAdapter:
         changed_paths: tuple[str, ...] | None = None,
         delegation: ProcedureDelegation | None = None,
     ) -> TerminalEgressReceiptV2:
-        if request.kind != "propose_change_set":
-            raise EffectfulTerminalError("proposal adapter serves propose_change_set only")
+        result = self.submit(
+            request=request,
+            admission=admission,
+            candidate_tree=candidate_tree,
+            accepted_mandates=accepted_mandates,
+            rationale=rationale,
+            base_tree=base_tree,
+            changed_paths=changed_paths,
+            delegation=delegation,
+        )
+        return proposal_terminal_receipt(request, result=result, item_paths=item_paths)
+
+    def submit(
+        self,
+        *,
+        request: TerminalEgressRequestV2,
+        admission: ProcedureRunAdmissionV1,
+        candidate_tree: Mapping[str, bytes],
+        accepted_mandates: Mapping[str, ProcedureMandateAny],
+        rationale: str | None = None,
+        base_tree: Mapping[str, bytes] | None = None,
+        changed_paths: tuple[str, ...] | None = None,
+        delegation: ProcedureDelegation | None = None,
+        delegated_mandate_digest: str | None = None,
+    ) -> ProposalResult:
+        """Submit the lowered candidate once, under the exact mandate, and return the result.
+
+        A settle terminal passes its bound mandate as ``delegated_mandate_digest``
+        so the candidate is evaluated under delegated authority; a settle
+        fallback and every proposal terminal pass none.
+        """
+
+        if request.kind not in {"propose_change_set", "settle_change_set"}:
+            raise EffectfulTerminalError("proposal adapter serves proposal and settle only")
         if changed_paths is None:
             # A caller that lowered the tree already knows exactly which paths
             # moved; only a caller handing over a bare tree pays for the diff.
@@ -194,6 +228,7 @@ class ProposalTerminalAdapter:
                     candidate_tree=candidate_tree,
                     timestamp=canonical_candidate_timestamp(request.evaluation_time),
                     authorize=_authorize_at_head,
+                    delegated_mandate_digest=delegated_mandate_digest,
                 )
                 break
             except ProposalHeadMovedError:
@@ -201,11 +236,7 @@ class ProposalTerminalAdapter:
                 # re-establishes the mandate there before evaluating again.
                 if attempt == HEAD_CONTENTION_ATTEMPTS - 1:
                     raise
-        return proposal_terminal_receipt(
-            request,
-            result=result,
-            item_paths=item_paths,
-        )
+        return result
 
 
 def proposal_terminal_ref(actor_id: str, operation_key: str) -> str:
@@ -221,6 +252,58 @@ def proposal_terminal_receipt(
     item_paths: Mapping[str, str] | None,
 ) -> TerminalEgressReceiptV2:
     """Bind every terminal item to the exact candidate member it lowered into."""
+
+    children, candidate = _receipt_children(request, result=result, item_paths=item_paths)
+    assert request.operation_key is not None  # request shape
+    return TerminalEgressReceiptV3(
+        kind=request.kind,
+        run_id=request.run_id,
+        node_id=request.node_id,
+        disposition="received",
+        children=children,
+        operation_key=request.operation_key,
+        proposal_id=result.admission.proposal_id,
+        candidate_digest=candidate.candidate_digest,
+        target_paths=request.target_paths,
+    )
+
+
+def settle_terminal_receipt(
+    request: TerminalEgressRequestV2,
+    *,
+    result: ProposalResult,
+    item_paths: Mapping[str, str] | None,
+    accepted_git_oid: str | None,
+    fallback_reason: str | None = None,
+) -> TerminalEgressReceiptV4:
+    """A settle outcome: the accepted generation, or the ordinary proposal it fell back to."""
+
+    children, candidate = _receipt_children(request, result=result, item_paths=item_paths)
+    assert request.operation_key is not None and request.procedure_mandate_digest is not None
+    settled = accepted_git_oid is not None
+    return TerminalEgressReceiptV4(
+        kind=request.kind,
+        run_id=request.run_id,
+        node_id=request.node_id,
+        disposition="settled" if settled else "received",
+        children=children,
+        operation_key=request.operation_key,
+        proposal_id=result.admission.proposal_id,
+        candidate_digest=candidate.candidate_digest,
+        target_paths=request.target_paths,
+        outcome="settled" if settled else "proposed",
+        procedure_mandate_digest=request.procedure_mandate_digest,
+        accepted_git_oid=accepted_git_oid,
+        fallback_reason=fallback_reason,
+    )
+
+
+def _receipt_children(
+    request: TerminalEgressRequestV2,
+    *,
+    result: ProposalResult,
+    item_paths: Mapping[str, str] | None,
+) -> tuple[tuple[TerminalEgressChildReceiptV2, ...], CandidateRecordAnyVersion]:
 
     candidate = result.candidate
     if candidate is None:
@@ -256,18 +339,7 @@ def proposal_terminal_receipt(
                 path=path,
             )
         )
-    assert request.operation_key is not None  # request shape
-    return TerminalEgressReceiptV3(
-        kind=request.kind,
-        run_id=request.run_id,
-        node_id=request.node_id,
-        disposition="received",
-        children=tuple(children),
-        operation_key=request.operation_key,
-        proposal_id=result.admission.proposal_id,
-        candidate_digest=candidate.candidate_digest,
-        target_paths=request.target_paths,
-    )
+    return tuple(children), candidate
 
 
 __all__ = [

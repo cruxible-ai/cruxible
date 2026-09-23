@@ -1733,6 +1733,14 @@ def parse_projection_tree(
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError("graph-v5 requires the provider-contract compiler")
+                if (
+                    any(
+                        getattr(node, "kind", None) == "settle_change_set"
+                        for node in procedure.definition.nodes
+                    )
+                    and artifact_kinds is not AUTHORITY_VERBS_ARTIFACT_KINDS
+                ):
+                    raise ProjectionFormatError("settle_change_set requires compiler revision 31")
                 if int(procedure.definition.graph_format) == 6:
                     if artifact_kinds not in (
                         SDK_SOURCE_ARTIFACT_KINDS,

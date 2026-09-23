@@ -4538,6 +4538,7 @@ class ProcedureExecutor:
             raise refusal from exc
         effectful = isinstance(request, TerminalEgressRequestV2) and request.kind in {
             "propose_change_set",
+            "settle_change_set",
             "mandate_settlement",
         }
         if isinstance(request, TerminalEgressRequestV2) and effectful:

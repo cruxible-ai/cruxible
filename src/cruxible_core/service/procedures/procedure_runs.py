@@ -1979,6 +1979,13 @@ def _fold_terminal_egress(
     receipt = payload.get("receipt")
     proposal_id = None
     candidate_digest = None
+    settle: dict[str, object] = {}
+    if isinstance(receipt, dict) and receipt.get("tag") == "playbill-terminal-egress-receipt-v4":
+        settle = {
+            "settle_outcome": receipt.get("outcome"),
+            "accepted_git_oid": receipt.get("accepted_git_oid"),
+            "fallback_reason": receipt.get("fallback_reason"),
+        }
     if isinstance(receipt, dict):
         proposal_id = (
             receipt.get("proposal_id") if isinstance(receipt.get("proposal_id"), str) else None
@@ -2039,6 +2046,9 @@ def _fold_terminal_egress(
         refusal_code=_string("refusal_code") if verdict in {"refused", "failed"} else None,
         children=tuple(children) if children else (() if current is None else current.children),
         journal_coordinate=journal_coordinate,
+        settle_outcome=cast(Any, settle.get("settle_outcome")),
+        accepted_git_oid=cast(Any, settle.get("accepted_git_oid")),
+        fallback_reason=cast(Any, settle.get("fallback_reason")),
     )
 
 

@@ -4395,6 +4395,7 @@ class ProposalService:
         ]
         | None = None,
         prepared: PreparedEvaluationScope | None = None,
+        delegated_mandate_digest: str | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
 
@@ -4415,6 +4416,11 @@ class ProposalService:
 
         `prepared` may reuse a same-call evaluation; it never replaces the
         fresh authorization callback or the publication head check.
+
+        `delegated_mandate_digest` is the settle terminal's alone: the candidate
+        is evaluated under that mandate's delegated authority, so it carries no
+        approval requirement and only activation under the same mandate can
+        reproduce it. No public door passes it.
         """
         self._require_writable()
         validate_candidate_timestamp(timestamp)
@@ -4490,6 +4496,8 @@ class ProposalService:
                 bodies=self.bodies,
             )
         )
+        if delegated_mandate_digest is not None:
+            outcome = None
         if outcome is None:
             outcome = evaluate_proposal_tree(
                 base_tree=base_tree,
@@ -4510,6 +4518,7 @@ class ProposalService:
                 claim_law_provider=self.claim_law_provider,
                 attestation_principal_provider=self.attestation_principal_provider,
                 accepted_referents_provider=self.accepted_referents_provider,
+                delegated_mandate_digest=delegated_mandate_digest,
             )
         _require_executed_derivations(
             outcome, current_tree=current_tree, authorized=authorized_derivations

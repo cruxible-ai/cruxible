@@ -87,8 +87,13 @@ TerminalEgressKindV1 = Literal[
     "emit_capture",
     "post_inbox",
     "propose_change_set",
+    "settle_change_set",
     "mandate_settlement",
 ]
+#: Terminals that change accepted state under an exact Procedure mandate.
+EFFECTFUL_TERMINAL_KINDS: frozenset[str] = frozenset(
+    {"propose_change_set", "settle_change_set", "mandate_settlement"}
+)
 
 TerminalEgressDispositionV1 = Literal["emitted", "posted", "received", "settled"]
 
@@ -133,8 +138,22 @@ TERMINAL_EGRESS_DISPOSITIONS: dict[TerminalEgressKindV1, TerminalEgressDispositi
     "emit_capture": "emitted",
     "post_inbox": "posted",
     "propose_change_set": "received",
+    "settle_change_set": "settled",
     "mandate_settlement": "settled",
 }
+#: A settle terminal whose condition does not hold may fall back to an ordinary
+#: proposal; its receipt then reports the proposal's disposition, never settled.
+TERMINAL_EGRESS_FALLBACK_DISPOSITIONS: dict[str, TerminalEgressDispositionV1] = {
+    "settle_change_set": "received",
+}
+
+
+def _disposition_allowed(kind: str, disposition: str) -> bool:
+    return disposition in {
+        TERMINAL_EGRESS_DISPOSITIONS[kind],  # type: ignore[index]
+        TERMINAL_EGRESS_FALLBACK_DISPOSITIONS.get(kind),
+    }
+
 
 #: Terminal kinds whose egress traverses one exact pinned artifact: the
 #: CaptureContract an emission is written under, and the target Claim law a
@@ -556,7 +575,7 @@ class TerminalEgressReceiptV1(_StrictEgressModel):
     @model_validator(mode="after")
     def _shape(self) -> "TerminalEgressReceiptV1":
         expected = TERMINAL_EGRESS_DISPOSITIONS[self.kind]
-        if self.disposition != expected:
+        if not _disposition_allowed(self.kind, self.disposition):
             raise ValueError(f"a {self.kind} egress reports {expected!r}, nothing else")
         if (self.bound_artifact_digest is not None) != (self.kind in TERMINAL_EGRESS_BOUND_KINDS):
             raise ValueError(f"{self.kind} egress reports exactly the artifact it traversed")
@@ -683,7 +702,7 @@ class TerminalEgressRequestV2(TerminalEgressRequestV1):
             raise ValueError("terminal egress operation disagrees with its rung")
         if (self.bound_artifact_pin is not None) != (self.kind in TERMINAL_EGRESS_BOUND_KINDS):
             raise ValueError(f"{self.kind} egress binds exactly the artifact its law traverses")
-        effectful = self.kind in {"propose_change_set", "mandate_settlement"}
+        effectful = self.kind in EFFECTFUL_TERMINAL_KINDS
         if bool(self.target_paths) != effectful or (self.operation_key is not None) != effectful:
             raise ValueError("effectful terminal egress requires exact targets and operation key")
         if (self.producer_receipt is not None) != (self.kind == "emit_capture"):
@@ -843,9 +862,7 @@ def build_terminal_egress_request_v2(
         ),
     )
     operation_key = (
-        terminal_operation_key(provisional)
-        if request.kind in {"propose_change_set", "mandate_settlement"}
-        else None
+        terminal_operation_key(provisional) if request.kind in EFFECTFUL_TERMINAL_KINDS else None
     )
     return TerminalEgressRequestV2.model_validate(
         provisional.model_copy(update={"operation_key": operation_key}).model_dump(mode="python")
@@ -865,15 +882,13 @@ class TerminalEgressReceiptV2(TerminalEgressReceiptV1):
     @model_validator(mode="after")
     def _shape(self) -> "TerminalEgressReceiptV2":
         expected = TERMINAL_EGRESS_DISPOSITIONS[self.kind]
-        if self.disposition != expected:
+        if not _disposition_allowed(self.kind, self.disposition):
             raise ValueError(f"a {self.kind} egress reports {expected!r}, nothing else")
         if (self.bound_artifact_digest is not None) != (self.kind in TERMINAL_EGRESS_BOUND_KINDS):
             raise ValueError(f"{self.kind} egress reports exactly the artifact it traversed")
         if (self.producer_receipt_digest is not None) != (self.kind == "emit_capture"):
             raise ValueError("only Capture egress reports a producer receipt")
-        if (self.operation_key is not None) != (
-            self.kind in {"propose_change_set", "mandate_settlement"}
-        ):
+        if (self.operation_key is not None) != (self.kind in EFFECTFUL_TERMINAL_KINDS):
             raise ValueError("only effectful egress reports an operation key")
         if not self.children:
             raise ValueError("terminal egress reports at least one delivered child")
@@ -926,10 +941,43 @@ class TerminalEgressReceiptV3(TerminalEgressReceiptV2):
 
     @model_validator(mode="after")
     def _proposal_shape(self) -> "TerminalEgressReceiptV3":
-        if self.kind != "propose_change_set":
-            raise ValueError("only propose_change_set egress reports a proposal receipt")
+        if self.kind not in {"propose_change_set", "settle_change_set"}:
+            raise ValueError("only proposal and settle egress report a proposal receipt")
+        if (self.kind == "settle_change_set") != isinstance(self, TerminalEgressReceiptV4):
+            raise ValueError("settle egress reports a settlement receipt, and only it does")
         if any(child.path not in self.target_paths for child in self.children):
             raise ValueError("every proposal child settles into one of the receipt's targets")
+        return self
+
+
+class TerminalEgressReceiptV4(TerminalEgressReceiptV3):
+    """What a settle terminal did: settled under its mandate, or fell back to a proposal.
+
+    ``settled`` names the accepted generation the change landed in; ``proposed``
+    names only the ordinary proposal left open for review, so a fallback can
+    never read as a settlement.
+    """
+
+    tag: Literal["playbill-terminal-egress-receipt-v4"] = "playbill-terminal-egress-receipt-v4"  # type: ignore[assignment]
+    outcome: Literal["settled", "proposed"]
+    procedure_mandate_digest: str
+    accepted_git_oid: str | None = None
+    fallback_reason: str | None = None
+
+    @field_validator("procedure_mandate_digest")
+    @classmethod
+    def _mandate(cls, value: str) -> str:
+        return _tagged(value)
+
+    @model_validator(mode="after")
+    def _settle_shape(self) -> "TerminalEgressReceiptV4":
+        settled = self.outcome == "settled"
+        if settled != (self.disposition == "settled"):
+            raise ValueError("a settle receipt's disposition follows its outcome")
+        if settled != (self.accepted_git_oid is not None):
+            raise ValueError("only a settled outcome names its accepted generation")
+        if settled == (self.fallback_reason is not None):
+            raise ValueError("only a fallback proposal carries the reason it did not settle")
         return self
 
 
@@ -1004,7 +1052,7 @@ def require_procedure_mandate(
     # A nested carrier alone is insufficient. This checks the executing parent
     # frame, exact accepted Invoke node, same actor/lane, and constrained limits.
     authority = authority_procedure(admission, delegation)
-    if request.kind not in {"propose_change_set", "mandate_settlement"}:
+    if request.kind not in EFFECTFUL_TERMINAL_KINDS:
         raise TerminalAuthorityRefusal(
             "procedure_mandate_not_applicable",
             "Only rung-2 and rung-3 terminals consume Procedure mandates.",
@@ -1168,8 +1216,13 @@ def verify_terminal_egress_receipt(
         if isinstance(receipt, TerminalEgressReceiptV3):
             if receipt.target_paths != request.target_paths:
                 raise TerminalEgressError("proposal egress did not settle the exact target paths")
-        elif request.kind == "propose_change_set":
+        elif request.kind in {"propose_change_set", "settle_change_set"}:
             raise TerminalEgressError("proposal egress requires a receipt naming its proposal")
+        if request.kind == "settle_change_set" and (
+            not isinstance(receipt, TerminalEgressReceiptV4)
+            or receipt.procedure_mandate_digest != request.procedure_mandate_digest
+        ):
+            raise TerminalEgressError("settle egress must report under its exact mandate")
     elif isinstance(request, TerminalEgressRequestV2):
         raise TerminalEgressError("v2 terminal egress requires a v2 receipt")
 
@@ -1376,6 +1429,8 @@ __all__ = [
     "TerminalEgressReceiptV1",
     "TerminalEgressReceiptV2",
     "TerminalEgressReceiptV3",
+    "TerminalEgressReceiptV4",
+    "EFFECTFUL_TERMINAL_KINDS",
     "TerminalEgressChildReceiptV2",
     "PreparedTerminalEgressV1",
     "TerminalEgressPreparerProtocol",

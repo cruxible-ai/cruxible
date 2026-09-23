@@ -457,8 +457,14 @@ def service_activate_playbill_proposal(
     *,
     proposal_id: str,
     activated_by: str,
+    mandate_digest: str | None = None,
 ) -> PlaybillActivationReceipt:
-    """Settle, prebuild, and atomically activate one admitted candidate."""
+    """Settle, prebuild, and atomically activate one admitted candidate.
+
+    ``mandate_digest`` is passed only by the settle terminal for a candidate it
+    submitted under that mandate: delegated authority then stands in for
+    candidate approvals, and publication re-verifies it from the parent state.
+    """
 
     proposal_id = instance.proposal_evidence().resolve_proposal_id(proposal_id)
     try:
@@ -475,7 +481,11 @@ def service_activate_playbill_proposal(
     base = instance.coordinate_for_oid(evaluation.evaluated_base_oid)
     if candidate.candidate.parent_semantic_root != base.semantic_root:
         raise SettlementIntegrityError("candidate parent root differs from evaluated base")
-    approvals = instance.proposal_evidence().read_approvals(candidate.candidate_digest)
+    approvals = (
+        ()
+        if mandate_digest is not None
+        else instance.proposal_evidence().read_approvals(candidate.candidate_digest)
+    )
     _reconcile_proposal_notes(instance, proposal=proposal, candidate=candidate)
     activation = instance.settle_and_activate(
         base=base,
@@ -490,6 +500,7 @@ def service_activate_playbill_proposal(
             source_compilation_digest=proposal.admission.source_compilation_digest,
         ),
         proposal_actor_id=proposal.admission.actor_id,
+        mandate_digest=mandate_digest,
     )
     if activation.status not in {"accepted", "lost_cas"}:
         raise SettlementIntegrityError("activation returned an unsupported terminal status")
