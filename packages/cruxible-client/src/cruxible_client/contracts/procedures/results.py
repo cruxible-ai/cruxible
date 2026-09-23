@@ -50,6 +50,13 @@ ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
     "occurrence_id_mismatch",
     "occurrence_not_due",
     "occurrence_already_admitted",
+    "trigger_capture_stale",
+    "trigger_capture_unavailable",
+    "trigger_capture_over_budget",
+    "trigger_capture_forbidden",
+    "trigger_capture_invalid",
+    "trigger_capture_not_yet_observed",
+    "line_binding_superseded",
 ]
 ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "guard_refused",

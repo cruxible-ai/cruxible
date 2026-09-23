@@ -492,6 +492,22 @@ LINE_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-line-v3",
 )
 
+LINE_V4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.line.v4", "playbill-line-v4", semantic_revision=1
+    ),
+    artifact_kind="line",
+    artifact_tag="playbill-line-v4",
+)
+TRIGGER_CAPTURE_UPGRADE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=8
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+    current=False,
+)
+
 RESOLUTION_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "cruxible.resolution-contract.v1", "playbill-resolution-contract-v1", semantic_revision=1
@@ -618,6 +634,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         SDK_SOURCE_PROCEDURE_LAW,
         SOURCE_CHECKED_PROCEDURE_LAW,
         SOURCE_CHECKED_UPGRADE_LAW,
+        TRIGGER_CAPTURE_UPGRADE_LAW,
         PROVIDER_CONTRACT_PROCEDURE_LAW,
         PROVIDER_CONTRACT_UPGRADE_LAW,
         COMPILER_UPGRADE_ACCEPTANCE_LAW,
@@ -643,6 +660,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         LINE_ACCEPTANCE_LAW,
         LINE_V2_ACCEPTANCE_LAW,
         LINE_V3_ACCEPTANCE_LAW,
+        LINE_V4_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
         PROVIDER_V2_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_ACCEPTANCE_LAW,
@@ -679,6 +697,7 @@ __all__ = [
     "CLAIM_EVIDENCE_UPGRADE_LAW",
     "SOURCE_CHECKED_PROCEDURE_LAW",
     "SOURCE_CHECKED_UPGRADE_LAW",
+    "TRIGGER_CAPTURE_UPGRADE_LAW",
     "CAPTURE_CONTRACT_ACCEPTANCE_LAW",
     "CAPTURE_CONTRACT_LAW",
     "CAPTURE_CONTRACT_LAW_IDENTIFIER",

@@ -33,6 +33,33 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
+from cruxible_client.contracts.line_dispatch import (
+    LineDispatchItemV1 as LineDispatchItemV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineDispatchRequestV1 as LineDispatchRequestV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineDispatchResultV1 as LineDispatchResultV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineEvaluateRequestV1 as LineEvaluateRequestV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineListeningSessionV1 as LineListeningSessionV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineListenRequestV1 as LineListenRequestV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineTriggerCheckRequestV1 as LineTriggerCheckRequestV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineTriggerCheckResultV1 as LineTriggerCheckResultV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineTriggerOccurrenceV1 as LineTriggerOccurrenceV1,
+)
 from cruxible_client.contracts.predictions import (
     ObservationSettlementEvidenceV2 as ObservationSettlementEvidenceV2,
 )

@@ -185,6 +185,10 @@ exactly one may omit it.
 | `cruxible_playbill_procedure_run_status` | Read one finalized Procedure run and its receipt | `READ_ONLY` |
 | `cruxible_playbill_procedure_measure` | Evaluate due Procedure measurements from real evidence, persist the resolution, and credit one run's exact grain | `GOVERNED_WRITE` |
 | `cruxible_playbill_procedure_readings` | Inspect measurement standing and retained exact-grain readings (read-only, paginated) | `READ_ONLY` |
+| `cruxible_playbill_line_check` | Read trigger eligibility, exact matches, and admitted occurrences without queuing or running. | `READ_ONLY` |
+| `cruxible_playbill_line_listen` | Start or stop forward trigger matching into pending work; never executes. | `GOVERNED_WRITE` |
+| `cruxible_playbill_line_evaluate` | Evaluate an explicit historical range into pending work; never executes. | `GOVERNED_WRITE` |
+| `cruxible_playbill_line_dispatch` | Admit retained pending occurrences under the current caller’s authority. | `GOVERNED_WRITE` |
 | `cruxible_playbill_line_run` | Trigger one due accepted Line occurrence under its governed mandate | `READ_ONLY` |
 
 Read-tier Procedure runs append receipted journal records, following the same

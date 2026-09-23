@@ -6,8 +6,9 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -17,6 +18,7 @@ from cruxible_client.contracts.errors import (
     PlaybillJournalError,
     PlaybillJournalIntegrityError,
 )
+from cruxible_core.exhaust.journal_index import JournalIndex, journal_locked
 from cruxible_core.exhaust.records import (
     JournalHeadVectorV1,
     JournalPartitionHeadV1,
@@ -218,26 +220,29 @@ class LocalJournalBackend:
             raise PlaybillJournalIntegrityError("journal partition identity substitution detected")
 
     @staticmethod
-    def _read_records_from_directory(
+    def _read_frames(
         directory: Path,
         *,
         stream: JournalStreamIdentityV1,
         partition_id: str,
         recover_tail: bool,
-    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
+        offset: int = 0,
+        sequence: int = 0,
+        previous: str | None = None,
+    ) -> Generator[tuple[int, int, StoredProcedureJournalRecordV1], None, None]:
+        """One verifier for rebuilds, tail catch-up, and indexed exact reads."""
         path = directory / "records.log"
         if not path.exists():
-            return ()
+            return
         if path.is_symlink() or not path.is_file():
             raise PlaybillJournalError("journal record log is not a regular file")
-        mode = os.O_RDWR if recover_tail else os.O_RDONLY
-        descriptor = os.open(path, mode | getattr(os, "O_NOFOLLOW", 0))
-        records: list[StoredProcedureJournalRecordV1] = []
-        valid_end = 0
+        descriptor = os.open(
+            path, (os.O_RDWR if recover_tail else os.O_RDONLY) | getattr(os, "O_NOFOLLOW", 0)
+        )
+        valid_end = offset
         try:
             size = os.fstat(descriptor).st_size
-            offset = 0
-            previous = journal_genesis_digest(stream, partition_id)
+            previous = previous or journal_genesis_digest(stream, partition_id)
             while offset < size:
                 header = os.pread(descriptor, _FRAME_HEADER_BYTES, offset)
                 if len(header) < _FRAME_HEADER_BYTES:
@@ -249,9 +254,8 @@ class LocalJournalBackend:
                 if len(body) < length:
                     break
                 try:
-                    raw = json.loads(body)
-                    stored = StoredProcedureJournalRecordV1.model_validate(raw)
-                except (UnicodeDecodeError, ValueError) as exc:
+                    stored = StoredProcedureJournalRecordV1.model_validate_json(body)
+                except ValueError as exc:
                     raise PlaybillJournalIntegrityError(
                         "journal record frame is malformed"
                     ) from exc
@@ -261,14 +265,15 @@ class LocalJournalBackend:
                 if (
                     record.stream != stream
                     or record.partition_id != partition_id
-                    or record.sequence != len(records) + 1
+                    or record.sequence != sequence + 1
                     or record.previous_record_digest != previous
                 ):
                     raise PlaybillJournalIntegrityError(
                         "journal record chain or coordinate is corrupt"
                     )
-                records.append(stored)
+                yield offset, length + _FRAME_HEADER_BYTES, stored
                 previous = stored.record_digest
+                sequence += 1
                 offset += _FRAME_HEADER_BYTES + length
                 valid_end = offset
             if valid_end != size:
@@ -276,11 +281,31 @@ class LocalJournalBackend:
                     raise PlaybillJournalIntegrityError("journal has an incomplete crash tail")
                 os.ftruncate(descriptor, valid_end)
                 os.fsync(descriptor)
+                _fsync_directory(directory)
         finally:
             os.close(descriptor)
-        if recover_tail and valid_end != size:
-            _fsync_directory(directory)
-        return tuple(records)
+
+    @staticmethod
+    def _read_records_from_directory(
+        directory: Path, *, stream: JournalStreamIdentityV1, partition_id: str, recover_tail: bool
+    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
+        return tuple(
+            stored
+            for _, _, stored in LocalJournalBackend._read_frames(
+                directory, stream=stream, partition_id=partition_id, recover_tail=recover_tail
+            )
+        )
+
+    @property
+    def index(self) -> JournalIndex:
+
+        return JournalIndex(self)
+
+    def select_records(
+        self, stream: JournalStreamIdentityV1, **filters: Any
+    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
+        """Read only matching retained records; SQL is a rebuildable locator."""
+        return self.index.select(stream, **filters)
 
     def _records(
         self,
@@ -308,16 +333,7 @@ class LocalJournalBackend:
         stream: JournalStreamIdentityV1,
         partition_id: str,
     ) -> JournalPartitionHeadV1:
-        records = self._records(stream, partition_id)
-        digest = (
-            records[-1].record_digest if records else journal_genesis_digest(stream, partition_id)
-        )
-        return JournalPartitionHeadV1(
-            stream=stream,
-            partition_id=partition_id,
-            sequence=len(records),
-            record_digest=digest,
-        )
+        return self.index.head(stream, partition_id)
 
     def read_head_vector(
         self,
@@ -406,6 +422,7 @@ class LocalJournalBackend:
         _atomic_write(directory / "writer.json", canonical_bytes(fenced.model_dump(mode="json")))
         return fenced
 
+    @journal_locked
     def append(
         self,
         draft: ProcedureJournalRecordDraftV1,
@@ -420,7 +437,9 @@ class LocalJournalBackend:
             draft.partition_id,
             create=True,
         )
-        records = self._records(draft.stream, draft.partition_id, create=True)
+        records = self.select_records(
+            draft.stream, partition_id=draft.partition_id, descending=True, limit=1
+        )
         current = self.read_head(draft.stream, draft.partition_id)
         writer = self._writer_state(draft.stream, draft.partition_id)
         if writer is None or not writer.active or writer.fencing_token != fencing_token:
@@ -450,6 +469,7 @@ class LocalJournalBackend:
         if len(body) > _MAX_RECORD_BYTES:
             raise PlaybillJournalError("journal record exceeds the frozen local frame limit")
         frame = len(body).to_bytes(_FRAME_HEADER_BYTES, "big") + body
+        self.index.mark_dirty(draft.stream, draft.partition_id)
         path = directory / "records.log"
         descriptor = os.open(
             path,
@@ -468,15 +488,19 @@ class LocalJournalBackend:
             os.close(descriptor)
         os.chmod(path, 0o600)
         _fsync_directory(directory)
+        self.index.sync(draft.stream, draft.partition_id)
         return stored
 
     def read_exact_range(
         self,
         journal_range: JournalRangeV1,
     ) -> tuple[StoredProcedureJournalRecordV1, ...]:
-        records = self._records(journal_range.stream, journal_range.partition_id)
-        selected = records[journal_range.first_sequence - 1 : journal_range.last_sequence]
-        result = tuple(selected)
+        result = self.select_records(
+            journal_range.stream,
+            partition_id=journal_range.partition_id,
+            first_sequence=journal_range.first_sequence,
+            last_sequence=journal_range.last_sequence,
+        )
         verify_journal_range(journal_range, result)
         return result
 
@@ -488,23 +512,29 @@ class LocalJournalBackend:
         first_sequence: int,
         last_sequence: int,
     ) -> JournalRangeV1:
-        records = self._records(stream, partition_id)
-        if first_sequence < 1 or last_sequence < first_sequence or last_sequence > len(records):
-            raise PlaybillJournalError("requested journal sequence range is unavailable")
-        previous = (
-            journal_genesis_digest(stream, partition_id)
-            if first_sequence == 1
-            else records[first_sequence - 2].record_digest
+        records = self.select_records(
+            stream,
+            partition_id=partition_id,
+            first_sequence=first_sequence,
+            last_sequence=last_sequence,
         )
+        if (
+            first_sequence < 1
+            or last_sequence < first_sequence
+            or len(records) != last_sequence - first_sequence + 1
+        ):
+            raise PlaybillJournalError("requested journal sequence range is unavailable")
+        previous = records[0].record.previous_record_digest
         return JournalRangeV1(
             stream=stream,
             partition_id=partition_id,
             first_sequence=first_sequence,
             last_sequence=last_sequence,
             expected_previous_digest=previous,
-            expected_head_digest=records[last_sequence - 1].record_digest,
+            expected_head_digest=records[-1].record_digest,
         )
 
+    @journal_locked
     def import_verified_range(
         self,
         records: tuple[StoredProcedureJournalRecordV1, ...],
@@ -536,6 +566,7 @@ class LocalJournalBackend:
         if current != expected_head:
             raise PlaybillJournalConflictError("journal import local head changed or names a fork")
         directory = self._partition_directory(first.stream, first.partition_id, create=True)
+        self.index.mark_dirty(first.stream, first.partition_id)
         path = directory / "records.log"
         descriptor = os.open(
             path,
@@ -559,6 +590,7 @@ class LocalJournalBackend:
             os.close(descriptor)
         os.chmod(path, 0o600)
         _fsync_directory(directory)
+        self.index.sync(first.stream, first.partition_id)
         return imported_head
 
     def recover_partition(

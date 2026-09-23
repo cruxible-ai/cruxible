@@ -154,6 +154,18 @@
   "/api/v1/{instance_id}/playbill/ledger/publish": {
     "POST": "PlaybillLedgerMirrorV1"
   },
+  "/api/v1/{instance_id}/playbill/lines/{line}/check": {
+    "POST": "LineTriggerCheckResultV1"
+  },
+  "/api/v1/{instance_id}/playbill/lines/{line}/dispatch": {
+    "POST": "LineDispatchResultV1"
+  },
+  "/api/v1/{instance_id}/playbill/lines/{line}/evaluate": {
+    "POST": "LineTriggerCheckResultV1"
+  },
+  "/api/v1/{instance_id}/playbill/lines/{line}/listen": {
+    "POST": "LineListeningSessionV1"
+  },
   "/api/v1/{instance_id}/playbill/lines/{line}/runs": {
     "POST": "PlaybillProcedureRunState"
   },

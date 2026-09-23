@@ -249,6 +249,22 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need each measurement's standing (pending, expired, resolved) and the "
         "retained exact-grain readings that credit real runs. Read-only and paginated."
     ),
+    "cruxible_playbill_line_check": (
+        "Check a named Line without enqueuing or running it. Incomplete coverage is not absence; "
+        "retain the returned checked_until when paging."
+    ),
+    "cruxible_playbill_line_listen": (
+        "Maintain pending matches while the daemon listens. "
+        "Downtime is not evaluated automatically."
+    ),
+    "cruxible_playbill_line_evaluate": (
+        "Evaluate an explicit missed range into pending work. "
+        "Repeat or page incomplete results; no runs start."
+    ),
+    "cruxible_playbill_line_dispatch": (
+        "Execute pending occurrences under your current authority; "
+        "installation and listening grant no execution permission."
+    ),
     "cruxible_playbill_line_run": (
         "Trigger one due accepted Line occurrence. Reuse a returned occurrence id only as an "
         "idempotency assertion; the daemon derives occurrence identity."

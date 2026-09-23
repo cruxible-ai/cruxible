@@ -39,7 +39,9 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 PROCEDURE_EXHAUST_JOURNAL_FAMILY = "procedure-exhaust-v1"
 RESOLUTION_JOURNAL_FAMILY = "resolution-exhaust-v1"
 QUERY_RECEIPT_JOURNAL_FAMILY = "query-receipt-v1"
+LINE_DISPATCH_JOURNAL_FAMILY = "line-dispatch-v1"
 REGISTERED_JOURNAL_FAMILIES: tuple[str, ...] = (
+    LINE_DISPATCH_JOURNAL_FAMILY,
     RESOLUTION_JOURNAL_FAMILY,
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     QUERY_RECEIPT_JOURNAL_FAMILY,
@@ -50,6 +52,7 @@ _PARTITION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _HEX_SIGNATURE_RE = re.compile(r"^[0-9a-f]{128}$")
 
 JournalEventKindV1 = Literal[
+    "line_dispatch_transition",
     "occurrence_materialized",
     "occurrence_lapsed",
     "attempt_started",
@@ -124,6 +127,24 @@ def _validate_event_family(
 ) -> None:
     """Bind each event kind to the one family whose coordinates it can honestly fill."""
 
+    if event_kind == "line_dispatch_transition" or journal_family == LINE_DISPATCH_JOURNAL_FAMILY:
+        if (
+            event_kind != "line_dispatch_transition"
+            or journal_family != LINE_DISPATCH_JOURNAL_FAMILY
+            or any(
+                value is not None
+                for value in (
+                    procedure_artifact_digest,
+                    run_id,
+                    line_spec_digest,
+                    occurrence_id,
+                    attempt,
+                    admission_binding_digest,
+                )
+            )
+        ):
+            raise ValueError("Line dispatch transitions carry no Procedure-run coordinates")
+        return
     if journal_family == RESOLUTION_JOURNAL_FAMILY:
         if event_kind not in {
             "resolution_activation",

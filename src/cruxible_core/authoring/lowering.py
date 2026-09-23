@@ -141,6 +141,7 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.line_specs import (
     CaptureLandingTriggerPolicyV2,
     LineSpecV3,
+    LineSpecV4,
     WindowCloseTriggerPolicyV2,
     line_spec_digest,
     line_spec_path,
@@ -2086,7 +2087,7 @@ def _render_line_member(
     the staged tree -- accepted at the base or authored earlier in the same
     set -- and lowering pins their exact digests. A Procedure that pins every
     Provider it names fills no slot, so the Line's slot bindings and Provider
-    closures are empty; graph-v4/v5 Procedures lower to the v2 Line wire.
+    closures are empty. Event input bindings lower to Line v4; other Lines retain v3.
     """
 
     procedure_target = procedure_path(payload.procedure_name)
@@ -2189,7 +2190,7 @@ def _render_line_member(
                 artifact_digest=selector.capture_contract_digest,
             ),
         )
-    line = LineSpecV3(
+    line_fields = dict(
         identity=ArtifactIdentity(kind="Line", name=payload.name),
         occurrence_epoch=payload.occurrence_epoch,
         procedure=procedure_pin,
@@ -2215,6 +2216,11 @@ def _render_line_member(
             state="retired" if payload.retire else "live",
             predecessor_digest=predecessor_digest,
         ),
+    )
+    line = (
+        LineSpecV3.model_validate(line_fields)
+        if payload.trigger_input is None
+        else LineSpecV4.model_validate({**line_fields, "trigger_input": payload.trigger_input})
     )
     if previous_content is not None and _same_revision_content(line, previous):
         return path, previous_content, line_spec_digest(previous).tagged

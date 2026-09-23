@@ -24,6 +24,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecy
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
+    canonical_bytes,
     normalize_canonical,
     typed_digest,
 )
@@ -65,6 +66,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     CadenceTriggerPolicyV1,
     CaptureLandingTriggerPolicyV2,
     LineSpecV2,
+    LineSpecV4,
     ManualTriggerPolicyV1,
     WindowCloseTriggerPolicyV2,
     evaluate_line_spec_law,
@@ -178,6 +180,7 @@ from cruxible_core.compiler.compiler import (
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
     SOURCE_CHECKED_COMPILER,
+    TRIGGER_CAPTURE_COMPILER,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
@@ -186,7 +189,7 @@ from cruxible_core.exhaust import (
     LocalJournalBackend,
 )
 from cruxible_core.exhaust.promotions import VerifiedExhaustRecordV1
-from cruxible_core.exhaust.records import parse_journal_payload
+from cruxible_core.exhaust.records import JournalEventKindV1, parse_journal_payload
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -209,6 +212,7 @@ from cruxible_core.procedures.execution import (
     PROCEDURE_RUN_RECEIPT_V5_DOMAIN,
     PROCEDURE_RUN_RECEIPT_V6_DOMAIN,
     AcceptedStateRunMaterialV2,
+    LandedCaptureRunMaterialV1,
     PreparedProcedureRunV2,
     PreparedProcedureRunV5,
     ProcedureAdmissionBoundPayloadV3,
@@ -230,6 +234,7 @@ from cruxible_core.procedures.execution import (
     bind_accepted_state_materials,
     bind_line_admission_runtime_policy,
     bind_prepared_investigation,
+    capture_admission_material_member,
     parse_admission_payload,
     prepare_direct_procedure_run,
     procedure_admission_digest,
@@ -249,7 +254,10 @@ from cruxible_core.procedures.execution import (
 from cruxible_core.procedures.proposal_delivery import (
     ProposalTerminalEgressSink,
 )
-from cruxible_core.procedures.terminal_dependencies import TerminalItemDependencyManifestV1
+from cruxible_core.procedures.terminal_dependencies import (
+    AcquisitionInputOutcomeV1,
+    TerminalItemDependencyManifestV1,
+)
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.providers.provider_local_runtime import (
     ProviderLocalRuntimeRefused,
@@ -264,6 +272,7 @@ from cruxible_core.service.procedures.procedures import (
     service_execute_direct_procedure,
 )
 from cruxible_core.service.procedures.resolution_contracts import (
+    TriggerCaptureRefused,
     bind_investigation,
     bind_window,
     capture_event_time,
@@ -273,6 +282,7 @@ from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.material_reservations import (
     ProcedureMaterialReservationStore,
     ReservedCaptureStore,
+    reserve_admission_material_body,
 )
 
 PROCEDURE_RUN_ID_DOMAIN = "playbill-procedure-run-id-v1"
@@ -729,19 +739,23 @@ def _accepted_runtime_policy(
         return policy
 
 
-def _accepted_line_by_reference(
-    instance: PlaybillInstance,
-    *,
-    coordinate: AcceptedProjectionCoordinate,
-    reference: str,
-) -> AcceptedLineSpecV1:
-    identity_digest = (
+def _line_reference_digest(reference: str) -> str:
+    return (
         reference
         if reference.startswith("sha256:")
         else line_identity_digest(
             ArtifactIdentity(kind="Line", name=reference.removeprefix("Line:"))
         )
     )
+
+
+def _accepted_line_by_reference(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    reference: str,
+) -> AcceptedLineSpecV1:
+    identity_digest = _line_reference_digest(reference)
     with instance.bind_accepted_projection(coordinate) as projection:
         matches = projection.typed.connection.execute(
             "SELECT identity,path,artifact_digest FROM lines "
@@ -859,12 +873,21 @@ def _resolve_line_pin(
 def _line_admissions(
     instance: PlaybillInstance,
     accepted_line: AcceptedLineSpecV1,
+    *,
+    occurrence_id: str | None = None,
 ) -> tuple[ProcedureRunAdmissionV5, ...]:
     journal, _root = _journal(instance)
     stream = procedure_line_journal_stream(instance.descriptor.instance_id)
     partition = procedure_line_partition(accepted_line.line.identity)
     admissions: list[ProcedureRunAdmissionV5] = []
-    for stored in journal.all_records(stream, partition):
+    for stored in journal.select_records(
+        stream,
+        partition_id=partition,
+        event_kind="admission_bound",
+        occurrence_id=occurrence_id,
+        descending=True,
+        limit=1,
+    ):
         if stored.record.event_kind != "admission_bound":
             continue
         payload = parse_journal_payload(
@@ -1004,6 +1027,7 @@ def _plan_external_occurrences(
     runtime_policy: ProcedureRuntimePolicyV1,
     budget: ProcedureBudgetV3,
     implementation_closures: Sequence[Any] = (),
+    supplied_source_inputs: frozenset[str] = frozenset(),
 ) -> tuple[ProviderExternalOccurrencePlanV1, ...]:
     """Plan every external Provider occurrence one admitted run will invoke.
 
@@ -1019,6 +1043,8 @@ def _plan_external_occurrences(
         return ()
     occurrences: list[ProviderExternalOccurrencePlanV1] = []
     for node, repeat_node_id in _provider_nodes(definition):
+        if isinstance(node, SourceNodeV4) and node.as_ in supplied_source_inputs:
+            continue
         provider_binding = node.provider
         assert provider_binding is not None
         provider_pin = _resolve_line_pin(provider_binding, slot_pins=slot_pins)
@@ -1200,6 +1226,11 @@ def _line_external_occurrences(
         runtime_policy=runtime_policy,
         budget=budget,
         implementation_closures=getattr(accepted_line.line, "provider_implementation_closures", ()),
+        supplied_source_inputs=(
+            frozenset({accepted_line.line.trigger_input})
+            if isinstance(accepted_line.line, LineSpecV4)
+            else frozenset()
+        ),
     )
 
 
@@ -1798,15 +1829,25 @@ def _journal_for_write(instance: PlaybillInstance) -> tuple[LocalJournalBackend,
 
     journal, root = _journal(instance)
     stream = _stream(instance)
-    records = tuple(
-        stored
-        for partition_id in journal.partition_ids(stream)
-        for stored in journal.all_records(stream, partition_id)
-    )
     bodies = instance.body_store()
     ProcedureMaterialReservationStore(bodies.reservation_root).recover_run_material(
-        records,
+        lambda reservation: journal.select_records(
+            stream, run_id=reservation.run_id, event_kind=reservation.intended_event_kind
+        ),
         bodies=bodies,
+        intended_event_kinds=frozenset(
+            kind
+            for kind in get_args(JournalEventKindV1)
+            if kind
+            not in {
+                "line_dispatch_transition",
+                "resolution",
+                "resolution_activation",
+                "resolution_disposition",
+                "query_executed",
+                "claim_verdict_observed",
+            }
+        ),
     )
     return journal, root
 
@@ -1868,9 +1909,8 @@ def _records_for_run(instance: PlaybillInstance, run_id: str):  # type: ignore[n
     journal, _root = _journal(instance)
     records = tuple(
         item
-        for partition_id in journal.partition_ids(_stream(instance))
-        for item in journal.all_records(_stream(instance), partition_id)
-        if item.record.run_id == run_id and item.record.admission_binding_digest is not None
+        for item in journal.select_records(_stream(instance), run_id=run_id)
+        if item.record.admission_binding_digest is not None
     )
     partitions = {item.record.partition_id for item in records}
     admission_digests = {
@@ -3293,6 +3333,7 @@ def _line_refusal_state(
     code: str,
     message: str,
     details: object,
+    retryable: bool = False,
 ) -> ProcedureRunStateV2:
     return ProcedureRunStateV2(
         run_id=None,
@@ -3309,6 +3350,7 @@ def _line_refusal_state(
         terminal=ProcedureAdmissionRefusalV1.model_validate(
             {
                 "code": code,
+                "retryable": retryable,
                 "message": message,
                 "details": {
                     "line_identity_digest": line_identity_digest(accepted_line.line.identity),
@@ -3383,6 +3425,45 @@ def service_run_playbill_line(
     workspace_file_reader: WorkspaceFileReader | None = None,
     daemon_clock: ProcedureClockProtocol | None = None,
     evaluation_instant_skew: timedelta | None = None,
+    occurrence_basis_time: datetime | None = None,
+    expected_line_artifact_digest: str | None = None,
+) -> ProcedureRunStateV2:
+    instance.require_writable()
+    if request.line != path_identity_digest:
+        raise LineRunIdentityMismatch(
+            f"{LineRunIdentityMismatch.code}: route and request Line identities differ"
+        )
+    from cruxible_core.procedures.line_admission import line_admission_guard
+
+    with line_admission_guard(instance.root, _line_reference_digest(path_identity_digest)):
+        return _run_playbill_line(
+            instance,
+            path_identity_digest=path_identity_digest,
+            request=request,
+            actor_context=actor_context,
+            caller_rung=caller_rung,
+            provider_runtime_operator=provider_runtime_operator,
+            workspace_file_reader=workspace_file_reader,
+            daemon_clock=daemon_clock,
+            evaluation_instant_skew=evaluation_instant_skew,
+            occurrence_basis_time=occurrence_basis_time,
+            expected_line_artifact_digest=expected_line_artifact_digest,
+        )
+
+
+def _run_playbill_line(
+    instance: PlaybillInstance,
+    *,
+    path_identity_digest: str,
+    request: LineRunRequestV1,
+    actor_context: GovernedActorContext,
+    caller_rung: int,
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
+    workspace_file_reader: WorkspaceFileReader | None = None,
+    daemon_clock: ProcedureClockProtocol | None = None,
+    evaluation_instant_skew: timedelta | None = None,
+    occurrence_basis_time: datetime | None = None,
+    expected_line_artifact_digest: str | None = None,
 ) -> ProcedureRunStateV2:
     """Derive, admit, and execute one occurrence of an accepted Line.
 
@@ -3395,11 +3476,6 @@ def service_run_playbill_line(
     skew -- so a mandate validity window cannot be entered by claiming a time.
     """
 
-    instance.require_writable()
-    if request.line != path_identity_digest:
-        raise LineRunIdentityMismatch(
-            f"{LineRunIdentityMismatch.code}: route and request Line identities differ"
-        )
     clock = daemon_clock or SystemProcedureClock()
     evaluation_time = ensure_utc(clock.now())
     asserted = request.evaluation_time
@@ -3423,6 +3499,23 @@ def service_run_playbill_line(
         name=accepted_line.line.procedure.target.name,
         coordinate=coordinate,
     )
+    if (
+        expected_line_artifact_digest is not None
+        and accepted_line.artifact_digest != expected_line_artifact_digest
+    ):
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="line_binding_superseded",
+            message="The accepted Line changed after the pending binding was checked.",
+            details={
+                "expected_line_artifact_digest": expected_line_artifact_digest,
+                "current_line_artifact_digest": accepted_line.artifact_digest,
+            },
+        )
     if accepted.artifact_digest != accepted_line.line.procedure.artifact_digest:
         return _line_refusal_state(
             accepted,
@@ -3502,57 +3595,72 @@ def service_run_playbill_line(
         )
     trigger = accepted_line.line.trigger_policy
     trigger_binding = None
-    if isinstance(trigger, CaptureLandingTriggerPolicyV2):
-        if request.trigger_event is None:
-            return _line_refusal_state(
-                accepted,
-                accepted_line,
-                coordinate=coordinate,
-                head_at_admission=head_at_admission,
-                evaluation_time=evaluation_time,
-                code="occurrence_not_due",
-                message="The Line is waiting for a matching retained capture event.",
-                details={"repair": "Supply the retained capture event when it arrives."},
+    try:
+        if isinstance(trigger, CaptureLandingTriggerPolicyV2):
+            if request.trigger_event is None:
+                return _line_refusal_state(
+                    accepted,
+                    accepted_line,
+                    coordinate=coordinate,
+                    head_at_admission=head_at_admission,
+                    evaluation_time=evaluation_time,
+                    code="occurrence_not_due",
+                    message="The Line is waiting for a matching retained capture event.",
+                    details={"repair": "Supply the retained capture event when it arrives."},
+                )
+            capture_event_time(instance, trigger.event, request.trigger_event, now=evaluation_time)
+            trigger_binding = LineTriggerBindingV1(
+                kind="capture_landing", event=request.trigger_event
             )
-        capture_event_time(instance, trigger.event, request.trigger_event, now=evaluation_time)
-        trigger_binding = LineTriggerBindingV1(kind="capture_landing", event=request.trigger_event)
-    elif isinstance(trigger, WindowCloseTriggerPolicyV2):
-        from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+        elif isinstance(trigger, WindowCloseTriggerPolicyV2):
+            from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
 
-        if isinstance(trigger.window, CaptureEventWindowV1) and request.trigger_event is None:
-            return _line_refusal_state(
-                accepted,
-                accepted_line,
-                coordinate=coordinate,
-                head_at_admission=head_at_admission,
-                evaluation_time=evaluation_time,
-                code="occurrence_not_due",
-                message="The observation window is waiting for its capture event anchor.",
-                details={"repair": "Supply the retained anchor event when it arrives."},
+            if isinstance(trigger.window, CaptureEventWindowV1) and request.trigger_event is None:
+                return _line_refusal_state(
+                    accepted,
+                    accepted_line,
+                    coordinate=coordinate,
+                    head_at_admission=head_at_admission,
+                    evaluation_time=evaluation_time,
+                    code="occurrence_not_due",
+                    message="The observation window is waiting for its capture event anchor.",
+                    details={"repair": "Supply the retained anchor event when it arrives."},
+                )
+            line_event = request.trigger_event
+            if (
+                not isinstance(trigger.window, CaptureEventWindowV1)
+                and request.resolution_contract is not None
+            ):
+                line_event = None
+            window = bind_window(instance, trigger.window, line_event, now=evaluation_time)
+            trigger_binding = LineTriggerBindingV1(
+                kind="window_close", window=window, event=window.event
             )
-        line_event = request.trigger_event
-        if (
-            not isinstance(trigger.window, CaptureEventWindowV1)
-            and request.resolution_contract is not None
-        ):
-            line_event = None
-        window = bind_window(instance, trigger.window, line_event, now=evaluation_time)
-        trigger_binding = LineTriggerBindingV1(
-            kind="window_close", window=window, event=window.event
+        elif request.trigger_event is not None and request.resolution_contract is None:
+            raise PlaybillExecutionError("this Line trigger does not accept a capture event")
+        investigation = (
+            None
+            if request.resolution_contract is None
+            else bind_investigation(
+                instance,
+                request.resolution_contract,
+                event=request.trigger_event,
+                now=evaluation_time,
+                trigger_binding=trigger_binding,
+            )
         )
-    elif request.trigger_event is not None and request.resolution_contract is None:
-        raise PlaybillExecutionError("this Line trigger does not accept a capture event")
-    investigation = (
-        None
-        if request.resolution_contract is None
-        else bind_investigation(
-            instance,
-            request.resolution_contract,
-            event=request.trigger_event,
-            now=evaluation_time,
-            trigger_binding=trigger_binding,
+    except TriggerCaptureRefused as exc:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code=exc.refusal_code,
+            message=str(exc),
+            retryable=exc.retryable,
+            details=exc.details,
         )
-    )
     if (
         investigation is not None
         and trigger_binding is not None
@@ -3565,7 +3673,11 @@ def service_run_playbill_line(
     prior = _line_admissions(instance, accepted_line)
     occurrence_id, next_due = _line_occurrence(
         accepted_line,
-        evaluation_time=evaluation_time,
+        evaluation_time=(
+            min(occurrence_basis_time, evaluation_time)
+            if occurrence_basis_time is not None and isinstance(trigger, CadenceTriggerPolicyV1)
+            else evaluation_time
+        ),
         prior=prior,
         binding=trigger_binding,
     )
@@ -3594,7 +3706,9 @@ def service_run_playbill_line(
                 "repair": "Re-run at or after next_due.",
             },
         )
-    existing = next((item for item in prior if item.occurrence_id == occurrence_id), None)
+    existing = next(
+        iter(_line_admissions(instance, accepted_line, occurrence_id=occurrence_id)), None
+    )
     if existing is not None:
         if not isinstance(existing, ProcedureRunAdmissionV7):
             return _line_refusal_state(
@@ -3647,8 +3761,69 @@ def service_run_playbill_line(
             SDK_SOURCE_COMPILER,
             CLAIM_EVIDENCE_COMPILER,
             SOURCE_CHECKED_COMPILER,
+            TRIGGER_CAPTURE_COMPILER,
         },
     )
+    capture_contracts = _accepted_capture_contracts(
+        instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
+    )
+    accepted_policies = dict(
+        _accepted_acquisition_policies(
+            instance, coordinate, pin=accepted_line.line.acquisition_policy
+        )
+    )
+    line_policy = accepted_policies.get(accepted_line.line.acquisition_policy.artifact_digest)
+    if line_policy is None:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="artifact_binding_mismatch",
+            message="The Line's pinned acquisition policy is not accepted at this coordinate.",
+            details={"repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Line."},
+        )
+    landed_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
+    if isinstance(accepted_line.line, LineSpecV4):
+        from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
+
+        try:
+            landed_materials = (
+                bind_trigger_capture(
+                    instance,
+                    line=accepted_line.line,
+                    procedure=accepted,
+                    binding=trigger_binding,
+                    contracts=capture_contracts,
+                    policy=line_policy,
+                    evaluation_time=evaluation_time,
+                    max_bytes=budget.max_capture_bytes,
+                ),
+            )
+        except TriggerCaptureRefused as exc:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code=exc.refusal_code,
+                message=str(exc),
+                retryable=exc.retryable,
+                details={"input_name": accepted_line.line.trigger_input, **exc.details},
+            )
+        except (PlaybillError, ValueError) as exc:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="trigger_capture_invalid",
+                message="The exact triggering Capture cannot be admitted as this Source input.",
+                details={"reason": str(exc), "input_name": accepted_line.line.trigger_input},
+            )
     try:
         external_occurrences = _line_external_occurrences(
             accepted_line,
@@ -3682,26 +3857,6 @@ def service_run_playbill_line(
                 repair=served_repair_for_refusal("provider_unavailable"),
             ),
         )
-    capture_contracts = _accepted_capture_contracts(
-        instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
-    )
-    accepted_policies = dict(
-        _accepted_acquisition_policies(
-            instance, coordinate, pin=accepted_line.line.acquisition_policy
-        )
-    )
-    line_policy = accepted_policies.get(accepted_line.line.acquisition_policy.artifact_digest)
-    if line_policy is None:
-        return _line_refusal_state(
-            accepted,
-            accepted_line,
-            coordinate=coordinate,
-            head_at_admission=head_at_admission,
-            evaluation_time=evaluation_time,
-            code="artifact_binding_mismatch",
-            message="The Line's pinned acquisition policy is not accepted at this coordinate.",
-            details={"repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Line."},
-        )
     selection = _plan_selection_decision(
         line_policy,
         policy_digest=accepted_line.line.acquisition_policy.artifact_digest,
@@ -3729,6 +3884,28 @@ def service_run_playbill_line(
                     else "Widen the accepted policy rule or repair the Source binding."
                 ),
             },
+        )
+    if landed_materials:
+        selection = selection.model_copy(
+            update={
+                "decisions": tuple(
+                    sorted(
+                        (
+                            *selection.decisions,
+                            *(
+                                AcquisitionInputDecisionV1(
+                                    input_name=item.input.input_name,
+                                    disposition="selected",
+                                    considered_capture_digests=(item.input.capture_digest,),
+                                    selected_capture_digests=(item.input.capture_digest,),
+                                )
+                                for item in landed_materials
+                            ),
+                        ),
+                        key=lambda item: item.input_name.encode("utf-8"),
+                    )
+                )
+            }
         )
     selection_digest = procedure_selection_decision_digest(selection)
     accepted_coordinate = AcceptedCoordinate.from_internal(coordinate)
@@ -3819,7 +3996,7 @@ def service_run_playbill_line(
         "pin_set_digest": procedure_pin_set_digest(full_pins, node_pin_sets),
         "invocation_input": accepted_line.line.parameters,
         "accepted_state_inputs": tuple(item.input for item in materials),
-        "landed_capture_inputs": (),
+        "landed_capture_inputs": tuple(item.input for item in landed_materials),
         "exhaust_inputs": (),
         "budget": budget,
         "hard_caps": accepted.procedure.definition.hard_caps,
@@ -3894,10 +4071,33 @@ def service_run_playbill_line(
         )
     if not isinstance(prepared_admission, ProcedureRunAdmissionV5):
         raise PlaybillExecutionError("Line admission unexpectedly changed wire generation")
-    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    manifest = ProcedureAdmissionMaterialManifestV1(
+        members=tuple(
+            capture_admission_material_member(
+                item.input,
+                policy=capture_contracts[
+                    item.input.capture_contract_digest
+                ].retention_erasure_policy,
+                admitted_at=evaluation_time,
+                body_digest=instance.body_store()
+                .digest_bytes(canonical_bytes(item.material.value))
+                .tagged,
+            )
+            for item in landed_materials
+        )
+    )
     prepared = PreparedProcedureRunV5(
         admission=prepared_admission,
         accepted_state_materials=materials,
+        landed_capture_materials=landed_materials,
+        acquisition_outcomes=tuple(
+            AcquisitionInputOutcomeV1(
+                input_name=item.input.input_name,
+                disposition="selected",
+                capture_digests=(item.input.capture_digest,),
+            )
+            for item in landed_materials
+        ),
         admission_material_manifest=manifest,
         admission_material_manifest_digest=procedure_admission_material_digest(manifest),
         acquisition_plan=plan,
@@ -3907,7 +4107,12 @@ def service_run_playbill_line(
     effective_rung = compute_effective_rung(
         procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
         requested_terminal_rung=accepted_line.line.requested_terminal_rung,
-        selector_privacies={},
+        selector_privacies={
+            item.input.capture_digest: capture_contracts[
+                item.input.capture_contract_digest
+            ].retention_erasure_policy.selector_privacy
+            for item in landed_materials
+        },
         taint_labels=(),
         mandate_grants={},
         calibration_caps=(),
@@ -3924,85 +4129,114 @@ def service_run_playbill_line(
         prepared = bind_prepared_investigation(
             prepared, investigation=investigation, trigger=trigger_binding
         )
-    capture_store = ReservedCaptureStore(
-        bodies=instance.body_store(),
-        reservations=ProcedureMaterialReservationStore(instance.body_store().reservation_root),
-        admission=prepared.admission,
-        event_kind="terminal_egress",
-    )
-    egress_sink = _LineTerminalEgressSink(
-        capture=CaptureTerminalEgressSink(
-            store=capture_store,
-            contracts=capture_contracts,
-            producer=accepted.procedure.identity,
-            producer_binding_digest=accepted.artifact_digest,
-        ),
-        proposal=ProposalTerminalEgressSink(instance=instance, accepted_mandates=dict(mandates)),
-    )
-    journal, root = _journal_for_write(instance)
-    _activate_writer(
-        journal,
-        prepared.admission.journal_stream,
-        prepared.admission.journal_partition_id,
-    )
-    if instance.accepted_coordinate() != coordinate:
-        raise ProcedureRunNotCurrent(
-            f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before Line append"
-        )
+    reservations = []
     try:
-        result = service_execute_direct_procedure(
-            prepared,
-            accepted,
-            journal=journal,
-            bodies=instance.body_store(),
-            run_index_path=root / "procedure-run-index.sqlite",
-            fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
-            activation_authority=_CurrentProcedureAuthority(instance),
-            provider_runtime_invoker_factory=(
-                None
-                if provider_runtime_operator is None
-                else lambda: provider_runtime_operator.invoker_for(
-                    instance,
-                    accepted_oid=coordinate.git_oid,
+        for item in landed_materials:
+            reservations.append(
+                reserve_admission_material_body(
+                    bodies=instance.body_store(),
+                    instance_id=instance.descriptor.instance_id,
+                    run_id=prepared.admission.run_id,
+                    admission_binding_digest=prepared.admission.admission_binding_digest,
+                    input_name=item.input.input_name,
+                    plane="landed_capture",
+                    content=canonical_bytes(item.material.value),
                 )
+            )
+        prepared = prepared.model_copy(
+            update={
+                "required_reservation_ids": tuple(
+                    sorted(item.reservation_id for item in reservations)
+                )
+            }
+        )
+        capture_store = ReservedCaptureStore(
+            bodies=instance.body_store(),
+            reservations=ProcedureMaterialReservationStore(instance.body_store().reservation_root),
+            admission=prepared.admission,
+            event_kind="terminal_egress",
+        )
+        egress_sink = _LineTerminalEgressSink(
+            capture=CaptureTerminalEgressSink(
+                store=capture_store,
+                contracts=capture_contracts,
+                producer=accepted.procedure.identity,
+                producer_binding_digest=accepted.artifact_digest,
             ),
-            acquisition_policy=line_policy,
-            capture_contracts=capture_contracts,
-            workspace_file_reader=workspace_file_reader,
-            slot_pins=slot_pins,
-            effective_rung=effective_rung,
-            egress_sink=egress_sink,
-            clock=_DeterministicClock(evaluation_time),
-            nested_runner=ServedNestedProcedureRunner(
-                instance,
-                coordinate,
-                head_at_admission,
-                evaluation_time,
-                provider_runtime_operator,
-                workspace_file_reader,
-                _DeterministicClock(evaluation_time),
-                mandates=dict(mandates),
+            proposal=ProposalTerminalEgressSink(
+                instance=instance, accepted_mandates=dict(mandates)
             ),
         )
-    except ProcedureBoundaryRefused as exc:
-        return _line_refusal_state(
-            accepted,
-            accepted_line,
-            coordinate=coordinate,
-            head_at_admission=head_at_admission,
-            evaluation_time=evaluation_time,
-            code="pin_binding_mismatch",
-            message=str(exc),
-            details={"boundary_code": exc.code, "detail": exc.details},
+        journal, root = _journal_for_write(instance)
+        _activate_writer(
+            journal,
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
         )
-    if result.status == "succeeded":
-        # The terminal and finalization are durable before staged bodies are released.
-        capture_store.release()
-    return _state_from_records(
-        instance,
-        run_id=prepared.admission.run_id,
-        receipt=result.receipt,
-    )
+        if instance.accepted_coordinate() != coordinate:
+            raise ProcedureRunNotCurrent(
+                f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before Line append"
+            )
+        try:
+            result = service_execute_direct_procedure(
+                prepared,
+                accepted,
+                journal=journal,
+                bodies=instance.body_store(),
+                run_index_path=root / "procedure-run-index.sqlite",
+                fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
+                activation_authority=_CurrentProcedureAuthority(instance),
+                provider_runtime_invoker_factory=(
+                    None
+                    if provider_runtime_operator is None
+                    else lambda: provider_runtime_operator.invoker_for(
+                        instance,
+                        accepted_oid=coordinate.git_oid,
+                    )
+                ),
+                acquisition_policy=line_policy,
+                capture_contracts=capture_contracts,
+                workspace_file_reader=workspace_file_reader,
+                slot_pins=slot_pins,
+                effective_rung=effective_rung,
+                egress_sink=egress_sink,
+                clock=_DeterministicClock(evaluation_time),
+                nested_runner=ServedNestedProcedureRunner(
+                    instance,
+                    coordinate,
+                    head_at_admission,
+                    evaluation_time,
+                    provider_runtime_operator,
+                    workspace_file_reader,
+                    _DeterministicClock(evaluation_time),
+                    mandates=dict(mandates),
+                ),
+            )
+        except ProcedureBoundaryRefused as exc:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="pin_binding_mismatch",
+                message=str(exc),
+                details={"boundary_code": exc.code, "detail": exc.details},
+            )
+        if result.status == "succeeded":
+            # The terminal and finalization are durable before staged bodies are released.
+            capture_store.release()
+        return _state_from_records(
+            instance,
+            run_id=prepared.admission.run_id,
+            receipt=result.receipt,
+        )
+    finally:
+        # admission_bound takes over retention before execution; before admission,
+        # no durable run owns these leases. Release on refusals and exceptions too.
+        store = ProcedureMaterialReservationStore(instance.body_store().reservation_root)
+        for reservation in reservations:
+            store.release(reservation.reservation_id)
 
 
 def service_get_playbill_procedure_run(
