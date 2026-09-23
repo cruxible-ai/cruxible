@@ -254,14 +254,25 @@ class GitLedger:
         sequence: int,
         timestamp: str,
         message: str,
+        extends_tree: str | None = None,
     ) -> str:
-        """Create one signed, still-unsettled generation commit over an exact parent."""
+        """Create one signed, still-unsettled generation commit over an exact parent.
+
+        ``extends_tree`` names a stored tree whose members ``tree`` carries
+        unchanged, as a settled proposal's tree is carried into its generation.
+        Only the members it lacks are written; the caller's readback of the
+        stored generation still compares every member.
+        """
 
         self._validate_oid(parent_oid)
         if sequence < 1:
             raise PlaybillGitError("non-genesis generation sequence must be positive")
         _validate_commit_message(message)
-        tree_oid = self._write_tree(tree, accepted_parent=parent_oid)
+        tree_oid = (
+            self._write_tree(tree, accepted_parent=parent_oid)
+            if extends_tree is None
+            else self._extend_tree(extends_tree, tree)
+        )
         environment = {
             "GIT_AUTHOR_NAME": "playbill-daemon",
             "GIT_AUTHOR_EMAIL": "daemon@playbill.invalid",
@@ -414,6 +425,62 @@ class GitLedger:
             )
             for path in ordered
         )
+        _remember_listing(_repository_key(self.path), oid, listing)
+        return oid
+
+    def _extend_tree(self, base_tree: str, tree: Mapping[str, bytes]) -> str:
+        """Write ``tree`` as ``base_tree`` plus the members ``base_tree`` lacks.
+
+        Loading the stored tree into the index keeps Git's cache of its unchanged
+        subtrees, so only the added paths and their parent trees are hashed and
+        written, instead of every member of the whole tree.
+        """
+
+        self._validate_oid(base_tree)
+        base = self._list_tree(base_tree, with_sizes=True)
+        base_paths = {entry.path for entry in base}
+        if any(entry.object_type != "blob" for entry in base) or not base_paths <= set(tree):
+            raise PlaybillGitError("extended tree does not carry every member of its base")
+        added = [path for path in tree if path not in base_paths]
+        ordered_added = normalize_manifest_paths(added)
+        if set(ordered_added) != set(added):
+            raise PlaybillGitError("extended tree adds a path that is not normalized")
+        oids = {path: self._blob_oid(tree[path]) for path in ordered_added}
+        absent = self._absent_objects(tuple(oids.values()))
+        missing: dict[str, bytes] = {}
+        for path in ordered_added:
+            blob_oid = oids[path]
+            if blob_oid not in absent:
+                continue
+            if blob_oid in missing and missing[blob_oid] != tree[path]:
+                raise PlaybillGitError("different blob bytes share a computed content address")
+            missing[blob_oid] = tree[path]
+        self._write_missing_blobs(missing)
+        index_info = b"".join(
+            b"100644 " + oids[path].encode("ascii") + b"\t" + path.encode("utf-8") + b"\x00"
+            for path in ordered_added
+        )
+        with tempfile.TemporaryDirectory(prefix="playbill-tree-index-") as temporary:
+            environment = {"GIT_INDEX_FILE": str(Path(temporary) / "index")}
+            self._git(["read-tree", base_tree], environment=environment)
+            if index_info:
+                self._git(
+                    ["update-index", "-z", "--index-info"],
+                    input_bytes=index_info,
+                    environment=environment,
+                )
+            oid = self._git(["write-tree"], environment=environment).decode().strip()
+        self._validate_oid(oid)
+        entries = {entry.path: entry for entry in base}
+        for path in ordered_added:
+            entries[path] = GitTreeEntry(
+                path=path,
+                mode="100644",
+                object_type="blob",
+                oid=oids[path],
+                size=len(tree[path]),
+            )
+        listing = tuple(entries[path] for path in normalize_manifest_paths(list(entries)))
         _remember_listing(_repository_key(self.path), oid, listing)
         return oid
 
@@ -1387,6 +1454,60 @@ class GitLedger:
             raise PlaybillGitError(f"unknown Playbill proposal note kind: {kind!r}")
         return self._read_note(kind, oid)
 
+    def read_proposal_notes(
+        self, pairs: Sequence[tuple[str, str]]
+    ) -> dict[tuple[str, str], bytes | None]:
+        """Read several proposal notes in one Git process, resolving refs now.
+
+        Git notes stores a target under zero or more two-hex-digit fanout
+        directories (git/git notes.c construct_path_with_fanout), so each target
+        is asked for at every path it could occupy; at most one exists.
+        """
+
+        wanted: dict[str, tuple[str, str]] = {}
+        for kind, oid in pairs:
+            if kind not in {"evaluation", "approval"}:
+                raise PlaybillGitError(f"unknown Playbill proposal note kind: {kind!r}")
+            self._validate_oid(oid)
+            ref = self._note_ref(kind)
+            for split in range(0, len(oid), 2):
+                path = "/".join([oid[i : i + 2] for i in range(0, split, 2)] + [oid[split:]])
+                wanted[f"{ref}:{path}"] = (kind, oid)
+        found: dict[tuple[str, str], bytes] = {}
+        if wanted:
+            ordered = tuple(wanted)
+            output = self._git(
+                ["--no-replace-objects", "cat-file", "--batch"],
+                input_bytes=("\n".join(ordered) + "\n").encode("ascii"),
+            )
+            position = 0
+            for expression in ordered:
+                end = output.find(b"\n", position)
+                if end < 0:
+                    raise PlaybillGitError("Git note output has no header")
+                header = output[position:end]
+                position = end + 1
+                if header == f"{expression} missing".encode("ascii"):
+                    continue
+                try:
+                    _oid, object_type, raw_size = header.decode("ascii").split()
+                    size = int(raw_size)
+                except (UnicodeDecodeError, ValueError) as exc:
+                    raise PlaybillGitError("Git note metadata is malformed") from exc
+                if object_type != "blob" or size < 0:
+                    raise PlaybillGitError("Git note is not a blob")
+                end = position + size
+                if end >= len(output) or output[end : end + 1] != b"\n":
+                    raise PlaybillGitError("Git note payload is truncated")
+                key = wanted[expression]
+                if key in found:
+                    raise PlaybillGitError("Git notes repeat an annotated object")
+                found[key] = output[position:end]
+                position = end + 1
+            if position != len(output):
+                raise PlaybillGitError("Git note output has trailing bytes")
+        return {pair: found.get(pair) for pair in pairs}
+
     def read_main(self) -> str:
         result = self._git(["rev-parse", "--verify", "refs/heads/main"])
         oid = result.decode().strip()
@@ -1650,20 +1771,36 @@ class GitLedger:
             return self._read_tree_listing(oid, with_sizes=with_sizes, paths=paths)
         # A whole listing of one object ID never changes: reuse it per repository.
         repository = _repository_key(self.path)
-        key = (repository, oid, with_sizes)
-        with _TREE_LISTINGS_LOCK:
-            cached = _TREE_LISTINGS.get(key)
+        cached = _remembered_listing(repository, oid, with_sizes=with_sizes)
+        if cached is not None:
+            return cached
+        # A commit lists as its root tree, and the tree is usually what this
+        # process just wrote or listed: resolve it from the commit's own bytes.
+        tree = self._commit_tree(oid)
+        if tree is not None:
+            cached = _remembered_listing(repository, tree, with_sizes=with_sizes)
             if cached is not None:
-                _TREE_LISTINGS.move_to_end(key)
+                _remember_listing(repository, oid, cached)
                 return cached
-            sized = None if with_sizes else _TREE_LISTINGS.get((repository, oid, True))
-        if sized is not None:
-            # A sized listing carries every unsized field; only the size differs.
-            return tuple(replace(entry, size=None) for entry in sized)
         listing = self._read_tree_listing(oid, with_sizes=with_sizes, paths=None)
         if listing:
             _remember_listing(repository, oid, listing)
+            if tree is not None:
+                _remember_listing(repository, tree, listing)
         return listing
+
+    def _commit_tree(self, oid: str) -> str | None:
+        """The root tree a commit names, or None when the object is not a commit."""
+
+        found = _batch_reader(self.path).objects((oid,))[oid]
+        if found is None or found[0] != "commit":
+            return None
+        first = found[1].split(b"\n", 1)[0]
+        if not first.startswith(b"tree "):
+            raise PlaybillGitError(f"ledger commit has no tree header: {oid}")
+        tree = first[len(b"tree ") :].decode("ascii")
+        self._validate_oid(tree)
+        return tree
 
     def _read_tree_listing(
         self,
@@ -1727,6 +1864,14 @@ class GitLedger:
 
         self._validate_oid(oid)
         signer = self._allowed_signer_entry(principal_id)
+        # A commit's signed bytes never change under its object ID, so a check
+        # that passed for this exact signer entry passes again. Only successes
+        # are remembered; a changed or rotated entry is a different key.
+        key = (_repository_key(self.path), oid, signer)
+        with _VERIFIED_COMMITS_LOCK:
+            if key in _VERIFIED_COMMITS:
+                _VERIFIED_COMMITS.move_to_end(key)
+                return True
         with tempfile.NamedTemporaryFile(prefix="playbill-allowed-signer-") as exact_signers:
             exact_signers.write(signer + b"\n")
             exact_signers.flush()
@@ -1742,7 +1887,14 @@ class GitLedger:
                 ],
                 check=False,
             )
-        return result.returncode == 0
+        if result.returncode != 0:
+            return False
+        with _VERIFIED_COMMITS_LOCK:
+            _VERIFIED_COMMITS[key] = None
+            _VERIFIED_COMMITS.move_to_end(key)
+            while len(_VERIFIED_COMMITS) > _VERIFIED_COMMIT_CAPACITY:
+                _VERIFIED_COMMITS.popitem(last=False)
+        return True
 
     def verify_commit_with_public_key(
         self,
@@ -2037,11 +2189,32 @@ def _repository_key(path: Path) -> tuple[str, int, int]:
     return (resolved, identity.st_dev, identity.st_ino)
 
 
-_TREE_LISTING_CAPACITY = 8
+_VERIFIED_COMMIT_CAPACITY = 256
+_VERIFIED_COMMITS: OrderedDict[tuple[tuple[str, int, int], str, bytes], None] = OrderedDict()
+_VERIFIED_COMMITS_LOCK = threading.Lock()
+
+# A commit and its root tree share one listing object under two keys.
+_TREE_LISTING_CAPACITY = 16
 _TREE_LISTINGS: OrderedDict[tuple[tuple[str, int, int], str, bool], tuple[GitTreeEntry, ...]] = (
     OrderedDict()
 )
 _TREE_LISTINGS_LOCK = threading.Lock()
+
+
+def _remembered_listing(
+    repository: tuple[str, int, int], oid: str, *, with_sizes: bool
+) -> tuple[GitTreeEntry, ...] | None:
+    with _TREE_LISTINGS_LOCK:
+        key = (repository, oid, with_sizes)
+        cached = _TREE_LISTINGS.get(key)
+        if cached is not None:
+            _TREE_LISTINGS.move_to_end(key)
+            return cached
+        sized = None if with_sizes else _TREE_LISTINGS.get((repository, oid, True))
+    if sized is None:
+        return None
+    # A sized listing carries every unsized field; only the size differs.
+    return tuple(replace(entry, size=None) for entry in sized)
 
 
 def _remember_listing(

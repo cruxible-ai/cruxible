@@ -724,6 +724,7 @@ def prepare_generation(
     candidate_tree: dict[str, bytes],
     candidate: CandidateRecordAnyVersion,
     approval_submissions: tuple[ApprovalSubmission, ...],
+    candidate_tree_oid: str | None = None,
     bodies: BodyVerifierProtocol,
     actor_binding: ChangeActorBinding,
     proposal_actor_id: str,
@@ -858,6 +859,10 @@ def prepare_generation(
         # accepted history reads as the same change set a reviewer approved
         # rather than as an anonymous sequence number.
         message=generation_commit_message(candidate.members, sequence=sequence),
+        # The candidate tree was read from this stored proposal tree; the
+        # generation adds only its change-set record. The readback below still
+        # compares every member of what was stored.
+        extends_tree=candidate_tree_oid,
     )
     if ledger.parent_of(oid) != binding.base_oid or not ledger.verify_commit(oid):
         raise SettlementIntegrityError("generation parent or daemon signature failed")

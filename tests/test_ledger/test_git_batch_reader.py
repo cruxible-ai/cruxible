@@ -109,3 +109,44 @@ def test_a_written_tree_records_exactly_the_listing_git_reports(tmp_path):
         assert ledger._list_tree(oid, with_sizes=with_sizes) == ledger._read_tree_listing(
             oid, with_sizes=with_sizes, paths=None
         )
+
+
+def test_a_commit_lists_from_its_written_tree_without_ls_tree(tmp_path, monkeypatch):
+    ledger = _ledger(tmp_path / "ledger.git")
+    tree = {"a.json": b"1", "claims/x.json": b"22"}
+    tree_oid = ledger._write_tree(tree)
+    commit = ledger._git(["commit-tree", tree_oid, "-m", "one"]).decode().strip()
+    expected = {
+        sized: ledger._read_tree_listing(commit, with_sizes=sized, paths=None)
+        for sized in (True, False)
+    }
+    listed = []
+    read = GitLedger._read_tree_listing
+
+    def counted(self, oid, **kwargs):
+        listed.append(oid)
+        return read(self, oid, **kwargs)
+
+    monkeypatch.setattr(GitLedger, "_read_tree_listing", counted)
+    for sized in (True, False):
+        assert ledger._list_tree(commit, with_sizes=sized) == expected[sized]
+    assert listed == []
+    # A tree listed directly is not a commit and resolves to nothing further.
+    assert ledger._commit_tree(tree_oid) is None
+    assert ledger._commit_tree(commit) == tree_oid
+
+
+def test_extending_a_stored_tree_writes_the_same_tree_as_a_full_write(tmp_path):
+    ledger = _ledger(tmp_path / "ledger.git")
+    base = {"a.json": b"1", "claims/x.json": b"22", "claims-z.json": b"z" * 70000}
+    base_oid = ledger._write_tree(base)
+    grown = {**base, "changesets/0001.json": b"record", "claims/w.json": b"new"}
+    extended = ledger._extend_tree(base_oid, grown)
+    assert extended == ledger._write_tree(grown)
+    for sized in (True, False):
+        assert ledger._list_tree(extended, with_sizes=sized) == ledger._read_tree_listing(
+            extended, with_sizes=sized, paths=None
+        )
+    # A tree that drops a base member is not an extension of it.
+    with pytest.raises(PlaybillGitError, match="every member"):
+        ledger._extend_tree(base_oid, {"a.json": b"1"})

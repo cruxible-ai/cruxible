@@ -1507,6 +1507,13 @@ class PlaybillInstance:
 
         return self._ledger.read_proposal_note(kind, oid)
 
+    def read_proposal_notes(
+        self, pairs: Sequence[tuple[str, str]]
+    ) -> dict[tuple[str, str], bytes | None]:
+        """Read several projected proposal notes in one fresh ledger read."""
+
+        return self._ledger.read_proposal_notes(pairs)
+
     def review_operational_store(self) -> ReviewOperationalStore:
         """Return the local append-only review observation store.
 
@@ -1962,6 +1969,7 @@ class PlaybillInstance:
         actor_binding: ChangeActorBinding,
         proposal_actor_id: str,
         sequence: int,
+        candidate_tree_oid: str | None = None,
     ) -> VerifiedGenerationBundle:
         """Construct one verified generation without exposing the Git ledger to surfaces."""
 
@@ -1976,6 +1984,7 @@ class PlaybillInstance:
             self._ledger,
             base=base,
             candidate_tree=candidate_tree,
+            candidate_tree_oid=candidate_tree_oid,
             candidate=candidate,
             approval_submissions=approvals,
             bodies=self.body_store(),
@@ -2006,6 +2015,7 @@ class PlaybillInstance:
         approvals: tuple[ApprovalSubmission, ...],
         actor_binding: ChangeActorBinding,
         proposal_actor_id: str,
+        candidate_tree_oid: str | None = None,
     ) -> ActivationResult:
         """Publish one owned preparation and install its verified successor state.
 
@@ -2023,6 +2033,7 @@ class PlaybillInstance:
                 actor_binding=actor_binding,
                 proposal_actor_id=proposal_actor_id,
                 sequence=previous.head.sequence + 1,
+                candidate_tree_oid=candidate_tree_oid,
             )
             successor = (
                 prepared_generation_for_handoff(
