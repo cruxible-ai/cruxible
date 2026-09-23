@@ -6,7 +6,8 @@ import faulthandler
 import os
 import sqlite3
 import sys
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import IO, Any
 
@@ -107,7 +108,16 @@ def create_app() -> FastAPI:
     # the proposal it produced, then its finalization. Recovery logs and
     # continues per instance; it never keeps the daemon from starting.
     manager.recover_proposal_egress()
-    app = FastAPI(title="cruxible", responses=STANDARD_ERROR_RESPONSES)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        manager.line_listener.start()
+        try:
+            yield
+        finally:
+            manager.line_listener.close()
+
+    app = FastAPI(title="cruxible", responses=STANDARD_ERROR_RESPONSES, lifespan=lifespan)
     app.middleware("http")(token_auth_middleware)
 
     @app.exception_handler(CoreError)

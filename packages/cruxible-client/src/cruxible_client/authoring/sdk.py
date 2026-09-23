@@ -177,6 +177,10 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV2,
     ProjectionCurrencyPolicy,
 )
+from cruxible_client.contracts.line_dispatch import (
+    LineTriggerCheckRequestV1,
+    LineTriggerCheckResultV1,
+)
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV2,
@@ -924,6 +928,7 @@ class ChangeSetDraft:
         acquisition_policy: str,
         requested_terminal_rung: Literal[1, 2, 3],
         trigger_policy: TriggerPolicyV2 | None = None,
+        trigger_input: str | None = None,
         parameters: CanonicalValue | None = None,
         budgets: Mapping[str, int] | None = None,
         occurrence_epoch: int = 1,
@@ -935,6 +940,9 @@ class ChangeSetDraft:
         in this same set -- into the exact pins the LineSpec carries. A Line is
         manual unless another trigger policy is given, and inherits the
         Procedure's hard caps as its budget unless one is given.
+        ``trigger_input`` binds the triggering Capture to a named Source alias;
+        the trigger selector must match that Source's exact CaptureContract.
+        Missing or ineligible trigger material refuses admission, without a re-fetch.
 
         Lowering refuses a Procedure that is not graph-v4/v5 and one whose Source
         nodes leave a Provider slot open: the Line pins exactly what the
@@ -951,6 +959,7 @@ class ChangeSetDraft:
                     acquisition_policy_name=acquisition_policy,
                     requested_terminal_rung=requested_terminal_rung,
                     trigger_policy=trigger_policy or ManualTriggerPolicyV1(),
+                    trigger_input=trigger_input,
                     parameters={} if parameters is None else parameters,
                     budgets=None if budgets is None else dict(budgets),
                     occurrence_epoch=occurrence_epoch,
@@ -2900,6 +2909,58 @@ class Playbill:
             procedure.coordinate if isinstance(procedure, ProcedureRef) else None
         )
         return Procedure(self, name, None if requested is None else _coordinate(requested))
+
+    def check_line(
+        self,
+        line: str,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> LineTriggerCheckResultV1:
+        """Inspect trigger eligibility and retained admissions without starting work."""
+        return self._client.check_playbill_line(
+            self._instance_id,
+            line,
+            request=LineTriggerCheckRequestV1(since=since, until=until, limit=limit, cursor=cursor),
+        )
+
+    def listen_line(self, line: str, *, enabled: bool = True) -> api.LineListeningSessionV1:
+        """Start or stop forward listening; no Procedure is executed."""
+        return self._client.listen_playbill_line(
+            self._instance_id,
+            line,
+            request=api.LineListenRequestV1(action="start" if enabled else "stop"),
+        )
+
+    def evaluate_line(
+        self,
+        line: str,
+        *,
+        since: datetime,
+        until: datetime,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> api.LineTriggerCheckResultV1:
+        """Explicitly turn a missed range into pending occurrences."""
+        return self._client.evaluate_playbill_line(
+            self._instance_id,
+            line,
+            request=api.LineEvaluateRequestV1(since=since, until=until, limit=limit, cursor=cursor),
+        )
+
+    def dispatch_line(
+        self, line: str, *, occurrence_id: str | None = None, limit: int = 1, retry: bool = False
+    ) -> api.LineDispatchResultV1:
+        """Admit pending work using this connection's current actor and authority."""
+        return self._client.dispatch_playbill_line(
+            self._instance_id,
+            line,
+            request=api.LineDispatchRequestV1(
+                occurrence_id=occurrence_id, limit=limit, retry=retry
+            ),
+        )
 
     def run_line(
         self,

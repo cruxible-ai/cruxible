@@ -100,7 +100,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:c097a8e1b83dc5b6c6dd5315b3c6a5229016517b934776347b9b8d67c6bc8c6b"
+    "sha256:387ec556e70dd5d4b373844ea4c59af92acfc1d94243253d9de85bd41cbe1f11"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -963,6 +963,7 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
     acquisition_policy_name: str
     requested_terminal_rung: Literal[1, 2, 3]
     trigger_policy: TriggerPolicyV2
+    trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     parameters: object = Field(default_factory=dict)
     budgets: dict[str, int] | None = None
     epsilon: object = Field(default_factory=lambda: {"$decimal": "0.1"})

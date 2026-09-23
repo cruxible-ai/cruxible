@@ -39,6 +39,7 @@ from cruxible_core.compiler.projection_artifacts import (
     RESOURCE_BUDGET_ARTIFACT_KINDS,
     SDK_SOURCE_ARTIFACT_KINDS,
     SOURCE_CHECKED_ARTIFACT_KINDS,
+    TRIGGER_CAPTURE_ARTIFACT_KINDS,
     UPGRADE_ARTIFACT_KINDS,
 )
 from cruxible_core.proposals.candidate_cards import CARD_RENDERER_DIGEST
@@ -166,6 +167,12 @@ SOURCE_CHECKED_COMPILER = _coordinate(
     candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
 )
 
+TRIGGER_CAPTURE_COMPILER = _coordinate(
+    projection_content="claims-procedures-runtime-v1",
+    semantic_revision=30,
+    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
+)
+
 # The renderer a coordinate commits to is resolved from the coordinate itself,
 # never from a second copy of its preimage. A duplicated preimage with its own
 # revision literal silently returns None the moment the revision is succeeded,
@@ -183,6 +190,7 @@ _CARD_RENDERER_BY_COMPILER: dict[str, str] = {
     SDK_SOURCE_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
     CLAIM_EVIDENCE_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
     SOURCE_CHECKED_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
+    TRIGGER_CAPTURE_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
 }
 
 
@@ -223,6 +231,7 @@ SUPPORTED_COMPILERS = (
     SDK_SOURCE_COMPILER,
     CLAIM_EVIDENCE_COMPILER,
     SOURCE_CHECKED_COMPILER,
+    TRIGGER_CAPTURE_COMPILER,
 )
 # Immutable human-facing revision labels.  The digest remains the authority;
 # these labels are display metadata and must never be inferred from the moving
@@ -256,6 +265,7 @@ COMPILER_REVISION_LABELS = {
     SDK_SOURCE_COMPILER: "typed-procedure-source-v1",
     CLAIM_EVIDENCE_COMPILER: "producer-independent-claim-types-v1",
     SOURCE_CHECKED_COMPILER: "checked-procedure-source-v2",
+    TRIGGER_CAPTURE_COMPILER: "line-trigger-capture-input-v1",
 }
 PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
     {
@@ -277,17 +287,20 @@ PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
         SDK_SOURCE_COMPILER,
         CLAIM_EVIDENCE_COMPILER,
         SOURCE_CHECKED_COMPILER,
+        TRIGGER_CAPTURE_COMPILER,
     }
 )
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
-    return SOURCE_CHECKED_COMPILER
+    return TRIGGER_CAPTURE_COMPILER
 
 
 def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindRegistry:
     """Return the frozen ledger path grammar selected by one compiler."""
 
+    if compiler == TRIGGER_CAPTURE_COMPILER:
+        return TRIGGER_CAPTURE_ARTIFACT_KINDS
     if compiler == SOURCE_CHECKED_COMPILER:
         return SOURCE_CHECKED_ARTIFACT_KINDS
     if compiler == CLAIM_EVIDENCE_COMPILER:
@@ -350,6 +363,7 @@ def projection_registry_for_compiler(
         SDK_SOURCE_COMPILER,
         CLAIM_EVIDENCE_COMPILER,
         SOURCE_CHECKED_COMPILER,
+        TRIGGER_CAPTURE_COMPILER,
     }:
         return playbill_p2c_extension_registry().with_artifact_kinds(
             "attestation", "resolution-contract"
@@ -402,6 +416,7 @@ __all__ = [
     "SDK_SOURCE_COMPILER",
     "CLAIM_EVIDENCE_COMPILER",
     "SOURCE_CHECKED_COMPILER",
+    "TRIGGER_CAPTURE_COMPILER",
     "RESOLUTION_COMPILER",
     "PB_B_COMPILER",
     "PB_C_COMPILER",

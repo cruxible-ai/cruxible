@@ -42,6 +42,37 @@ UNDECLARED_HAND_EDIT_CHANGE = "read_the_refusal_details_and_revise_the_named_art
 # is declared here beside the vocabularies it covers, never derived from the
 # code, and the served refusal models read it when a producer carries none.
 DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
+    "trigger_capture_stale": (
+        "Acquire a fresh Capture and evaluate its new occurrence. "
+        "Freshness is checked at admission time."
+    ),
+    "trigger_capture_unavailable": (
+        "Restore the exact retained Capture if available, then "
+        "explicitly retry this occurrence; otherwise acquire a new "
+        "Capture."
+    ),
+    "trigger_capture_over_budget": (
+        "If the Line budget is limiting, accept a successor Line with a larger budget, "
+        "then use line dispatch --occurrence-id DIGEST --retry. If the exact "
+        "CaptureContract cap is limiting, use a new contract and fresh Capture; "
+        "a Line budget increase cannot override that cap."
+    ),
+    "trigger_capture_forbidden": (
+        "Accept a successor Line or acquisition policy that permits "
+        "this material, then explicitly retry; do not bypass "
+        "retention policy."
+    ),
+    "trigger_capture_invalid": (
+        "Inspect the exact event and Capture integrity; repair the "
+        "retained material or use a new verified Capture."
+    ),
+    "trigger_capture_not_yet_observed": (
+        "Wait until the recorded observation time, then retry the occurrence."
+    ),
+    "line_binding_superseded": (
+        "Explicitly retry this occurrence to bind the current Line in "
+        "the same epoch, or evaluate the new trigger epoch."
+    ),
     "prediction_unsettleable_rule": (
         "revise_the_resolution_contract_rule_or_hypothesis_and_submit_a_successor"
     ),

@@ -162,6 +162,22 @@ def _refusal(
     )
 
 
+def capture_selection_failure(
+    rule: InputAcquisitionRuleV1,
+    envelope: CaptureEnvelopeAny,
+    *,
+    evaluation_time: datetime,
+) -> str | None:
+    """Eligibility shared by newly acquired and retained Capture inputs."""
+    if getattr(envelope.source, "replayability", "exact") not in rule.permitted_replayability:
+        return ACQUISITION_UNAVAILABLE
+    if rule.max_age is not None and (
+        evaluation_time - envelope.observed_at > timedelta(microseconds=rule.max_age.microseconds)
+    ):
+        return ACQUISITION_STALE
+    return None
+
+
 def apply_acquisition_result(
     rule: InputAcquisitionRuleV1,
     result: ProcedureSourceAcquisitionResultV1,
@@ -179,15 +195,14 @@ def apply_acquisition_result(
         if acquisition is None:  # pragma: no cover - model invariant
             raise ValueError("acquired result lost its Capture")
         considered = (acquisition.capture_digest,)
-        replayability = getattr(acquisition.envelope.source, "replayability", "exact")
+        failure = capture_selection_failure(
+            rule, acquisition.envelope, evaluation_time=evaluation_time
+        )
         # Producing bytes is not admission: apply the same eligibility rules as
         # accepted Capture selection before those bytes enter the run context.
-        if replayability not in rule.permitted_replayability:
+        if failure == ACQUISITION_UNAVAILABLE:
             behavior, reason = rule.on_unavailable, ACQUISITION_UNAVAILABLE
-        elif rule.max_age is not None and (
-            evaluation_time - acquisition.envelope.observed_at
-            > timedelta(microseconds=rule.max_age.microseconds)
-        ):
+        elif failure == ACQUISITION_STALE:
             behavior, reason = rule.on_stale, ACQUISITION_STALE
         else:
             return AcquisitionInputDecisionV1(

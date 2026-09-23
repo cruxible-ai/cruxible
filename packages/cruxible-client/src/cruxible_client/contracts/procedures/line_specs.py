@@ -309,8 +309,61 @@ class LineSpecV3(LineSpecV2):
     trigger_policy: TriggerPolicyV2  # type: ignore[assignment]
 
 
+class LineSpecV4(LineSpecV3):
+    """Bind the triggering Capture to one named Source input, without re-fetching."""
+
+    artifact_format: Literal["playbill-line-v4"] = "playbill-line-v4"  # type: ignore[assignment]
+    trigger_input: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+
+    @model_validator(mode="after")
+    def _event_input(self) -> "LineSpecV4":
+        if trigger_capture_selector(self) is None:
+            raise ValueError("a trigger input requires a Capture event trigger or event window")
+        return self
+
+
+def trigger_capture_selector(line: LineSpecV3) -> CaptureEventSelectorV1 | None:
+    trigger = line.trigger_policy
+    if isinstance(trigger, CaptureLandingTriggerPolicyV2):
+        return trigger.event
+    if isinstance(trigger, WindowCloseTriggerPolicyV2) and isinstance(
+        trigger.window, CaptureEventWindowV1
+    ):
+        return trigger.window.event
+    return None
+
+
+def trigger_capture_source(line: LineSpecV4, procedure: AcceptedProcedureV1) -> SourceNodeV4:
+    """Resolve the single input and verify its closed CaptureContract pin."""
+    nodes = [
+        n
+        for n in procedure.procedure.definition.nodes
+        if getattr(n, "as_", None) == line.trigger_input
+    ]
+    if len(nodes) != 1 or not isinstance(nodes[0], SourceNodeV4):
+        raise ValueError("trigger_input must name exactly one graph-v4 Source input")
+    node = nodes[0]
+    binding = node.capture_contract
+    pin: ArtifactPin | None = (
+        next((b.artifact_pin for b in line.slot_bindings if b.slot_name == binding.slot_name), None)
+        if isinstance(binding, ProcedurePinSlotRefV1)
+        else binding
+    )
+    selector = trigger_capture_selector(line)
+    if (
+        pin is None
+        or selector is None
+        or (
+            pin.target != selector.capture_contract_identity
+            or pin.artifact_digest != selector.capture_contract_digest
+        )
+    ):
+        raise ValueError("trigger input CaptureContract differs from the event selector")
+    return node
+
+
 LineSpecAny: TypeAlias = Annotated[
-    LineSpecV1 | LineSpecV2 | LineSpecV3,
+    LineSpecV1 | LineSpecV2 | LineSpecV3 | LineSpecV4,
     Field(discriminator="artifact_format"),
 ]
 _LINE_SPEC_ADAPTER: TypeAdapter[LineSpecAny] = TypeAdapter(LineSpecAny)
@@ -496,6 +549,11 @@ def evaluate_line_spec_law(
     except ProcedurePinClosureError as exc:
         return _refusal("playbill.line.slot_closure_failed", str(exc), path=path)
     definition = procedure.procedure.definition
+    if isinstance(line, LineSpecV4):
+        try:
+            trigger_capture_source(line, procedure)
+        except ValueError as exc:
+            return _refusal("playbill.line.trigger_input_mismatch", str(exc), path=path)
     if isinstance(definition, ProcedureDefinitionV4):
         if not isinstance(line, LineSpecV2):
             return _refusal(
@@ -761,6 +819,9 @@ __all__ = [
     "LineSpecV1",
     "LineSpecV2",
     "LineSpecV3",
+    "LineSpecV4",
+    "trigger_capture_selector",
+    "trigger_capture_source",
     "TriggerPolicyV2",
     "CaptureLandingTriggerPolicyV2",
     "WindowCloseTriggerPolicyV2",

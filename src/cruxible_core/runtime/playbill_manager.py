@@ -61,6 +61,9 @@ class PlaybillInstanceManager:
         self._instances: dict[str, PlaybillInstance] = {}
         self._provider_runtime_operators: dict[Path, ProviderRuntimeOperator] = {}
         self._lock = threading.RLock()
+        from cruxible_core.runtime.line_listener import LineListener
+
+        self.line_listener = LineListener(self)
 
     def _paths(self, instance_id: str) -> tuple[Path, Path, tuple[Path, ...]]:
         registry = get_registry()

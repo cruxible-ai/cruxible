@@ -47,6 +47,7 @@ from cruxible_core.compiler.compiler import (
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
     SOURCE_CHECKED_COMPILER,
+    TRIGGER_CAPTURE_COMPILER,
 )
 from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import ConfigError
@@ -332,6 +333,7 @@ def service_install_provider(
         SDK_SOURCE_COMPILER,
         CLAIM_EVIDENCE_COMPILER,
         SOURCE_CHECKED_COMPILER,
+        TRIGGER_CAPTURE_COMPILER,
     ):
         raise ConfigError(
             "provider installation requires an explicit upgrade to the package compiler"

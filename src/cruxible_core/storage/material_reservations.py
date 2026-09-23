@@ -7,7 +7,7 @@ import json
 import os
 import stat
 import tempfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -234,12 +234,20 @@ def reserve_admission_material_body(
     )
     store = ProcedureMaterialReservationStore(bodies.reservation_root)
     with store.locked():
+        existing = store._path(reservation.reservation_id).exists()
         store.reserve_locked(reservation)
-        metadata = bodies.store(content)
-        if metadata.digest != reservation.body_digest:
-            raise ProcedureMaterialReservationError(
-                "CAS store did not reproduce its pending material reservation"
-            )
+        try:
+            metadata = bodies.store(content)
+            if metadata.digest != reservation.body_digest:
+                raise ProcedureMaterialReservationError(
+                    "CAS store did not reproduce its pending material reservation"
+                )
+        except Exception:
+            # A failed call cannot hand its new lease to the admission owner.
+            # Preserve an existing lease, and leave process-crash recovery unchanged.
+            if not existing:
+                store.release_locked(reservation.reservation_id)
+            raise
     return reservation
 
 
@@ -442,7 +450,8 @@ class ProcedureMaterialReservationStore:
 
     def recover(
         self,
-        records: Sequence[StoredProcedureJournalRecordV1],
+        records: Sequence[StoredProcedureJournalRecordV1]
+        | Callable[[MaterialReservationV1], Sequence[StoredProcedureJournalRecordV1]],
         *,
         bodies: ContentAddressedBodyStore,
     ) -> tuple[str, ...]:
@@ -456,7 +465,8 @@ class ProcedureMaterialReservationStore:
 
     def recover_run_material(
         self,
-        records: Sequence[StoredProcedureJournalRecordV1],
+        records: Sequence[StoredProcedureJournalRecordV1]
+        | Callable[[MaterialReservationV1], Sequence[StoredProcedureJournalRecordV1]],
         *,
         bodies: ContentAddressedBodyStore,
         intended_event_kinds: frozenset[JournalEventKindV1] | None = None,
@@ -477,7 +487,8 @@ class ProcedureMaterialReservationStore:
 
     def _recover(
         self,
-        records: Sequence[StoredProcedureJournalRecordV1],
+        records: Sequence[StoredProcedureJournalRecordV1]
+        | Callable[[MaterialReservationV1], Sequence[StoredProcedureJournalRecordV1]],
         *,
         bodies: ContentAddressedBodyStore,
         include_pending_admission: bool,
@@ -499,7 +510,7 @@ class ProcedureMaterialReservationStore:
                 ):
                     continue
                 matches: list[StoredProcedureJournalRecordV1] = []
-                for stored in records:
+                for stored in records(reservation) if callable(records) else records:
                     record = stored.record
                     if record.stream.instance_id != reservation.instance_id:
                         continue

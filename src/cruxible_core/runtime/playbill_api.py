@@ -1890,6 +1890,82 @@ def playbill_procedure_readings(
     )
 
 
+def playbill_line_listen(
+    instance_id: str, line: str, *, request: contracts.LineListenRequestV1
+) -> contracts.LineListeningSessionV1:
+    check_permission("cruxible_playbill_line_listen", instance_id=instance_id)
+    actor = _actor_context()
+    if actor is None:
+        raise AuthenticationError("Listening requires an authenticated actor identity")
+    from cruxible_core.service.procedures.line_dispatch import service_listen_line
+
+    manager = get_playbill_manager()
+    return service_listen_line(
+        manager.get(instance_id),
+        line,
+        request,
+        actor=actor,
+        now=_evaluation_time(None),
+        daemon_id=manager.line_listener.daemon_id,
+    )
+
+
+def playbill_line_evaluate(
+    instance_id: str, line: str, *, request: contracts.LineEvaluateRequestV1
+) -> contracts.LineTriggerCheckResultV1:
+    check_permission("cruxible_playbill_line_evaluate", instance_id=instance_id)
+    actor = _actor_context()
+    if actor is None:
+        raise AuthenticationError("Historical evaluation requires an authenticated actor identity")
+    from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+
+    return service_evaluate_line(
+        get_playbill_manager().get(instance_id),
+        line,
+        request,
+        actor=actor,
+        now=_evaluation_time(None),
+    )
+
+
+def playbill_line_dispatch(
+    instance_id: str, line: str, *, request: contracts.LineDispatchRequestV1
+) -> contracts.LineDispatchResultV1:
+    check_permission("cruxible_playbill_line_dispatch", instance_id=instance_id)
+    enforce_customer_code_execution_supported()
+    actor = _actor_context()
+    if actor is None:
+        raise AuthenticationError("Dispatch requires an authenticated actor identity")
+    from cruxible_core.service.procedures.line_dispatch import service_dispatch_line
+
+    manager = get_playbill_manager()
+    try:
+        workspace_file_reader = manager.workspace_file_reader(instance_id)
+    except WorkspaceFileReadRefused:
+        workspace_file_reader = None
+    return service_dispatch_line(
+        manager.get(instance_id),
+        line,
+        request,
+        actor=actor,
+        now=_evaluation_time(None),
+        caller_rung=get_current_mode().value - 1,
+        provider_runtime_operator=manager.provider_runtime_operator(),
+        workspace_file_reader=workspace_file_reader,
+    )
+
+
+def playbill_line_check(
+    instance_id: str, line: str, *, request: contracts.LineTriggerCheckRequestV1
+) -> contracts.LineTriggerCheckResultV1:
+    check_permission("cruxible_playbill_line_check", instance_id=instance_id)
+    from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
+
+    return service_check_line_trigger(
+        get_playbill_manager().get(instance_id), line, request, now=_evaluation_time(None)
+    )
+
+
 def playbill_line_run(
     instance_id: str,
     line_identity_digest: str,

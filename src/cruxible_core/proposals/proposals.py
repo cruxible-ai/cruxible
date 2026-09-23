@@ -2603,11 +2603,16 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
             claim_type=previous,
             artifact_digest=claim_type_digest(previous).tagged,
         )
-    from cruxible_core.compiler.compiler import CLAIM_EVIDENCE_COMPILER, SOURCE_CHECKED_COMPILER
+    from cruxible_core.compiler.compiler import (
+        CLAIM_EVIDENCE_COMPILER,
+        SOURCE_CHECKED_COMPILER,
+        TRIGGER_CAPTURE_COMPILER,
+    )
 
     if context.historical_law_coordinate is None and context.current.compiler in {
         CLAIM_EVIDENCE_COMPILER,
         SOURCE_CHECKED_COMPILER,
+        TRIGGER_CAPTURE_COMPILER,
     }:
         if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
             getattr(rule, "allowed_reducer_digests", ())

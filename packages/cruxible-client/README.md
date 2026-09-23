@@ -1367,6 +1367,7 @@ line(
     acquisition_policy: str,
     requested_terminal_rung: Literal[1, 2, 3],
     trigger_policy: TriggerPolicyV2 | None = None,
+    trigger_input: str | None = None,
     parameters: CanonicalValue | None = None,
     budgets: Mapping[str, int] | None = None,
     occurrence_epoch: int = 1,
@@ -1394,6 +1395,7 @@ can run; that is checked at admission, not here.
 | `acquisition_policy` | Required | Accepted SourceAcquisitionPolicy name for source authority. |
 | `requested_terminal_rung` | Required | Requested Line capability rung 1, 2, or 3; effective authority is checked at admission. |
 | `trigger_policy` | `None` | Typed Line trigger policy; None authors a manual trigger. |
+| `trigger_input` | `None` | Source alias receiving the exact triggering Capture; its CaptureContract must match the event selector. |
 | `parameters` | `None` | Invocation/query parameters in the declared canonical contract. |
 | `budgets` | `None` | Operation-specific bounds; the signature distinguishes QueryBudgetsV1 from Line budget mappings. |
 | `occurrence_epoch` | `1` | Positive epoch distinguishing Line occurrence identity. |

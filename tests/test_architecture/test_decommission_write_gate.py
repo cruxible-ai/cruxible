@@ -67,6 +67,14 @@ DECLARED_ROLL_FORWARD_DOORS = frozenset(
 
 # module path -> the qualified names that refuse a decommissioned instance.
 DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
+    "cruxible_core/service/procedures/line_dispatch.py": frozenset(
+        {
+            "service_evaluate_line",
+            "service_listen_line",
+            "service_match_listening_lines",
+            "service_dispatch_line",
+        }
+    ),
     "cruxible_core/service/procedures/provider_installation.py": frozenset(
         {"service_install_provider"}
     ),
