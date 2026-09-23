@@ -560,6 +560,53 @@ def test_only_a_purely_narrowing_candidate_skips_independent_approval(
     assert fast.diagnostics == ()
     assert fast.candidate is not None and fast.candidate.approval_requirements == ()
 
+    retired = mandate.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=lineage.predecessor_digest
+            )
+        }
+    )
+    retiring = _evaluate(
+        instance, current, first, {**first, path: render_procedure_mandate(retired)}
+    )
+    assert retiring.candidate is not None and retiring.candidate.approval_requirements == ()
+    after_retirement = {**first, path: render_procedure_mandate(retired)}
+    revived = mandate.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=procedure_mandate_digest(retired).tagged
+            )
+        }
+    )
+    revival = _evaluate(
+        instance,
+        current,
+        after_retirement,
+        {**after_retirement, path: render_procedure_mandate(revived)},
+    )
+    assert revival.candidate is not None
+    assert revival.candidate.approval_requirements == INDEPENDENT_APPROVAL_REQUIREMENTS
+
+    # A narrowing mandate beside any ordinary change keeps the policy's approval.
+    from cruxible_client.contracts.query.definitions import render_query_definition
+
+    unrelated = _query_definition.model_copy(
+        update={"identity": ArtifactIdentity(kind="QueryDefinition", name="project.unrelated")}
+    )
+    mixed = _evaluate(
+        instance,
+        current,
+        first,
+        {
+            **first,
+            path: render_procedure_mandate(suspended),
+            _accepted_query(unrelated).path: render_query_definition(unrelated),
+        },
+    )
+    assert mixed.candidate is not None
+    assert mixed.candidate.approval_requirements == INDEPENDENT_APPROVAL_REQUIREMENTS
+
     widened = mandate.model_copy(
         update={"expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc), "lifecycle": lineage}
     )

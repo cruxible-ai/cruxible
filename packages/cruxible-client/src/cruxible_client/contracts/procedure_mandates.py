@@ -654,6 +654,9 @@ def mandate_change_is_narrowing(new: ProcedureMandateAny, old: ProcedureMandateA
 
     if new.procedure != old.procedure:
         return False
+    # Reviving a retired mandate restores revoked authority: that is widening.
+    if old.lifecycle.state == "retired" and new.lifecycle.state != "retired":
+        return False
     if new.lifecycle.state == "retired":
         return True
     if _GRANT_ORDER[mandate_grant(new)] > _GRANT_ORDER[mandate_grant(old)]:
