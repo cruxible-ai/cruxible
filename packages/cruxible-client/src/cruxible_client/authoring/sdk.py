@@ -47,6 +47,7 @@ from cruxible_client.authoring.sdk_types import (
     ClaimObjectKind,
     ClaimRef,
     ClaimRole,
+    ClaimRoleNotPermittedError,
     ClaimTypeRef,
     Diagnostic,
     Disposition,
@@ -746,7 +747,7 @@ class ChangeSetDraft:
             dispositions={} if dispositions is None else dispositions,
             subject_definition=subject_definition,
             claim_type_definition=claim_type_definition,
-            staged_object_kinds=self._staged_object_kinds(),
+            staged_claim_types=self._staged_claim_types(),
         )
         assert isinstance(draft.payload, ClaimAuthoringPayloadV1)
         self._members.append(
@@ -809,8 +810,8 @@ class ChangeSetDraft:
             )
         )
 
-    def _staged_object_kinds(self) -> dict[str, str]:
-        """The object kinds this set's own ClaimType definitions declare, by predicate.
+    def _staged_claim_types(self) -> dict[str, ClaimType]:
+        """The ClaimType definitions this set stages, by predicate.
 
         A ref returned by `.claim_type(...)` already carries its object kind, so
         a caller who keeps the ref needs nothing here. A caller who names the
@@ -821,7 +822,7 @@ class ChangeSetDraft:
         """
 
         return {
-            member.payload.claim_type.predicate: member.payload.claim_type.object_kind
+            member.payload.claim_type.predicate: member.payload.claim_type
             for member in self._members
             if isinstance(member.payload, ClaimTypeAuthoringPayloadV1)
         }
@@ -1517,6 +1518,9 @@ class Playbill:
         self._retirement_submissions: OrderedDict[str, tuple[ClaimRetireRequestV1, str]] = (
             OrderedDict()
         )
+        # An accepted ClaimType at an exact coordinate never changes, so one read
+        # answers every Claim this connection drafts under that predicate there.
+        self._claim_type_envelopes: dict[tuple[str, str], Mapping[str, object]] = {}
 
     @classmethod
     def connect(
@@ -2205,7 +2209,7 @@ class Playbill:
         dispositions: Mapping[str | ClaimRef, Disposition | str],
         subject_definition: SubjectDraft | None,
         claim_type_definition: ClaimTypeDraft | None,
-        staged_object_kinds: Mapping[str, str] | None = None,
+        staged_claim_types: Mapping[str, ClaimType] | None = None,
     ) -> ClaimDraft:
         """Build one authored Claim from decisions plus its caller's call sites.
 
@@ -2247,7 +2251,7 @@ class Playbill:
                 predicate_name=predicate_name,
                 predicate=predicate,
                 claim_type_definition=claim_type_definition,
-                staged_object_kinds=staged_object_kinds,
+                staged_claim_types=staged_claim_types,
             )
             if object_kind != "exact_content":
                 raise ExactContentTypeError(
@@ -2276,7 +2280,7 @@ class Playbill:
                 predicate_name=predicate_name,
                 predicate=predicate,
                 claim_type_definition=claim_type_definition,
-                staged_object_kinds=staged_object_kinds,
+                staged_claim_types=staged_claim_types,
             )
             statement_object = (
                 SubjectClaimObject(address=_subject_address(value))
@@ -2285,6 +2289,21 @@ class Playbill:
             )
         else:
             statement_object = LiteralClaimObject(value=normalize_canonical(value))
+        # A role the ClaimType does not permit is refused here, at the keyword that
+        # set it, instead of as a proposal-evaluation diagnostic after a round trip.
+        permitted_roles = self._claim_type_permitted_roles(
+            predicate_name=predicate_name,
+            predicate=predicate,
+            claim_type_definition=claim_type_definition,
+            staged_claim_types=staged_claim_types,
+        )
+        if permitted_roles is not None and claim_role.value not in permitted_roles:
+            raise ClaimRoleNotPermittedError(
+                predicate=predicate_name,
+                role=claim_role.value,
+                permitted_roles=permitted_roles,
+                call_site=sites.get("role"),
+            )
         source: Any
         if supported_by is not None:
             if isinstance(supported_by, CaptureRef):
@@ -2493,13 +2512,69 @@ class Playbill:
             ),
         )
 
+    def _accepted_claim_type_envelope(
+        self, predicate_name: str, predicate: str | ClaimTypeRef
+    ) -> Mapping[str, object]:
+        """Read one accepted ClaimType at the draft's coordinate, once per connection."""
+
+        coordinate = (
+            predicate.coordinate if isinstance(predicate, ClaimTypeRef) else self.coordinate
+        )
+        if isinstance(predicate, ClaimTypeRef):
+            self._assert_coordinate(coordinate)
+        key = (predicate_name, coordinate.git_oid)
+        envelope = self._claim_type_envelopes.get(key)
+        if envelope is None:
+            envelope = self._client.get_playbill_claim_type(
+                self._instance_id,
+                predicate_name,
+                at=_api_coordinate(coordinate),
+            ).envelope
+            self._claim_type_envelopes[key] = envelope
+        return envelope
+
+    def _claim_type_permitted_roles(
+        self,
+        *,
+        predicate_name: str,
+        predicate: str | ClaimTypeRef,
+        claim_type_definition: ClaimTypeDraft | None,
+        staged_claim_types: Mapping[str, ClaimType] | None,
+    ) -> tuple[str, ...] | None:
+        """The roles the exact ClaimType permits, or None when only the daemon can say.
+
+        A definition this Claim carries, a World ref, or a definition its set
+        stages answers without a read.
+        Otherwise the accepted ClaimType is read; a predicate that does not
+        resolve is left to preflight, whose typed refusal names it.
+        """
+
+        if claim_type_definition is not None:
+            return tuple(claim_type_definition.definition.permitted_roles)
+        # A World ClaimType ref already carries the structure it was read with.
+        world_roles = getattr(predicate, "permitted_roles", None)
+        if isinstance(predicate, ClaimTypeRef) and isinstance(world_roles, tuple):
+            return tuple(str(getattr(role, "value", role)) for role in world_roles)
+        staged = (staged_claim_types or {}).get(predicate_name)
+        if staged is not None:
+            return tuple(staged.permitted_roles)
+        try:
+            roles = self._accepted_claim_type_envelope(predicate_name, predicate).get(
+                "permitted_roles"
+            )
+        except (CoreError, ValueError):
+            return None
+        if not isinstance(roles, list | tuple) or not all(isinstance(r, str) for r in roles):
+            return None
+        return tuple(roles)
+
     def _claim_type_object_kind(
         self,
         *,
         predicate_name: str,
         predicate: str | ClaimTypeRef,
         claim_type_definition: ClaimTypeDraft | None,
-        staged_object_kinds: Mapping[str, str] | None = None,
+        staged_claim_types: Mapping[str, ClaimType] | None = None,
     ) -> Literal["literal", "subject", "exact_content"]:
         """Resolve the exact ClaimType before interpreting an untyped object.
 
@@ -2519,20 +2594,12 @@ class Playbill:
                 Literal["literal", "subject", "exact_content"],
                 predicate.object_kind,
             )
-        staged = (staged_object_kinds or {}).get(predicate_name)
-        if staged in _CLAIM_TYPE_OBJECT_KINDS:
-            return cast(Literal["literal", "subject", "exact_content"], staged)
-        coordinate = (
-            predicate.coordinate if isinstance(predicate, ClaimTypeRef) else self.coordinate
+        staged = (staged_claim_types or {}).get(predicate_name)
+        if staged is not None and staged.object_kind in _CLAIM_TYPE_OBJECT_KINDS:
+            return staged.object_kind
+        object_kind = self._accepted_claim_type_envelope(predicate_name, predicate).get(
+            "object_kind"
         )
-        if isinstance(predicate, ClaimTypeRef):
-            self._assert_coordinate(coordinate)
-        view = self._client.get_playbill_claim_type(
-            self._instance_id,
-            predicate_name,
-            at=_api_coordinate(coordinate),
-        )
-        object_kind = view.envelope.get("object_kind")
         if object_kind not in _CLAIM_TYPE_OBJECT_KINDS:
             # An envelope kind this client does not know is daemon/client skew,
             # not a caller mistake. Falling back to the literal shape keeps the
