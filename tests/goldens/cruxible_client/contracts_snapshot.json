@@ -8210,6 +8210,99 @@
             "title": "LiteralObjectInput",
             "type": "object"
           },
+          "MandateConditionAuthoringV1": {
+            "additionalProperties": false,
+            "description": "The settle predicate, named by query; lowering pins the exact accepted query.",
+            "properties": {
+              "binding_parameter": {
+                "title": "Binding Parameter",
+                "type": "string"
+              },
+              "fallback": {
+                "enum": [
+                  "refuse",
+                  "propose"
+                ],
+                "title": "Fallback",
+                "type": "string"
+              },
+              "fixed_parameters": {
+                "additionalProperties": true,
+                "title": "Fixed Parameters",
+                "type": "object"
+              },
+              "query_name": {
+                "title": "Query Name",
+                "type": "string"
+              },
+              "required_fields": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Required Fields",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-mandate-condition-authoring-v1",
+                "default": "playbill-mandate-condition-authoring-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "query_name",
+              "binding_parameter",
+              "required_fields",
+              "fallback"
+            ],
+            "title": "MandateConditionAuthoringV1",
+            "type": "object"
+          },
+          "MandateScopeAuthoringV1": {
+            "additionalProperties": false,
+            "description": "One ClaimType a settle grant covers, named by predicate; lowering pins its digest.",
+            "properties": {
+              "binding_subject_role": {
+                "default": "subject",
+                "enum": [
+                  "subject",
+                  "object"
+                ],
+                "title": "Binding Subject Role",
+                "type": "string"
+              },
+              "change_kinds": {
+                "items": {
+                  "enum": [
+                    "create",
+                    "revise",
+                    "retire"
+                  ],
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Change Kinds",
+                "type": "array"
+              },
+              "claim_type": {
+                "title": "Claim Type",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-mandate-scope-authoring-v1",
+                "default": "playbill-mandate-scope-authoring-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_type",
+              "change_kinds"
+            ],
+            "title": "MandateScopeAuthoringV1",
+            "type": "object"
+          },
           "ProcedureHardCapsV3": {
             "additionalProperties": false,
             "properties": {
@@ -8329,13 +8422,30 @@
           },
           "ProcedureMandateInputV1": {
             "additionalProperties": false,
+            "description": "A propose grant, or a settle grant with its Claim scope and condition query.\n\n``grants`` is the verb the mandate delegates. A settle grant names the\nClaimTypes (by predicate) and change kinds it covers and the accepted query\nthat decides each target; lowering pins every exact digest.",
             "properties": {
-              "authority_ceiling": {
-                "$ref": "#/$defs/ProcedureHardCapsV3"
+              "condition": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MandateConditionAuthoringV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "expires_at": {
                 "format": "date-time",
                 "title": "Expires At",
+                "type": "string"
+              },
+              "grants": {
+                "enum": [
+                  "propose",
+                  "settle"
+                ],
+                "title": "Grants",
                 "type": "string"
               },
               "kind": {
@@ -8358,18 +8468,41 @@
                 "title": "Procedure Name",
                 "type": "string"
               },
+              "resource_ceiling": {
+                "$ref": "#/$defs/ProcedureHardCapsV3"
+              },
               "retire": {
                 "default": false,
                 "title": "Retire",
                 "type": "boolean"
               },
-              "rung": {
-                "enum": [
-                  2,
-                  3
+              "scope": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/MandateScopeAuthoringV1"
+                },
+                "title": "Scope",
+                "type": "array"
+              },
+              "subject_scope": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/$defs/SemanticAddress"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
                 ],
-                "title": "Rung",
-                "type": "integer"
+                "default": null,
+                "title": "Subject Scope"
+              },
+              "suspended": {
+                "default": false,
+                "title": "Suspended",
+                "type": "boolean"
               },
               "tag": {
                 "const": "playbill-procedure-mandate-input-v1",
@@ -8387,8 +8520,8 @@
               "kind",
               "name",
               "procedure_name",
-              "rung",
-              "authority_ceiling",
+              "grants",
+              "resource_ceiling",
               "namespace",
               "valid_from",
               "expires_at"
@@ -10206,6 +10339,50 @@
               "body"
             ],
             "title": "SelfSourceInput",
+            "type": "object"
+          },
+          "SemanticAddress": {
+            "additionalProperties": false,
+            "description": "Stable meaning identity, independent of source-line presentation.",
+            "properties": {
+              "artifact_path": {
+                "title": "Artifact Path",
+                "type": "string"
+              },
+              "selector": {
+                "$ref": "#/$defs/SemanticSelector"
+              },
+              "tag": {
+                "const": "playbill-semantic-address-v1",
+                "default": "playbill-semantic-address-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_path",
+              "selector"
+            ],
+            "title": "SemanticAddress",
+            "type": "object"
+          },
+          "SemanticSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "scheme": {
+                "title": "Scheme",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "scheme",
+              "value"
+            ],
+            "title": "SemanticSelector",
             "type": "object"
           },
           "SubjectInput": {

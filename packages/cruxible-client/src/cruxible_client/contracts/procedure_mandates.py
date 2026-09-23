@@ -301,11 +301,11 @@ def evaluate_procedure_mandate_v2_law(
             "ProcedureMandate resource_ceiling may narrow but never widen Procedure hard caps.",
             path=path,
         )
-    needed = 3 if mandate.grants == "settle" else 2
-    if definition.terminal_capability < needed:
+    # A settle grant over a Procedure that cannot settle is incoherent authority.
+    if mandate.grants == "settle" and definition.terminal_capability < 3:
         return _law_refusal(
             "playbill.procedure_mandate.grant_exceeds_procedure",
-            f"A {mandate.grants} grant needs a Procedure whose terminal can {mandate.grants}.",
+            "A settle grant needs a Procedure whose terminal can settle.",
             path=path,
         )
     if predecessor is None and mandate.lifecycle.predecessor_digest is not None:
@@ -472,6 +472,7 @@ def evaluate_procedure_mandate(
 MandateGrant = Literal["propose", "settle"]
 MandateChangeKind = Literal["create", "revise", "retire"]
 _GRANT_ORDER: Final = {"propose": 0, "settle": 1}
+MANDATE_CHANGE_KIND_ORDER: Final[tuple[MandateChangeKind, ...]] = ("create", "revise", "retire")
 _PARAMETER_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 # Settle authority may only reach accepted Claims; a mandate can never cover the
 # artifacts that govern authority itself (mandates, laws, policy, ClaimTypes).
@@ -505,9 +506,8 @@ class MandateClaimScopeV1(_StrictProcedureMandateModel):
     def _shape(self) -> "MandateClaimScopeV1":
         if self.claim_type.role != "claim-type" or self.claim_type.target.kind != "ClaimType":
             raise ValueError("a mandate Claim scope must pin one exact ClaimType")
-        order = ("create", "revise", "retire")
         if not self.change_kinds or self.change_kinds != tuple(
-            kind for kind in order if kind in self.change_kinds
+            kind for kind in MANDATE_CHANGE_KIND_ORDER if kind in self.change_kinds
         ):
             raise ValueError(
                 "mandate change kinds must be nonempty, unique and canonically ordered"
@@ -785,6 +785,7 @@ def condition_query_refusal(
 
 
 __all__ = [
+    "MANDATE_CHANGE_KIND_ORDER",
     "MandateChangeKind",
     "MandateClaimScopeV1",
     "MandateConditionV1",

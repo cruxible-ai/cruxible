@@ -15,6 +15,7 @@ from cruxible_client.contracts.procedure_mandates import (
     evaluate_procedure_mandate,
     evaluate_procedure_mandate_law,
     parse_procedure_mandate,
+    parse_procedure_mandate_any,
     procedure_mandate_digest,
     procedure_mandate_evaluation_digest,
     procedure_mandate_path,
@@ -302,8 +303,8 @@ def test_procedure_mandate_authoring_resolves_machine_owned_digests(tmp_path) ->
     payload = ProcedureMandateAuthoringPayloadV1(
         name="triage",
         procedure_name="triage",
-        rung=2,
-        authority_ceiling=_caps(),
+        grants="propose",
+        resource_ceiling=_caps(),
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
@@ -322,7 +323,7 @@ def test_procedure_mandate_authoring_resolves_machine_owned_digests(tmp_path) ->
     assert computed.result.verdict == "passed", computed.result.frontier
     assert computed.lowered is not None
     assert "procedure_digest" not in payload.model_fields_set
-    mandate = parse_procedure_mandate(
+    mandate = parse_procedure_mandate_any(
         computed.evaluated_tree[procedure_mandate_path("triage")],
         path=procedure_mandate_path("triage"),
     )

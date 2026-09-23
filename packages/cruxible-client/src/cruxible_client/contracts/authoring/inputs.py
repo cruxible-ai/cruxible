@@ -30,6 +30,8 @@ from cruxible_client.contracts.authoring.models import (
     ClaimTypeSuccessionDependentV1,
     ClaimTypeSuccessionMemberV1,
     ExistingCaptureCitationSourceV1,
+    MandateConditionAuthoringV1,
+    MandateScopeAuthoringV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
     ProcedureMandateAuthoringPayloadV1,
@@ -252,15 +254,26 @@ class ClaimRetirementInput(_StrictInputModel):
 
 
 class ProcedureMandateInputV1(_StrictInputModel):
+    """A propose grant, or a settle grant with its Claim scope and condition query.
+
+    ``grants`` is the verb the mandate delegates. A settle grant names the
+    ClaimTypes (by predicate) and change kinds it covers and the accepted query
+    that decides each target; lowering pins every exact digest.
+    """
+
     tag: Literal["playbill-procedure-mandate-input-v1"] = "playbill-procedure-mandate-input-v1"
     kind: Literal["procedure_mandate"]
     name: str
     procedure_name: str
-    rung: Literal[2, 3]
-    authority_ceiling: ProcedureHardCapsV3
+    grants: Literal["propose", "settle"]
+    resource_ceiling: ProcedureHardCapsV3
     namespace: tuple[str, ...]
     valid_from: datetime
     expires_at: datetime
+    scope: tuple[MandateScopeAuthoringV1, ...] = ()
+    subject_scope: tuple[SemanticAddress, ...] | None = None
+    condition: MandateConditionAuthoringV1 | None = None
+    suspended: bool = False
     retire: bool = False
 
 
@@ -609,6 +622,12 @@ def _procedure_payload(
     )
 
 
+def _mandate_payload(value: ProcedureMandateInputV1) -> ProcedureMandateAuthoringPayloadV1:
+    return ProcedureMandateAuthoringPayloadV1.model_validate(
+        value.model_dump(mode="python", exclude={"tag", "kind"})
+    )
+
+
 def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChangeSetMemberV1:
     if isinstance(member, ClaimInput):
         return _claim_payload(member)
@@ -638,16 +657,7 @@ def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChan
         return ProcedureRuntimePolicyAuthoringPayloadV1(
             procedure_runtime_policy=member.procedure_runtime_policy
         )
-    return ProcedureMandateAuthoringPayloadV1(
-        name=member.name,
-        procedure_name=member.procedure_name,
-        rung=member.rung,
-        authority_ceiling=member.authority_ceiling,
-        namespace=member.namespace,
-        valid_from=member.valid_from,
-        expires_at=member.expires_at,
-        retire=member.retire,
-    )
+    return _mandate_payload(member)
 
 
 def lower_authoring_input(value: AuthoringInputV1) -> AuthoringPayloadV1:
@@ -667,16 +677,7 @@ def lower_authoring_input(value: AuthoringInputV1) -> AuthoringPayloadV1:
             procedure_runtime_policy=value.procedure_runtime_policy
         )
     if isinstance(value, ProcedureMandateInputV1):
-        return ProcedureMandateAuthoringPayloadV1(
-            name=value.name,
-            procedure_name=value.procedure_name,
-            rung=value.rung,
-            authority_ceiling=value.authority_ceiling,
-            namespace=value.namespace,
-            valid_from=value.valid_from,
-            expires_at=value.expires_at,
-            retire=value.retire,
-        )
+        return _mandate_payload(value)
     members = tuple(_change_set_member(member) for member in value.members)
     identities = tuple(authoring_member_identity(member) for member in members)
     if len(set(identities)) != len(identities):

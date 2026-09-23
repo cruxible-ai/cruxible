@@ -1488,8 +1488,8 @@ def _accepted_authoring_trio(tmp_path):
     mandate = ProcedureMandateAuthoringPayloadV1(
         name=name,
         procedure_name=name,
-        rung=2,
-        authority_ceiling=ProcedureHardCapsV3.model_validate(procedure.definition["hard_caps"]),
+        grants="propose",
+        resource_ceiling=ProcedureHardCapsV3.model_validate(procedure.definition["hard_caps"]),
         namespace=("captures",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
@@ -1537,7 +1537,7 @@ def test_unchanged_procedure_line_mandate_submit_reuses_accepted_state(tmp_path)
 
 
 def test_changed_procedure_rebinds_dependents_then_reauthoring_is_unchanged(tmp_path):
-    from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate
+    from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate_any
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
     from cruxible_client.contracts.procedures.line_specs import parse_line_spec
 
@@ -1566,7 +1566,7 @@ def test_changed_procedure_rebinds_dependents_then_reauthoring_is_unchanged(tmp_
         if p.startswith("lines/"):
             assert parse_line_spec(b, path=p).procedure.artifact_digest == new_digest
         if p.startswith("procedure-mandates/"):
-            assert parse_procedure_mandate(b, path=p).procedure.artifact_digest == new_digest
+            assert parse_procedure_mandate_any(b, path=p).procedure.artifact_digest == new_digest
     _accept_tree(
         instance,
         owner,

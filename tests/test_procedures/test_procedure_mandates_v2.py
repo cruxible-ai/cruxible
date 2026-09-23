@@ -586,3 +586,49 @@ def test_v2_mandates_require_compiler_revision_30(tmp_path) -> None:
             registry=projection_registry_for_compiler(SOURCE_CHECKED_COMPILER),
             artifact_kinds=artifact_kinds_for_compiler(SOURCE_CHECKED_COMPILER),
         )
+
+
+def test_settle_authoring_names_its_scope_and_condition_and_lowering_pins_them(tmp_path) -> None:
+    from cruxible_client.contracts.authoring.models import (
+        MandateConditionAuthoringV1,
+        MandateScopeAuthoringV1,
+        ProcedureMandateAuthoringPayloadV1,
+    )
+    from cruxible_core.authoring.lowering import (
+        AuthoringLoweringError,
+        _render_procedure_mandate_member,
+    )
+
+    _instance, _current, _tree, grown, mandate, query = _world(tmp_path)
+    payload = ProcedureMandateAuthoringPayloadV1(
+        name="triage",
+        procedure_name=mandate.procedure.target.name,
+        grants="settle",
+        resource_ceiling=mandate.resource_ceiling,
+        namespace=("claims",),
+        valid_from=mandate.valid_from,
+        expires_at=mandate.expires_at,
+        scope=(
+            MandateScopeAuthoringV1(
+                claim_type=mandate.scope[0].claim_type.target.name,
+                change_kinds=("revise", "create"),
+            ),
+        ),
+        condition=MandateConditionAuthoringV1(
+            query_name=query.identity.name,
+            binding_parameter="asset_id",
+            required_fields=("status",),
+            fallback="propose",
+        ),
+    )
+    path, content, _digest = _render_procedure_mandate_member(payload, tree=grown)
+    authored = parse_procedure_mandate_any(content, path=path)
+    # Author order does not matter; lowering canonicalizes and pins exact digests.
+    assert authored == mandate
+
+    missing = payload.model_copy(
+        update={"condition": payload.condition.model_copy(update={"query_name": "project.absent"})}
+    )
+    with pytest.raises(AuthoringLoweringError) as refused:
+        _render_procedure_mandate_member(missing, tree=grown)
+    assert refused.value.code == "playbill.authoring.procedure_mandate_condition_query_missing"
