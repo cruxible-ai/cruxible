@@ -335,7 +335,14 @@ def claim_resolution_statuses(
             _SLOT_MEMO[(root, compiler, slot_key)] = _RememberedSlot(
                 members=_slot_members(group),
                 reads=reads,
-                observed={read: observed.get(read) for read in (*reads.keys(), ("compiler",))},
+                observed={
+                    **{read: observed.get(read) for read in (*reads.keys(), ("compiler",))},
+                    # Availability as the verdicts used it, not as re-read now.
+                    **{
+                        ("capture", digest): used
+                        for digest, used in reads.used_availability.items()
+                    },
+                },
                 interval=invariance_interval(group_boundaries, evaluation_time=evaluation_time),
                 statuses=dict(group_statuses),
                 verdicts={

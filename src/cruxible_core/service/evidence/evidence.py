@@ -186,6 +186,10 @@ class VerdictReads:
     law_paths: set[str] = dataclass_field(default_factory=set)
     providers: set[str] = dataclass_field(default_factory=set)
     captures: set[str] = dataclass_field(default_factory=set)
+    # The replay availability each verdict actually used. Availability is the
+    # one input outside the accepted coordinate, so a remembered answer is keyed
+    # on what was used, never on a later re-read.
+    used_availability: dict[str, bool] = dataclass_field(default_factory=dict)
 
     def update(self, other: VerdictReads) -> None:
         self.paths |= other.paths
@@ -193,6 +197,7 @@ class VerdictReads:
         self.law_paths |= other.law_paths
         self.providers |= other.providers
         self.captures |= other.captures
+        self.used_availability.update(other.used_availability)
 
     def keys(self) -> tuple[tuple[str, ...], ...]:
         return (
@@ -412,9 +417,11 @@ class ClaimVerdictReadContext:
         if self._recording is not None:
             self._recording.law_paths.add(path)
 
-    def note_capture(self, digest: str) -> None:
+    def note_capture(self, digest: str, available: bool | None = None) -> None:
         if self._recording is not None:
             self._recording.captures.add(digest)
+            if available is not None:
+                self._recording.used_availability[digest] = available
 
     def snapshot(self, reads: VerdictReads) -> dict[tuple[str, ...], object]:
         """Re-read every named input at this context's coordinate, in batches.
@@ -665,21 +672,36 @@ def _current_replay_available(
             answer, consulted = remembered
             if all(_cas_file_identity(store, digest) == seen for digest, seen in consulted):
                 return answer
-    consulted_digests: list[str] = []
+    first: list[str] = []
     available = _replay_available(
-        instance, capture_digest_value, readers=readers, store=store, consulted=consulted_digests
+        instance, capture_digest_value, readers=readers, store=store, consulted=first
     )
-    if key is not None and "external" not in consulted_digests:
+    if key is None or "external" in first:
+        return available
+
+    def observe(
+        consulted: list[str],
+    ) -> tuple[tuple[str, tuple[int, int, int, int, int] | None], ...]:
+        return tuple(
+            (digest, _cas_file_identity(store, digest)) for digest in dict.fromkeys(consulted)
+        )
+
+    # An answer is remembered only with observations that bracket a derivation
+    # of it: identities read, the answer derived again, identities read again.
+    # Anything that moved in between shows as different identities (nothing is
+    # remembered) or is already reflected in the second answer, which is what
+    # this call returns either way.
+    before = observe(first)
+    second: list[str] = []
+    available = _replay_available(
+        instance, capture_digest_value, readers=readers, store=store, consulted=second
+    )
+    after = observe(second)
+    if second == first and after == before:
         memo_put(
             _AVAILABILITY_MEMO,
             key,
-            (
-                available,
-                tuple(
-                    (digest, _cas_file_identity(store, digest))
-                    for digest in dict.fromkeys(consulted_digests)
-                ),
-            ),
+            (available, after),
             capacity=_AVAILABILITY_CAPACITY,
         )
     return available
@@ -1047,8 +1069,6 @@ def service_evaluate_playbill_claim_verdict(
         history=history,
     )
     readers = external_readers or {}
-    for item in evidence.verdict_captures:
-        read_context.note_capture(item.capture_digest)
     captures = tuple(
         item.model_copy(
             update={
@@ -1062,6 +1082,8 @@ def service_evaluate_playbill_claim_verdict(
         )
         for item in evidence.verdict_captures
     )
+    for item in captures:
+        read_context.note_capture(item.capture_digest, item.current_replay_available)
     if evidence.verdict_result is not None:
         verify_claim_verdict_freshness(
             evidence.verdict_result,

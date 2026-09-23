@@ -130,3 +130,58 @@ def test_a_verdict_that_iterates_every_provider_is_refused_rather_than_remembere
     providers = _RecordingProviders({}, VerdictReads())
     with pytest.raises(ProposalIntegrityError):
         list(providers)
+
+
+def test_evidence_vanishing_while_a_slot_is_remembered_is_not_masked(tmp_path, monkeypatch):
+    instance, _owner = seed_claims(tmp_path)
+    context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
+    capture = next(
+        claim.backing.capture_digests[0]
+        for claim in context.claims()
+        if claim.statement.subject.artifact_path.endswith("wi-43.json")
+    )
+    snapshot = ClaimVerdictReadContext.snapshot
+
+    def evidence_vanishes_before_recording(self, reads):
+        path = instance.body_store()._path(capture)
+        if path.exists():
+            path.unlink()
+        return snapshot(self, reads)
+
+    # Derive with the evidence present; it disappears before the slot is stored.
+    monkeypatch.setattr(ClaimVerdictReadContext, "snapshot", evidence_vanishes_before_recording)
+    _derive(instance, fresh=True)
+    monkeypatch.setattr(ClaimVerdictReadContext, "snapshot", snapshot)
+
+    assert _derive(instance, fresh=False) == _derive(instance, fresh=True)
+
+
+def test_availability_is_not_remembered_across_a_change_during_its_derivation(
+    tmp_path, monkeypatch
+):
+    from cruxible_core.service.evidence import evidence as playbill_evidence
+
+    instance, _owner = seed_claims(tmp_path)
+    capture = (
+        ClaimVerdictReadContext(instance, instance.accepted_coordinate())
+        .claims()[0]
+        .backing.capture_digests[0]
+    )
+    playbill_evidence._AVAILABILITY_MEMO.clear()
+    identity = playbill_evidence._cas_file_identity
+    vanished = []
+
+    def evidence_vanishes_before_observation(store, digest):
+        if not vanished:
+            store._path(capture).unlink()
+            vanished.append(digest)
+        return identity(store, digest)
+
+    monkeypatch.setattr(
+        playbill_evidence, "_cas_file_identity", evidence_vanishes_before_observation
+    )
+    available = playbill_evidence._current_replay_available
+    assert available(instance, capture, readers={}) is False
+    monkeypatch.setattr(playbill_evidence, "_cas_file_identity", identity)
+    assert available(instance, capture, readers={}) is False
+    assert playbill_evidence._replay_available(instance, capture, readers={}) is False
