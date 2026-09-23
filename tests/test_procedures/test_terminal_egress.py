@@ -293,8 +293,8 @@ def test_the_mandate_term_names_whichever_source_reached_the_rung() -> None:
     )
     term = next(item for item in tier_wins.terms if item.term == "mandate_grant")
     assert term.rung == 3
-    assert "authority tier holds rung 3" in term.reason
-    assert "mandate grants rung 2" in term.reason
+    assert "authority tier holds settle" in term.reason
+    assert "mandate grants propose" in term.reason
 
     mandate_wins = compute_effective_rung(
         **common,  # type: ignore[arg-type]
@@ -303,4 +303,4 @@ def test_the_mandate_term_names_whichever_source_reached_the_rung() -> None:
     )
     term = next(item for item in mandate_wins.terms if item.term == "mandate_grant")
     assert term.rung == 3
-    assert term.reason == "The exact accepted Procedure mandate grants rung 3."
+    assert term.reason == "The exact accepted Procedure mandate grants settle."
