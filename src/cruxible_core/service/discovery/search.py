@@ -8,9 +8,11 @@ from datetime import datetime
 from typing import Protocol
 
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultAny
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
+    SubjectClaimObject,
     claim_path,
 )
 from cruxible_client.contracts.discovery import DiscoveryMatchBasisV1
@@ -169,6 +171,26 @@ def claim_resolution_statuses(
 
     coordinate = _resolve_coordinate(instance, at)
     read_context = read_context or ClaimVerdictReadContext(instance, coordinate)
+    # One batched read of every live Claim and the artifacts its verdict reads
+    # (ClaimType and referents) instead of one read per verdict.
+    live = tuple(claim for group in live_groups.values() for claim in group)
+    read_context.prefetch(
+        tuple(
+            path
+            for claim in live
+            for path in (
+                claim_path(claim.identity.name),
+                claim_type_path(claim.statement.predicate),
+                claim.statement.subject.artifact_path,
+                *(
+                    (claim.statement.object.address.artifact_path,)
+                    if isinstance(claim.statement.object, SubjectClaimObject)
+                    else ()
+                ),
+            )
+        )
+    )
+    read_context.prefetch_law_evidence(tuple(claim_path(claim.identity.name) for claim in live))
     for group in live_groups.values():
         first = group[0]
         resolution = resolve_playbill_claim_group(
@@ -246,7 +268,9 @@ def _claim_rows(
     read_context = ClaimVerdictReadContext(instance, coordinate)
     # Discovery needs Claim envelopes and current status, not the full fact
     # projection (including provenance/explanation payloads) for every row.
-    claims = read_context.claims()
+    # Resolution groups are keyed by subject and predicate, so a subject filter
+    # keeps every contender group whole: read and evaluate only those groups.
+    claims = read_context.claims(subject=request.subject)
     statuses = claim_resolution_statuses(
         instance,
         claims=claims,

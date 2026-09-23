@@ -26,7 +26,7 @@ from cruxible_client.contracts.approval_policy import (
 )
 from cruxible_client.contracts.attestations import ApprovalSubmission
 from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import canonical_bytes, is_candidate_card_path
 from cruxible_client.contracts.claims import (
     ClaimLawEvidenceAny,
     claim_path,
@@ -73,7 +73,10 @@ from cruxible_core.compiler.compiler import (
     SUPPORTED_COMPILERS,
     current_compiler_coordinate,
 )
-from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
+from cruxible_core.compiler.projection_artifacts import (
+    ArtifactEnvelopeRow,
+    registered_path_kind,
+)
 from cruxible_core.compiler.projection_tree import TreeReadLimits, read_registered_tree
 from cruxible_core.curation.review_operational import ReviewOperationalStore
 from cruxible_core.derived.derived_state import (
@@ -96,6 +99,7 @@ from cruxible_core.indexes.history.history_index import (
     AcceptedGenerationLocation,
     AcceptedHistoryIndex,
     HistoryReader,
+    RetainedRecordReader,
 )
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
@@ -143,6 +147,7 @@ from cruxible_core.proposals.proposals import (
 )
 from cruxible_core.proposals.settlement import (
     ChangeActorBinding,
+    ChangeSetRecordAnyVersion,
     VerifiedGenerationBundle,
     prepare_generation,
     render_generation_descriptor,
@@ -277,6 +282,11 @@ class PlaybillInstance:
         # review-context snapshot and access profile. Bounded by the floor service.
         self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self.floor_export_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
+        # Verified retained change-set records, keyed by their full accepted
+        # location. Their bytes are immutable, so they survive head movement.
+        self.verified_change_set_records: OrderedDict[
+            AcceptedGenerationLocation, ChangeSetRecordAnyVersion
+        ] = OrderedDict()
 
     @staticmethod
     def _accepted_query_facts(
@@ -1434,39 +1444,55 @@ class PlaybillInstance:
                 publication_directory=paths["projections"],
                 bodies=ContentAddressedBodyStore(paths["cas"]),
             )
-            request = assembler.request(
-                output_staging_directory=paths["projections"]
-                / f".stage-history-{secrets.token_hex(12)}"
-            )
-            manifest = paths["projections"] / projection_manifest_name(request)
-            changed = (
-                None
-                if sequence == 0
-                else self._ledger.changed_tree_paths(
-                    recovered.history[sequence - 1].oid, generation.oid
+            if sequence == 0:
+                request = assembler.request(
+                    output_staging_directory=paths["projections"]
+                    / f".stage-history-{secrets.token_hex(12)}"
                 )
+                manifest = paths["projections"] / projection_manifest_name(request)
+                if manifest.exists():
+                    with bind_projection(manifest, expected=coordinate) as projection:
+                        projection.require_source_authentication(repository=self._ledger)
+                        return projection.artifact_envelopes(paths=None)
+                # Missing publications derive membership from retained contracts.
+                # Document bodies and promoted output availability are
+                # independent of accepted membership.
+                sources = {
+                    blob.path: blob.content
+                    for blob in read_registered_tree(
+                        self._ledger,
+                        generation.oid,
+                        limits=TreeReadLimits(),
+                        artifact_kinds=assembler.artifact_kinds,
+                    )
+                }
+                return parse_static_owners(sources, accepted=coordinate).envelopes
+            # A successor needs envelopes only for its changed members, published
+            # or not. Their bytes come from this generation; the replay-verified
+            # record prefix supplies change-set context, so no whole historical
+            # tree is read, authenticated or re-parsed once per generation.
+            changed = self._ledger.changed_tree_paths(
+                recovered.history[sequence - 1].oid, generation.oid
             )
-            if manifest.exists():
-                with bind_projection(manifest, expected=coordinate) as projection:
-                    projection.require_source_authentication(repository=self._ledger)
-                    return projection.artifact_envelopes(paths=changed)
-            # Missing historical publications derive
-            # membership from retained contracts. Document bodies and promoted
-            # output availability are independent of accepted membership.
-            sources = {
-                blob.path: blob.content
-                for blob in read_registered_tree(
-                    self._ledger,
-                    generation.oid,
-                    limits=TreeReadLimits(),
-                    artifact_kinds=assembler.artifact_kinds,
-                )
-            }
-            parsed = parse_static_owners(sources, accepted=coordinate)
-            selected = None if changed is None else frozenset(changed)
-            return tuple(
-                row for row in parsed.envelopes if selected is None or row.path in selected
+            member_paths = tuple(
+                path
+                for path in changed
+                if is_candidate_card_path(path)
+                or registered_path_kind(path, artifact_kinds=assembler.artifact_kinds)
+                != "changeset"
             )
+            verified = tuple(
+                (f"changesets/cs-{item.sequence:020d}.json", item.record)
+                for item in recovered.history[1 : sequence + 1]
+                if item.record is not None
+            )
+            parsed = parse_static_owners(
+                self._ledger.blobs_at(generation.oid, member_paths),
+                accepted=coordinate,
+                verified_change_sets=verified,
+            )
+            selected = frozenset(changed)
+            return tuple(row for row in parsed.envelopes if row.path in selected)
 
         with self._accepted_history_index.read(recovered, envelopes, at=at) as reader:
             yield reader
@@ -1587,6 +1613,11 @@ class PlaybillInstance:
         self.coordinate_for_oid(oid)
         return self._ledger.paths_at(oid)
 
+    def retained_record_reader(self) -> RetainedRecordReader:
+        """A record reader sharing this instance's verified change-set records."""
+
+        return RetainedRecordReader(self.blob_at, verified=self.verified_change_set_records)
+
     def blob_at(self, oid: str, path: str) -> bytes | None:
         """Read one accepted path without materializing its whole generation."""
 
@@ -1680,6 +1711,9 @@ class PlaybillInstance:
             self._ledger,
             bodies=self.body_store(),
             history=lambda: self.accepted_history_reader(at=at),
+            records=RetainedRecordReader(
+                self._ledger.blob_at, verified=self.verified_change_set_records
+            ),
         )
 
     def bind_accepted_projection(

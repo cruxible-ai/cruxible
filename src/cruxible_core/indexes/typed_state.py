@@ -718,6 +718,7 @@ class TypedStateReader:
         *,
         bodies: Any = None,
         history: Any = None,
+        records: Any = None,
     ) -> None:
         self.connection = connection
         self.accepted = accepted
@@ -726,7 +727,9 @@ class TypedStateReader:
         self.history = history
         from cruxible_core.indexes.history.history_index import RetainedRecordReader
 
-        self.records = RetainedRecordReader(repository.blob_at) if history is not None else None
+        if records is None and history is not None:
+            records = RetainedRecordReader(repository.blob_at)
+        self.records = records
         self._member_bytes: dict[str, bytes] = {}
         self.work = {"members_read": 0, "source_bytes": 0, "owners_selected": 0}
 

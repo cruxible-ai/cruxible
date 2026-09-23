@@ -340,11 +340,18 @@ class ProjectionHandle:
             connection, accepted, _source_repository(accepted.repository_path)
         )
 
-    def attach_sources(self, repository: Any, *, bodies: Any, history: Any) -> ProjectionHandle:
+    def attach_sources(
+        self, repository: Any, *, bodies: Any, history: Any, records: Any = None
+    ) -> ProjectionHandle:
         from cruxible_core.indexes.typed_state import TypedStateReader
 
         self.typed = TypedStateReader(
-            self._connection, self.accepted, repository, bodies=bodies, history=history
+            self._connection,
+            self.accepted,
+            repository,
+            bodies=bodies,
+            history=history,
+            records=records,
         )
         try:
             self.require_source_authentication(repository=repository)

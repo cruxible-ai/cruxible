@@ -52,6 +52,7 @@ def test_bulk_claims_share_sources_and_records_preserving_selected_order(instanc
         return original(oids)
 
     monkeypatch.setattr(instance._ledger, "read_blobs", read)
+    instance.verified_change_set_records.clear()
     with instance.bind_accepted_projection(coordinate) as projection:
         claim_oids = {
             row[0]
@@ -64,6 +65,11 @@ def test_bulk_claims_share_sources_and_records_preserving_selected_order(instanc
     assert sum(bool(set(batch) & claim_oids) for batch in batches) == 1
     # One source batch and the two generation records, irrespective of Claim count.
     assert len(batches) == 3
+    # The instance retains verified records: a later request reads sources only.
+    batches.clear()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        assert projection.claims(tuple(reversed(identities))) == expected
+    assert len(batches) == 1
 
 
 def test_query_facts_match_source_replay_and_read_each_record_once(instance, monkeypatch):
@@ -83,9 +89,14 @@ def test_query_facts_match_source_replay_and_read_each_record_once(instance, mon
         return original(oid, path)
 
     monkeypatch.setattr(instance, "blob_at", read)
+    instance.verified_change_set_records.clear()
     assert build_accepted_query_facts(instance, coordinate=coordinate) == expected
     assert len(reads) == 2
     assert set(reads.values()) == {1}
+    # Retained on the instance: a later request re-reads no change-set record.
+    reads.clear()
+    assert build_accepted_query_facts(instance, coordinate=coordinate) == expected
+    assert not reads
 
 
 def test_floor_reuses_query_claims_instead_of_materializing_another_list(instance, monkeypatch):

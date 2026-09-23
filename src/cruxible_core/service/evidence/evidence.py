@@ -53,6 +53,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import ClaimNotFoundError, ProposalIntegrityError
 from cruxible_client.contracts.providers import ProviderV1, parse_provider
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
     CasSourceReferenceV1,
     LedgerSourceReferenceV1,
@@ -65,7 +66,7 @@ from cruxible_client.contracts.standing_mandates import (
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
-from cruxible_core.indexes.history.history_index import RetainedRecordReader
+from cruxible_core.indexes.history.history_index import HistoryReader, RetainedRecordReader
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.settlement import ChangeSetRecord, ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -180,6 +181,11 @@ class ClaimVerdictReadContext:
     _providers: Mapping[str, ProviderV1] | None = dataclass_field(default=None, init=False)
     _source_bytes: dict[str, bytes] = dataclass_field(default_factory=dict, init=False)
     _tree: Mapping[str, bytes] = dataclass_field(init=False)
+    _history: "ClaimReadHistoryIndex | None" = dataclass_field(default=None, init=False)
+    _attestations: dict[tuple[str, str], list[ClaimAttestationV2]] | None = dataclass_field(
+        default=None, init=False
+    )
+    _claim_types: dict[str, ClaimType] = dataclass_field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         from cruxible_core.indexes.evaluated_state import SelectedRows
@@ -207,13 +213,28 @@ class ClaimVerdictReadContext:
     def tree(self) -> Mapping[str, bytes]:
         return self._tree
 
-    def claims(self) -> tuple[ClaimArtifactAny, ...]:
+    def claims(self, *, subject: SemanticAddress | None = None) -> tuple[ClaimArtifactAny, ...]:
+        """Every accepted Claim, or only those about ``subject`` via the subject index."""
+
         with self.instance.bind_accepted_projection(self.coordinate) as projection:
-            identities = tuple(row.identity for row in projection.typed.envelopes(kind="claim"))
+            if subject is None:
+                identities = tuple(row.identity for row in projection.typed.envelopes(kind="claim"))
+            else:
+                identities = tuple(
+                    row[0]
+                    for row in projection.typed.connection.execute(
+                        "SELECT identity FROM claims WHERE subject_path=? "
+                        "AND subject_selector_scheme=? AND subject_selector_value=? "
+                        "ORDER BY identity",
+                        (subject.artifact_path, subject.selector.scheme, subject.selector.value),
+                    )
+                )
         self.prefetch(tuple(claim_path(identity.removeprefix("Claim:")) for identity in identities))
-        for identity in identities:
-            self.claim(identity)
-        return tuple(self._claims.values())
+        selected = tuple(self.claim(identity) for identity in identities)
+        if subject is None:
+            return tuple(self._claims.values())
+        # The index only locates rows; the parsed statement is the authority.
+        return tuple(claim for claim in selected if claim.statement.subject == subject)
 
     def claim(self, identity: str) -> ClaimArtifactAny:
         identity = "Claim:" + identity.removeprefix("Claim:")
@@ -224,6 +245,57 @@ class ClaimVerdictReadContext:
                 raise ClaimNotFoundError(identity)
             self._claims[identity] = parse_claim(content, path=path)
         return self._claims[identity]
+
+    def history(self) -> "ClaimReadHistoryIndex":
+        """One history index per batch, so each retained record is verified once."""
+
+        if self._history is None:
+            object.__setattr__(
+                self,
+                "_history",
+                _claim_read_history_index(self.instance, coordinate=self.coordinate),
+            )
+        assert self._history is not None
+        return self._history
+
+    def claim_type(self, path: str) -> ClaimType:
+        """The accepted ClaimType at ``path``, parsed once per batch."""
+
+        if path not in self._claim_types:
+            content = self._tree.get(path)
+            if content is None:
+                raise ClaimNotFoundError(path)
+            self._claim_types[path] = parse_claim_type(content, path=path)
+        return self._claim_types[path]
+
+    def prefetch_law_evidence(self, paths: tuple[str, ...]) -> None:
+        """Read every Claim's law evidence under one history snapshot."""
+
+        law_evidence = self.history().law_evidence
+        if isinstance(law_evidence, _IndexedClaimLawEvidence):
+            law_evidence.prefetch(paths)
+
+    def attestation_envelopes(self, claim: ClaimArtifactAny) -> tuple[ClaimAttestationV2, ...]:
+        """This exact Claim version's accepted attestations, read once per batch."""
+
+        if self._attestations is None:
+            grouped: dict[tuple[str, str], list[ClaimAttestationV2]] = {}
+            with self.instance.bind_accepted_projection(self.coordinate) as projection:
+                for value in projection.typed.claim_attestations():
+                    grouped.setdefault(
+                        (
+                            value.statement.claim_identity.qualified,
+                            value.statement.claim_artifact_digest,
+                        ),
+                        [],
+                    ).append(value)
+            object.__setattr__(self, "_attestations", grouped)
+        assert self._attestations is not None
+        return tuple(
+            self._attestations.get(
+                (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()
+            )
+        )
 
     def providers(self) -> Mapping[str, ProviderV1]:
         if self._providers is None:
@@ -311,6 +383,15 @@ def _historical_verified_claim_attestations(
     )
 
 
+def _serves_attestations(coordinate: AcceptedProjectionCoordinate) -> bool:
+    from cruxible_core.compiler.compiler import artifact_kinds_for_compiler
+
+    return any(
+        entry.kind == "attestation"
+        for entry in artifact_kinds_for_compiler(coordinate.compiler).entries()
+    )
+
+
 def accepted_claim_attestations(
     instance: Any,
     *,
@@ -326,12 +407,7 @@ def accepted_claim_attestations(
     remain evidence under the existing reducer; changing stance does not erase
     the earlier statement. Explicit replacement requires its own signed contract.
     """
-    from cruxible_core.compiler.compiler import artifact_kinds_for_compiler
-
-    if not any(
-        entry.kind == "attestation"
-        for entry in artifact_kinds_for_compiler(coordinate.compiler).entries()
-    ):
+    if not _serves_attestations(coordinate):
         return _historical_verified_claim_attestations(tree, claim, historical)
     if envelopes is None:
         with instance.bind_accepted_projection(coordinate) as projection:
@@ -454,26 +530,45 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
     ):
         self.instance = instance
         self.at = AcceptedCoordinate.from_internal(coordinate)
-        self._records = records if records is not None else RetainedRecordReader(instance.blob_at)
+        self._records = records if records is not None else instance.retained_record_reader()
         self._evidence_by_sequence: dict[int, dict[str, MemberLawEvaluationV2]] = {}
+        # Prefetched answers: parsed evidence, or None for a path with no law record.
+        self._prefetched: dict[str, ClaimLawEvidenceAny | None] = {}
+
+    def prefetch(self, paths: tuple[str, ...]) -> None:
+        wanted = tuple(dict.fromkeys(p for p in paths if p not in self._prefetched))
+        if not wanted:
+            return
+        with self.instance.accepted_history_reader(at=self.at) as history:
+            for path in wanted:
+                self._prefetched[path] = self._read(history, path)
+
+    def _read(self, history: HistoryReader, path: str) -> ClaimLawEvidenceAny | None:
+        locations = history.claim_law_locations(path=path, latest=True)
+        if not locations:
+            return None
+        record = history.read_member_record(locations[0], self._records)
+        if isinstance(record, ChangeSetRecord):
+            return None
+        if record.sequence not in self._evidence_by_sequence:
+            self._evidence_by_sequence[record.sequence] = {
+                item.path: item for item in record.law_evidence
+            }
+        evidence = self._evidence_by_sequence[record.sequence].get(path)
+        raw = None if evidence is None else evidence.result.get("claim_evidence")
+        if raw is None:
+            raise ProposalIntegrityError("accepted Claim law locator has no retained evidence")
+        return parse_claim_law_evidence(raw)
 
     def __getitem__(self, path: str) -> ClaimLawEvidenceAny:
-        with self.instance.accepted_history_reader(at=self.at) as history:
-            locations = history.claim_law_locations(path=path, latest=True)
-            if not locations:
-                raise KeyError(path)
-            record = history.read_member_record(locations[0], self._records)
-            if isinstance(record, ChangeSetRecord):
-                raise KeyError(path)
-            if record.sequence not in self._evidence_by_sequence:
-                self._evidence_by_sequence[record.sequence] = {
-                    item.path: item for item in record.law_evidence
-                }
-            evidence = self._evidence_by_sequence[record.sequence].get(path)
-            raw = None if evidence is None else evidence.result.get("claim_evidence")
-            if raw is None:
-                raise ProposalIntegrityError("accepted Claim law locator has no retained evidence")
-            return parse_claim_law_evidence(raw)
+        if path in self._prefetched:
+            found = self._prefetched[path]
+        else:
+            with self.instance.accepted_history_reader(at=self.at) as history:
+                found = self._read(history, path)
+        if found is None:
+            raise KeyError(path)
+        return found
 
     def __iter__(self) -> Iterator[str]:
         with self.instance.accepted_history_reader(at=self.at) as history:
@@ -685,20 +780,30 @@ def service_evaluate_playbill_claim_verdict(
 
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
         raise ProposalIntegrityError("Claim verdict evaluation_time must be timezone-aware")
-    coordinate = _resolve_coordinate(instance, at)
+    if (
+        read_context is not None
+        and read_context.instance is instance
+        and at == AcceptedCoordinate.from_internal(read_context.coordinate)
+    ):
+        # The context was built from this exact resolved coordinate.
+        coordinate = read_context.coordinate
+    else:
+        coordinate = _resolve_coordinate(instance, at)
     if read_context is not None and (
         read_context.instance is not instance or read_context.coordinate != coordinate
     ):
         raise ProposalIntegrityError("Claim read context differs from requested accepted state")
+    # Only a caller's shared batch context amortizes whole-coordinate reads.
+    batched = read_context is not None
     read_context = read_context or ClaimVerdictReadContext(instance, coordinate)
     tree = read_context.tree
     accepted = _accepted_claim_artifact(read_context.claim(claim_identity))
-    history = _claim_read_history_index(instance, coordinate=coordinate)
+    history = read_context.history()
     evidence = history.law_evidence.get(accepted.path)
     if evidence is None:
         raise ProposalIntegrityError("accepted Claim has no verdict law evidence")
     type_path = claim_type_path(accepted.claim.statement.predicate)
-    claim_type = parse_claim_type(tree[type_path], path=type_path)
+    claim_type = read_context.claim_type(type_path)
     rule = _reproduced_claim_adjudication_rule(
         claim_type=claim_type,
         evidence_digest=evidence.adjudication_rule_digest,
@@ -734,6 +839,11 @@ def service_evaluate_playbill_claim_verdict(
         tree=tree,
         claim=accepted.claim,
         historical=evidence.verified_attestations,
+        envelopes=(
+            read_context.attestation_envelopes(accepted.claim)
+            if batched and _serves_attestations(coordinate)
+            else None
+        ),
     )
     if time_boundaries is not None:
         _record_verdict_time_boundaries(
