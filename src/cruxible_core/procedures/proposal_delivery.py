@@ -51,8 +51,8 @@ from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandateAny,
     ProcedureMandateInvocationV1,
-    ProcedureMandateV1,
     evaluate_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.models import TERMINAL_REQUIRED_RUNGS
@@ -318,7 +318,7 @@ def select_procedure_mandate(
     request: TerminalEgressRequestV1,
     *,
     admission: ProcedureRunAdmissionV1,
-    accepted_mandates: Mapping[str, ProcedureMandateV1],
+    accepted_mandates: Mapping[str, ProcedureMandateAny],
     target_paths: tuple[str, ...],
     delegation: ProcedureDelegation | None = None,
 ) -> str | None:
@@ -364,7 +364,7 @@ class ProposalTerminalEgressSink:
         self,
         *,
         instance: PlaybillInstance,
-        accepted_mandates: Mapping[str, ProcedureMandateV1],
+        accepted_mandates: Mapping[str, ProcedureMandateAny],
         proposal_service: Callable[[], ProposalService] | None = None,
         delegation: ProcedureDelegation | None = None,
     ) -> None:

@@ -174,8 +174,11 @@ from cruxible_client.contracts.principals import (
 from cruxible_client.contracts.procedure_mandates import (
     AcceptedProcedureMandateV1,
     ProcedureMandateError,
+    ProcedureMandateV2,
+    ScopedClaimTypeV1,
     evaluate_procedure_mandate_law,
-    parse_procedure_mandate,
+    evaluate_procedure_mandate_v2_law,
+    parse_procedure_mandate_any,
     procedure_mandate_digest,
 )
 from cruxible_client.contracts.procedure_runtime_policy import (
@@ -1604,6 +1607,10 @@ class _AcceptedMember:
     policy_digests: tuple[str, ...] = ()
     query_receipt_digests: tuple[str, ...] = ()
     retired: bool = False
+    # Only removes authority (a narrowing, suspended or retired ProcedureMandate).
+    # A candidate made only of such members takes the approval fast path; it is
+    # recomputed by re-running the laws, never read back from a record.
+    approval_exempt: bool = False
 
 
 @dataclass(frozen=True)
@@ -1711,9 +1718,11 @@ def _accepted(
     policy_digests: tuple[str, ...] = (),
     query_receipt_digests: tuple[str, ...] = (),
     retired: bool = False,
+    approval_exempt: bool = False,
 ) -> _MemberVerdict:
     return _MemberVerdict(
         member=_AcceptedMember(
+            approval_exempt=approval_exempt,
             path=context.path,
             artifact_kind=installed.artifact_kind,
             predecessor_artifact_digest=predecessor_artifact_digest,
@@ -2212,7 +2221,7 @@ def _standing_mandate_member(context: _MemberContext) -> _MemberVerdict:
 
 
 def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
-    mandate = parse_procedure_mandate(context.content, path=context.path)
+    mandate = parse_procedure_mandate_any(context.content, path=context.path)
     accepted_procedure = context.resolved.procedures.get(mandate.procedure.target.qualified)
     if accepted_procedure is None:
         return _MemberVerdict(
@@ -2226,18 +2235,38 @@ def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
         )
     predecessor: AcceptedProcedureMandateV1 | None = None
     if context.parent_content is not None:
-        previous = parse_procedure_mandate(context.parent_content, path=context.path)
+        previous = parse_procedure_mandate_any(context.parent_content, path=context.path)
         predecessor = AcceptedProcedureMandateV1(
             path=context.path,
             mandate=previous,
             artifact_digest=procedure_mandate_digest(previous).tagged,
         )
-    law = evaluate_procedure_mandate_law(
-        mandate,
-        path=context.path,
-        predecessor=predecessor,
-        procedure=accepted_procedure,
-    )
+    if isinstance(mandate, ProcedureMandateV2):
+        law = evaluate_procedure_mandate_v2_law(
+            mandate,
+            path=context.path,
+            predecessor=predecessor,
+            procedure=accepted_procedure,
+            claim_types=_scoped_claim_types(context, mandate),
+            condition_query=_condition_query(context, mandate),
+        )
+    else:
+        if predecessor is not None and isinstance(predecessor.mandate, ProcedureMandateV2):
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.procedure_mandate.format_regression",
+                        "A v2 ProcedureMandate cannot be succeeded by a v1 mandate.",
+                        context.path,
+                    ),
+                )
+            )
+        law = evaluate_procedure_mandate_law(
+            mandate,
+            path=context.path,
+            predecessor=predecessor,
+            procedure=accepted_procedure,
+        )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
@@ -2252,6 +2281,50 @@ def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
         activation_policy="snapshot",
         result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
         retired=mandate.lifecycle.state == "retired",
+        approval_exempt=law.narrowing,
+    )
+
+
+def _scoped_claim_types(
+    context: _MemberContext, mandate: ProcedureMandateV2
+) -> dict[ArtifactIdentity, ScopedClaimTypeV1]:
+    """The candidate-state ClaimTypes a settle scope pins, reduced to what its law reads."""
+
+    scoped: dict[ArtifactIdentity, ScopedClaimTypeV1] = {}
+    for item in mandate.scope:
+        accepted = context.resolved.claim_types.get(item.claim_type.target.qualified)
+        if accepted is None:
+            continue
+        claim_type = accepted.claim_type
+        scoped[item.claim_type.target] = ScopedClaimTypeV1(
+            identity=claim_type.identity,
+            artifact_digest=accepted.artifact_digest,
+            object_kind=claim_type.object_kind,
+            allowed_subject_kinds=claim_type.allowed_subject_kinds,
+            allowed_object_subject_kinds=claim_type.allowed_object_subject_kinds,
+        )
+    return scoped
+
+
+def _condition_query(
+    context: _MemberContext, mandate: ProcedureMandateV2
+) -> AcceptedQueryDefinitionV1 | None:
+    """The candidate-state query a settle condition pins, or None when it is absent."""
+
+    from cruxible_client.contracts.query.definitions import (
+        query_definition_digest,
+        query_definition_path,
+    )
+
+    if mandate.condition is None:
+        return None
+    path = query_definition_path(mandate.condition.query.target.name)
+    content = context.candidate_tree.get(path)
+    if content is None:
+        return None
+    query = parse_query_definition(content, path=path)
+    return AcceptedQueryDefinitionV1(
+        path=path, query=query, artifact_digest=query_definition_digest(query).tagged
     )
 
 
@@ -3719,7 +3792,11 @@ def _evaluate_scoped_members(
         )
     if tuple(item.path for item in accepted) != scope:
         raise ProposalIntegrityError("evaluator did not cover every scoped member")
-    approval_requirements = _approval_requirements(current_tree)
+    approval_requirements = (
+        ()
+        if accepted and all(item.approval_exempt for item in accepted)
+        else _approval_requirements(current_tree)
+    )
     if wire_version == "playbill-validated-candidate-v1":
         record: CandidateRecordAnyVersion = _candidate_record_v1(
             accepted,

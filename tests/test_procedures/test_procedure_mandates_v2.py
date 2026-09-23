@@ -387,3 +387,202 @@ def test_narrowing_takes_the_fast_path_and_widening_does_not() -> None:
         update={"lifecycle": ArtifactLifecycle(predecessor_digest=suspended.artifact_digest)}
     )
     assert not mandate_change_is_narrowing(lifted, suspended.mandate)
+
+
+# -- Proposal evaluation on a revision-30 instance ---------------------------------
+
+
+def _world(tmp_path):
+    from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
+    from cruxible_client.contracts.procedures.artifacts import (
+        procedure_artifact_digest,
+        render_procedure,
+    )
+    from cruxible_client.contracts.query.definitions import render_query_definition
+    from tests.core_support._support import initialize_local
+    from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
+    from tests.test_claims.test_claims import _claim_type
+    from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
+
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    current = instance.accepted_coordinate()
+    tree = instance.tree_at(current.git_oid)
+    claim_type = next(
+        _claim_type().__class__.model_validate_json(tree[path])
+        for path in tree
+        if path == claim_type_path(_claim_type().predicate)
+    )
+    status = claim_type.predicate
+    query = _query().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="QueryDefinition", name="project.settle-condition"),
+            "entry": QueryEntryV1(
+                binding="item",
+                subject_kinds=tuple(claim_type.allowed_subject_kinds),
+                subject_id=QueryParameterRefV1(parameter="asset_id"),
+            ),
+            "result_binding": "item",
+            "projection": QueryProjectionV1(
+                fields=(
+                    QueryProjectionFieldV1(
+                        name="status", value=QueryClaimValueRefV1(binding="item", predicate=status)
+                    ),
+                )
+            ),
+            "parameters": (QueryParameterDeclarationV1(name="asset_id", value_type="string"),),
+            "pins": (
+                ArtifactPin(
+                    role="claim-type",
+                    target=claim_type.identity,
+                    artifact_digest=claim_type_digest(claim_type).tagged,
+                ),
+            ),
+        }
+    )
+    procedure = _artifact(_definition(terminal_capability=3))
+    accepted_procedure = AcceptedProcedureV1(
+        path="procedures/triage.json",
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+    accepted_query = _accepted_query(query)
+    mandate = _settle(
+        accepted_query,
+        procedure=accepted_procedure,
+        required_fields=("status",),
+        scope=(
+            MandateClaimScopeV1(
+                claim_type=ArtifactPin(
+                    role="claim-type",
+                    target=claim_type.identity,
+                    artifact_digest=claim_type_digest(claim_type).tagged,
+                ),
+                change_kinds=("create", "revise"),
+            ),
+        ),
+    )
+    mandate = mandate.model_copy(
+        update={"condition": mandate.condition.model_copy(update={"fixed_parameters": {}})}
+    )
+    grown = {
+        **tree,
+        accepted_procedure.path: render_procedure(procedure),
+        accepted_query.path: render_query_definition(query),
+    }
+    return instance, current, tree, grown, mandate, query
+
+
+def _evaluate(instance, current, base, proposed):
+    from cruxible_core.proposals.proposals import evaluate_proposal_tree
+
+    return evaluate_proposal_tree(
+        base_tree=base,
+        current_tree=base,
+        proposed_tree=proposed,
+        current=current,
+        bodies=instance.body_store(),
+        timestamp="2026-09-01T12:00:00.000000Z",
+        rebased=False,
+        actor_id="owner",
+    )
+
+
+def test_a_settle_mandate_is_accepted_through_proposal_evaluation(tmp_path) -> None:
+    instance, current, tree, grown, mandate, _query_definition = _world(tmp_path)
+    path = procedure_mandate_path(mandate.identity.name)
+    accepted = _evaluate(
+        instance, current, tree, {**grown, path: render_procedure_mandate(mandate)}
+    )
+    assert accepted.diagnostics == ()
+    assert accepted.candidate is not None
+
+
+def test_a_fail_open_condition_refuses_during_proposal_evaluation(tmp_path) -> None:
+    from cruxible_client.contracts.query.definitions import render_query_definition
+
+    instance, current, tree, grown, mandate, query = _world(tmp_path)
+    negated = query.model_copy(
+        update={
+            "where": QueryNegationFilterV1(
+                operand=QueryClaimPresenceFilterV1(
+                    binding="item", predicate=query.pins[0].target.name
+                )
+            )
+        }
+    )
+    accepted_negated = _accepted_query(negated)
+    pinned = mandate.model_copy(
+        update={
+            "condition": mandate.condition.model_copy(
+                update={
+                    "query": mandate.condition.query.model_copy(
+                        update={"artifact_digest": accepted_negated.artifact_digest}
+                    )
+                }
+            )
+        }
+    )
+    refused = _evaluate(
+        instance,
+        current,
+        tree,
+        {
+            **grown,
+            accepted_negated.path: render_query_definition(negated),
+            procedure_mandate_path(pinned.identity.name): render_procedure_mandate(pinned),
+        },
+    )
+    assert "playbill.procedure_mandate.condition_fails_open" in {
+        item.code for item in refused.diagnostics
+    }
+
+
+def test_only_a_purely_narrowing_candidate_skips_independent_approval(
+    tmp_path, monkeypatch
+) -> None:
+    from cruxible_client.contracts.governance import INDEPENDENT_APPROVAL_REQUIREMENTS
+    from cruxible_core.proposals import proposals
+
+    instance, current, tree, grown, mandate, _query_definition = _world(tmp_path)
+    monkeypatch.setattr(
+        proposals, "_approval_requirements", lambda _tree: INDEPENDENT_APPROVAL_REQUIREMENTS
+    )
+    path = procedure_mandate_path(mandate.identity.name)
+    first = {**grown, path: render_procedure_mandate(mandate)}
+    granted = _evaluate(instance, current, tree, first)
+    assert granted.candidate is not None
+    assert granted.candidate.approval_requirements == INDEPENDENT_APPROVAL_REQUIREMENTS
+
+    lineage = ArtifactLifecycle(predecessor_digest=procedure_mandate_digest(mandate).tagged)
+    suspended = mandate.model_copy(update={"suspended": True, "lifecycle": lineage})
+    fast = _evaluate(instance, current, first, {**first, path: render_procedure_mandate(suspended)})
+    assert fast.diagnostics == ()
+    assert fast.candidate is not None and fast.candidate.approval_requirements == ()
+
+    widened = mandate.model_copy(
+        update={"expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc), "lifecycle": lineage}
+    )
+    governed = _evaluate(
+        instance, current, first, {**first, path: render_procedure_mandate(widened)}
+    )
+    assert governed.candidate is not None
+    assert governed.candidate.approval_requirements == INDEPENDENT_APPROVAL_REQUIREMENTS
+
+
+def test_v2_mandates_require_compiler_revision_30(tmp_path) -> None:
+    from cruxible_client.contracts.errors import ProjectionFormatError
+    from cruxible_core.compiler.compiler import (
+        SOURCE_CHECKED_COMPILER,
+        artifact_kinds_for_compiler,
+        projection_registry_for_compiler,
+    )
+    from cruxible_core.compiler.projection_artifacts import parse_projection_tree
+
+    mandate = _settle(_accepted_query(_query()))
+    with pytest.raises(ProjectionFormatError, match="ProcedureMandate v2 requires"):
+        parse_projection_tree(
+            {procedure_mandate_path("triage"): render_procedure_mandate(mandate)},
+            registry=projection_registry_for_compiler(SOURCE_CHECKED_COMPILER),
+            artifact_kinds=artifact_kinds_for_compiler(SOURCE_CHECKED_COMPILER),
+        )

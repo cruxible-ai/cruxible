@@ -52,8 +52,10 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.errors import PlaybillFormatError, ProjectionIntegrityError
 from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandateAny,
     ProcedureMandateInvocationV1,
     ProcedureMandateV1,
+    ProcedureMandateV2,
     evaluate_procedure_mandate,
     procedure_mandate_digest,
 )
@@ -991,9 +993,9 @@ def require_procedure_mandate(
     request: TerminalEgressRequestV2,
     *,
     admission: ProcedureRunAdmissionV1,
-    accepted_mandates: Mapping[str, ProcedureMandateV1],
+    accepted_mandates: Mapping[str, ProcedureMandateAny],
     delegation: ProcedureDelegation | None = None,
-) -> ProcedureMandateV1:
+) -> ProcedureMandateAny:
     """Resolve and evaluate authority before any effectful adapter is invoked."""
 
     _validated_run_admission(request, admission)
@@ -1055,7 +1057,7 @@ def require_procedure_mandate_at_head(
     admission: ProcedureRunAdmissionV1,
     projection: ProjectionHandle,
     delegation: ProcedureDelegation | None = None,
-) -> ProcedureMandateV1:
+) -> ProcedureMandateAny:
     """Re-establish the bound mandate against the accepted tree an effect is about to touch.
 
     Admission bound the mandate at the run's base. Accepted state may have
@@ -1078,7 +1080,7 @@ def require_procedure_mandate_at_head(
         if row is not None:
             mandate = projection.typed.source(row[0])
             if (
-                not isinstance(mandate, ProcedureMandateV1)
+                not isinstance(mandate, ProcedureMandateV1 | ProcedureMandateV2)
                 or procedure_mandate_digest(mandate).tagged != digest
             ):
                 raise ProjectionIntegrityError(

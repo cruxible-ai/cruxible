@@ -14,7 +14,7 @@ from cruxible_client.contracts.candidates import (
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.errors import PlaybillFormatError
-from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1
+from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV2,
@@ -122,7 +122,7 @@ class ProposalTerminalAdapter:
         request: TerminalEgressRequestV2,
         admission: ProcedureRunAdmissionV1,
         candidate_tree: Mapping[str, bytes],
-        accepted_mandates: Mapping[str, ProcedureMandateV1],
+        accepted_mandates: Mapping[str, ProcedureMandateAny],
         item_paths: Mapping[str, str] | None = None,
         rationale: str | None = None,
         base_tree: Mapping[str, bytes] | None = None,

@@ -292,6 +292,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-source-acquisition-policy-v1",
                 "playbill-standing-mandate-v1",
                 "playbill-procedure-mandate-v1",
+                "playbill-procedure-mandate-v2",
                 "playbill-procedure-producer-receipt-v1",
                 "playbill-procedure-derived-source-request-v1",
                 "playbill-source-read-receipt-v1",
@@ -397,6 +398,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-source-acquisition-policy-v1",
             "playbill-standing-mandate-v1",
             "playbill-procedure-mandate-v1",
+            "playbill-procedure-mandate-v2",
             "playbill-procedure-producer-receipt-v1",
             "playbill-procedure-derived-source-request-v1",
             "playbill-source-read-receipt-v1",
@@ -1613,12 +1615,23 @@ def parse_projection_tree(
                 continue
             if kind == "procedure-mandate":
                 from cruxible_client.contracts.procedure_mandates import (
-                    parse_procedure_mandate,
+                    ProcedureMandateV2,
+                    parse_procedure_mandate_any,
                     procedure_mandate_digest,
                 )
 
-                procedure_mandate = parse_procedure_mandate(
+                procedure_mandate = parse_procedure_mandate_any(
                     content, path=path, codec=artifact_codec
+                )
+                if (
+                    isinstance(procedure_mandate, ProcedureMandateV2)
+                    and artifact_kinds is not TRIGGER_CAPTURE_ARTIFACT_KINDS
+                ):
+                    raise ProjectionFormatError("ProcedureMandate v2 requires compiler revision 30")
+                resources = (
+                    procedure_mandate.resource_ceiling
+                    if isinstance(procedure_mandate, ProcedureMandateV2)
+                    else procedure_mandate.authority_ceiling
                 )
                 if artifact_kinds not in (
                     RESOURCE_BUDGET_ARTIFACT_KINDS,
@@ -1626,9 +1639,7 @@ def parse_projection_tree(
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                ) and _requires_resource_budgets(
-                    procedure_mandate.authority_ceiling.model_dump(mode="json")
-                ):
+                ) and _requires_resource_budgets(resources.model_dump(mode="json")):
                     raise ProjectionFormatError(
                         "resource mandate budgets require compiler revision 26"
                     )
@@ -1654,12 +1665,13 @@ def parse_projection_tree(
                         ),
                     )
                 )
-                pins.append(
+                pins.extend(
                     PinRow(
                         source_identity=identity,
-                        target_identity=procedure_mandate.procedure.target.qualified,
-                        target_digest=procedure_mandate.procedure.artifact_digest,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
                     )
+                    for pin in procedure_mandate.pins
                 )
                 semantic_facts.append(
                     ProjectionFact(

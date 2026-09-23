@@ -39,7 +39,10 @@ from cruxible_client.contracts.claims import claim_statement_digest, parse_claim
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import PrincipalIntegrityError, ProjectionIntegrityError
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
-from cruxible_client.contracts.procedure_mandates import parse_procedure_mandate
+from cruxible_client.contracts.procedure_mandates import (
+    mandate_rung,
+    parse_procedure_mandate_any,
+)
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
     PROCEDURE_RUNTIME_POLICY_PATH,
@@ -266,7 +269,7 @@ OWNER_CODECS = (
         "procedure-mandate",
         "ProcedureMandate",
         "procedure_mandates",
-        parse_procedure_mandate,
+        parse_procedure_mandate_any,
         (
             ("procedure_identity", "TEXT NOT NULL"),
             ("procedure_digest", "TEXT NOT NULL"),
@@ -534,6 +537,9 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
             procedure_identity=source.procedure.target.qualified,
             procedure_digest=source.procedure.artifact_digest,
         )
+    if owner.kind == "procedure-mandate":
+        # The grant verb is authored; the index keeps its internal ordering value.
+        result["rung"] = mandate_rung(source)
     if owner.kind == "line":
         result["identity_digest"] = line_identity_digest(source.identity)
     if owner.kind == "standing-mandate":

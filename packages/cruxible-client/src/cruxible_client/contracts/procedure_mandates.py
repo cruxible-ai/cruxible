@@ -437,7 +437,7 @@ def _path_is_in_namespace(path: str, namespace: tuple[str, ...]) -> bool:
 
 
 def evaluate_procedure_mandate(
-    mandate: ProcedureMandateV1,
+    mandate: "ProcedureMandateV1 | ProcedureMandateV2",
     invocation: ProcedureMandateInvocationV1,
 ) -> ProcedureMandateEvaluationV1:
     """Test EVALUATION INSTANT membership in the mandate VALIDITY WINDOW."""
@@ -445,6 +445,8 @@ def evaluate_procedure_mandate(
     digest = procedure_mandate_digest(mandate).tagged
     if invocation.accepted_mandate_digest != digest or mandate.lifecycle.state != "live":
         refusals.add("procedure_mandate_superseded")
+    if isinstance(mandate, ProcedureMandateV2) and mandate.suspended:
+        refusals.add("procedure_mandate_suspended")
     if not (mandate.valid_from <= invocation.evaluation_time < mandate.expires_at):
         refusals.add("procedure_mandate_expired")
     if (
@@ -452,9 +454,9 @@ def evaluate_procedure_mandate(
         or invocation.procedure_artifact_digest != mandate.procedure.artifact_digest
     ):
         refusals.add("procedure_mandate_procedure_mismatch")
-    if invocation.requested_rung > mandate.rung:
+    if invocation.requested_rung > mandate_rung(mandate):
         refusals.add("procedure_mandate_rung_insufficient")
-    if not _ceiling_within(invocation.requested_authority, mandate.authority_ceiling):
+    if not _ceiling_within(invocation.requested_authority, _resources(mandate)):
         refusals.add("procedure_mandate_authority_ceiling_insufficient")
     if any(not _path_is_in_namespace(path, mandate.namespace) for path in invocation.target_paths):
         refusals.add("procedure_mandate_namespace_mismatch")
@@ -474,6 +476,12 @@ _PARAMETER_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 # Settle authority may only reach accepted Claims; a mandate can never cover the
 # artifacts that govern authority itself (mandates, laws, policy, ClaimTypes).
 SETTLE_NAMESPACE_ROOT: Final = "claims"
+
+
+def mandate_rung(mandate: "ProcedureMandateAny") -> Literal[2, 3]:
+    """The internal ordering value of a grant (retained admission evidence stays numeric)."""
+
+    return 3 if mandate_grant(mandate) == "settle" else 2
 
 
 def mandate_grant(mandate: "ProcedureMandateAny") -> MandateGrant:
@@ -789,6 +797,7 @@ __all__ = [
     "evaluate_procedure_mandate_v2_law",
     "mandate_change_is_narrowing",
     "mandate_grant",
+    "mandate_rung",
     "parse_procedure_mandate_any",
     "AcceptedProcedureMandateV1",
     "ProcedureMandateError",

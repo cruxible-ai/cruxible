@@ -420,6 +420,13 @@ STANDING_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="standing-mandate",
     artifact_tag="playbill-standing-mandate-v1",
 )
+PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.procedure-mandate.v2", "playbill-procedure-mandate-v2", semantic_revision=1
+    ),
+    artifact_kind="procedure-mandate",
+    artifact_tag="playbill-procedure-mandate-v2",
+)
 PROCEDURE_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=PROCEDURE_MANDATE_LAW,
     artifact_kind="procedure-mandate",
@@ -669,6 +676,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
         STANDING_MANDATE_ACCEPTANCE_LAW,
         PROCEDURE_MANDATE_ACCEPTANCE_LAW,
+        PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW,
         SUBJECT_ACCEPTANCE_LAW,
     )
 )
@@ -756,6 +764,7 @@ __all__ = [
     "STANDING_MANDATE_LAW",
     "STANDING_MANDATE_LAW_IDENTIFIER",
     "PROCEDURE_MANDATE_ACCEPTANCE_LAW",
+    "PROCEDURE_MANDATE_V2_ACCEPTANCE_LAW",
     "PROCEDURE_MANDATE_LAW",
     "PROCEDURE_MANDATE_LAW_IDENTIFIER",
     "SUBJECT_ACCEPTANCE_LAW",

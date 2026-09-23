@@ -74,7 +74,7 @@ from cruxible_client.contracts.merkle import (
 from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateError,
-    parse_procedure_mandate,
+    parse_procedure_mandate_any,
     procedure_mandate_digest,
 )
 from cruxible_client.contracts.procedures.artifacts import (
@@ -318,7 +318,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 lifecycle=procedure.lifecycle,
             )
         if path.startswith("procedure-mandates/"):
-            procedure_mandate = parse_procedure_mandate(content, path=path)
+            procedure_mandate = parse_procedure_mandate_any(content, path=path)
             return ArtifactDependencyStateV1(
                 path=path,
                 artifact_kind="procedure-mandate",

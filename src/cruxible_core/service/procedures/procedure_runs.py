@@ -39,8 +39,11 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.procedure_mandates import (
     PROCEDURE_MANDATE_CLOCK_SKEW,
+    ProcedureMandateAny,
     ProcedureMandateV1,
+    ProcedureMandateV2,
 )
+from cruxible_client.contracts.procedure_mandates import mandate_rung as procedure_mandate_rung
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
     PROCEDURE_RUNTIME_POLICY_PATH,
@@ -3367,7 +3370,7 @@ def _accepted_line_mandates(
     *,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
-) -> tuple[tuple[str, ProcedureMandateV1], ...]:
+) -> tuple[tuple[str, ProcedureMandateAny], ...]:
     instant = utc_microseconds(evaluation_time)
     with instance.bind_accepted_projection(coordinate) as projection:
         result = []
@@ -3378,7 +3381,7 @@ def _accepted_line_mandates(
             (accepted.procedure.identity.qualified, accepted.artifact_digest, instant, instant),
         ):
             mandate = projection.typed.source(identity)
-            if not isinstance(mandate, ProcedureMandateV1):
+            if not isinstance(mandate, ProcedureMandateV1 | ProcedureMandateV2):
                 raise ProjectionIntegrityError(
                     "accepted ProcedureMandate source is absent or invalid"
                 )
@@ -4103,7 +4106,7 @@ def _run_playbill_line(
         acquisition_plan=plan,
         acquisition_plan_digest=plan_digest,
     )
-    mandate_rung = max(mandate.rung for _digest, mandate in mandates)
+    mandate_rung = max(procedure_mandate_rung(mandate) for _digest, mandate in mandates)
     effective_rung = compute_effective_rung(
         procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
         requested_terminal_rung=accepted_line.line.requested_terminal_rung,
