@@ -63,6 +63,30 @@ ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
     "trigger_capture_not_yet_observed",
     "line_binding_superseded",
 ]
+#: Codes retained runs were refused with before authority was served as verbs.
+#: A run's journal keeps the bytes it wrote; reading it serves today's code.
+HISTORICAL_NODE_REFUSAL_CODES: dict[str, str] = {
+    "procedure_mandate_rung_insufficient": "procedure_mandate_grant_insufficient",
+    "terminal_rung_capped_by_procedure_terminal_capability": (
+        "terminal_authority_capped_by_procedure_terminal_capability"
+    ),
+    "terminal_rung_capped_by_line_requested_rung": (
+        "terminal_authority_capped_by_line_max_authority"
+    ),
+    "terminal_rung_capped_by_propagated_sensitivity": (
+        "terminal_authority_capped_by_propagated_sensitivity"
+    ),
+    "terminal_rung_capped_by_mandate_grant": "terminal_authority_capped_by_mandate_grant",
+    "terminal_rung_capped_by_calibration": "terminal_authority_capped_by_calibration",
+}
+
+
+def current_refusal_code(code: str) -> str:
+    """The code a retained refusal is served as today."""
+
+    return HISTORICAL_NODE_REFUSAL_CODES.get(code, code)
+
+
 ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "guard_refused",
     "repeat_exhausted",
@@ -297,6 +321,26 @@ class ProcedureNodeRefusalV1(_StrictResultModel):
     repair: ServedRepairV1
 
     _repair = model_validator(mode="before")(_with_default_repair)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _current_codes(cls, value: object) -> object:
+        # A retained run refused before the verb rename reads as today's code.
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        if isinstance(value.get("code"), str):
+            value["code"] = current_refusal_code(value["code"])
+        details = value.get("details")
+        if isinstance(details, dict) and isinstance(details.get("codes"), list):
+            value["details"] = {
+                **details,
+                "codes": [
+                    current_refusal_code(code) if isinstance(code, str) else code
+                    for code in details["codes"]
+                ],
+            }
+        return value
 
     @field_validator("details", mode="before")
     @classmethod
@@ -1266,7 +1310,9 @@ __all__ = [
     "ProcedureInternalFailureCodeV1",
     "ProcedureInternalFailureV1",
     "ProcedureJournalCoordinateV1",
+    "HISTORICAL_NODE_REFUSAL_CODES",
     "ProcedureNodeRefusalCodeV1",
+    "current_refusal_code",
     "ProcedureNodeRefusalV1",
     "ProcedureOperationalFailureCodeV1",
     "ProcedureOperationalFailureV1",

@@ -137,6 +137,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureTerminalEgressV1,
     ProcedureTerminalV1,
     ProviderBucketClassificationPlanV1,
+    current_refusal_code,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
     procedure_selection_decision_digest,
@@ -2029,6 +2030,7 @@ def _fold_terminal_egress(
     if verdict == "refused_effective_rung":
         verdict = "refused_effective_authority"
     limiting_term = _string("limiting_term")
+    raw_refusal_code = _string("refusal_code")
     return ProcedureTerminalEgressV1(
         node_id=str(payload.get("node_id")),
         kind=cast(Any, _string("kind")),
@@ -2053,7 +2055,11 @@ def _fold_terminal_egress(
         target_paths=target_paths,
         proposal_id=proposal_id,
         candidate_digest=candidate_digest,
-        refusal_code=_string("refusal_code") if verdict in {"refused", "failed"} else None,
+        refusal_code=(
+            current_refusal_code(raw_refusal_code)
+            if verdict in {"refused", "failed"} and raw_refusal_code is not None
+            else None
+        ),
         children=tuple(children) if children else (() if current is None else current.children),
         journal_coordinate=journal_coordinate,
         settle_outcome=cast(Any, settle.get("settle_outcome")),
