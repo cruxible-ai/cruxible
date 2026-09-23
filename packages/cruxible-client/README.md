@@ -1365,8 +1365,8 @@ line(
     name: str,
     procedure: str,
     acquisition_policy: str,
-    requested_terminal_rung: Literal[1, 2, 3],
     trigger_policy: TriggerPolicyV2 | None = None,
+    max_authority: Literal["observe", "propose", "settle"] | None = None,
     trigger_input: str | None = None,
     parameters: CanonicalValue | None = None,
     budgets: Mapping[str, int] | None = None,
@@ -1384,17 +1384,19 @@ Procedure's hard caps as its budget unless one is given.
 
 Lowering refuses a Procedure that is not graph-v4/v5 and one whose Source
 nodes leave a Provider slot open: the Line pins exactly what the
-Procedure names, and an open slot is nothing to pin. A rung-2 Line
-also needs a live ProcedureMandate over its target namespace before it
-can run; that is checked at admission, not here.
+Procedure names, and an open slot is nothing to pin. ``max_authority``
+(observe, propose or settle) caps this Line below its Procedure's own
+capability and defaults to it. A Line that proposes or settles also needs
+a live ProcedureMandate over its target namespace before it can run;
+that is checked at admission, not here.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `name` | Required | Definition identity name, not an arbitrary file path. |
 | `procedure` | Required | Procedure name or typed reference; Line authoring also accepts a name defined earlier in the same changeset. |
 | `acquisition_policy` | Required | Accepted SourceAcquisitionPolicy name for source authority. |
-| `requested_terminal_rung` | Required | Requested Line capability rung 1, 2, or 3; effective authority is checked at admission. |
 | `trigger_policy` | `None` | Typed Line trigger policy; None authors a manual trigger. |
+| `max_authority` | `None` | Most this Line may do: `observe`, `propose` or `settle`. Defaults to its Procedure's capability; effective authority is checked at admission. |
 | `trigger_input` | `None` | Source alias receiving the exact triggering Capture; its CaptureContract must match the event selector. |
 | `parameters` | `None` | Invocation/query parameters in the declared canonical contract. |
 | `budgets` | `None` | Operation-specific bounds; the signature distinguishes QueryBudgetsV1 from Line budget mappings. |

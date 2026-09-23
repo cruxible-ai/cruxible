@@ -50,7 +50,11 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     procedure_runtime_policy_digest,
 )
 from cruxible_client.contracts.procedures.artifacts import parse_procedure
-from cruxible_client.contracts.procedures.line_specs import line_identity_digest, parse_line_spec
+from cruxible_client.contracts.procedures.line_specs import (
+    line_identity_digest,
+    line_requested_rung,
+    parse_line_spec,
+)
 from cruxible_client.contracts.provider_interfaces import parse_provider_interface
 from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.contracts.query.definitions import parse_query_definition
@@ -542,6 +546,7 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
         result["rung"] = mandate_rung(source)
     if owner.kind == "line":
         result["identity_digest"] = line_identity_digest(source.identity)
+        result["requested_terminal_rung"] = line_requested_rung(source)
     if owner.kind == "standing-mandate":
         result["provider_identity"] = source.provider.qualified
     for name in ("valid_from", "valid_until", "expires_at"):

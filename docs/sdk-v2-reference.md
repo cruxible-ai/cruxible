@@ -1119,7 +1119,7 @@ heavy-engine execution is not part of that integration test.
 | `security.http_response` CaptureContract | Permits the fixture HTTP source/logical source `security.feed`, records acquisition provenance and retained response bytes under explicit byte/retention rules. |
 | `security.registered_http_observation` CaptureContract | Permits registration of the verified acquisition result and preserves its original evidence binding. |
 | `security.feed_reads` acquisition policy | Permits the configured feed acquisition and its declared Source aliases under effective limits. The parent/child admission includes the child's policy/effects. |
-| Capture/proposal Lines | Manually triggered accepted Lines, pinned to the relevant Procedures with parameters below. Capture uses rung 1; proposal uses rung 2 and an applicable live ProcedureMandate. Required credentials/grants remain instance-specific. |
+| Capture/proposal Lines | Manually triggered accepted Lines, pinned to the relevant Procedures with parameters below. Capture Lines observe; proposal Lines propose under an applicable live ProcedureMandate. Required credentials/grants remain instance-specific. |
 
 Scalar state fields used with `.one()` each have exactly one live Claim in this
 fixture. Its verdict checks are explicit below. Claims and relationships were
@@ -1473,8 +1473,8 @@ parse its entries or author exposure Claims.
 ### Consume the Capture that triggered a Line
 
 Set `trigger_input="feed"` on `ChangeSetDraft.line(...)` to bind the event's
-Capture to the Procedure's Source alias `feed`. This authors Line v4 under
-compiler revision 30. The Source's exact CaptureContract must match the
+Capture to the Procedure's Source alias `feed`. Every Line authors as Line v4
+under compiler revision 30. The Source's exact CaptureContract must match the
 capture-arrival selector, or the selector anchoring an event-relative window.
 Manual, cadence, and fixed-window triggers cannot provide this input.
 
@@ -1494,8 +1494,8 @@ normally. Late execution keeps the original observation time and window. Missing
 stale, incompatible, or unavailable material refuses admission, even if an ordinary
 acquisition rule permits omission or a default. A retry reuses the admitted binding.
 
-Omitting `trigger_input` preserves the existing trigger-only behavior. Existing
-instances need an explicit governed compiler upgrade before accepting Line v4.
+Omitting `trigger_input` preserves trigger-only behavior. Existing instances need
+an explicit governed compiler upgrade to revision 30 before accepting new Lines.
 
 ### Compare a feed observation with an accepted baseline
 
@@ -1577,7 +1577,7 @@ verifier_intent = pb.procedure(definition=bound_verifier).prepare()
 The parent has no independent Source node. Admission includes the child's
 pinned acquisition policy and effective effects/budgets; nested execution does
 not invent or bypass an acquisition policy on the parent. The accepted proposal
-Line binds `feed_id="kev"` and requests rung 2 under its applicable mandate.
+Line binds `feed_id="kev"` and proposes under its applicable mandate.
 Its invocation uses the same `pb.run_line(...)` surface.
 
 | Stage or condition | Expected result/state effect |

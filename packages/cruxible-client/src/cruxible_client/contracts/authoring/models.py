@@ -987,7 +987,8 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
     name: str
     procedure_name: str
     acquisition_policy_name: str
-    requested_terminal_rung: Literal[1, 2, 3]
+    # Caps this Line below its Procedure's capability; omitted, it is that capability.
+    max_authority: Literal["observe", "propose", "settle"] | None = None
     trigger_policy: TriggerPolicyV2
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     parameters: object = Field(default_factory=dict)

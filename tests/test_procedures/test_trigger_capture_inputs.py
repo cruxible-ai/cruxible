@@ -12,6 +12,7 @@ from cruxible_client.contracts.line_dispatch import (
     LineListenRequestV1,
 )
 from cruxible_client.contracts.procedures.line_specs import (
+    RUNG_AUTHORITY,
     CaptureLandingTriggerPolicyV2,
     LineSpecV4,
     line_spec_path,
@@ -67,6 +68,8 @@ def world(tmp_path, *, window=False, line_budget=None, with_owner=False, **kwarg
         {
             **original.model_dump(mode="python"),
             "artifact_format": "playbill-line-v4",
+            "requested_terminal_rung": None,
+            "max_authority": RUNG_AUTHORITY[original.requested_terminal_rung],
             "trigger_policy": trigger,
             "trigger_input": SOURCE_ALIAS,
             "pins": tuple(
@@ -361,7 +364,7 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
         name="second-consumer",
         procedure_name=line.procedure.target.name,
         acquisition_policy_name=line.acquisition_policy.target.name,
-        requested_terminal_rung=1,
+        max_authority="observe",
         trigger_policy=line.trigger_policy,
         trigger_input=SOURCE_ALIAS,
     )
@@ -619,3 +622,45 @@ def test_over_budget_occurrence_closes_then_requires_successor_for_retry(tmp_pat
     ).items[0]
     assert retried.status == "admitted", retried
     assert admission(instance, retried.run_id).admission.trigger_binding.event == first_event
+
+
+def test_line_v4_states_its_authority_as_a_verb_and_defaults_to_the_procedure(tmp_path):
+    import json
+
+    from cruxible_client.contracts.authoring.models import LineAuthoringPayloadV1
+    from cruxible_client.contracts.procedures.line_specs import (
+        AUTHORITY_RUNG,
+        ManualTriggerPolicyV1,
+        line_requested_rung,
+        parse_line_spec,
+    )
+    from cruxible_core.authoring.lowering import _render_line_member
+    from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
+
+    instance, _, line = world(tmp_path)
+    wire = json.loads(render_line_spec(line))
+    assert "requested_terminal_rung" not in wire
+    assert wire["max_authority"] == line.max_authority
+    assert line_requested_rung(line) == AUTHORITY_RUNG[line.max_authority]
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    accepted = _accepted_procedure(
+        instance, coordinate=instance.accepted_coordinate(), name=line.procedure.target.name
+    )
+    capability = accepted.procedure.definition.terminal_capability
+    path, raw, _ = _render_line_member(
+        LineAuthoringPayloadV1(
+            name="manual-consumer",
+            procedure_name=line.procedure.target.name,
+            acquisition_policy_name=line.acquisition_policy.target.name,
+            trigger_policy=ManualTriggerPolicyV1(),
+        ),
+        tree=tree,
+    )
+    manual = parse_line_spec(raw, path=path)
+    assert isinstance(manual, LineSpecV4) and manual.trigger_input is None
+    assert AUTHORITY_RUNG[manual.max_authority] == capability
+
+    # The law's capability check reads the same internal value the verb maps to.
+    above = next(verb for verb, rung in AUTHORITY_RUNG.items() if rung > capability)
+    assert line_requested_rung(manual.model_copy(update={"max_authority": above})) > capability

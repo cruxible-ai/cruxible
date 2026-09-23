@@ -142,8 +142,8 @@ from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest,
 )
 from cruxible_client.contracts.procedures.line_specs import (
+    RUNG_AUTHORITY,
     CaptureLandingTriggerPolicyV2,
-    LineSpecV3,
     LineSpecV4,
     WindowCloseTriggerPolicyV2,
     line_spec_digest,
@@ -2091,7 +2091,7 @@ def _render_line_member(
     the staged tree -- accepted at the base or authored earlier in the same
     set -- and lowering pins their exact digests. A Procedure that pins every
     Provider it names fills no slot, so the Line's slot bindings and Provider
-    closures are empty. Event input bindings lower to Line v4; other Lines retain v3.
+    closures are empty. Every Line lowers to v4, which states its authority as a verb.
     """
 
     procedure_target = procedure_path(payload.procedure_name)
@@ -2202,7 +2202,10 @@ def _render_line_member(
         slot_bindings=(),
         trigger_policy=payload.trigger_policy,
         acquisition_policy=policy_pin,
-        requested_terminal_rung=payload.requested_terminal_rung,
+        max_authority=(
+            payload.max_authority or RUNG_AUTHORITY[procedure.definition.terminal_capability]
+        ),
+        trigger_input=payload.trigger_input,
         budgets=budgets,
         epsilon=payload.epsilon,
         pins=tuple(
@@ -2221,11 +2224,7 @@ def _render_line_member(
             predecessor_digest=predecessor_digest,
         ),
     )
-    line = (
-        LineSpecV3.model_validate(line_fields)
-        if payload.trigger_input is None
-        else LineSpecV4.model_validate({**line_fields, "trigger_input": payload.trigger_input})
-    )
+    line = LineSpecV4.model_validate(line_fields)
     if previous_content is not None and _same_revision_content(line, previous):
         return path, previous_content, line_spec_digest(previous).tagged
     return path, render_line_spec(line), line_spec_digest(line).tagged

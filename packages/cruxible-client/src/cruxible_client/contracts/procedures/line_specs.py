@@ -6,9 +6,17 @@ import json
 import re
 from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from cruxible_client.contracts.acquisition_policies import ACQUISITION_POLICY_PIN_ROLE
 from cruxible_client.contracts.artifacts import (
@@ -309,17 +317,48 @@ class LineSpecV3(LineSpecV2):
     trigger_policy: TriggerPolicyV2  # type: ignore[assignment]
 
 
+LineAuthority = Literal["observe", "propose", "settle"]
+# Internal ordering only: stored admission evidence and indexes keep these numbers.
+AUTHORITY_RUNG: dict[str, Literal[1, 2, 3]] = {"observe": 1, "propose": 2, "settle": 3}
+RUNG_AUTHORITY: dict[int, LineAuthority] = {1: "observe", 2: "propose", 3: "settle"}
+
+
 class LineSpecV4(LineSpecV3):
-    """Bind the triggering Capture to one named Source input, without re-fetching."""
+    """A Line that states its authority as a verb and may consume its triggering Capture.
+
+    ``max_authority`` caps what this Line may do below its Procedure's own
+    capability; authoring defaults it to that capability, so the artifact always
+    states it. ``trigger_input`` binds the event's exact Capture to one named
+    Source input, without re-fetching.
+    """
 
     artifact_format: Literal["playbill-line-v4"] = "playbill-line-v4"  # type: ignore[assignment]
-    trigger_input: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    requested_terminal_rung: None = None  # type: ignore[assignment]
+    max_authority: LineAuthority
+    trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
 
     @model_validator(mode="after")
     def _event_input(self) -> "LineSpecV4":
-        if trigger_capture_selector(self) is None:
+        if self.trigger_input is not None and trigger_capture_selector(self) is None:
             raise ValueError("a trigger input requires a Capture event trigger or event window")
         return self
+
+    @model_serializer(mode="wrap")
+    def _wire(self, handler: Any) -> dict[str, object]:
+        data = cast(dict[str, object], handler(self))
+        # The numeric rung is not part of this wire; the verb is.
+        data.pop("requested_terminal_rung", None)
+        return data
+
+
+def line_requested_rung(line: "LineSpecV1") -> Literal[1, 2, 3]:
+    """The internal ordering value of what a Line asks to do, for either generation."""
+
+    if isinstance(line, LineSpecV4):
+        return AUTHORITY_RUNG[line.max_authority]
+    rung = line.requested_terminal_rung
+    assert rung is not None
+    return rung
 
 
 def trigger_capture_selector(line: LineSpecV3) -> CaptureEventSelectorV1 | None:
@@ -335,6 +374,8 @@ def trigger_capture_selector(line: LineSpecV3) -> CaptureEventSelectorV1 | None:
 
 def trigger_capture_source(line: LineSpecV4, procedure: AcceptedProcedureV1) -> SourceNodeV4:
     """Resolve the single input and verify its closed CaptureContract pin."""
+    if line.trigger_input is None:
+        raise ValueError("this Line binds no trigger input")
     nodes = [
         n
         for n in procedure.procedure.definition.nodes
@@ -549,7 +590,7 @@ def evaluate_line_spec_law(
     except ProcedurePinClosureError as exc:
         return _refusal("playbill.line.slot_closure_failed", str(exc), path=path)
     definition = procedure.procedure.definition
-    if isinstance(line, LineSpecV4):
+    if isinstance(line, LineSpecV4) and line.trigger_input is not None:
         try:
             trigger_capture_source(line, procedure)
         except ValueError as exc:
@@ -576,10 +617,10 @@ def evaluate_line_spec_law(
             "A playbill-line-v2 closure must instantiate a graph-v4 Procedure.",
             path=path,
         )
-    if line.requested_terminal_rung > definition.terminal_capability:
+    if line_requested_rung(line) > definition.terminal_capability:
         return _refusal(
             "playbill.line.rung_exceeds_procedure_cap",
-            "LineSpec requested terminal rung exceeds the Procedure hard cap.",
+            "The Line's max_authority exceeds what its Procedure's terminals can do.",
             path=path,
         )
     caps = definition.hard_caps
@@ -820,6 +861,10 @@ __all__ = [
     "LineSpecV2",
     "LineSpecV3",
     "LineSpecV4",
+    "AUTHORITY_RUNG",
+    "LineAuthority",
+    "RUNG_AUTHORITY",
+    "line_requested_rung",
     "trigger_capture_selector",
     "trigger_capture_source",
     "TriggerPolicyV2",

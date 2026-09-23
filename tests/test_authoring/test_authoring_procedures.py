@@ -1482,7 +1482,7 @@ def _accepted_authoring_trio(tmp_path):
         name=name,
         procedure_name=name,
         acquisition_policy_name="demo",
-        requested_terminal_rung=1,
+        max_authority="observe",
         trigger_policy=ManualTriggerPolicyV1(),
     )
     mandate = ProcedureMandateAuthoringPayloadV1(

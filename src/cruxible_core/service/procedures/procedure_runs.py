@@ -74,6 +74,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     WindowCloseTriggerPolicyV2,
     evaluate_line_spec_law,
     line_identity_digest,
+    line_requested_rung,
     line_spec_digest,
     parse_line_spec,
 )
@@ -1232,6 +1233,7 @@ def _line_external_occurrences(
         supplied_source_inputs=(
             frozenset({accepted_line.line.trigger_input})
             if isinstance(accepted_line.line, LineSpecV4)
+            and accepted_line.line.trigger_input is not None
             else frozenset()
         ),
     )
@@ -3788,7 +3790,7 @@ def _run_playbill_line(
             details={"repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Line."},
         )
     landed_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
-    if isinstance(accepted_line.line, LineSpecV4):
+    if isinstance(accepted_line.line, LineSpecV4) and accepted_line.line.trigger_input is not None:
         from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
 
         try:
@@ -4109,7 +4111,7 @@ def _run_playbill_line(
     mandate_rung = max(procedure_mandate_rung(mandate) for _digest, mandate in mandates)
     effective_rung = compute_effective_rung(
         procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
-        requested_terminal_rung=accepted_line.line.requested_terminal_rung,
+        requested_terminal_rung=line_requested_rung(accepted_line.line),
         selector_privacies={
             item.input.capture_digest: capture_contracts[
                 item.input.capture_contract_digest

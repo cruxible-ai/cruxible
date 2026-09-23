@@ -927,8 +927,8 @@ class ChangeSetDraft:
         name: str,
         procedure: str,
         acquisition_policy: str,
-        requested_terminal_rung: Literal[1, 2, 3],
         trigger_policy: TriggerPolicyV2 | None = None,
+        max_authority: Literal["observe", "propose", "settle"] | None = None,
         trigger_input: str | None = None,
         parameters: CanonicalValue | None = None,
         budgets: Mapping[str, int] | None = None,
@@ -947,9 +947,11 @@ class ChangeSetDraft:
 
         Lowering refuses a Procedure that is not graph-v4/v5 and one whose Source
         nodes leave a Provider slot open: the Line pins exactly what the
-        Procedure names, and an open slot is nothing to pin. A rung-2 Line
-        also needs a live ProcedureMandate over its target namespace before it
-        can run; that is checked at admission, not here.
+        Procedure names, and an open slot is nothing to pin. ``max_authority``
+        (observe, propose or settle) caps this Line below its Procedure's own
+        capability and defaults to it. A Line that proposes or settles also needs
+        a live ProcedureMandate over its target namespace before it can run;
+        that is checked at admission, not here.
         """
 
         self._members.append(
@@ -958,7 +960,7 @@ class ChangeSetDraft:
                     name=name,
                     procedure_name=procedure,
                     acquisition_policy_name=acquisition_policy,
-                    requested_terminal_rung=requested_terminal_rung,
+                    max_authority=max_authority,
                     trigger_policy=trigger_policy or ManualTriggerPolicyV1(),
                     trigger_input=trigger_input,
                     parameters={} if parameters is None else parameters,

@@ -311,7 +311,7 @@ def test_sdk_changeset_carries_procedure_line_and_mandate_together():
     changes = (
         ChangeSetDraft(pb)
         .procedure(definition=plan)
-        .line(name="demo", procedure="demo", acquisition_policy="demo", requested_terminal_rung=1)
+        .line(name="demo", procedure="demo", acquisition_policy="demo", max_authority="observe")
     )
     changes.procedure_mandate(
         ProcedureMandateInputV1(
