@@ -381,12 +381,14 @@ class GitLedger:
         contents = {path: tree[normalized_to_raw[path]] for path in ordered}
         oids = {path: self._blob_oid(content) for path, content in contents.items()}
         held: frozenset[str] = frozenset()
+        parent_entries: dict[str, GitTreeEntry] = {}
         if accepted_parent is not None:
-            held = frozenset(
-                entry.oid
+            parent_entries = {
+                entry.path: entry
                 for entry in self._list_tree(accepted_parent, with_sizes=False)
                 if entry.object_type == "blob"
-            )
+            }
+            held = frozenset(entry.oid for entry in parent_entries.values())
         absent = self._absent_objects(tuple(oid for oid in oids.values() if oid not in held))
         missing: dict[str, bytes] = {}
         for path in ordered:
@@ -398,13 +400,36 @@ class GitLedger:
             missing[blob_oid] = contents[path]
         self._write_missing_blobs(missing)
 
+        # Starting from the parent's own tree keeps Git's cache of every subtree
+        # this write leaves alone, so only changed paths and their parents are
+        # rehashed. The result is the same tree object a from-empty write makes.
+        start = None if accepted_parent is None else self._commit_tree(accepted_parent)
+        staged = (
+            ordered
+            if start is None
+            else [
+                path
+                for path in ordered
+                if (entry := parent_entries.get(path)) is None
+                or entry.oid != oids[path]
+                or entry.mode != "100644"
+            ]
+        )
+        removed = [] if start is None else [path for path in parent_entries if path not in contents]
+        zero = "0" * (40 if self.object_format() == "sha1" else 64)
         index_info = b"".join(
             b"100644 " + oids[path].encode("ascii") + b"\t" + path.encode("utf-8") + b"\x00"
-            for path in ordered
+            for path in staged
+        ) + b"".join(
+            b"0 " + zero.encode("ascii") + b"\t" + path.encode("utf-8") + b"\x00"
+            for path in removed
         )
         with tempfile.TemporaryDirectory(prefix="playbill-tree-index-") as temporary:
             environment = {"GIT_INDEX_FILE": str(Path(temporary) / "index")}
-            self._git(["read-tree", "--empty"], environment=environment)
+            self._git(
+                ["read-tree", "--empty"] if start is None else ["read-tree", start],
+                environment=environment,
+            )
             if index_info:
                 self._git(
                     ["update-index", "-z", "--index-info"],

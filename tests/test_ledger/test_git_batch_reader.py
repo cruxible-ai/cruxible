@@ -150,3 +150,36 @@ def test_extending_a_stored_tree_writes_the_same_tree_as_a_full_write(tmp_path):
     # A tree that drops a base member is not an extension of it.
     with pytest.raises(PlaybillGitError, match="every member"):
         ledger._extend_tree(base_oid, {"a.json": b"1"})
+
+
+@pytest.mark.parametrize("object_format", ["sha1", "sha256"])
+def test_a_tree_written_over_its_parent_equals_a_write_from_empty(tmp_path, object_format):
+    ledger = GitLedger.initialize(
+        tmp_path / "ledger.git",
+        object_format=object_format,
+        signing_key_path=tmp_path / "unused-key",
+        allowed_signers_path=tmp_path / "unused-signers",
+    )
+    base = {
+        "a.json": b"1",
+        "claims/x.json": b"22",
+        "claims/y.json": b"33",
+        "gone/only.json": b"removed with its directory",
+        "claims-z.json": b"z" * 70000,
+    }
+    base_tree = ledger._write_tree(base)
+    parent = ledger._git(["commit-tree", base_tree, "-m", "base"]).decode().strip()
+    changed = {
+        "a.json": b"1",  # unchanged
+        "claims/x.json": b"changed",  # modified
+        "claims/w.json": b"new",  # added beside an existing member
+        "fresh/dir/v.json": b"new directory",  # added in a new directory
+        "claims-z.json": b"z" * 70000,
+    }  # claims/y.json and gone/only.json are removed
+    over_parent = ledger._write_tree(changed, accepted_parent=parent)
+    ledger_git._TREE_LISTINGS.clear()
+    assert over_parent == ledger._write_tree(changed)
+    for sized in (True, False):
+        assert ledger._list_tree(over_parent, with_sizes=sized) == ledger._read_tree_listing(
+            over_parent, with_sizes=sized, paths=None
+        )
