@@ -169,6 +169,59 @@ def _accepted_claim_artifact(claim: ClaimArtifactAny) -> AcceptedClaim:
     )
 
 
+@dataclass
+class VerdictReads:
+    """Everything one slot's verdicts read, named so it can be re-read later.
+
+    A remembered slot answer is reused at another coordinate only when every
+    one of these reads returns what it returned then (see
+    ``ClaimVerdictReadContext.snapshot``), so the keys must cover every input a
+    verdict consults: accepted artifacts by path, the accepted attestation set
+    of each Claim version, each Claim path's latest law record, every provider
+    looked up (present or absent), and each capture's replay availability.
+    """
+
+    paths: set[str] = dataclass_field(default_factory=set)
+    attestation_versions: set[tuple[str, str]] = dataclass_field(default_factory=set)
+    law_paths: set[str] = dataclass_field(default_factory=set)
+    providers: set[str] = dataclass_field(default_factory=set)
+    captures: set[str] = dataclass_field(default_factory=set)
+
+    def update(self, other: VerdictReads) -> None:
+        self.paths |= other.paths
+        self.attestation_versions |= other.attestation_versions
+        self.law_paths |= other.law_paths
+        self.providers |= other.providers
+        self.captures |= other.captures
+
+    def keys(self) -> tuple[tuple[str, ...], ...]:
+        return (
+            *(("path", path) for path in sorted(self.paths)),
+            *(("attestations", *version) for version in sorted(self.attestation_versions)),
+            *(("law", path) for path in sorted(self.law_paths)),
+            *(("provider", identity) for identity in sorted(self.providers)),
+            *(("capture", digest) for digest in sorted(self.captures)),
+        )
+
+
+class _RecordingProviders(Mapping[str, ProviderV1]):
+    """Provider lookups attributed to the slot being resolved, absent ones included."""
+
+    def __init__(self, providers: Mapping[str, ProviderV1], reads: VerdictReads) -> None:
+        self._providers = providers
+        self._reads = reads
+
+    def __getitem__(self, identity: str) -> ProviderV1:
+        self._reads.providers.add(identity)
+        return self._providers[identity]
+
+    def __iter__(self) -> Iterator[str]:
+        raise ProposalIntegrityError("a remembered verdict cannot depend on every provider")
+
+    def __len__(self) -> int:
+        raise ProposalIntegrityError("a remembered verdict cannot depend on every provider")
+
+
 @dataclass(frozen=True)
 class ClaimVerdictReadContext:
     """One request's immutable accepted inputs; never retains current evidence.
@@ -191,6 +244,7 @@ class ClaimVerdictReadContext:
     _claim_types: dict[str, ClaimType] = dataclass_field(default_factory=dict, init=False)
     _fingerprint: tuple[str | None] | None = dataclass_field(default=None, init=False)
     _attestation_versions: set[tuple[str, str]] = dataclass_field(default_factory=set, init=False)
+    _recording: VerdictReads | None = dataclass_field(default=None, init=False)
 
     def __post_init__(self) -> None:
         from cruxible_core.indexes.evaluated_state import SelectedRows
@@ -243,6 +297,7 @@ class ClaimVerdictReadContext:
 
     def claim(self, identity: str) -> ClaimArtifactAny:
         identity = "Claim:" + identity.removeprefix("Claim:")
+        self.note_paths(claim_path(identity.removeprefix("Claim:")))
         if identity not in self._claims:
             path = claim_path(identity.removeprefix("Claim:"))
             content = self._tree.get(path)
@@ -276,6 +331,7 @@ class ClaimVerdictReadContext:
     def claim_type(self, path: str) -> ClaimType:
         """The accepted ClaimType at ``path``, parsed once per batch."""
 
+        self.note_paths(path)
         if path not in self._claim_types:
             content = self._tree.get(path)
             if content is None:
@@ -298,6 +354,8 @@ class ClaimVerdictReadContext:
         """
 
         key = (claim.identity.qualified, claim_artifact_digest(claim).tagged)
+        if self._recording is not None:
+            self._recording.attestation_versions.add(key)
         if self._attestations is None or key not in self._attestation_versions:
             versions = tuple(
                 dict.fromkeys(
@@ -335,7 +393,85 @@ class ClaimVerdictReadContext:
                 accepted_claim_providers(self.instance, coordinate=self.coordinate),
             )
         assert self._providers is not None
+        if self._recording is not None:
+            return _RecordingProviders(self._providers, self._recording)
         return self._providers
+
+    def record(self) -> VerdictReads:
+        """Attribute every following read to a fresh slot read set, until ``stop``."""
+
+        reads = VerdictReads()
+        object.__setattr__(self, "_recording", reads)
+        return reads
+
+    def stop(self) -> None:
+        object.__setattr__(self, "_recording", None)
+
+    def note_paths(self, *paths: str | None) -> None:
+        if self._recording is not None:
+            self._recording.paths.update(path for path in paths if path is not None)
+
+    def note_law(self, path: str) -> None:
+        if self._recording is not None:
+            self._recording.law_paths.add(path)
+
+    def note_capture(self, digest: str) -> None:
+        if self._recording is not None:
+            self._recording.captures.add(digest)
+
+    def snapshot(self, reads: VerdictReads) -> dict[tuple[str, ...], object]:
+        """Re-read every named input at this context's coordinate, in batches.
+
+        The same function records a slot's reads and later validates them, so a
+        remembered answer and its check always agree on what each read means.
+        """
+
+        values: dict[tuple[str, ...], object] = {}
+        paths = tuple(sorted(reads.paths))
+        providers = tuple(sorted(reads.providers))
+        versions = tuple(sorted(reads.attestation_versions))
+        with self.instance.bind_accepted_projection(self.coordinate) as projection:
+            connection = projection.typed.connection
+            for kind, column, keys in (
+                ("path", "path", paths),
+                ("provider", "identity", providers),
+            ):
+                found: dict[str, str] = {}
+                for start in range(0, len(keys), 500):
+                    chunk = keys[start : start + 500]
+                    found.update(
+                        (str(key), str(digest))
+                        for key, digest in connection.execute(
+                            f"SELECT {column}, artifact_digest FROM artifact_lookup WHERE "
+                            f"{column} IN (" + ",".join("?" for _ in chunk) + ")",
+                            chunk,
+                        )
+                    )
+                for key in keys:
+                    values[(kind, key)] = found.get(key)
+            attested: dict[tuple[str, str], list[str]] = {version: [] for version in versions}
+            for start in range(0, len(versions), 400):
+                selected = versions[start : start + 400]
+                for identity, digest, envelope in connection.execute(
+                    "SELECT claim_identity, claim_artifact_digest, envelope_digest "
+                    "FROM attestations WHERE (claim_identity, claim_artifact_digest) IN (VALUES "
+                    + ",".join("(?,?)" for _ in selected)
+                    + ")",
+                    tuple(item for version in selected for item in version),
+                ):
+                    attested[(str(identity), str(digest))].append(str(envelope))
+            for version, envelopes in attested.items():
+                values[("attestations", *version)] = tuple(sorted(envelopes))
+        if reads.law_paths:
+            with self.instance.accepted_history_reader(
+                at=AcceptedCoordinate.from_internal(self.coordinate)
+            ) as history:
+                for path, head in history.claim_law_heads(tuple(sorted(reads.law_paths))).items():
+                    values[("law", path)] = head
+        for digest in sorted(reads.captures):
+            values[("capture", digest)] = _replay_available(self.instance, digest, readers={})
+        values[("compiler",)] = self.coordinate.compiler.rule_digest
+        return values
 
 
 class _AcceptedClaimProviders(Mapping[str, ProviderV1]):
@@ -863,6 +999,7 @@ def service_evaluate_playbill_claim_verdict(
     tree = read_context.tree
     accepted = _accepted_claim_artifact(read_context.claim(claim_identity))
     history = read_context.history()
+    read_context.note_law(accepted.path)
     evidence = history.law_evidence.get(accepted.path)
     if evidence is None:
         raise ProposalIntegrityError("accepted Claim has no verdict law evidence")
@@ -874,6 +1011,8 @@ def service_evaluate_playbill_claim_verdict(
         history=history,
     )
     readers = external_readers or {}
+    for item in evidence.verdict_captures:
+        read_context.note_capture(item.capture_digest)
     captures = tuple(
         item.model_copy(
             update={
@@ -893,6 +1032,12 @@ def service_evaluate_playbill_claim_verdict(
             rule=rule,
             captures=evidence.verdict_captures,
         )
+    read_context.note_paths(
+        accepted.claim.statement.subject.artifact_path,
+        accepted.claim.statement.object.address.artifact_path
+        if isinstance(accepted.claim.statement.object, SubjectClaimObject)
+        else None,
+    )
     subject_content_digest, object_content_digest = _referent_digests(tree, accepted.claim)
     referent_current = (
         accepted.claim.backing.referent_context.subject_content_digest == subject_content_digest
