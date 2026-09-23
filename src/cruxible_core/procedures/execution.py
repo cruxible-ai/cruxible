@@ -96,6 +96,7 @@ from cruxible_client.contracts.procedures.models import (
     StateTapNodeV3,
     StateTapNodeV6,
     TransformNodeV3,
+    authority_for_rung,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.results import (
@@ -170,6 +171,7 @@ from cruxible_core.procedures.acquisition import (
     apply_acquisition_result,
 )
 from cruxible_core.procedures.egress import (
+    SERVED_AUTHORITY_TERMS,
     EffectiveRungV1,
     PreparedTerminalEgressV1,
     TerminalAuthorityRefusal,
@@ -4506,8 +4508,9 @@ class ProcedureExecutor:
             )
             raise _RunRefusal(
                 cast(ProcedureNodeRefusalCodeV1, rung.refusal_code),
-                f"Terminal {node.kind!r} requires rung {required}; the "
-                f"{rung.limiting_term} term capped this run at {rung.effective_rung}. "
+                f"Terminal {node.kind!r} requires {authority_for_rung(required)}; the "
+                f"{SERVED_AUTHORITY_TERMS[rung.limiting_term]} term capped this run at "
+                f"{authority_for_rung(rung.effective_rung)}. "
                 f"{rung.term(rung.limiting_term).reason}",
                 node_id=node.node_id,
             )

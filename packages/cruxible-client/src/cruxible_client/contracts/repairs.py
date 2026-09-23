@@ -157,7 +157,7 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "procedure_mandate_expired": (
         "accept_a_procedure_mandate_whose_window_covers_the_evaluation_instant"
     ),
-    "procedure_mandate_rung_insufficient": "accept_a_procedure_mandate_granting_the_required_rung",
+    "procedure_mandate_grant_insufficient": "accept_a_procedure_mandate_granting_the_required_authority",
     "procedure_mandate_authority_ceiling_insufficient": (
         "accept_a_procedure_mandate_whose_ceiling_covers_the_admitted_hard_caps"
     ),
@@ -170,7 +170,7 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "procedure_mandate_procedure_mismatch": (
         "accept_a_procedure_mandate_pinning_this_exact_procedure_artifact"
     ),
-    "procedure_mandate_not_applicable": "use_the_declared_terminal_rung",
+    "procedure_mandate_not_applicable": "use_the_declared_terminal_authority",
     "procedure_authority_admission_invalid": "rebuild_the_terminal_from_the_exact_admitted_run",
     "procedure_authority_admission_mismatch": "rebuild_the_terminal_from_the_exact_admitted_run",
 }

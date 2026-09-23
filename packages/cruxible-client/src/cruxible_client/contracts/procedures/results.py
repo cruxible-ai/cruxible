@@ -15,7 +15,12 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
+from cruxible_client.contracts.procedures.models import (
+    AuthorityVerb,
+    EffectiveAuthority,
+    ProcedureBudgetV3,
+    ProcedureHardCapsV3,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlanV1,
@@ -94,7 +99,7 @@ ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "procedure_mandate_superseded",
     "procedure_mandate_expired",
     "procedure_mandate_procedure_mismatch",
-    "procedure_mandate_rung_insufficient",
+    "procedure_mandate_grant_insufficient",
     "procedure_mandate_authority_ceiling_insufficient",
     "procedure_mandate_namespace_mismatch",
     "procedure_mandate_not_applicable",
@@ -110,11 +115,11 @@ ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "effect_grant_unrecognized",
     "effect_dispatch_requires_actor",
     "effect_dispatch_requires_authenticated_actor",
-    "terminal_rung_capped_by_procedure_terminal_capability",
-    "terminal_rung_capped_by_line_requested_rung",
-    "terminal_rung_capped_by_propagated_sensitivity",
-    "terminal_rung_capped_by_mandate_grant",
-    "terminal_rung_capped_by_calibration",
+    "terminal_authority_capped_by_procedure_terminal_capability",
+    "terminal_authority_capped_by_line_max_authority",
+    "terminal_authority_capped_by_propagated_sensitivity",
+    "terminal_authority_capped_by_mandate_grant",
+    "terminal_authority_capped_by_calibration",
     "provider_acquisition_plan_required",
     "provider_acquisition_plan_mismatch",
     "workspace_file_read_refused",
@@ -931,9 +936,19 @@ class ProcedureSourceCaptureAssociationV1(_StrictResultModel):
         return value
 
 
+#: The independent ceilings a served result can name as what capped a run.
+ServedAuthorityTermV1: TypeAlias = Literal[
+    "procedure_terminal_capability",
+    "line_max_authority",
+    "propagated_sensitivity",
+    "mandate_grant",
+    "calibration",
+]
+
+
 TerminalEgressVerdictV1: TypeAlias = Literal[
     "dependencies_bound_egress_pending",
-    "refused_effective_rung",
+    "refused_effective_authority",
     "prepared",
     "delivered",
     "refused",
@@ -981,9 +996,9 @@ class ProcedureTerminalEgressV1(_StrictResultModel):
         "settle_change_set",
     ]
     verdict: TerminalEgressVerdictV1
-    required_rung: int = Field(ge=0, le=3)
-    effective_rung: int | None = Field(default=None, ge=-1, le=3)
-    limiting_term: str | None = None
+    required_authority: AuthorityVerb
+    effective_authority: EffectiveAuthority | None = None
+    limiting_term: ServedAuthorityTermV1 | None = None
     operation_key: str | None = None
     procedure_mandate_digest: str | None = None
     target_paths: tuple[str, ...] = ()
@@ -1277,6 +1292,7 @@ __all__ = [
     "ProcedureTerminalEgressChildV1",
     "ProcedureTerminalEgressV1",
     "ProcedureTerminalV1",
+    "ServedAuthorityTermV1",
     "TerminalEgressVerdictV1",
     "procedure_admission_material_digest",
     "procedure_acquisition_plan_digest",

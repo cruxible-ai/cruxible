@@ -455,7 +455,7 @@ def evaluate_procedure_mandate(
     ):
         refusals.add("procedure_mandate_procedure_mismatch")
     if invocation.requested_rung > mandate_rung(mandate):
-        refusals.add("procedure_mandate_rung_insufficient")
+        refusals.add("procedure_mandate_grant_insufficient")
     if not _ceiling_within(invocation.requested_authority, _resources(mandate)):
         refusals.add("procedure_mandate_authority_ceiling_insufficient")
     if any(not _path_is_in_namespace(path, mandate.namespace) for path in invocation.target_paths):

@@ -59,7 +59,12 @@ from cruxible_client.contracts.procedure_mandates import (
     evaluate_procedure_mandate,
     procedure_mandate_digest,
 )
-from cruxible_client.contracts.procedures.models import TERMINAL_REQUIRED_RUNGS, ProcedureHardCapsV3
+from cruxible_client.contracts.procedures.models import (
+    TERMINAL_REQUIRED_RUNGS,
+    ProcedureHardCapsV3,
+    authority_for_rung,
+)
+from cruxible_client.contracts.procedures.results import ServedAuthorityTermV1
 from cruxible_client.contracts.repairs import (
     HandEditInstructionV1,
     HandEditRepairV1,
@@ -111,6 +116,15 @@ EFFECTIVE_RUNG_TERMS: tuple[EffectiveRungTermV1, ...] = (
     "mandate_grant",
     "calibration",
 )
+
+#: What a served result calls each term: the Line's ceiling is authored as a verb.
+SERVED_AUTHORITY_TERMS: dict[EffectiveRungTermV1, ServedAuthorityTermV1] = {
+    "procedure_terminal_capability": "procedure_terminal_capability",
+    "line_requested_rung": "line_max_authority",
+    "propagated_sensitivity": "propagated_sensitivity",
+    "mandate_grant": "mandate_grant",
+    "calibration": "calibration",
+}
 
 #: Below rung 0 there is no governed egress at all.  A term reaches this value
 #: only by refusing to interpret something, never by grading it.
@@ -267,7 +281,7 @@ class EffectiveRungV1(_StrictEgressModel):
     def refusal_code(self) -> str:
         """Return the typed code naming which term capped this run."""
 
-        return f"terminal_rung_capped_by_{self.limiting_term}"
+        return f"terminal_authority_capped_by_{SERVED_AUTHORITY_TERMS[self.limiting_term]}"
 
 
 def effective_rung_digest(rung: EffectiveRungV1) -> str:
@@ -313,7 +327,7 @@ def _mandate_term(
         return EffectiveRungTermReadingV1(
             term="mandate_grant",
             rung=MANDATE_FREE_RUNG_CEILING,
-            reason="No exact Procedure mandate is bound; rung 2 and rung 3 are unavailable.",
+            reason="No exact Procedure mandate is bound; proposing and settling are unavailable.",
             basis_digest=mandate_coordinate_digest,
         )
     # A principal holds a rung either directly, by its authority tier, or
@@ -325,15 +339,19 @@ def _mandate_term(
             term="mandate_grant",
             rung=caller_tier_rung,
             reason=(
-                f"The calling principal's authority tier holds rung {caller_tier_rung}; "
-                f"the exact accepted Procedure mandate grants rung {procedure_mandate_rung}."
+                f"The calling principal's authority tier holds "
+                f"{authority_for_rung(caller_tier_rung)}; the exact accepted Procedure "
+                f"mandate grants {authority_for_rung(procedure_mandate_rung)}."
             ),
             basis_digest=mandate_coordinate_digest,
         )
     return EffectiveRungTermReadingV1(
         term="mandate_grant",
         rung=procedure_mandate_rung,
-        reason=f"The exact accepted Procedure mandate grants rung {procedure_mandate_rung}.",
+        reason=(
+            f"The exact accepted Procedure mandate grants "
+            f"{authority_for_rung(procedure_mandate_rung)}."
+        ),
         basis_digest=mandate_coordinate_digest,
     )
 
@@ -365,15 +383,17 @@ def compute_effective_rung(
             term="procedure_terminal_capability",
             rung=procedure_terminal_capability,
             reason=(
-                f"The accepted Procedure declares terminal capability "
-                f"{procedure_terminal_capability}."
+                f"The accepted Procedure's terminals reach "
+                f"{authority_for_rung(procedure_terminal_capability)}."
             ),
             basis_digest=procedure_definition_digest,
         ),
         EffectiveRungTermReadingV1(
             term="line_requested_rung",
             rung=requested_terminal_rung,
-            reason=f"The accepted LineSpec requests terminal rung {requested_terminal_rung}.",
+            reason=(
+                f"The accepted Line allows at most {authority_for_rung(requested_terminal_rung)}."
+            ),
             basis_digest=line_spec_digest,
         ),
         _sensitivity_term(
@@ -709,7 +729,8 @@ class TerminalAuthorityRefusal(TerminalEgressError):
         self.repair = repair
         super().__init__(
             f"{', '.join(normalized)}: {message} "
-            f"Procedure={self.procedure_name!r}; required_rung={self.required_rung}; "
+            f"Procedure={self.procedure_name!r}; "
+            f"required_authority={authority_for_rung(self.required_rung)}; "
             f"target_namespace={list(self.target_namespace)!r}."
         )
 

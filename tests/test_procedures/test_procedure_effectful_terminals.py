@@ -535,9 +535,9 @@ def test_procedure_mandate_refusal_reports_every_failed_law_and_repair(tmp_path)
     assert caught.value.codes == (
         "procedure_mandate_authority_ceiling_insufficient",
         "procedure_mandate_expired",
+        "procedure_mandate_grant_insufficient",
         "procedure_mandate_namespace_mismatch",
         "procedure_mandate_procedure_mismatch",
-        "procedure_mandate_rung_insufficient",
         "procedure_mandate_superseded",
     )
     assert caught.value.procedure_name == "triage"

@@ -1405,7 +1405,7 @@
                   "procedure_mandate_superseded",
                   "procedure_mandate_expired",
                   "procedure_mandate_procedure_mismatch",
-                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_grant_insufficient",
                   "procedure_mandate_authority_ceiling_insufficient",
                   "procedure_mandate_namespace_mismatch",
                   "procedure_mandate_not_applicable",
@@ -1421,11 +1421,11 @@
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
-                  "terminal_rung_capped_by_procedure_terminal_capability",
-                  "terminal_rung_capped_by_line_requested_rung",
-                  "terminal_rung_capped_by_propagated_sensitivity",
-                  "terminal_rung_capped_by_mandate_grant",
-                  "terminal_rung_capped_by_calibration",
+                  "terminal_authority_capped_by_procedure_terminal_capability",
+                  "terminal_authority_capped_by_line_max_authority",
+                  "terminal_authority_capped_by_propagated_sensitivity",
+                  "terminal_authority_capped_by_mandate_grant",
+                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -2044,7 +2044,7 @@
                   "procedure_mandate_superseded",
                   "procedure_mandate_expired",
                   "procedure_mandate_procedure_mismatch",
-                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_grant_insufficient",
                   "procedure_mandate_authority_ceiling_insufficient",
                   "procedure_mandate_namespace_mismatch",
                   "procedure_mandate_not_applicable",
@@ -2060,11 +2060,11 @@
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
-                  "terminal_rung_capped_by_procedure_terminal_capability",
-                  "terminal_rung_capped_by_line_requested_rung",
-                  "terminal_rung_capped_by_propagated_sensitivity",
-                  "terminal_rung_capped_by_mandate_grant",
-                  "terminal_rung_capped_by_calibration",
+                  "terminal_authority_capped_by_procedure_terminal_capability",
+                  "terminal_authority_capped_by_line_max_authority",
+                  "terminal_authority_capped_by_propagated_sensitivity",
+                  "terminal_authority_capped_by_mandate_grant",
+                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -42088,7 +42088,7 @@
                   "procedure_mandate_superseded",
                   "procedure_mandate_expired",
                   "procedure_mandate_procedure_mismatch",
-                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_grant_insufficient",
                   "procedure_mandate_authority_ceiling_insufficient",
                   "procedure_mandate_namespace_mismatch",
                   "procedure_mandate_not_applicable",
@@ -42104,11 +42104,11 @@
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
-                  "terminal_rung_capped_by_procedure_terminal_capability",
-                  "terminal_rung_capped_by_line_requested_rung",
-                  "terminal_rung_capped_by_propagated_sensitivity",
-                  "terminal_rung_capped_by_mandate_grant",
-                  "terminal_rung_capped_by_calibration",
+                  "terminal_authority_capped_by_procedure_terminal_capability",
+                  "terminal_authority_capped_by_line_max_authority",
+                  "terminal_authority_capped_by_propagated_sensitivity",
+                  "terminal_authority_capped_by_mandate_grant",
+                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -44258,19 +44258,23 @@
                 "title": "Children",
                 "type": "array"
               },
-              "effective_rung": {
+              "effective_authority": {
                 "anyOf": [
                   {
-                    "maximum": 3,
-                    "minimum": -1,
-                    "type": "integer"
+                    "enum": [
+                      "none",
+                      "observe",
+                      "propose",
+                      "settle"
+                    ],
+                    "type": "string"
                   },
                   {
                     "type": "null"
                   }
                 ],
                 "default": null,
-                "title": "Effective Rung"
+                "title": "Effective Authority"
               },
               "fallback_reason": {
                 "anyOf": [
@@ -44308,6 +44312,13 @@
               "limiting_term": {
                 "anyOf": [
                   {
+                    "enum": [
+                      "procedure_terminal_capability",
+                      "line_max_authority",
+                      "propagated_sensitivity",
+                      "mandate_grant",
+                      "calibration"
+                    ],
                     "type": "string"
                   },
                   {
@@ -44369,11 +44380,14 @@
                 "default": null,
                 "title": "Refusal Code"
               },
-              "required_rung": {
-                "maximum": 3,
-                "minimum": 0,
-                "title": "Required Rung",
-                "type": "integer"
+              "required_authority": {
+                "enum": [
+                  "observe",
+                  "propose",
+                  "settle"
+                ],
+                "title": "Required Authority",
+                "type": "string"
               },
               "settle_outcome": {
                 "anyOf": [
@@ -44408,7 +44422,7 @@
               "verdict": {
                 "enum": [
                   "dependencies_bound_egress_pending",
-                  "refused_effective_rung",
+                  "refused_effective_authority",
                   "prepared",
                   "delivered",
                   "refused",
@@ -44422,7 +44436,7 @@
               "node_id",
               "kind",
               "verdict",
-              "required_rung"
+              "required_authority"
             ],
             "title": "ProcedureTerminalEgressV1",
             "type": "object"
@@ -67938,7 +67952,7 @@
                   "procedure_mandate_superseded",
                   "procedure_mandate_expired",
                   "procedure_mandate_procedure_mismatch",
-                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_grant_insufficient",
                   "procedure_mandate_authority_ceiling_insufficient",
                   "procedure_mandate_namespace_mismatch",
                   "procedure_mandate_not_applicable",
@@ -67954,11 +67968,11 @@
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
-                  "terminal_rung_capped_by_procedure_terminal_capability",
-                  "terminal_rung_capped_by_line_requested_rung",
-                  "terminal_rung_capped_by_propagated_sensitivity",
-                  "terminal_rung_capped_by_mandate_grant",
-                  "terminal_rung_capped_by_calibration",
+                  "terminal_authority_capped_by_procedure_terminal_capability",
+                  "terminal_authority_capped_by_line_max_authority",
+                  "terminal_authority_capped_by_propagated_sensitivity",
+                  "terminal_authority_capped_by_mandate_grant",
+                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -70033,7 +70047,7 @@
                   "procedure_mandate_superseded",
                   "procedure_mandate_expired",
                   "procedure_mandate_procedure_mismatch",
-                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_grant_insufficient",
                   "procedure_mandate_authority_ceiling_insufficient",
                   "procedure_mandate_namespace_mismatch",
                   "procedure_mandate_not_applicable",
@@ -70049,11 +70063,11 @@
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
-                  "terminal_rung_capped_by_procedure_terminal_capability",
-                  "terminal_rung_capped_by_line_requested_rung",
-                  "terminal_rung_capped_by_propagated_sensitivity",
-                  "terminal_rung_capped_by_mandate_grant",
-                  "terminal_rung_capped_by_calibration",
+                  "terminal_authority_capped_by_procedure_terminal_capability",
+                  "terminal_authority_capped_by_line_max_authority",
+                  "terminal_authority_capped_by_propagated_sensitivity",
+                  "terminal_authority_capped_by_mandate_grant",
+                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -72466,7 +72480,7 @@
                   "procedure_mandate_superseded",
                   "procedure_mandate_expired",
                   "procedure_mandate_procedure_mismatch",
-                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_grant_insufficient",
                   "procedure_mandate_authority_ceiling_insufficient",
                   "procedure_mandate_namespace_mismatch",
                   "procedure_mandate_not_applicable",
@@ -72482,11 +72496,11 @@
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
-                  "terminal_rung_capped_by_procedure_terminal_capability",
-                  "terminal_rung_capped_by_line_requested_rung",
-                  "terminal_rung_capped_by_propagated_sensitivity",
-                  "terminal_rung_capped_by_mandate_grant",
-                  "terminal_rung_capped_by_calibration",
+                  "terminal_authority_capped_by_procedure_terminal_capability",
+                  "terminal_authority_capped_by_line_max_authority",
+                  "terminal_authority_capped_by_propagated_sensitivity",
+                  "terminal_authority_capped_by_mandate_grant",
+                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -75003,7 +75017,7 @@
                   "procedure_mandate_superseded",
                   "procedure_mandate_expired",
                   "procedure_mandate_procedure_mismatch",
-                  "procedure_mandate_rung_insufficient",
+                  "procedure_mandate_grant_insufficient",
                   "procedure_mandate_authority_ceiling_insufficient",
                   "procedure_mandate_namespace_mismatch",
                   "procedure_mandate_not_applicable",
@@ -75019,11 +75033,11 @@
                   "effect_grant_unrecognized",
                   "effect_dispatch_requires_actor",
                   "effect_dispatch_requires_authenticated_actor",
-                  "terminal_rung_capped_by_procedure_terminal_capability",
-                  "terminal_rung_capped_by_line_requested_rung",
-                  "terminal_rung_capped_by_propagated_sensitivity",
-                  "terminal_rung_capped_by_mandate_grant",
-                  "terminal_rung_capped_by_calibration",
+                  "terminal_authority_capped_by_procedure_terminal_capability",
+                  "terminal_authority_capped_by_line_max_authority",
+                  "terminal_authority_capped_by_propagated_sensitivity",
+                  "terminal_authority_capped_by_mandate_grant",
+                  "terminal_authority_capped_by_calibration",
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "workspace_file_read_refused",
@@ -76482,26 +76496,30 @@
             "type": "array"
           }
         },
-        "effective_rung": {
+        "effective_authority": {
           "default": null,
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
-          "json_name": "effective_rung",
+          "json_name": "effective_authority",
           "required": false,
           "schema": {
             "anyOf": [
               {
-                "maximum": 3,
-                "minimum": -1,
-                "type": "integer"
+                "enum": [
+                  "none",
+                  "observe",
+                  "propose",
+                  "settle"
+                ],
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
             "default": null,
-            "title": "Effective Rung"
+            "title": "Effective Authority"
           }
         },
         "fallback_reason": {
@@ -76569,6 +76587,13 @@
           "schema": {
             "anyOf": [
               {
+                "enum": [
+                  "procedure_terminal_capability",
+                  "line_max_authority",
+                  "propagated_sensitivity",
+                  "mandate_grant",
+                  "calibration"
+                ],
                 "type": "string"
               },
               {
@@ -76669,16 +76694,19 @@
             "title": "Refusal Code"
           }
         },
-        "required_rung": {
+        "required_authority": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "required_rung",
+          "json_name": "required_authority",
           "required": true,
           "schema": {
-            "maximum": 3,
-            "minimum": 0,
-            "title": "Required Rung",
-            "type": "integer"
+            "enum": [
+              "observe",
+              "propose",
+              "settle"
+            ],
+            "title": "Required Authority",
+            "type": "string"
           }
         },
         "settle_outcome": {
@@ -76743,7 +76771,7 @@
           "schema": {
             "enum": [
               "dependencies_bound_egress_pending",
-              "refused_effective_rung",
+              "refused_effective_authority",
               "prepared",
               "delivered",
               "refused",
@@ -76894,19 +76922,23 @@
             "title": "Children",
             "type": "array"
           },
-          "effective_rung": {
+          "effective_authority": {
             "anyOf": [
               {
-                "maximum": 3,
-                "minimum": -1,
-                "type": "integer"
+                "enum": [
+                  "none",
+                  "observe",
+                  "propose",
+                  "settle"
+                ],
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
             "default": null,
-            "title": "Effective Rung"
+            "title": "Effective Authority"
           },
           "fallback_reason": {
             "anyOf": [
@@ -76944,6 +76976,13 @@
           "limiting_term": {
             "anyOf": [
               {
+                "enum": [
+                  "procedure_terminal_capability",
+                  "line_max_authority",
+                  "propagated_sensitivity",
+                  "mandate_grant",
+                  "calibration"
+                ],
                 "type": "string"
               },
               {
@@ -77005,11 +77044,14 @@
             "default": null,
             "title": "Refusal Code"
           },
-          "required_rung": {
-            "maximum": 3,
-            "minimum": 0,
-            "title": "Required Rung",
-            "type": "integer"
+          "required_authority": {
+            "enum": [
+              "observe",
+              "propose",
+              "settle"
+            ],
+            "title": "Required Authority",
+            "type": "string"
           },
           "settle_outcome": {
             "anyOf": [
@@ -77044,7 +77086,7 @@
           "verdict": {
             "enum": [
               "dependencies_bound_egress_pending",
-              "refused_effective_rung",
+              "refused_effective_authority",
               "prepared",
               "delivered",
               "refused",
@@ -77058,7 +77100,7 @@
           "node_id",
           "kind",
           "verdict",
-          "required_rung"
+          "required_authority"
         ],
         "title": "ProcedureTerminalEgressV1",
         "type": "object"
@@ -77066,7 +77108,7 @@
       "required_fields": [
         "kind",
         "node_id",
-        "required_rung",
+        "required_authority",
         "verdict"
       ]
     },

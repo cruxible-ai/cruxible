@@ -93,7 +93,9 @@ from cruxible_client.contracts.procedures.models import (
     RepeatNodeV4,
     SourceNodeV3,
     SourceNodeV4,
+    authority_for_rung,
     iter_pin_bindings,
+    required_authority,
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlanV2,
@@ -205,6 +207,7 @@ from cruxible_core.procedures.acquisition import (
     ACQUISITION_REFUSED,
 )
 from cruxible_core.procedures.egress import (
+    SERVED_AUTHORITY_TERMS,
     CaptureTerminalEgressSink,
     PreparedTerminalEgressV1,
     TerminalEgressReceiptV1,
@@ -2022,18 +2025,25 @@ def _fold_terminal_egress(
         else (() if current is None else current.target_paths)
     )
     verdict = _string("verdict") or "failed"
+    # The journal keeps the internal ordering; a served result speaks verbs.
+    if verdict == "refused_effective_rung":
+        verdict = "refused_effective_authority"
+    limiting_term = _string("limiting_term")
     return ProcedureTerminalEgressV1(
         node_id=str(payload.get("node_id")),
         kind=cast(Any, _string("kind")),
         verdict=cast(Any, verdict),
-        required_rung=int(cast(int, payload.get("required_rung", 0))),
-        effective_rung=(
-            int(cast(int, payload["effective_rung"]))
+        required_authority=required_authority(int(cast(int, payload.get("required_rung", 0)))),
+        effective_authority=(
+            authority_for_rung(cast(int, payload["effective_rung"]))
             if isinstance(payload.get("effective_rung"), int)
-            else (None if current is None else current.effective_rung)
+            else (None if current is None else current.effective_authority)
         ),
-        limiting_term=_string("limiting_term")
-        or (None if current is None else current.limiting_term),
+        limiting_term=(
+            SERVED_AUTHORITY_TERMS[cast(Any, limiting_term)]
+            if limiting_term is not None
+            else (None if current is None else current.limiting_term)
+        ),
         operation_key=_string("operation_key")
         or (None if current is None else current.operation_key),
         procedure_mandate_digest=(

@@ -152,7 +152,7 @@ def test_procedure_mandate_runtime_refusals_are_complete_and_deterministic() -> 
             update={"accepted_mandate_digest": procedure_mandate_digest(rung_two).tagged}
         ),
     )
-    assert rung_refused.refusal_codes == ("procedure_mandate_rung_insufficient",)
+    assert rung_refused.refusal_codes == ("procedure_mandate_grant_insufficient",)
 
 
 def test_procedure_mandate_successor_requires_exact_predecessor() -> None:

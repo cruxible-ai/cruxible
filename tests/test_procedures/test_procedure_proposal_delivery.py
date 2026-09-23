@@ -253,7 +253,7 @@ def test_a_line_terminal_produces_a_proposal_the_manager_accepts_and_reads_back(
     assert egress.node_id == "propose"
     assert egress.kind == "propose_change_set"
     assert egress.verdict == "delivered"
-    assert egress.effective_rung == 2
+    assert egress.effective_authority == "propose"
     assert egress.operation_key is not None
     assert egress.procedure_mandate_digest is not None
     assert egress.proposal_id is not None and egress.candidate_digest is not None
@@ -358,12 +358,12 @@ def test_a_line_requesting_rung_one_is_capped_before_the_proposal_door(tmp_path:
     state = run_line(instance, root, line)
 
     refusal = _refusal(state)
-    assert refusal.code == "terminal_rung_capped_by_line_requested_rung", refusal
+    assert refusal.code == "terminal_authority_capped_by_line_max_authority", refusal
     assert _proposal_refs(instance) == []
     (egress,) = state.terminal_egress
-    assert egress.verdict == "refused_effective_rung"
-    assert egress.effective_rung == 1
-    assert egress.limiting_term == "line_requested_rung"
+    assert egress.verdict == "refused_effective_authority"
+    assert egress.effective_authority == "observe"
+    assert egress.limiting_term == "line_max_authority"
 
 
 def test_a_source_failure_stops_the_run_before_the_terminal(tmp_path: Path) -> None:

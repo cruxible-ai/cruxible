@@ -777,6 +777,21 @@ AuthorityVerb = Literal["observe", "propose", "settle"]
 # Authored surfaces and results speak these verbs; the numbers are internal ordering.
 AUTHORITY_RUNG: dict[str, Literal[1, 2, 3]] = {"observe": 1, "propose": 2, "settle": 3}
 RUNG_AUTHORITY: dict[int, AuthorityVerb] = {1: "observe", 2: "propose", 3: "settle"}
+#: What a served result names in place of an ordering value: a run capped below
+#: observation may egress nothing at all.
+EffectiveAuthority = Literal["none", "observe", "propose", "settle"]
+
+
+def required_authority(rung: int) -> AuthorityVerb:
+    """The verb a terminal's required rung serves as; capture (rung 0) observes too."""
+
+    return RUNG_AUTHORITY[max(rung, 1)]
+
+
+def authority_for_rung(rung: int) -> EffectiveAuthority:
+    """The verb an effective rung serves as, or none below observation."""
+
+    return "none" if rung < 0 else required_authority(rung)
 
 
 def derived_terminal_capability(
