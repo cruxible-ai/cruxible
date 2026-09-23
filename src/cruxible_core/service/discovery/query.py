@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -141,6 +141,7 @@ def _fact_row(
     claim_types: dict[str, ClaimType],
     attestation_envelopes: tuple[ClaimAttestationV2, ...],
     availability_fingerprint: str | None = None,
+    store: Any = None,
 ) -> ClaimFactRowV1:
     """Assemble one Claim's verdict inputs exactly as the verdict service does."""
 
@@ -173,6 +174,7 @@ def _fact_row(
                     item.capture_digest,
                     readers=readers,
                     fingerprint=availability_fingerprint,
+                    store=store,
                 )
             }
         )
@@ -337,6 +339,8 @@ class _AcceptedQueryFactsRead:
                     wanted.append(path)
             law_evidence.prefetch(tuple(wanted))
         availability_fingerprint = verdict_input_fingerprint(self._instance)
+        # One store per build: obtaining it checks the storage binding.
+        store = self._instance.body_store()
         rows: list[ClaimFactRowV1] = []
         for path in sorted(self._claim_paths, key=lambda item: item.encode("utf-8")):
             # The full-history path historically looked up evidence before
@@ -364,6 +368,7 @@ class _AcceptedQueryFactsRead:
                     claim=claim,
                     claim_types=self._claim_types,
                     availability_fingerprint=availability_fingerprint,
+                    store=store,
                     attestation_envelopes=tuple(
                         self._attestations.get(
                             (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()

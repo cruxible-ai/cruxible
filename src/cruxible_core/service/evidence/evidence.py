@@ -245,6 +245,7 @@ class ClaimVerdictReadContext:
     _fingerprint: tuple[str | None] | None = dataclass_field(default=None, init=False)
     _attestation_versions: set[tuple[str, str]] = dataclass_field(default_factory=set, init=False)
     _recording: VerdictReads | None = dataclass_field(default=None, init=False)
+    _store: Any = dataclass_field(default=None, init=False)
 
     def __post_init__(self) -> None:
         from cruxible_core.indexes.evaluated_state import SelectedRows
@@ -397,6 +398,13 @@ class ClaimVerdictReadContext:
             return _RecordingProviders(self._providers, self._recording)
         return self._providers
 
+    def body_store(self) -> Any:
+        """The instance's body store, obtained (and its storage binding checked) once."""
+
+        if self._store is None:
+            object.__setattr__(self, "_store", self.instance.body_store())
+        return self._store
+
     def record(self) -> VerdictReads:
         """Attribute every following read to a fresh slot read set, until ``stop``."""
 
@@ -469,7 +477,9 @@ class ClaimVerdictReadContext:
                 for path, head in history.claim_law_heads(tuple(sorted(reads.law_paths))).items():
                     values[("law", path)] = head
         for digest in sorted(reads.captures):
-            values[("capture", digest)] = _replay_available(self.instance, digest, readers={})
+            values[("capture", digest)] = _replay_available(
+                self.instance, digest, readers={}, store=self.body_store()
+            )
         values[("compiler",)] = self.coordinate.compiler.rule_digest
         return values
 
@@ -633,6 +643,7 @@ def _current_replay_available(
     *,
     readers: Mapping[str, ExternalSourceReaderProtocol],
     fingerprint: str | None = None,
+    store: Any = None,
 ) -> bool:
     """Whether a Capture's evidence can still be replayed from retained material.
 
@@ -651,7 +662,7 @@ def _current_replay_available(
         remembered = memo_get(_AVAILABILITY_MEMO, key)
         if remembered is not None:
             return remembered
-    available = _replay_available(instance, capture_digest_value, readers=readers)
+    available = _replay_available(instance, capture_digest_value, readers=readers, store=store)
     if key is not None:
         memo_put(_AVAILABILITY_MEMO, key, available, capacity=_AVAILABILITY_CAPACITY)
     return available
@@ -662,8 +673,9 @@ def _replay_available(
     capture_digest_value: str,
     *,
     readers: Mapping[str, ExternalSourceReaderProtocol],
+    store: Any = None,
 ) -> bool:
-    store = instance.body_store()
+    store = store if store is not None else instance.body_store()
     if not store.verify(capture_digest_value):
         return False
     envelope = parse_capture_envelope(
@@ -673,7 +685,7 @@ def _replay_available(
         )
     )
     if isinstance(envelope.source, CasSourceReferenceV1):
-        return store.verify(envelope.source.content_digest)
+        return bool(store.verify(envelope.source.content_digest))
     if isinstance(envelope.source, LedgerSourceReferenceV1):
         try:
             material = (
@@ -1021,6 +1033,7 @@ def service_evaluate_playbill_claim_verdict(
                     item.capture_digest,
                     readers=readers,
                     fingerprint=read_context.availability_fingerprint() if batched else None,
+                    store=read_context.body_store() if batched else None,
                 )
             }
         )

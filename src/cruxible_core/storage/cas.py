@@ -33,9 +33,9 @@ def _fsync_directory(path: Path) -> None:
 _VERIFIED_CAPACITY = 65536
 _VERIFIED: OrderedDict[tuple[str, str], tuple[int, int, int, int, int]] = OrderedDict()
 _VERIFIED_LOCK = threading.Lock()
-# Validated shard directories, with their identity and the path they resolve to.
+# Validated shard directories and their lstat identity (device, inode, mode).
 _VALID_SHARD_CAPACITY = 4096
-_VALID_SHARDS: OrderedDict[tuple[str, str], tuple[int, int, int, str]] = OrderedDict()
+_VALID_SHARDS: OrderedDict[tuple[str, str], tuple[int, int, int]] = OrderedDict()
 
 
 def _after_fork_in_child() -> None:
@@ -98,6 +98,12 @@ class ContentAddressedBodyStore:
             raise PlaybillCasError("CAS algorithm directory is not trustworthy")
         os.chmod(algorithm, 0o700)
         self._algorithm_root = algorithm.resolve(strict=True)
+        root_identity = self._algorithm_root.lstat()
+        self._algorithm_identity = (
+            root_identity.st_dev,
+            root_identity.st_ino,
+            root_identity.st_mode,
+        )
 
     @staticmethod
     def digest_bytes(content: bytes) -> CasDigest:
@@ -111,23 +117,28 @@ class ContentAddressedBodyStore:
         return directory / value.value
 
     def _validate_shard(self, directory: Path) -> None:
-        # A shard validated before is re-resolved only if its lstat identity
-        # (device, inode, mode) changed: a swapped-in symlink or directory differs.
-        # The resolved path covers the ancestors, which the leaf's inode does not.
+        # A shard validated before is trusted only while its lstat identity
+        # (device, inode, mode) and the algorithm root's are both unchanged: a
+        # swapped-in symlink or directory at either level differs. Ancestors
+        # above the algorithm root are the instance's storage-path binding,
+        # checked where the store is obtained.
         try:
             identity = directory.lstat()
-            resolved_path = os.path.realpath(directory)
+            root = self._algorithm_root.lstat()
         except OSError:
             identity = None
         key = (str(self._algorithm_root), directory.name)
         signature = (
-            None
-            if identity is None
-            else (identity.st_dev, identity.st_ino, identity.st_mode, resolved_path)
+            None if identity is None else (identity.st_dev, identity.st_ino, identity.st_mode)
         )
         with _VERIFIED_LOCK:
             known = _VALID_SHARDS.get(key)
-        if identity is not None and known == signature and stat.S_ISDIR(identity.st_mode):
+        if (
+            identity is not None
+            and known == signature
+            and stat.S_ISDIR(identity.st_mode)
+            and (root.st_dev, root.st_ino, root.st_mode) == self._algorithm_identity
+        ):
             return
         if directory.is_symlink() or not directory.is_dir():
             raise PlaybillCasError("CAS shard directory is not trustworthy")
