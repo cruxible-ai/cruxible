@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.claim_types import (
@@ -258,3 +260,91 @@ def test_two_covering_mandates_refuse_as_ambiguous(tmp_path: Path) -> None:
     state = run_settle(instance, root, line)
     egress = _egress(state)
     assert (egress.verdict, egress.refusal_code) == ("refused", "settle_mandate_ambiguous")
+
+
+class _Crash(BaseException):
+    """A process death: not an exception any code path may catch and continue."""
+
+
+def test_a_duplicate_settle_delivery_returns_the_same_settled_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from cruxible_core.procedures import proposal_delivery as delivery_module
+
+    receipts = []
+    original = delivery_module.ProposalTerminalEgressSink.deliver_terminal_egress
+
+    def twice(self, **kwargs):  # type: ignore[no-untyped-def]
+        first = original(self, **kwargs)
+        second = original(self, **kwargs)
+        receipts.append((first, second))
+        return second
+
+    monkeypatch.setattr(
+        delivery_module.ProposalTerminalEgressSink, "deliver_terminal_egress", twice
+    )
+    instance, root, line = settle_world(tmp_path)
+    generations = len(instance.accepted_history())
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    ((first, second),) = receipts
+    assert first == second and first.outcome == "settled"  # type: ignore[attr-defined]
+    assert len(instance.accepted_history()) == generations + 1
+
+
+def _crash_settle(monkeypatch, *, after_activation: bool) -> None:  # type: ignore[no-untyped-def]
+    from cruxible_core.procedures import proposal_delivery as delivery_module
+    from cruxible_core.procedures.execution import ProcedureExecutor
+
+    crashed = {"value": False}
+    original_activate = delivery_module.ProposalTerminalEgressSink._activate
+    original_append = ProcedureExecutor._append_event
+
+    def crashing_activate(self, result, **kwargs):  # type: ignore[no-untyped-def]
+        if after_activation:
+            original_activate(self, result, **kwargs)
+        crashed["value"] = True
+        raise _Crash()
+
+    def dead_append(self, admission, records, event_kind, payload):  # type: ignore[no-untyped-def]
+        if crashed["value"]:
+            raise _Crash()
+        return original_append(self, admission, records, event_kind, payload)
+
+    monkeypatch.setattr(delivery_module.ProposalTerminalEgressSink, "_activate", crashing_activate)
+    monkeypatch.setattr(ProcedureExecutor, "_append_event", dead_append)
+
+
+@pytest.mark.parametrize(
+    "after_activation", [True, False], ids=["after-acceptance", "before-activation"]
+)
+def test_a_crashed_settlement_recovers_one_accepted_result(
+    tmp_path: Path, monkeypatch, after_activation: bool
+) -> None:
+    from datetime import timedelta
+
+    from cruxible_core.service.procedures.procedure_runs import service_get_playbill_procedure_run
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, root, line = settle_world(tmp_path)
+    generations = len(instance.accepted_history())
+    _crash_settle(monkeypatch, after_activation=after_activation)
+    with pytest.raises(_Crash):
+        run_settle(instance, root, line)
+    monkeypatch.undo()
+    assert len(instance.accepted_history()) == generations + (1 if after_activation else 0)
+
+    recovered = service_recover_proposal_egress(
+        instance, recorded_at=fixtures.NOW + timedelta(minutes=1)
+    )
+    ((run_id, disposition),) = recovered.items()
+    assert disposition == "delivered"
+    # Exactly one accepted settlement, whichever side of activation crashed.
+    assert len(instance.accepted_history()) == generations + 1
+    (egress,) = service_get_playbill_procedure_run(instance, run_id=run_id).terminal_egress
+    assert egress.settle_outcome == "settled"
+    assert egress.accepted_git_oid == instance.accepted_coordinate().git_oid
+    assert (
+        service_recover_proposal_egress(instance, recorded_at=fixtures.NOW + timedelta(minutes=2))
+        == {}
+    )
