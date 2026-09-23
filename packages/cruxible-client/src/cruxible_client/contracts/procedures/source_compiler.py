@@ -24,6 +24,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
     ProcedureDefinitionV6,
     ProcedureHardCapsV3,
+    derived_terminal_capability,
 )
 from cruxible_client.contracts.procedures.source_program import (
     ProcedureSourceV1,
@@ -1581,7 +1582,7 @@ def _compile_source(
     output: SourceContract,
     budget: ProcedureBudgetV3,
     hard_caps: ProcedureHardCapsV3,
-    terminal_capability: Literal[1, 2, 3] = 1,
+    terminal_capability: Literal[1, 2, 3] | None = None,
     description: str | None = None,
 ) -> CompiledSource:
     compiler = _Compiler(program, input, output)
@@ -1632,7 +1633,14 @@ def _compile_source(
     compiler.environment.update({n: Namespace(n) for n in names[1:]})
     if not compiler.statements(function.body):
         compiler.fail(function, "Every path must explicitly return or halt", "missing_return")
-    if compiler.required_child_rung > terminal_capability:
+    # New authoring derives capability from the compiled terminals and children;
+    # an explicit value only reproduces a retained artifact during verification.
+    capability = (
+        derived_terminal_capability(compiler.nodes, child_rung=compiler.required_child_rung)
+        if terminal_capability is None
+        else terminal_capability
+    )
+    if compiler.required_child_rung > capability:
         compiler.fail(
             function,
             "A child requires a higher terminal capability than this Procedure",
@@ -1652,7 +1660,7 @@ def _compile_source(
             else None,
             budget=budget,
             hard_caps=hard_caps,
-            terminal_capability=terminal_capability,
+            terminal_capability=capability,
             source=program.model_copy(
                 update={
                     "contracts": {
@@ -1686,7 +1694,7 @@ def compile_source(
     output: SourceContract,
     budget: ProcedureBudgetV3,
     hard_caps: ProcedureHardCapsV3,
-    terminal_capability: Literal[1, 2, 3] = 1,
+    terminal_capability: Literal[1, 2, 3] | None = None,
     description: str | None = None,
 ) -> CompiledSource:
     """Return a graph or a localized diagnostic, including unsupported schemas."""

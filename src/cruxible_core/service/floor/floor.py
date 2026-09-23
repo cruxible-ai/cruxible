@@ -43,6 +43,7 @@ from cruxible_client.contracts.errors import ProjectionIntegrityError, ProposalI
 from cruxible_client.contracts.primitives import pretty_json
 from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactV1, ProcedureArtifactV2
 from cruxible_client.contracts.procedures.models import (
+    RUNG_AUTHORITY,
     ProcedureBudgetV3,
     ProcedureHardCapsV3,
     ProcedurePinSlotRefV1,
@@ -155,7 +156,8 @@ class PlaybillProcedureCapabilitiesV1(_StrictFloorModel):
     """Compact execution shape used when discovering a Procedure."""
 
     node_kinds: tuple[str, ...]
-    terminal_capability: Literal[1, 2, 3]
+    # The most this Procedure's terminals can do: observe, propose or settle.
+    authority: Literal["observe", "propose", "settle"]
 
 
 class PlaybillProcedureGovernanceV1(_StrictFloorModel):
@@ -420,7 +422,7 @@ def _procedure_cards(
                 node_kinds=tuple(
                     sorted({node.kind for node in definition.nodes}, key=lambda item: item.encode())
                 ),
-                terminal_capability=definition.terminal_capability,
+                authority=RUNG_AUTHORITY[definition.terminal_capability],
             ),
             budget=definition.budget,
             hard_caps=definition.hard_caps,

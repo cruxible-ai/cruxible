@@ -291,7 +291,6 @@ procedure(
     output: Contract,
     budget: ProcedureBudgetV3,
     hard_caps: ProcedureHardCapsV3,
-    terminal_capability: Literal[1, 2, 3] = 1,
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot",
     acquisition_policy: str | None = None,
     description: str | None = None,
@@ -305,10 +304,13 @@ procedure(
 | `output` | Required | Contract for successful returned values. Every successful reachable return must satisfy it. |
 | `budget` | Required | Declared resource budget, using the current model. No hidden unlimited default. |
 | `hard_caps` | Required | Declared Procedure ceilings; effective admission policy can be stricter. |
-| `terminal_capability` | `1` | Existing numeric capability contract. The graph and chosen run lane must agree; this field does not grant authority. |
 | `activation_policy` | `"snapshot"` | Existing lifecycle behavior; values retain their current meanings. |
 | `acquisition_policy` | `None` | Accepted acquisition policy when needed by Source operations. Missing required policy prevents readiness. |
 | `description` | `None` | Optional human description retained with the definition. |
+
+A Procedure's authority is not an argument: it is the most its terminals and
+invoked children can do (`observe`, `propose` or `settle`), and previews report it
+as `authority`.
 
 **Function form:** `def name(request[, world][, bindings]): ...`. `request`
 is required, including for an explicitly empty input contract. Optional `world`
@@ -346,7 +348,6 @@ decorator; reading a property has no network or execution effect.
 | `filename` | `str` | Caller-local diagnostic/source-map label. Accepted source uses a portable Procedure filename and relative lines, so relocating identical code does not change its identity. |
 | `contract_in`, `contract_out` | `Contract` | Declared invocation and successful-result contracts. |
 | `budget`, `hard_caps` | Existing models | Declared limits. |
-| `terminal_capability` | `Literal[1, 2, 3]` | Declared terminal capability. |
 | `activation_policy` | Existing literal union | Declared activation policy. |
 | `acquisition_policy`, `description` | `str \| None` | Optional definition metadata. |
 | `bindings` | Readonly mapping of slot name to `BindingValue` | Explicit selections currently supplied; an absent slot remains unbound. |
@@ -1010,7 +1011,7 @@ No arbitrary Python fallback is introduced to cover those missing spellings.
 
 Reuse the current type and its existing fields:
 `name`, `ready_for_prepare`, `contracts`, `contract_in`, `contract_out`,
-`terminal_capability`, `acquisition_policy`, `nodes`, `edges`, `providers`,
+`authority`, `acquisition_policy`, `nodes`, `edges`, `providers`,
 `terminals`, `returns`, `budget`, `hard_caps`, `errors`, and `pending_checks`.
 Its normal structured serialization remains the inspection surface. The SDK
 objects are typed: contract references use existing contract-reference variants;
@@ -1423,7 +1424,6 @@ request fields, including the format enum and byte limit.
     output=ObserveOutput,
     budget=BUDGET,
     hard_caps=CAPS,
-    terminal_capability=1,
     acquisition_policy="security.feed_reads",
 )
 def observe_feed(request, bindings):
@@ -1521,7 +1521,6 @@ observer or provider computation supplies a hidden value.
     output=VerifyOutput,
     budget=BUDGET,
     hard_caps=CAPS,
-    terminal_capability=2,
 )
 def verify_feed(request, world, bindings):
     feed = world.security.feed[request.feed_id]

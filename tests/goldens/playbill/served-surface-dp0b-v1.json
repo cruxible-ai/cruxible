@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-23:rung3-mandate-v2-line-verbs",
-    "surface_digest": "sha256:0d4d40d72b5c1d9bd53f6cc4c876860db0bce663886cc07d42b5323b2e876df3"
+    "register_entry": "2026-09-23:rung3-derived-procedure-authority",
+    "surface_digest": "sha256:ee68791ce117a11d43713221e8fab776d8fd925fee4d42fbb8dfa4e5c78a7bab"
   },
   "surface": {
     "cli_leaves": [
@@ -1665,7 +1665,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/procedures/source/preview",
         "request_model": "cruxible_client.contracts.procedures.source_requests.ProcedureSourcePreviewRequestV1",
-        "request_schema_digest": "sha256:390ec336f814d3d9e635e06885651fc846f1fc833277558002af53c3886a2cba",
+        "request_schema_digest": "sha256:09887044336f3d1d93ba9a7e6be3322126f52cb3e375147714fb4065fb3dcc04",
         "response_model": "cruxible_client.contracts.procedures.source_requests.ProcedureSourcePreviewV1",
         "response_schema_digest": "sha256:9c5f20acfbb91bf336fb0502900d344943be6f51cfe2ff63caf999511c00db3d"
       },

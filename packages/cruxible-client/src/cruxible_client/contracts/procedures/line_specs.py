@@ -46,6 +46,9 @@ from cruxible_client.contracts.procedures.closure import (
     close_procedure_pin_slots,
 )
 from cruxible_client.contracts.procedures.models import (
+    AUTHORITY_RUNG,
+    RUNG_AUTHORITY,
+    AuthorityVerb,
     ExhaustTapNodeV3,
     ProcedureDefinitionV4,
     ProcedurePinSlotRefV1,
@@ -317,10 +320,7 @@ class LineSpecV3(LineSpecV2):
     trigger_policy: TriggerPolicyV2  # type: ignore[assignment]
 
 
-LineAuthority = Literal["observe", "propose", "settle"]
-# Internal ordering only: stored admission evidence and indexes keep these numbers.
-AUTHORITY_RUNG: dict[str, Literal[1, 2, 3]] = {"observe": 1, "propose": 2, "settle": 3}
-RUNG_AUTHORITY: dict[int, LineAuthority] = {1: "observe", 2: "propose", 3: "settle"}
+LineAuthority = AuthorityVerb
 
 
 class LineSpecV4(LineSpecV3):

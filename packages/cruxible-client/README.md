@@ -3237,7 +3237,6 @@ Import: `cruxible_client.authoring.procedures.Sequence`. [Source](src/cruxible_c
 | `budget` | `ProcedureBudgetV3` | `Required` |
 | `hard_caps` | `ProcedureHardCapsV3` | `Required` |
 | `returns` | `str \| None` | `None` |
-| `terminal_capability` | `Literal[1, 2, 3]` | `1` |
 | `activation_policy` | `Literal['drain', 'abort', 'snapshot', 'epoch-check']` | `'snapshot'` |
 | `acquisition_policy` | `str \| None` | `None` |
 | `description` | `str \| None` | `None` |
@@ -3463,7 +3462,7 @@ Import: `cruxible_client.authoring.procedures.ProcedurePreview`. [Source](src/cr
 | `contracts` | `tuple[CarriedContractInput, ...]` | `Required` |
 | `contract_in` | `dict[str, Any]` | `Required` |
 | `contract_out` | `dict[str, Any]` | `Required` |
-| `terminal_capability` | `Literal[1, 2, 3]` | `Required` |
+| `authority` | `Literal["observe", "propose", "settle"]` | `Required` |
 | `acquisition_policy` | `str \| None` | `Required` |
 | `nodes` | `tuple[dict[str, Any], ...]` | `Required` |
 | `edges` | `dict[str, dict[str, str]]` | `Field(default_factory=dict)` |
@@ -4147,7 +4146,7 @@ This root export is the frozen graph-v3 model, not an alias for the latest graph
 | `measurements` | `tuple[ProcedureMeasurementDeclarationV1, ...]` | `()` |
 | `budget` | `ProcedureBudgetV3` | `Required` |
 | `hard_caps` | `ProcedureHardCapsV3` | `Required` |
-| `terminal_capability` | `Literal[1, 2, 3]` | `Required` |
+| `terminal_capability` | `Literal[1, 2, 3]` | `Required`; authoring derives it from the terminals and invoked children |
 | `annotations` | `object` | `Field(default_factory=dict)` |
 
 <a id="api-procedurehardcapsv3"></a>

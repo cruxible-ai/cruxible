@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Annotated, Literal, TypeAlias
+from collections.abc import Iterable, Mapping
+from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -778,6 +779,32 @@ TERMINAL_REQUIRED_RUNGS = {
     "mandate_settlement": 3,
 }
 TERMINAL_NODE_KINDS = frozenset((*TERMINAL_REQUIRED_RUNGS, "halt", "return"))
+
+
+AuthorityVerb = Literal["observe", "propose", "settle"]
+# Authored surfaces and results speak these verbs; the numbers are internal ordering.
+AUTHORITY_RUNG: dict[str, Literal[1, 2, 3]] = {"observe": 1, "propose": 2, "settle": 3}
+RUNG_AUTHORITY: dict[int, AuthorityVerb] = {1: "observe", 2: "propose", 3: "settle"}
+
+
+def derived_terminal_capability(
+    nodes: Iterable[object], *, child_rung: int = 0
+) -> Literal[1, 2, 3]:
+    """What a Procedure's own terminals (and any child it invokes) require it to do.
+
+    Authors do not state a Procedure's capability: it is the highest level any
+    terminal node or invoked child needs, and never below observe (1).
+    """
+
+    required = [child_rung]
+    for node in nodes:
+        kind = node.get("kind") if isinstance(node, Mapping) else getattr(node, "kind", None)
+        if isinstance(kind, str):
+            required.append(TERMINAL_REQUIRED_RUNGS.get(kind, 0))
+    level = max(1, *required)
+    if level > 3:
+        raise ValueError("a Procedure terminal requires an unknown authority level")
+    return cast(Literal[1, 2, 3], level)
 
 
 class ProcedureDefinitionV3(_StrictProcedureModel):

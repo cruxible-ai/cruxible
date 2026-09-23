@@ -31,7 +31,12 @@ from cruxible_client.authoring.procedures import (
 from cruxible_client.authoring.queries import QueryBinding
 from cruxible_client.authoring.sdk_types import ProcedureRef, QueryRef
 from cruxible_client.contracts.canonical import normalize_canonical
-from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
+from cruxible_client.contracts.procedures.models import (
+    RUNG_AUTHORITY,
+    ProcedureBudgetV3,
+    ProcedureHardCapsV3,
+    derived_terminal_capability,
+)
 from cruxible_client.contracts.procedures.source_program import SourceContract
 from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourcePreviewRequestV1,
@@ -99,10 +104,6 @@ class ProcedureBlueprint:
         return self._request.hard_caps.model_copy(deep=True)
 
     @property
-    def terminal_capability(self) -> Literal[1, 2, 3]:
-        return self._request.terminal_capability
-
-    @property
     def description(self) -> str | None:
         return self._request.description
 
@@ -160,7 +161,7 @@ class ProcedureBlueprint:
                 contracts=(self.contract_in, self.contract_out),
                 contract_in=self._request.input.schema_.model_dump(),
                 contract_out=self._request.output.schema_.model_dump(),
-                terminal_capability=self.terminal_capability,
+                authority="observe",
                 acquisition_policy=self.acquisition_policy,
                 nodes=(),
                 returns="",
@@ -216,7 +217,11 @@ class ProcedureBlueprint:
             contract_out=definition.contract_out
             if definition
             else self._request.output.schema_.model_dump(),
-            terminal_capability=self._request.terminal_capability,
+            authority=RUNG_AUTHORITY[
+                definition.terminal_capability
+                if definition
+                else derived_terminal_capability(compiled.nodes)
+            ],
             acquisition_policy=self.acquisition_policy,
             nodes=compiled.nodes,
             edges=edges,
@@ -330,7 +335,6 @@ def procedure(
     output: CarriedContractInput,
     budget: ProcedureBudgetV3,
     hard_caps: ProcedureHardCapsV3,
-    terminal_capability: Literal[1, 2, 3] = 1,
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot",
     acquisition_policy: str | None = None,
     description: str | None = None,
@@ -374,7 +378,6 @@ def procedure(
                 contracts=contracts,
                 budget=budget,
                 hard_caps=hard_caps,
-                terminal_capability=terminal_capability,
                 description=description,
             ),
             activation_policy=activation_policy,
