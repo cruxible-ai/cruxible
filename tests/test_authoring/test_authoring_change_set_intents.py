@@ -787,13 +787,16 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
     # Literal schema: a value the accepted ClaimType's enum does not admit.
     schema_claim_member = _claim(value="not-a-status")
 
-    cases: tuple[tuple[str, tuple[object, ...], object, str, str], ...] = (
+    # A refused statement field is addressed at the authored field, which an SDK
+    # maps back to the keyword that set it; other refusals keep the artifact path.
+    cases: tuple[tuple[str, tuple[object, ...], object, str, str, str], ...] = (
         (
             "claim_type_succession",
             (claim_type_member, SubjectAuthoringPayloadV1(subject=_shell("wi-2"))),
             claim_type_member,
             "playbill.claim_type.stale_predecessor",
             claim_type_path("project.work_item.status"),
+            "",
         ),
         (
             "subject_succession",
@@ -801,13 +804,15 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
             subject_member,
             "playbill.subject.stale_predecessor",
             subject_path(SUBJECT_KIND, "wi-42"),
+            "",
         ),
         (
             "permitted_roles",
             (role_type_member, role_claim_member),
             role_claim_member,
-            "playbill.claim.statement_contract_mismatch",
+            "playbill.claim.role_not_permitted",
             "",
+            "role",
         ),
         (
             "literal_schema",
@@ -815,10 +820,11 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
             schema_claim_member,
             "playbill.claim.literal_schema_invalid",
             "",
+            "object",
         ),
     )
 
-    for label, members, offender, code, artifact_path in cases:
+    for label, members, offender, code, artifact_path, field in cases:
         payload = _change_set(*members)
         index = payload.members.index(offender)  # type: ignore[arg-type]
         intent = coordinator.create(
@@ -838,19 +844,20 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
         assert code in offending, (label, sorted(offending))
         diagnostic = offending[code]
         assert diagnostic.stage == "proposal_evaluation", label
-        assert diagnostic.offending_element == f"members[{index}].{path}", label
+        expected = f"members[{index}].statement.{field}" if field else f"members[{index}].{path}"
+        assert diagnostic.offending_element == expected, label
         assert _repair_replacement(diagnostic) == {
             "artifact_path": path,
             "member": index,
-            "offending_element": f"members[{index}].{path}",
+            "offending_element": expected,
         }, label
         assert instance.accepted_coordinate() == before, label
 
 
-def test_a_singular_intent_keeps_its_compiler_refusal_at_the_artifact_path(
+def test_a_singular_intent_is_never_re_addressed_to_a_member(
     tmp_path: Path,
 ) -> None:
-    """A singular intent owns every path it writes, so nothing is re-addressed."""
+    """A singular intent owns every path it writes, so no member prefix is added."""
 
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
@@ -865,9 +872,11 @@ def test_a_singular_intent_keeps_its_compiler_refusal_at_the_artifact_path(
 
     offending = _refused_diagnostics(coordinator, intent.intent_id, actor)
     diagnostic = offending["playbill.claim.literal_schema_invalid"]
-    assert diagnostic.offending_element == claim_path(intent.semantic_identity)
+    # Its own statement field is addressed as authored; the artifact path rides along.
+    assert diagnostic.offending_element == "statement.object"
     assert _repair_replacement(diagnostic) == {
-        "offending_element": claim_path(intent.semantic_identity)
+        "offending_element": "statement.object",
+        "artifact_path": claim_path(intent.semantic_identity),
     }
 
 

@@ -28,6 +28,20 @@ def _validate_claim_statement(value: str) -> str:
     return value
 
 
+# The authored statement fields a Claim law can refuse one at a time. The
+# diagnostic addresses the field so an authoring surface can point at the exact
+# keyword that set it; whole-statement identity keeps claim-statement-v1.
+CLAIM_STATEMENT_FIELDS = frozenset(
+    {"subject", "predicate", "qualifier", "object", "role", "effective_from", "effective_until"}
+)
+
+
+def _validate_claim_statement_field(value: str) -> str:
+    if value not in CLAIM_STATEMENT_FIELDS:
+        raise ValueError("claim-statement-field-v1 selector must name one Claim statement field")
+    return value
+
+
 _PROCEDURE_NODE_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _PROCEDURE_ARM_RE = re.compile(
     r"^[a-z][a-z0-9_.-]{0,127}:(?:next|on_true|on_false):"
@@ -56,6 +70,7 @@ def _validate_procedure_arm(value: str) -> str:
 _SELECTOR_SCHEMES: dict[str, Callable[[str], str]] = {
     "artifact-v1": _validate_whole_artifact,
     "claim-statement-v1": _validate_claim_statement,
+    "claim-statement-field-v1": _validate_claim_statement_field,
     "line-v1": _validate_empty_selector,
     "procedure-arm-v1": _validate_procedure_arm,
     "procedure-node-v1": _validate_procedure_node,
@@ -117,6 +132,13 @@ class SemanticAddress(_StrictSemanticModel):
         return cls(
             artifact_path=artifact_path,
             selector=SemanticSelector(scheme="claim-statement-v1", value=""),
+        )
+
+    @classmethod
+    def claim_statement_field(cls, artifact_path: str, field: str) -> "SemanticAddress":
+        return cls(
+            artifact_path=artifact_path,
+            selector=SemanticSelector(scheme="claim-statement-field-v1", value=field),
         )
 
     @classmethod
