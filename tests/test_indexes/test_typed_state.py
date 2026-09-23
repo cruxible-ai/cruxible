@@ -60,7 +60,7 @@ def test_typed_claim_source_parity_and_no_builtin_payload_copy(tmp_path):
     assert reader.principal("owner", active=True).principal_id == "owner"
     assert reader.principal_registry().semantic_root == instance.accepted_coordinate().semantic_root
     exported = canonical_logical_export(path)
-    assert exported["storage_schema_version"] == 7
+    assert exported["storage_schema_version"] == 8
     assert projection_logical_digest(path) == projection_logical_digest(path)
     connection.close()
 
@@ -282,6 +282,7 @@ def test_claim_type_name_overlay_and_delta_match_cold_reconstruction(tmp_path):
 STORAGE_SCHEMA_DIGESTS = {
     6: "a9916f75438f179d3e775c72cd39390a5742474c91fca6b2e8e26b7f963a21db",
     7: "67124ce0116d7204cf4a94ced9fc46733bd786663c8bb6439502ef71478404ee",
+    8: "4668de169407cd5af7b1811b5b249f3a3c821120ccacdd507b55c91771697f5b",
 }
 
 

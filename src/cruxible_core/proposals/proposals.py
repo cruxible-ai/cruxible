@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -118,6 +118,7 @@ from cruxible_client.contracts.discovery import (
     SemanticReuseInterfaceV1,
     VocabularyReuseRequestV1,
     evaluate_vocabulary_reuse,
+    normalize_discovery_term,
 )
 from cruxible_client.contracts.documents import (
     AcceptedDocument,
@@ -680,15 +681,54 @@ def _canonical_model_digest(domain: str, model: BaseModel) -> str:
     return typed_digest(Sha256Value, domain, payload).tagged
 
 
+def _sorted_terms(values: Iterable[str]) -> tuple[str, ...]:
+    return tuple(sorted(values, key=lambda item: item.encode("utf-8")))
+
+
+def _reuse_interface(
+    path: str, content: bytes, descriptors: Mapping[str, set[str]]
+) -> SemanticReuseInterfaceV1 | None:
+    """One live ClaimType or Subject's whole-artifact reuse interface."""
+
+    if _CLAIM_TYPE_PATH_RE.fullmatch(path):
+        claim_type = parse_claim_type(content, path=path)
+        if claim_type.lifecycle.state != "live":
+            return None
+        identity: ArtifactIdentity = claim_type.identity
+        kind, label = "claim-type", claim_type.predicate
+        tokens = _sorted_terms({claim_type.predicate, claim_type.predicate.rpartition(".")[2]})
+        signature = claim_type_structural_signature(claim_type.structure)
+    elif _SUBJECT_PATH_RE.fullmatch(path):
+        subject = parse_subject(content, path=path)
+        if subject.lifecycle.state != "live":
+            return None
+        identity = subject.identity
+        kind, label = "subject", subject.identity.qualified
+        tokens = (subject.subject_id,)
+        signature = subject_reuse_signature(subject.identity)
+    else:
+        return None
+    return SemanticReuseInterfaceV1(
+        address=SemanticAddress.whole_artifact(path),
+        identity=identity,
+        kind=kind,
+        label=label,
+        canonical_tokens=tokens,
+        structural_signature_digest=signature,
+        aliases=_sorted_terms(descriptors["alias"]),
+        tags=_sorted_terms(descriptors["tag"]),
+        relation_labels=_sorted_terms(descriptors["relation"]),
+    )
+
+
 def _reuse_interfaces(tree: Mapping[str, bytes]) -> tuple[SemanticReuseInterfaceV1, ...]:
+    """Every accepted reuse interface, by reading the whole tree (the cold oracle)."""
+
     descriptor_terms: dict[bytes, dict[str, set[str]]] = {}
 
     def terms_for(address: SemanticAddress) -> dict[str, set[str]]:
         key = canonical_bytes(address.model_dump(mode="json"))
-        return descriptor_terms.setdefault(
-            key,
-            {"aliases": set(), "tags": set(), "relations": set()},
-        )
+        return descriptor_terms.setdefault(key, {"alias": set(), "tag": set(), "relation": set()})
 
     for descriptor_path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not _CLAIM_PATH_RE.fullmatch(descriptor_path):
@@ -703,76 +743,62 @@ def _reuse_interfaces(tree: Mapping[str, bytes]) -> tuple[SemanticReuseInterface
             value = descriptor.statement.object.value
             if not isinstance(value, str):
                 continue
-            field = "aliases" if predicate == "semantic.alias" else "tags"
+            field = "alias" if predicate == "semantic.alias" else "tag"
             terms_for(descriptor.statement.subject)[field].add(value)
         elif predicate in {"semantic.related_to", "semantic.distinct_from"} and isinstance(
             descriptor.statement.object, SubjectClaimObject
         ):
             relation_label = descriptor.statement.object.address.artifact_path
-            terms_for(descriptor.statement.subject)["relations"].add(relation_label)
-            terms_for(descriptor.statement.object.address)["relations"].add(
+            terms_for(descriptor.statement.subject)["relation"].add(relation_label)
+            terms_for(descriptor.statement.object.address)["relation"].add(
                 descriptor.statement.subject.artifact_path
             )
 
     interfaces: list[SemanticReuseInterfaceV1] = []
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        content = tree[path]
-        if _CLAIM_TYPE_PATH_RE.fullmatch(path):
-            claim_type = parse_claim_type(content, path=path)
-            if claim_type.lifecycle.state != "live":
-                continue
-            signature = claim_type_structural_signature(claim_type.structure)
-            tokens = tuple(
-                sorted(
-                    {
-                        claim_type.predicate,
-                        claim_type.predicate.rpartition(".")[2],
-                    },
-                    key=lambda item: item.encode("utf-8"),
-                )
-            )
-            descriptors = terms_for(SemanticAddress.whole_artifact(path))
-            interfaces.append(
-                SemanticReuseInterfaceV1(
-                    address=SemanticAddress.whole_artifact(path),
-                    identity=claim_type.identity,
-                    kind="claim-type",
-                    label=claim_type.predicate,
-                    canonical_tokens=tokens,
-                    structural_signature_digest=signature,
-                    aliases=tuple(
-                        sorted(descriptors["aliases"], key=lambda item: item.encode("utf-8"))
-                    ),
-                    tags=tuple(sorted(descriptors["tags"], key=lambda item: item.encode("utf-8"))),
-                    relation_labels=tuple(
-                        sorted(descriptors["relations"], key=lambda item: item.encode("utf-8"))
-                    ),
-                )
-            )
-        elif _SUBJECT_PATH_RE.fullmatch(path):
-            subject = parse_subject(content, path=path)
-            if subject.lifecycle.state != "live":
-                continue
-            signature = subject_reuse_signature(subject.identity)
-            descriptors = terms_for(SemanticAddress.whole_artifact(path))
-            interfaces.append(
-                SemanticReuseInterfaceV1(
-                    address=SemanticAddress.whole_artifact(path),
-                    identity=subject.identity,
-                    kind="subject",
-                    label=subject.identity.qualified,
-                    canonical_tokens=(subject.subject_id,),
-                    structural_signature_digest=signature,
-                    aliases=tuple(
-                        sorted(descriptors["aliases"], key=lambda item: item.encode("utf-8"))
-                    ),
-                    tags=tuple(sorted(descriptors["tags"], key=lambda item: item.encode("utf-8"))),
-                    relation_labels=tuple(
-                        sorted(descriptors["relations"], key=lambda item: item.encode("utf-8"))
-                    ),
-                )
-            )
+        if not (_CLAIM_TYPE_PATH_RE.fullmatch(path) or _SUBJECT_PATH_RE.fullmatch(path)):
+            continue
+        interface = _reuse_interface(
+            path, tree[path], terms_for(SemanticAddress.whole_artifact(path))
+        )
+        if interface is not None:
+            interfaces.append(interface)
     return tuple(interfaces)
+
+
+def _indexed_reuse_interfaces(
+    selection: Any, proposal: ProposedSemanticInterfaceV1, *, exclude_path: str
+) -> tuple[SemanticReuseInterfaceV1, ...]:
+    """Only the interfaces the vocabulary index says could match this proposal.
+
+    Matching is exact equality on normalized terms, identity, or a same-kind
+    structural signature, and every such key is indexed, so interfaces outside
+    this set cannot match; each candidate is then built in full, exactly as the
+    whole-tree oracle builds it, so the law's result digest is unchanged.
+    """
+
+    def build(rows: Any) -> tuple[SemanticReuseInterfaceV1, ...]:
+        paths = rows.vocabulary_matches(
+            terms=(normalize_discovery_term(item) for item in proposal.canonical_tokens),
+            identity=proposal.identity.qualified,
+            signature_term=f"{proposal.kind}:{proposal.structural_signature_digest}",
+        )
+        interfaces = []
+        for path in paths:
+            if path == exclude_path:
+                continue
+            try:
+                content = rows.source_bytes(path)
+            except KeyError:
+                continue
+            interface = _reuse_interface(path, content, rows.vocabulary_descriptors(path))
+            if interface is not None:
+                interfaces.append(interface)
+        return tuple(interfaces)
+
+    if hasattr(selection, "call"):
+        return cast(tuple[SemanticReuseInterfaceV1, ...], selection.call(build))
+    return build(selection)
 
 
 def _claim_type_reuse_evidence(
@@ -782,6 +808,7 @@ def _claim_type_reuse_evidence(
     lookup_tree: Mapping[str, bytes],
     candidate_scope: tuple[str, ...],
     current: AcceptedProjectionCoordinate,
+    candidate_states: Mapping[str, ArtifactDependencyStateV1] | None = None,
 ) -> dict[str, object]:
     signature = claim_type_structural_signature(claim_type.structure)
     predicate = claim_type.predicate
@@ -815,15 +842,22 @@ def _claim_type_reuse_evidence(
                 object=relation.statement.object.address,
             )
         )
+    from cruxible_core.indexes.evaluated_state import EvaluationRows, SelectionSpec
+
+    selection = getattr(candidate_states, "owner", None)
+    if isinstance(selection, (EvaluationRows, SelectionSpec)):
+        accepted_interfaces = _indexed_reuse_interfaces(selection, proposal, exclude_path=path)
+    else:
+        accepted_interfaces = tuple(
+            item for item in _reuse_interfaces(lookup_tree) if item.address.artifact_path != path
+        )
     evidence = evaluate_vocabulary_reuse(
         VocabularyReuseRequestV1(
             proposal=proposal,
             hints=DiscoveryHintsV1(),
             disposition=ReuseDispositionV1(kind="new_distinct"),
         ),
-        accepted_interfaces=tuple(
-            item for item in _reuse_interfaces(lookup_tree) if item.address.artifact_path != path
-        ),
+        accepted_interfaces=accepted_interfaces,
         coordinate=AcceptedCoordinate.from_internal(current),
         implementation_digest=current.compiler.rule_digest,
         distinct_relation_members=tuple(
@@ -831,17 +865,6 @@ def _claim_type_reuse_evidence(
                 relations,
                 key=lambda item: canonical_bytes(item.model_dump(mode="json")),
             )
-        ),
-        descriptor_claims_available=any(
-            parse_claim(lookup_tree[item], path=item).statement.predicate
-            in {
-                "semantic.alias",
-                "semantic.distinct_from",
-                "semantic.related_to",
-                "semantic.tag",
-            }
-            for item in lookup_tree
-            if _CLAIM_PATH_RE.fullmatch(item)
         ),
     )
     return evidence.model_dump(mode="json")
@@ -939,7 +962,20 @@ def _effective_claim_values(
     }
 
 
-ClaimQueryFactsProvider = Callable[[AcceptedProjectionCoordinate], ClaimQueryFactsV1]
+class ClaimQueryFactsProvider(Protocol):
+    """Accepted query facts at a coordinate, optionally only for some predicates.
+
+    A QueryDefinition's referenced predicates are its complete read inventory,
+    so facts restricted to them evaluate it exactly as unrestricted facts do.
+    """
+
+    def __call__(
+        self,
+        coordinate: AcceptedProjectionCoordinate,
+        *,
+        predicates: tuple[str, ...] | None = None,
+    ) -> ClaimQueryFactsV1: ...
+
 
 _CORROBORATION_BINDING_TYPES = {
     "claim_predicate": "string",
@@ -1013,7 +1049,7 @@ def _run_corroboration_requirements(
     accepted_type: AcceptedClaimType,
     subject: AcceptedSubject,
     definition_for_digest: Callable[[str], AcceptedQueryDefinitionV1 | None],
-    facts: ClaimQueryFactsV1,
+    facts_for: Callable[[AcceptedQueryDefinitionV1], ClaimQueryFactsV1],
     current: AcceptedProjectionCoordinate,
     timestamp: str,
 ) -> tuple[
@@ -1055,7 +1091,7 @@ def _run_corroboration_requirements(
             continue
         result = evaluate_claim_query(
             definition,
-            facts=facts,
+            facts=facts_for(definition),
             coordinate=current,
             evaluation_time=evaluated_at,
             parameters=parameters,
@@ -1145,7 +1181,22 @@ def _claim_admission_evaluations(
     query_digests_by_path: dict[str, tuple[str, ...]] = {}
     accounts: list[ClaimAdmissionEvaluationAccountV1] = []
     diagnostics: list[CompilerDiagnostic] = []
-    facts: ClaimQueryFactsV1 | None = None
+    facts_by_predicates: dict[tuple[str, ...], ClaimQueryFactsV1] = {}
+
+    def facts_for(definition: AcceptedQueryDefinitionV1) -> ClaimQueryFactsV1:
+        if query_facts_provider is None:
+            raise ProposalIntegrityError("Claim corroboration requires accepted query facts")
+        predicates = definition.query.referenced_predicates
+        facts = facts_by_predicates.get(predicates)
+        if facts is None:
+            facts = query_facts_provider(current, predicates=predicates)
+            if facts.coordinate != current:
+                raise ProposalIntegrityError(
+                    "accepted query facts coordinate differs from proposal coordinate"
+                )
+            facts_by_predicates[predicates] = facts
+        return facts
+
     for subject_path, changed_claims in sorted(
         changed_by_subject.items(),
         key=lambda item: item[0].encode("utf-8"),
@@ -1179,7 +1230,7 @@ def _claim_admission_evaluations(
             *,
             carries_corroboration: bool,
         ) -> Evaluation:
-            nonlocal facts, policy_values
+            nonlocal policy_values
             parent_values: dict[str, dict[str, tuple[object, ...]]] = {}
             candidate_values: dict[str, dict[str, tuple[object, ...]]] = {}
             if (
@@ -1244,18 +1295,12 @@ def _claim_admission_evaluations(
                     raise ProposalIntegrityError(
                         "Claim corroboration requires accepted query facts"
                     )
-                if facts is None:
-                    facts = query_facts_provider(current)
-                    if facts.coordinate != current:
-                        raise ProposalIntegrityError(
-                            "accepted query facts coordinate differs from proposal coordinate"
-                        )
                 results, issues = _run_corroboration_requirements(
                     policy=policy,
                     accepted_type=accepted_type,
                     subject=subject,
                     definition_for_digest=lambda digest: _accepted_query(current_tree, digest),
-                    facts=facts,
+                    facts_for=facts_for,
                     current=current,
                     timestamp=timestamp,
                 )
@@ -1930,6 +1975,40 @@ def _exhaust_promotion_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+class _ArtifactDigestIdentities(dict[str, str]):
+    """Every candidate artifact digest maps to itself, looked up on demand.
+
+    Slot closure only asks ``get(bound digest)``; answering from the digest
+    index keeps a Line's law independent of how many artifacts exist. Explicit
+    entries (a provider's interface digest) take precedence, as before.
+    """
+
+    def __init__(self, has_digest: Callable[[str], bool]) -> None:
+        super().__init__()
+        self._has_digest = has_digest
+
+    def __missing__(self, key: str) -> str:
+        if self._has_digest(key):
+            return key
+        raise KeyError(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+
+def _artifact_digest_identities(
+    states: Mapping[str, ArtifactDependencyStateV1],
+) -> dict[str, str]:
+    owner = getattr(states, "owner", None)
+    if owner is not None and hasattr(owner, "has_artifact_digest"):
+        return _ArtifactDigestIdentities(owner.has_artifact_digest)
+    # Cold replay's in-memory oracle: enumerate the complete state.
+    return {state.artifact_digest: state.artifact_digest for state in states.values()}
+
+
 def _line_member(context: _MemberContext) -> _MemberVerdict:
     line = parse_line_spec(context.content, path=context.path)
     accepted_procedure = context.resolved.procedures.get(line.procedure.target.qualified)
@@ -1951,9 +2030,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             line=previous,
             artifact_digest=line_spec_digest(previous).tagged,
         )
-    interface_digests: dict[str, str] = {}
-    for state in context.candidate_states.values():
-        interface_digests[state.artifact_digest] = state.artifact_digest
+    interface_digests = _artifact_digest_identities(context.candidate_states)
     for provider in context.resolved.providers.values():
         interface_pin = next(
             (pin for pin in provider.provider.pins if pin.role == "provider-interface"),
@@ -2680,6 +2757,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
             lookup_tree=context.candidate_tree,
             candidate_scope=context.scope,
             current=context.current,
+            candidate_states=context.candidate_states,
         )
         if reuse["verdict"] == "refused":
             return _MemberVerdict(
