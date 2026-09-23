@@ -414,6 +414,15 @@ def schema_sql() -> str:
             name TEXT NOT NULL, leaf TEXT NOT NULL,
             PRIMARY KEY(source_identity,kind,name)
         ) STRICT""",
+            """CREATE TABLE vocabulary_terms (
+            source_identity TEXT NOT NULL, target_path TEXT NOT NULL,
+            basis TEXT NOT NULL CHECK(basis IN
+                ('identity','canonical_token','structural_signature','alias','tag','relation')),
+            term TEXT NOT NULL, value TEXT NOT NULL,
+            PRIMARY KEY(source_identity,target_path,basis,value)
+        ) STRICT""",
+            "CREATE INDEX vocabulary_terms_by_term ON vocabulary_terms(term,basis,target_path)",
+            "CREATE INDEX vocabulary_terms_by_target ON vocabulary_terms(target_path,basis,value)",
             "CREATE INDEX claim_type_names_by_name ON claim_type_names(name,kind,source_identity)",
             "CREATE INDEX claim_type_names_by_leaf ON claim_type_names(leaf,kind,name,source_identity)",
             "CREATE INDEX claims_by_subject_predicate ON claims(subject_path,predicate,subject_selector_scheme,subject_selector_value,identity)",
@@ -558,6 +567,84 @@ def claim_type_names(source: ClaimType) -> tuple[tuple[str, str, str, str], ...]
     )
 
 
+VOCABULARY_DESCRIPTOR_PREDICATES = frozenset(
+    {"semantic.alias", "semantic.tag", "semantic.related_to", "semantic.distinct_from"}
+)
+
+
+def vocabulary_terms(source: Any, *, path: str) -> tuple[tuple[str, str, str, str, str], ...]:
+    """Rows of the reuse vocabulary index one live owner contributes.
+
+    A live ClaimType or Subject contributes its identity, canonical tokens and
+    structural signature for its own whole-artifact interface; a live
+    descriptor Claim contributes the alias, tag or relation label it states
+    about a whole-artifact address. ``term`` is the exact normalized match key
+    the reuse law compares; ``value`` is the raw text an interface carries.
+    """
+    from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
+    from cruxible_client.contracts.claims import (
+        ClaimArtifactV2,
+        ClaimArtifactV3,
+        LiteralClaimObject,
+        SubjectClaimObject,
+    )
+    from cruxible_client.contracts.discovery import normalize_discovery_term as normal
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from cruxible_client.contracts.subjects import SubjectShell, subject_reuse_signature
+
+    def whole(address: SemanticAddress) -> bool:
+        return address == SemanticAddress.whole_artifact(address.artifact_path)
+
+    rows: set[tuple[str, str, str, str, str]] = set()
+    if isinstance(source, ClaimType):
+        if source.lifecycle.state != "live":
+            return ()
+        identity = source.identity.qualified
+        signature = claim_type_structural_signature(source.structure)
+        rows.add((identity, path, "identity", identity, identity))
+        rows.add((identity, path, "structural_signature", "claim-type:" + signature, signature))
+        for token in (source.predicate, source.predicate.rpartition(".")[2]):
+            rows.add((identity, path, "canonical_token", normal(token), token))
+    elif isinstance(source, SubjectShell):
+        if source.lifecycle.state != "live":
+            return ()
+        identity = source.identity.qualified
+        signature = subject_reuse_signature(source.identity)
+        rows.add((identity, path, "identity", identity, identity))
+        rows.add((identity, path, "structural_signature", "subject:" + signature, signature))
+        rows.add((identity, path, "canonical_token", normal(source.subject_id), source.subject_id))
+    elif isinstance(source, (ClaimArtifactV2, ClaimArtifactV3)):
+        statement = source.statement
+        if source.lifecycle.state != "live" or statement.predicate not in (
+            VOCABULARY_DESCRIPTOR_PREDICATES
+        ):
+            return ()
+        identity = source.identity.qualified
+        subject, value = statement.subject, statement.object
+        if statement.predicate in {"semantic.alias", "semantic.tag"}:
+            if isinstance(value, LiteralClaimObject) and isinstance(value.value, str):
+                if whole(subject):
+                    basis = "alias" if statement.predicate == "semantic.alias" else "tag"
+                    rows.add(
+                        (identity, subject.artifact_path, basis, normal(value.value), value.value)
+                    )
+        elif isinstance(value, SubjectClaimObject):
+            label = value.address.artifact_path
+            if whole(subject):
+                rows.add((identity, subject.artifact_path, "relation", normal(label), label))
+            if whole(value.address):
+                rows.add(
+                    (
+                        identity,
+                        value.address.artifact_path,
+                        "relation",
+                        normal(subject.artifact_path),
+                        subject.artifact_path,
+                    )
+                )
+    return tuple(sorted(rows))
+
+
 def select_claim_type_names(
     connection: sqlite3.Connection, names: Iterable[str], *, table: str = "main.claim_type_names"
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -621,6 +708,10 @@ def insert_owners(
             connection.executemany(
                 "INSERT INTO claim_type_names VALUES (?,?,?,?)", claim_type_names(source)
             )
+        connection.executemany(
+            "INSERT INTO vocabulary_terms VALUES (?,?,?,?,?)",
+            vocabulary_terms(source, path=row.path),
+        )
     for path, content in blobs.items():
         if path.startswith("principals/"):
             principal = PrincipalRecord.model_validate_json(content)

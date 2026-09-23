@@ -339,6 +339,8 @@ class PlaybillInstance:
     def _accepted_query_facts(
         source: object,
         coordinate: AcceptedProjectionCoordinate,
+        *,
+        predicates: tuple[str, ...] | None = None,
     ) -> "ClaimQueryFactsV1":
         """Build the one accepted-Claim facts projection for live and replay paths."""
 
@@ -348,6 +350,7 @@ class PlaybillInstance:
         return build_accepted_query_facts(
             cast(ClaimReadSourceProtocol, source),
             coordinate=coordinate,
+            predicates=predicates,
         )
 
     @classmethod
@@ -1249,7 +1252,9 @@ class PlaybillInstance:
                 instance_id=self.descriptor.instance_id,
                 bodies=bodies,
             ),
-            query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
+            query_facts_provider=lambda coordinate, *, predicates=None: self._accepted_query_facts(
+                self, coordinate, predicates=predicates
+            ),
             workspace_advertiser=self.advertise_workspace,
             receive_limits=self._receive_limits,
             require_writable=self.require_writable,
@@ -2025,7 +2030,9 @@ class PlaybillInstance:
                 instance_id=self.descriptor.instance_id,
                 bodies=self.body_store(),
             ),
-            query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
+            query_facts_provider=lambda coordinate, *, predicates=None: self._accepted_query_facts(
+                self, coordinate, predicates=predicates
+            ),
             tree_state_provider=derive_indexed_state,
             accepted_tree_provider=self.immutable_tree_at,
             claim_law_provider=self.accepted_claim_law_evidence,

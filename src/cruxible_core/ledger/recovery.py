@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import secrets
 import shutil
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from pydantic import ValidationError
 
@@ -142,10 +142,14 @@ class _ReplayQueryFactsSource:
         return self.bodies
 
 
-AcceptedQueryFactsBuilder = Callable[
-    [object, AcceptedProjectionCoordinate],
-    ClaimQueryFactsV1,
-]
+class AcceptedQueryFactsBuilder(Protocol):
+    def __call__(
+        self,
+        source: object,
+        coordinate: AcceptedProjectionCoordinate,
+        *,
+        predicates: tuple[str, ...] | None = None,
+    ) -> ClaimQueryFactsV1: ...
 
 
 @dataclass(frozen=True)
@@ -757,7 +761,9 @@ def _clean_unaccepted_generations(
                 query_facts_provider=(
                     None
                     if query_facts_builder is None
-                    else lambda coordinate: query_facts_builder(query_source, coordinate)
+                    else lambda coordinate, *, predicates=None: query_facts_builder(
+                        query_source, coordinate, predicates=predicates
+                    )
                 ),
             )
             ledger.collect_unreachable_generation(oid)
@@ -953,7 +959,9 @@ def recover_instance(
             query_facts_provider=(
                 None
                 if query_facts_builder is None
-                else lambda coordinate: query_facts_builder(query_source, coordinate)
+                else lambda coordinate, *, predicates=None: query_facts_builder(
+                    query_source, coordinate, predicates=predicates
+                )
             ),
         )
         history.append(window.generation)

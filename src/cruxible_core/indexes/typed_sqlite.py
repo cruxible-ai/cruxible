@@ -356,6 +356,7 @@ def replace_rows(
                 remove_owner_citations(connection, (("attestation", key),))
             connection.execute("DELETE FROM pins WHERE source_identity=?", (identity,))
             connection.execute("DELETE FROM claim_type_names WHERE source_identity=?", (identity,))
+            connection.execute("DELETE FROM vocabulary_terms WHERE source_identity=?", (identity,))
             if kind == "exhaust-promotion":
                 connection.execute(
                     "DELETE FROM promotion_subjects WHERE promotion_identity=?", (identity,)

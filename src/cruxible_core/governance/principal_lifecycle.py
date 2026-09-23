@@ -15,7 +15,6 @@ from cruxible_client.contracts.errors import PrincipalIntegrityError
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     parse_principal_record,
-    principal_registry_from_tree,
 )
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -127,13 +126,25 @@ def evaluate_principal_lifecycle(
             "Principal transition is outside registration, self-rotation, "
             "revocation, or recovery policy.",
         )
+    # The change set is exactly this one principal (the caller's scope rule), so
+    # the candidate registry is the parent registry with this record applied:
+    # no scan of the candidate tree for principal files.
+    records = {record.principal_id: record for record in principals.principals}
+    records[proposed.principal_id] = proposed
     try:
-        candidate_principals = principal_registry_from_tree(
-            candidate_tree,
+        candidate_principals = PrincipalRegistrySnapshot(
             semantic_root=current.semantic_root,
+            principals=tuple(
+                sorted(
+                    records.values(),
+                    key=lambda record: f"principals/{record.principal_id}.json".encode("utf-8"),
+                )
+            ),
         )
-    except PrincipalIntegrityError as exc:
-        return _refused("playbill.principal.registry_invalid", str(exc))
+    except ValueError:
+        return _refused(
+            "playbill.principal.registry_invalid", "principal registry snapshot is invalid"
+        )
     try:
         approval_policy = parse_approval_policy(
             candidate_tree[APPROVAL_POLICY_PATH],
