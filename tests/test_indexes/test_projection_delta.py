@@ -87,7 +87,9 @@ def test_successor_matches_every_cold_row_across_create_revise_and_retire(tmp_pa
             result = assemble(assembler, request, crash_hook=crash_hook, delta=delta)
         if delta is None:
             return result
-        assert inventories.count(request.git_oid) == 1
+        # The successor is gated through Git's diff and the parent's carried
+        # inventory, never by listing its whole tree.
+        assert inventories.count(request.git_oid) == 0
         directory = tmp_path / f"cold-{len(seen)}"
         directory.mkdir()
         # Candidate citation maintenance also binds its exact immutable parent.

@@ -14,7 +14,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_core.compiler.projection_artifacts import registered_path_kind
-from cruxible_core.ledger.git import GitTreeEntry
+from cruxible_core.ledger.git import GitLedger, GitTreeChange, GitTreeEntry
 from cruxible_core.ledger.protocols import LedgerRepositoryProtocol
 
 _LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
@@ -166,4 +166,96 @@ def _read_registered_entries(
     return tuple(blobs)
 
 
-__all__ = ["GitTreeBlob", "TreeReadLimits", "read_registered_tree"]
+def _forbidden_kind(mode: str) -> str:
+    if mode == "120000":
+        return "symlink"
+    if mode == "160000":
+        return "submodule"
+    return mode
+
+
+def read_registered_delta(
+    repository: GitLedger,
+    changes: tuple[GitTreeChange, ...],
+    *,
+    base_oid: str,
+    head_oid: str,
+    parent_inventory: tuple[int, int],
+    limits: TreeReadLimits,
+    artifact_kinds: ArtifactKindRegistry,
+    include_paths: frozenset[str],
+) -> tuple[tuple[GitTreeBlob, ...], tuple[int, int]]:
+    """Apply every reader gate to a successor through its changed entries only.
+
+    The parent's whole inventory passed these gates when its projection was
+    built, and Git's diff proves each unreported path byte-identical, so the
+    successor passes iff its changes do: per-entry gates here, the aggregate
+    limits through the parent's carried (file count, byte total), and case-fold
+    sibling collisions only at the levels where an added path introduces a name.
+    Returns the included blobs and the successor's inventory.
+    """
+    wanted = [change.oid for change in changes if change.oid is not None]
+    wanted += [change.previous_oid for change in changes if change.previous_oid is not None]
+    contents = repository.read_blobs(tuple(dict.fromkeys(wanted)))
+    files, total = parent_inventory
+    for change in changes:
+        if change.previous_oid is not None:
+            files -= 1
+            total -= len(contents[change.previous_oid])
+    blobs: list[GitTreeBlob] = []
+    for change in sorted(changes, key=lambda item: item.path.encode("utf-8")):
+        if change.oid is None:
+            continue
+        path = change.path
+        try:
+            if normalize_ledger_path(path) != path:
+                raise ProjectionFormatError(f"ledger path is not canonical: {path}")
+            if not is_candidate_card_path(path):
+                registered_path_kind(path, artifact_kinds=artifact_kinds)
+        except Exception as exc:
+            if isinstance(exc, ProjectionFormatError):
+                raise
+            raise ProjectionFormatError(f"ledger path is not registered: {path}") from exc
+        if change.mode != "100644":
+            raise ProjectionFormatError(
+                f"ledger tree contains forbidden {_forbidden_kind(change.mode)}: {path}"
+            )
+        content = contents[change.oid]
+        if len(content) > limits.max_blob_bytes:
+            raise ProjectionFormatError(
+                f"ledger blob exceeds per-file byte limit: {path} ({len(content)})"
+            )
+        files += 1
+        total += len(content)
+        if path in include_paths:
+            if content.startswith(_LFS_POINTER_PREFIX):
+                raise ProjectionFormatError(f"Git LFS pointer is not an artifact payload: {path}")
+            blobs.append(GitTreeBlob(path=path, oid=change.oid, content=content))
+    if files < 0 or total < 0:
+        raise ProjectionFormatError("ledger tree delta removes more than its parent held")
+    if files > limits.max_files:
+        raise ProjectionFormatError(
+            f"ledger tree exceeds file-count limit ({files} > {limits.max_files})"
+        )
+    if total > limits.max_total_bytes:
+        raise ProjectionFormatError(
+            f"ledger tree exceeds total-byte limit ({total} > {limits.max_total_bytes})"
+        )
+    for change in changes:
+        if change.status != "A":
+            continue
+        parts = change.path.split("/")
+        for depth, name in enumerate(parts):
+            if repository.tree_has_path(base_oid, "/".join(parts[: depth + 1])):
+                continue  # this name already passed as the parent's sibling
+            directory = "/".join(parts[:depth])
+            folded = name.casefold()
+            for sibling in repository.tree_child_names(head_oid, directory):
+                if sibling != name and sibling.casefold() == folded:
+                    raise ProjectionFormatError(
+                        "ledger tree paths are not canonical and collision-free"
+                    )
+    return tuple(blobs), (files, total)
+
+
+__all__ = ["GitTreeBlob", "TreeReadLimits", "read_registered_delta", "read_registered_tree"]

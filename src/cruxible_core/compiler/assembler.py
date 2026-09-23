@@ -294,7 +294,9 @@ class ProjectionAssembler:
         logical = _timed(
             timings,
             "logical_export_digest",
-            lambda: projection_logical_digest(staged_piece),
+            # The build just wrote and cross-checked these sums; binding
+            # elsewhere recomputes them from every row.
+            lambda: projection_logical_digest(staged_piece, recompute=False),
         )
         physical = physical_file_digest(staged_piece)
         byte_length = staged_piece.stat().st_size

@@ -102,6 +102,8 @@ class GitTreeChange:
     status: str
     mode: str
     oid: str | None
+    # The source entry's object, absent for an addition.
+    previous_oid: str | None = None
 
 
 # One `ls-tree` invocation carries a bounded pathspec so a large request
@@ -1683,6 +1685,22 @@ class GitLedger:
 
         self._validate_oid(base_oid)
         self._validate_oid(target_oid)
+        # Two commits never change, so neither does the diff between them.
+        key = (_repository_key(self.path), base_oid, target_oid)
+        with _TREE_CHANGES_LOCK:
+            remembered = _TREE_CHANGES.get(key)
+            if remembered is not None:
+                _TREE_CHANGES.move_to_end(key)
+                return remembered
+        changes = self._read_changed_entries(base_oid, target_oid)
+        with _TREE_CHANGES_LOCK:
+            _TREE_CHANGES[key] = changes
+            _TREE_CHANGES.move_to_end(key)
+            while len(_TREE_CHANGES) > _TREE_CHANGES_CAPACITY:
+                _TREE_CHANGES.popitem(last=False)
+        return changes
+
+    def _read_changed_entries(self, base_oid: str, target_oid: str) -> tuple[GitTreeChange, ...]:
         listing = self._git(
             [
                 "diff-tree",
@@ -1710,14 +1728,30 @@ class GitLedger:
                 raise PlaybillGitError("Git tree diff contains malformed metadata") from exc
             if len(parts) != 5:
                 raise PlaybillGitError("Git tree diff contains malformed metadata")
-            _source_mode, mode, _source_oid, destination_oid, status = parts
+            _source_mode, mode, source_oid, destination_oid, status = parts
             if status not in {"A", "M", "D", "T"}:
                 raise PlaybillGitError(f"Git tree diff reported an unsupported status: {status}")
+            previous = None
+            if status != "A":
+                self._validate_oid(source_oid)
+                previous = source_oid
             if status == "D":
-                changes.append(GitTreeChange(path=path, status=status, mode=mode, oid=None))
+                changes.append(
+                    GitTreeChange(
+                        path=path, status=status, mode=mode, oid=None, previous_oid=previous
+                    )
+                )
                 continue
             self._validate_oid(destination_oid)
-            changes.append(GitTreeChange(path=path, status=status, mode=mode, oid=destination_oid))
+            changes.append(
+                GitTreeChange(
+                    path=path,
+                    status=status,
+                    mode=mode,
+                    oid=destination_oid,
+                    previous_oid=previous,
+                )
+            )
         return tuple(changes)
 
     def list_tree(self, oid: str) -> tuple[GitTreeEntry, ...]:
@@ -1774,6 +1808,31 @@ class GitLedger:
             except UnicodeDecodeError as exc:
                 raise PlaybillGitError("ledger literal search returned a malformed path") from exc
         return tuple(found)
+
+    def tree_has_path(self, oid: str, path: str) -> bool:
+        """Whether this commit's tree names ``path`` as a file or a nonempty directory."""
+
+        return _listing_has_path(self._whole_listing(oid), path)
+
+    def tree_child_names(self, oid: str, directory: str) -> tuple[str, ...]:
+        """Immediate child names of one directory ("" is the root), in tree order."""
+
+        return _listing_child_names(self._whole_listing(oid), directory)
+
+    def _whole_listing(self, oid: str) -> tuple[GitTreeEntry, ...]:
+        """Whichever whole listing of this object is remembered, sized or not."""
+
+        self._validate_oid(oid)
+        repository = _repository_key(self.path)
+        for candidate in (oid, self._commit_tree(oid)):
+            if candidate is None:
+                continue
+            with _TREE_LISTINGS_LOCK:
+                for with_sizes in (True, False):
+                    listing = _TREE_LISTINGS.get((repository, candidate, with_sizes))
+                    if listing is not None:
+                        return listing
+        return self._list_tree(oid, with_sizes=False)
 
     def list_tree_with_sizes(self, oid: str) -> tuple[GitTreeEntry, ...]:
         """List an exact commit recursively, with the size Git reports per entry.
@@ -2256,6 +2315,13 @@ _TREE_LISTINGS: OrderedDict[tuple[tuple[str, int, int], str, bool], tuple[GitTre
 _TREE_LISTINGS_LOCK = threading.Lock()
 
 
+_TREE_CHANGES_CAPACITY = 32
+_TREE_CHANGES: OrderedDict[tuple[tuple[str, int, int], str, str], tuple[GitTreeChange, ...]] = (
+    OrderedDict()
+)
+_TREE_CHANGES_LOCK = threading.Lock()
+
+
 _LISTING_INDEX_CAPACITY = 16
 # id(listing) -> (the listing itself, path -> position, paths in sorted order).
 # The listing is held so its id cannot be reused while the index is remembered.
@@ -2265,16 +2331,10 @@ _LISTING_INDEXES: OrderedDict[
 _LISTING_INDEXES_LOCK = threading.Lock()
 
 
-def _select_from_listing(
-    listing: tuple[GitTreeEntry, ...], paths: Sequence[str]
-) -> tuple[GitTreeEntry, ...]:
-    """A literal pathspec's selection from a whole listing, in listing order.
-
-    Each requested path selects its exact entry, or every entry beneath it when
-    it names a directory. An index built once per remembered listing makes an
-    exact path a lookup and a directory a sorted range, so the work tracks the
-    selection rather than the size of the tree.
-    """
+def _listing_index(
+    listing: tuple[GitTreeEntry, ...],
+) -> tuple[dict[str, int], tuple[str, ...]]:
+    """Path -> position and the sorted paths, built once per remembered listing."""
 
     key = id(listing)
     with _LISTING_INDEXES_LOCK:
@@ -2288,7 +2348,51 @@ def _select_from_listing(
             _LISTING_INDEXES.move_to_end(key)
             while len(_LISTING_INDEXES) > _LISTING_INDEX_CAPACITY:
                 _LISTING_INDEXES.popitem(last=False)
-    _listing, positions, ordered = indexed
+    return indexed[1], indexed[2]
+
+
+def _listing_has_path(listing: tuple[GitTreeEntry, ...], path: str) -> bool:
+    """Whether a file, or a directory with any entry beneath it, is named path."""
+
+    positions, ordered = _listing_index(listing)
+    if path in positions:
+        return True
+    prefix = path + "/"
+    cursor = bisect.bisect_left(ordered, prefix)
+    return cursor < len(ordered) and ordered[cursor].startswith(prefix)
+
+
+def _listing_child_names(listing: tuple[GitTreeEntry, ...], directory: str) -> tuple[str, ...]:
+    """A directory's immediate child names, skipping each child's own subtree.
+
+    Every entry beneath ``child/`` sorts before ``child0`` ('/' < '0' and
+    nothing sorts between them), so one bisect per child steps over it: the
+    work tracks the number of children, not the size of the subtree.
+    """
+
+    _positions, ordered = _listing_index(listing)
+    prefix = directory + "/" if directory else ""
+    names: list[str] = []
+    cursor = bisect.bisect_left(ordered, prefix)
+    while cursor < len(ordered) and ordered[cursor].startswith(prefix):
+        name = ordered[cursor][len(prefix) :].split("/", 1)[0]
+        names.append(name)
+        cursor = bisect.bisect_left(ordered, prefix + name + "0", cursor + 1)
+    return tuple(names)
+
+
+def _select_from_listing(
+    listing: tuple[GitTreeEntry, ...], paths: Sequence[str]
+) -> tuple[GitTreeEntry, ...]:
+    """A literal pathspec's selection from a whole listing, in listing order.
+
+    Each requested path selects its exact entry, or every entry beneath it when
+    it names a directory. An index built once per remembered listing makes an
+    exact path a lookup and a directory a sorted range, so the work tracks the
+    selection rather than the size of the tree.
+    """
+
+    positions, ordered = _listing_index(listing)
     selected: set[int] = set()
     for path in paths:
         exact = positions.get(path)
@@ -2372,7 +2476,7 @@ def _after_fork_in_parent() -> None:
 
 def _after_fork_in_child() -> None:
     global _BATCH_READERS_LOCK, _TREE_LISTINGS_LOCK, _VERIFIED_COMMITS_LOCK
-    global _LISTING_INDEXES_LOCK
+    global _LISTING_INDEXES_LOCK, _TREE_CHANGES_LOCK
     inherited = tuple(_BATCH_READERS.values())
     _BATCH_READERS.clear()
     for reader in inherited:
@@ -2383,6 +2487,7 @@ def _after_fork_in_child() -> None:
     _TREE_LISTINGS_LOCK = threading.Lock()
     _VERIFIED_COMMITS_LOCK = threading.Lock()
     _LISTING_INDEXES_LOCK = threading.Lock()
+    _TREE_CHANGES_LOCK = threading.Lock()
 
 
 if hasattr(os, "register_at_fork"):

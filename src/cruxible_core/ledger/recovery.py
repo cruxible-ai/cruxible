@@ -61,6 +61,7 @@ from cruxible_core.indexes.serving import (
     load_serving_manifest,
     publish_serving_manifest,
     remove_exact_projection_build,
+    serving_manifest_for,
 )
 from cruxible_core.indexes.sqlite import (
     bind_projection,
@@ -799,15 +800,11 @@ def _repair_serving(
             serving = load_serving_manifest(publication_directory)
         except ProjectionIntegrityError:
             raise
-        if (
-            serving.git_oid == coordinate.git_oid
-            and serving.semantic_root == coordinate.semantic_root
-            and serving.generation_root == coordinate.generation_root
-            # A storage-schema rebuild can publish a different manifest for
-            # the same accepted coordinate. Rebind the verified replacement
-            # instead of reopening the retired physical projection.
-            and serving.projection_manifest_name == Path(projection.manifest_path).name
-        ):
+        # A storage-schema or logical-digest rebuild can publish a different
+        # manifest for the same accepted coordinate, even under the same name.
+        # Only a pointer to exactly this verified manifest is kept; any other
+        # is republished rather than reopening the retired projection.
+        if serving == serving_manifest_for(projection):
             with bind_current_projection(publication_directory, expected=coordinate):
                 return
     publish_serving_manifest(publication_directory, projection)
