@@ -1005,9 +1005,11 @@ with `settle_outcome: settled` and the `accepted_git_oid` it produced. The
 accepted record names the mandate digest, and replay re-derives the same
 authority from the parent state alone; the change carries no approvals.
 
-Settling needs the rung-3 authority tier: only an `ADMIN` caller can run a
-settle Line, whatever its mandate grants. A lower tier is capped at the rung
-its tier holds. A mandate that expired or was suspended before publication
+The settle mandate is the authority: any caller permitted to run the Line
+triggers the settlement, whatever its own tier, and no caller settles without
+one. A caller's tier can raise the run's reported authority above what its
+mandate grants, but the terminal still settles only under a covering settle
+mandate. A mandate that expired or was suspended before publication
 refuses `settle_publication_refused`, as does a delegated candidate that no
 longer reproduces under its mandate at publication.
 
