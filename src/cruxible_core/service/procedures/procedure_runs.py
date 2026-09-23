@@ -4079,106 +4079,114 @@ def _run_playbill_line(
         prepared = bind_prepared_investigation(
             prepared, investigation=investigation, trigger=trigger_binding
         )
-    reservations = tuple(
-        reserve_admission_material_body(
-            bodies=instance.body_store(),
-            instance_id=instance.descriptor.instance_id,
-            run_id=prepared.admission.run_id,
-            admission_binding_digest=prepared.admission.admission_binding_digest,
-            input_name=item.input.input_name,
-            plane="landed_capture",
-            content=canonical_bytes(item.material.value),
-        )
-        for item in landed_materials
-    )
-    prepared = prepared.model_copy(
-        update={
-            "required_reservation_ids": tuple(sorted(item.reservation_id for item in reservations))
-        }
-    )
-    capture_store = ReservedCaptureStore(
-        bodies=instance.body_store(),
-        reservations=ProcedureMaterialReservationStore(instance.body_store().reservation_root),
-        admission=prepared.admission,
-        event_kind="terminal_egress",
-    )
-    egress_sink = _LineTerminalEgressSink(
-        capture=CaptureTerminalEgressSink(
-            store=capture_store,
-            contracts=capture_contracts,
-            producer=accepted.procedure.identity,
-            producer_binding_digest=accepted.artifact_digest,
-        ),
-        proposal=ProposalTerminalEgressSink(instance=instance, accepted_mandates=dict(mandates)),
-    )
-    journal, root = _journal_for_write(instance)
-    _activate_writer(
-        journal,
-        prepared.admission.journal_stream,
-        prepared.admission.journal_partition_id,
-    )
-    if instance.accepted_coordinate() != coordinate:
-        raise ProcedureRunNotCurrent(
-            f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before Line append"
-        )
+    reservations = []
     try:
-        result = service_execute_direct_procedure(
-            prepared,
-            accepted,
-            journal=journal,
-            bodies=instance.body_store(),
-            run_index_path=root / "procedure-run-index.sqlite",
-            fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
-            activation_authority=_CurrentProcedureAuthority(instance),
-            provider_runtime_invoker_factory=(
-                None
-                if provider_runtime_operator is None
-                else lambda: provider_runtime_operator.invoker_for(
-                    instance,
-                    accepted_oid=coordinate.git_oid,
+        for item in landed_materials:
+            reservations.append(
+                reserve_admission_material_body(
+                    bodies=instance.body_store(),
+                    instance_id=instance.descriptor.instance_id,
+                    run_id=prepared.admission.run_id,
+                    admission_binding_digest=prepared.admission.admission_binding_digest,
+                    input_name=item.input.input_name,
+                    plane="landed_capture",
+                    content=canonical_bytes(item.material.value),
                 )
+            )
+        prepared = prepared.model_copy(
+            update={
+                "required_reservation_ids": tuple(
+                    sorted(item.reservation_id for item in reservations)
+                )
+            }
+        )
+        capture_store = ReservedCaptureStore(
+            bodies=instance.body_store(),
+            reservations=ProcedureMaterialReservationStore(instance.body_store().reservation_root),
+            admission=prepared.admission,
+            event_kind="terminal_egress",
+        )
+        egress_sink = _LineTerminalEgressSink(
+            capture=CaptureTerminalEgressSink(
+                store=capture_store,
+                contracts=capture_contracts,
+                producer=accepted.procedure.identity,
+                producer_binding_digest=accepted.artifact_digest,
             ),
-            acquisition_policy=line_policy,
-            capture_contracts=capture_contracts,
-            workspace_file_reader=workspace_file_reader,
-            slot_pins=slot_pins,
-            effective_rung=effective_rung,
-            egress_sink=egress_sink,
-            clock=_DeterministicClock(evaluation_time),
-            nested_runner=ServedNestedProcedureRunner(
-                instance,
-                coordinate,
-                head_at_admission,
-                evaluation_time,
-                provider_runtime_operator,
-                workspace_file_reader,
-                _DeterministicClock(evaluation_time),
-                mandates=dict(mandates),
+            proposal=ProposalTerminalEgressSink(
+                instance=instance, accepted_mandates=dict(mandates)
             ),
         )
-    except ProcedureBoundaryRefused as exc:
-        return _line_refusal_state(
-            accepted,
-            accepted_line,
-            coordinate=coordinate,
-            head_at_admission=head_at_admission,
-            evaluation_time=evaluation_time,
-            code="pin_binding_mismatch",
-            message=str(exc),
-            details={"boundary_code": exc.code, "detail": exc.details},
+        journal, root = _journal_for_write(instance)
+        _activate_writer(
+            journal,
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
         )
-    for reservation in reservations:
-        ProcedureMaterialReservationStore(instance.body_store().reservation_root).release(
-            reservation.reservation_id
+        if instance.accepted_coordinate() != coordinate:
+            raise ProcedureRunNotCurrent(
+                f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before Line append"
+            )
+        try:
+            result = service_execute_direct_procedure(
+                prepared,
+                accepted,
+                journal=journal,
+                bodies=instance.body_store(),
+                run_index_path=root / "procedure-run-index.sqlite",
+                fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
+                activation_authority=_CurrentProcedureAuthority(instance),
+                provider_runtime_invoker_factory=(
+                    None
+                    if provider_runtime_operator is None
+                    else lambda: provider_runtime_operator.invoker_for(
+                        instance,
+                        accepted_oid=coordinate.git_oid,
+                    )
+                ),
+                acquisition_policy=line_policy,
+                capture_contracts=capture_contracts,
+                workspace_file_reader=workspace_file_reader,
+                slot_pins=slot_pins,
+                effective_rung=effective_rung,
+                egress_sink=egress_sink,
+                clock=_DeterministicClock(evaluation_time),
+                nested_runner=ServedNestedProcedureRunner(
+                    instance,
+                    coordinate,
+                    head_at_admission,
+                    evaluation_time,
+                    provider_runtime_operator,
+                    workspace_file_reader,
+                    _DeterministicClock(evaluation_time),
+                    mandates=dict(mandates),
+                ),
+            )
+        except ProcedureBoundaryRefused as exc:
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="pin_binding_mismatch",
+                message=str(exc),
+                details={"boundary_code": exc.code, "detail": exc.details},
+            )
+        if result.status == "succeeded":
+            # The terminal and finalization are durable before staged bodies are released.
+            capture_store.release()
+        return _state_from_records(
+            instance,
+            run_id=prepared.admission.run_id,
+            receipt=result.receipt,
         )
-    if result.status == "succeeded":
-        # The terminal and finalization are durable before staged bodies are released.
-        capture_store.release()
-    return _state_from_records(
-        instance,
-        run_id=prepared.admission.run_id,
-        receipt=result.receipt,
-    )
+    finally:
+        # admission_bound takes over retention before execution; before admission,
+        # no durable run owns these leases. Release on refusals and exceptions too.
+        store = ProcedureMaterialReservationStore(instance.body_store().reservation_root)
+        for reservation in reservations:
+            store.release(reservation.reservation_id)
 
 
 def service_get_playbill_procedure_run(

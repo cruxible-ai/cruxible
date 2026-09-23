@@ -389,3 +389,42 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
             registry=projection_registry_for_compiler(SOURCE_CHECKED_COMPILER),
             artifact_kinds=artifact_kinds_for_compiler(SOURCE_CHECKED_COMPILER),
         )
+
+
+@pytest.mark.parametrize("failure", ["boundary", "head_moved", "unexpected"])
+def test_trigger_input_reservations_release_on_failed_admission(tmp_path, monkeypatch, failure):
+    import cruxible_core.service.procedures.procedure_runs as runs
+    from cruxible_core.procedures.execution import ProcedureBoundaryRefused
+    from cruxible_core.storage.material_reservations import ProcedureMaterialReservationStore
+
+    instance, root, line = world(tmp_path)
+    produced, _ = _run(instance, root)
+    event = event_from(produced)
+    store = ProcedureMaterialReservationStore(instance.body_store().reservation_root)
+    original_activate = runs._activate_writer
+
+    def fail(*args, **kwargs):
+        assert store.active(), "failure must happen after material is reserved"
+        if failure == "boundary":
+            raise ProcedureBoundaryRefused("test", "boundary refused")
+        if failure == "head_moved":
+            raise runs.ProcedureRunNotCurrent("accepted coordinate advanced")
+        raise RuntimeError("unexpected failure")
+
+    if failure == "head_moved":
+
+        def activate(*args, **kwargs):
+            original_activate(*args, **kwargs)
+            fail()
+
+        monkeypatch.setattr(runs, "_activate_writer", activate)
+    else:
+        monkeypatch.setattr(runs, "service_execute_direct_procedure", fail)
+    if failure == "boundary":
+        assert run_line(instance, line, event).status == "admission_refused"
+    else:
+        with pytest.raises((RuntimeError, runs.ProcedureRunNotCurrent)):
+            run_line(instance, line, event)
+    assert not store.active()
+    journal, _ = _journal(instance)
+    assert len(journal.select_records(_stream(instance), event_kind="admission_bound")) == 1
