@@ -7,7 +7,12 @@ from datetime import datetime
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claims import ClaimArtifactAny, claim_path, parse_claim
-from cruxible_client.contracts.errors import PlaybillExecutionError, PlaybillFormatError
+from cruxible_client.contracts.errors import (
+    PlaybillExecutionError,
+    PlaybillFormatError,
+    PlaybillJournalIntegrityError,
+)
+from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusalCodeV1
 from cruxible_client.contracts.procedures.windows import (
     BoundObservationWindowV1,
     CaptureEventSelectorV1,
@@ -35,6 +40,21 @@ from cruxible_core.compiler.compiler import artifact_codec_for_compiler
 from cruxible_core.exhaust.records import ProcedureJournalRecordV1, parse_journal_payload
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
+
+
+class TriggerCaptureRefused(PlaybillExecutionError):
+    def __init__(
+        self,
+        code: ProcedureAdmissionRefusalCodeV1,
+        message: str,
+        *,
+        retryable: bool = False,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.refusal_code = code
+        self.retryable = retryable
+        self.details = details or {}
 
 
 def read_claim_reference(
@@ -87,32 +107,55 @@ def read_capture_event(
     from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 
     journal, _ = _journal(instance)
-    selected = journal.range_from_sequences(
+    # The indexed reader verifies the retained frame and chain. Read this exact
+    # position once; an absent event is distinct from a broken journal backend.
+    selected = journal.select_records(
         _stream(instance),
-        reference.partition_id,
+        partition_id=reference.partition_id,
         first_sequence=reference.sequence,
         last_sequence=reference.sequence,
     )
-    if selected.expected_head_digest != reference.record_digest:
-        raise PlaybillExecutionError("trigger event does not reproduce its retained record")
-    (stored,) = journal.read_exact_range(selected)
+    if not selected:
+        raise TriggerCaptureRefused(
+            "trigger_capture_unavailable", "The exact trigger event is no longer retained."
+        )
+    (stored,) = selected
+    if stored.record_digest != reference.record_digest:
+        raise TriggerCaptureRefused(
+            "trigger_capture_invalid", "trigger event does not reproduce its retained record"
+        )
     record = stored.record
     if record.run_id != reference.run_id or record.event_kind != "produced_capture":
-        raise PlaybillExecutionError("trigger requires a produced Capture from the exact run")
-    payload = parse_journal_payload(
-        instance.body_store().read(
-            record.payload_digest,
-            access=BodyAccessContext(principal_id="trigger-binding", can_read_body=True),
+        raise TriggerCaptureRefused(
+            "trigger_capture_invalid", "trigger requires a produced Capture from the exact run"
         )
-    )
+    bodies = instance.body_store()
+    access = BodyAccessContext(principal_id="trigger-binding", can_read_body=True)
+    if not bodies.metadata(record.payload_digest, access=access).present:
+        raise TriggerCaptureRefused(
+            "trigger_capture_unavailable", "The exact trigger event payload is no longer retained."
+        )
+    raw = bodies.read(record.payload_digest, access=access)
+    try:
+        payload = parse_journal_payload(raw)
+    except PlaybillJournalIntegrityError as exc:
+        raise TriggerCaptureRefused(
+            "trigger_capture_invalid", "The exact trigger event payload is malformed."
+        ) from exc
     if (
         not isinstance(payload, dict)
         or payload.get("tag") != "playbill-procedure-produced-capture-v1"
         or payload.get("capture_contract_digest") != selector.capture_contract_digest
     ):
-        raise PlaybillExecutionError("trigger event does not match its CaptureContract selector")
+        raise TriggerCaptureRefused(
+            "trigger_capture_invalid", "trigger event does not match its CaptureContract selector"
+        )
     if record.recorded_at > now:
-        raise PlaybillExecutionError("trigger event has not occurred at the evaluation instant")
+        raise TriggerCaptureRefused(
+            "trigger_capture_not_yet_observed",
+            "trigger event has not occurred at the evaluation instant",
+            retryable=True,
+        )
     return record, payload
 
 

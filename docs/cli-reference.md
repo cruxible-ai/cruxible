@@ -927,8 +927,12 @@ its matches as pending. Follow its cursor to finish a bounded page.
 and the ordinary Line admission checks. Permanent input failures close as
 `rejected`; changed Line bindings close as `superseded`. Both leave the runnable
 queue, retaining their evidence and a typed refusal with repair instructions.
-Transient authority/provider failures remain blocked. Historical evaluation
-does not reopen closed work.
+Invalid event bindings, unavailable event material, and Captures that exceed
+their fixed read budget close as rejected. Budget refusals name the limiting
+Line or CaptureContract cap. Accepting a successor Line can raise its own limit;
+it cannot override the exact CaptureContract's cap. Transient authority/provider
+failures and events whose recorded time has not arrived remain blocked.
+Historical evaluation does not reopen closed work.
 
 `dispatch --occurrence-id DIGEST --retry` explicitly retries one occurrence,
 binding the current accepted Line version only within the same occurrence epoch.

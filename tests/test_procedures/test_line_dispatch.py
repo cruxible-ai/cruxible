@@ -700,3 +700,141 @@ def test_retry_requires_one_explicit_occurrence():
         LineDispatchRequestV1(retry=True)
     with pytest.raises(ValueError, match="retry requires"):
         LineDispatchRequestV1(retry=True, occurrence_id="one", limit=2)
+
+
+@pytest.mark.parametrize(
+    "failure", ["selector", "record", "run", "absent", "payload_absent", "future", "backend"]
+)
+def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, failure):
+    from cruxible_client.contracts.errors import PlaybillExecutionError
+    from cruxible_client.contracts.line_dispatch import LineTriggerOccurrenceV1
+    from cruxible_client.contracts.procedures.line_specs import line_identity_digest
+    from cruxible_client.contracts.procedures.windows import (
+        LineTriggerBindingV1,
+        TriggerEventReferenceV1,
+    )
+    from cruxible_core.service.procedures import resolution_contracts
+    from cruxible_core.service.procedures.procedure_runs import (
+        _accepted_line_by_reference,
+        _line_occurrence,
+    )
+
+    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    actor = _actor(instance)
+    first = capture(
+        instance,
+        procedure,
+        at=READ_TIME + timedelta(seconds=10) if failure == "future" else READ_TIME,
+        digest="sha256:" + "b" * 64 if failure == "selector" else SELECTOR.capture_contract_digest,
+    )
+    second = capture(
+        instance,
+        procedure,
+        at=READ_TIME + timedelta(seconds=1),
+        partition="run:second",
+        observed_at="2000-01-02T00:00:00Z",
+    )
+    now = READ_TIME + timedelta(seconds=2)
+    accepted = _accepted_line_by_reference(
+        instance, coordinate=instance.accepted_coordinate(), reference=line.identity.name
+    )
+    store = LineDispatchStore(instance)
+    occurrence_ids = []
+    for ordinal, stored in enumerate((first, second)):
+        event = TriggerEventReferenceV1(
+            run_id=stored.record.run_id,
+            partition_id=stored.record.partition_id,
+            sequence=stored.record.sequence,
+            record_digest=stored.record_digest,
+        )
+        if ordinal == 0:
+            updates = {
+                "record": {"record_digest": "sha256:" + "c" * 64},
+                "run": {"run_id": "RUN-other"},
+                "absent": {"sequence": 999},
+            }.get(failure, {})
+            event = event.model_copy(update=updates)
+        binding = LineTriggerBindingV1(kind="capture_landing", event=event)
+        occurrence_id, _ = _line_occurrence(
+            accepted, evaluation_time=READ_TIME, prior=(), binding=binding
+        )
+        occurrence_ids.append(occurrence_id)
+        # Seed retained pending work with a bad reference, modeling a damaged or
+        # incorrectly matched historical occurrence. Do not tamper with journal bytes.
+        with store.locked() as conn:
+            store.append(
+                conn,
+                "pending",
+                {
+                    "line": line.identity.qualified,
+                    "line_identity_digest": line_identity_digest(line.identity),
+                    "line_artifact_digest": accepted.artifact_digest,
+                    "occurrence_epoch": line.occurrence_epoch,
+                    "coordinate": stored.record.accepted_coordinate.model_dump(mode="json"),
+                    "occurrence": LineTriggerOccurrenceV1(
+                        occurrence_id=occurrence_id,
+                        binding=binding,
+                        eligible_at=READ_TIME + timedelta(seconds=ordinal),
+                    ).model_dump(mode="json"),
+                },
+                actor=actor,
+                now=now,
+            )
+    if failure == "payload_absent":
+        instance.body_store().erase(first.record.payload_digest)
+    if failure == "backend":
+
+        def unavailable(*args, **kwargs):
+            raise PlaybillExecutionError("temporary execution backend failure")
+
+        monkeypatch.setattr(
+            "cruxible_core.service.procedures.procedure_runs.capture_event_time", unavailable
+        )
+    item = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequestV1(),
+        actor=actor,
+        now=now,
+        caller_rung=3,
+    ).items[0]
+    assert item.occurrence_id == occurrence_ids[0]
+    store.path.unlink()
+    if failure in {"future", "backend"}:
+        assert item.status == "blocked"
+        if failure == "future":
+            assert item.refusal.code == "trigger_capture_not_yet_observed"
+            assert item.refusal.retryable
+        else:
+            assert item.refusal is None
+            monkeypatch.setattr(
+                "cruxible_core.service.procedures.procedure_runs.capture_event_time",
+                resolution_contracts.capture_event_time,
+            )
+        later = service_dispatch_line(
+            instance,
+            line.identity.name,
+            LineDispatchRequestV1(),
+            actor=actor,
+            now=READ_TIME + timedelta(seconds=11),
+            caller_rung=3,
+        ).items[0]
+        assert later.status == "admitted" and later.occurrence_id == occurrence_ids[0]
+    else:
+        assert item.status == "rejected"
+        assert item.refusal.code == (
+            "trigger_capture_unavailable"
+            if failure in {"absent", "payload_absent"}
+            else "trigger_capture_invalid"
+        )
+        assert not item.refusal.retryable
+        assert item.refusal.repair.hand_edit.required_change
+    next_item = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequestV1(),
+        actor=actor,
+        now=READ_TIME + timedelta(seconds=12),
+        caller_rung=3,
+    ).items[0]
+    assert next_item.status == "admitted" and next_item.occurrence_id == occurrence_ids[1]

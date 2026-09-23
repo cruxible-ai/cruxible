@@ -151,6 +151,7 @@ def capture(
     at=READ_TIME,
     partition="run:anchor",
     digest=SELECTOR.capture_contract_digest,
+    observed_at="2000-01-01T00:00:00Z",
 ):
     journal, _ = _journal(instance)
     stream = _stream(instance)
@@ -170,7 +171,7 @@ def capture(
         payload={
             "tag": "playbill-procedure-produced-capture-v1",
             "capture_contract_digest": digest,
-            "observed_at": "2000-01-01T00:00:00Z",
+            "observed_at": observed_at,
         },
     )
 

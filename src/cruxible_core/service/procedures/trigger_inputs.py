@@ -14,14 +14,12 @@ from cruxible_client.contracts.acquisition_policies import (
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
 from cruxible_client.contracts.captures import CaptureContractV1
-from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpecV4,
     trigger_capture_selector,
     trigger_capture_source,
 )
-from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusalCodeV1
 from cruxible_client.contracts.procedures.windows import LineTriggerBindingV1
 from cruxible_core.procedures.acquisition import (
     ACQUISITION_STALE,
@@ -33,23 +31,11 @@ from cruxible_core.procedures.execution import LandedCaptureRunMaterialV1
 from cruxible_core.procedures.input_planes import LandedCaptureRunInputV1
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
-from cruxible_core.service.procedures.resolution_contracts import read_capture_event
+from cruxible_core.service.procedures.resolution_contracts import (
+    TriggerCaptureRefused,
+    read_capture_event,
+)
 from cruxible_core.storage.cas import BodyAccessContext
-
-
-class TriggerCaptureRefused(PlaybillExecutionError):
-    def __init__(
-        self,
-        code: ProcedureAdmissionRefusalCodeV1,
-        message: str,
-        *,
-        retryable: bool = False,
-        details: dict[str, object] | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.refusal_code = code
-        self.retryable = retryable
-        self.details = details or {}
 
 
 def bind_trigger_capture(

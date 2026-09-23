@@ -272,6 +272,7 @@ from cruxible_core.service.procedures.procedures import (
     service_execute_direct_procedure,
 )
 from cruxible_core.service.procedures.resolution_contracts import (
+    TriggerCaptureRefused,
     bind_investigation,
     bind_window,
     capture_event_time,
@@ -3594,57 +3595,72 @@ def _run_playbill_line(
         )
     trigger = accepted_line.line.trigger_policy
     trigger_binding = None
-    if isinstance(trigger, CaptureLandingTriggerPolicyV2):
-        if request.trigger_event is None:
-            return _line_refusal_state(
-                accepted,
-                accepted_line,
-                coordinate=coordinate,
-                head_at_admission=head_at_admission,
-                evaluation_time=evaluation_time,
-                code="occurrence_not_due",
-                message="The Line is waiting for a matching retained capture event.",
-                details={"repair": "Supply the retained capture event when it arrives."},
+    try:
+        if isinstance(trigger, CaptureLandingTriggerPolicyV2):
+            if request.trigger_event is None:
+                return _line_refusal_state(
+                    accepted,
+                    accepted_line,
+                    coordinate=coordinate,
+                    head_at_admission=head_at_admission,
+                    evaluation_time=evaluation_time,
+                    code="occurrence_not_due",
+                    message="The Line is waiting for a matching retained capture event.",
+                    details={"repair": "Supply the retained capture event when it arrives."},
+                )
+            capture_event_time(instance, trigger.event, request.trigger_event, now=evaluation_time)
+            trigger_binding = LineTriggerBindingV1(
+                kind="capture_landing", event=request.trigger_event
             )
-        capture_event_time(instance, trigger.event, request.trigger_event, now=evaluation_time)
-        trigger_binding = LineTriggerBindingV1(kind="capture_landing", event=request.trigger_event)
-    elif isinstance(trigger, WindowCloseTriggerPolicyV2):
-        from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+        elif isinstance(trigger, WindowCloseTriggerPolicyV2):
+            from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
 
-        if isinstance(trigger.window, CaptureEventWindowV1) and request.trigger_event is None:
-            return _line_refusal_state(
-                accepted,
-                accepted_line,
-                coordinate=coordinate,
-                head_at_admission=head_at_admission,
-                evaluation_time=evaluation_time,
-                code="occurrence_not_due",
-                message="The observation window is waiting for its capture event anchor.",
-                details={"repair": "Supply the retained anchor event when it arrives."},
+            if isinstance(trigger.window, CaptureEventWindowV1) and request.trigger_event is None:
+                return _line_refusal_state(
+                    accepted,
+                    accepted_line,
+                    coordinate=coordinate,
+                    head_at_admission=head_at_admission,
+                    evaluation_time=evaluation_time,
+                    code="occurrence_not_due",
+                    message="The observation window is waiting for its capture event anchor.",
+                    details={"repair": "Supply the retained anchor event when it arrives."},
+                )
+            line_event = request.trigger_event
+            if (
+                not isinstance(trigger.window, CaptureEventWindowV1)
+                and request.resolution_contract is not None
+            ):
+                line_event = None
+            window = bind_window(instance, trigger.window, line_event, now=evaluation_time)
+            trigger_binding = LineTriggerBindingV1(
+                kind="window_close", window=window, event=window.event
             )
-        line_event = request.trigger_event
-        if (
-            not isinstance(trigger.window, CaptureEventWindowV1)
-            and request.resolution_contract is not None
-        ):
-            line_event = None
-        window = bind_window(instance, trigger.window, line_event, now=evaluation_time)
-        trigger_binding = LineTriggerBindingV1(
-            kind="window_close", window=window, event=window.event
+        elif request.trigger_event is not None and request.resolution_contract is None:
+            raise PlaybillExecutionError("this Line trigger does not accept a capture event")
+        investigation = (
+            None
+            if request.resolution_contract is None
+            else bind_investigation(
+                instance,
+                request.resolution_contract,
+                event=request.trigger_event,
+                now=evaluation_time,
+                trigger_binding=trigger_binding,
+            )
         )
-    elif request.trigger_event is not None and request.resolution_contract is None:
-        raise PlaybillExecutionError("this Line trigger does not accept a capture event")
-    investigation = (
-        None
-        if request.resolution_contract is None
-        else bind_investigation(
-            instance,
-            request.resolution_contract,
-            event=request.trigger_event,
-            now=evaluation_time,
-            trigger_binding=trigger_binding,
+    except TriggerCaptureRefused as exc:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code=exc.refusal_code,
+            message=str(exc),
+            retryable=exc.retryable,
+            details=exc.details,
         )
-    )
     if (
         investigation is not None
         and trigger_binding is not None
@@ -3770,10 +3786,7 @@ def _run_playbill_line(
         )
     landed_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
     if isinstance(accepted_line.line, LineSpecV4):
-        from cruxible_core.service.procedures.trigger_inputs import (
-            TriggerCaptureRefused,
-            bind_trigger_capture,
-        )
+        from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
 
         try:
             landed_materials = (

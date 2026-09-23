@@ -274,8 +274,10 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
         event = TriggerEventReferenceV1(
             **{**event.model_dump(), "record_digest": "sha256:" + "a" * 64}
         )
-        with pytest.raises(PlaybillExecutionError, match="retained record"):
-            run_line(instance, line, event, at=now)
+        refused = run_line(instance, line, event, at=now)
+        assert refused.status == "admission_refused"
+        assert refused.terminal.code == "trigger_capture_invalid"
+        assert not refused.terminal.retryable
         return
     else:
         # Exercise the admission budget independently of acquisition-time provider caps.
