@@ -207,3 +207,35 @@ def test_a_path_restricted_listing_from_memory_matches_git(tmp_path, monkeypatch
     for (oid, paths), entries in expected.items():
         assert ledger._list_tree(oid, with_sizes=False, paths=paths) == entries
     assert listed == []
+
+
+class _CountingPath(str):
+    checks = 0
+
+    def startswith(self, *args, **kwargs):  # type: ignore[override]
+        _CountingPath.checks += 1
+        return super().startswith(*args, **kwargs)
+
+
+def _listing(count: int) -> tuple[ledger_git.GitTreeEntry, ...]:
+    paths = sorted(
+        {"claims/x.json", "claims/y/z.json", *(f"filler/{n:06d}.json" for n in range(count))}
+    )
+    return tuple(
+        ledger_git.GitTreeEntry(
+            path=_CountingPath(path), mode="100644", object_type="blob", oid="0" * 40, size=None
+        )
+        for path in paths
+    )
+
+
+def test_a_remembered_selection_does_not_grow_with_unrelated_entries():
+    work = {}
+    for count in (10, 10000):
+        listing = _listing(count)
+        ledger_git._select_from_listing(listing, ("warm",))  # build the index once
+        _CountingPath.checks = 0
+        selected = ledger_git._select_from_listing(listing, ("claims/x.json", "claims/y"))
+        assert [entry.path for entry in selected] == ["claims/x.json", "claims/y/z.json"]
+        work[count] = _CountingPath.checks
+    assert work[10] == work[10000]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import bisect
 import fcntl
 import hashlib
 import os
@@ -1806,11 +1807,7 @@ class GitLedger:
                     whole = _remembered_listing(repository, tree, with_sizes=with_sizes)
             if whole is None:
                 return self._read_tree_listing(oid, with_sizes=with_sizes, paths=paths)
-            wanted = set(paths)
-            beneath = tuple(path + "/" for path in paths)
-            return tuple(
-                entry for entry in whole if entry.path in wanted or entry.path.startswith(beneath)
-            )
+            return _select_from_listing(whole, paths)
         cached = _remembered_listing(repository, oid, with_sizes=with_sizes)
         if cached is not None:
             return cached
@@ -2251,12 +2248,58 @@ _VERIFIED_COMMIT_CAPACITY = 256
 _VERIFIED_COMMITS: OrderedDict[tuple[tuple[str, int, int], str, bytes], None] = OrderedDict()
 _VERIFIED_COMMITS_LOCK = threading.Lock()
 
-# A commit and its root tree share one listing object under two keys.
-_TREE_LISTING_CAPACITY = 16
+# A commit and its root tree share one listing under two keys, sized and unsized.
+_TREE_LISTING_CAPACITY = 32
 _TREE_LISTINGS: OrderedDict[tuple[tuple[str, int, int], str, bool], tuple[GitTreeEntry, ...]] = (
     OrderedDict()
 )
 _TREE_LISTINGS_LOCK = threading.Lock()
+
+
+_LISTING_INDEX_CAPACITY = 16
+# id(listing) -> (the listing itself, path -> position, paths in sorted order).
+# The listing is held so its id cannot be reused while the index is remembered.
+_LISTING_INDEXES: OrderedDict[
+    int, tuple[tuple[GitTreeEntry, ...], dict[str, int], tuple[str, ...]]
+] = OrderedDict()
+_LISTING_INDEXES_LOCK = threading.Lock()
+
+
+def _select_from_listing(
+    listing: tuple[GitTreeEntry, ...], paths: Sequence[str]
+) -> tuple[GitTreeEntry, ...]:
+    """A literal pathspec's selection from a whole listing, in listing order.
+
+    Each requested path selects its exact entry, or every entry beneath it when
+    it names a directory. An index built once per remembered listing makes an
+    exact path a lookup and a directory a sorted range, so the work tracks the
+    selection rather than the size of the tree.
+    """
+
+    key = id(listing)
+    with _LISTING_INDEXES_LOCK:
+        indexed = _LISTING_INDEXES.get(key)
+        if indexed is not None and indexed[0] is listing:
+            _LISTING_INDEXES.move_to_end(key)
+        else:
+            positions = {entry.path: position for position, entry in enumerate(listing)}
+            indexed = (listing, positions, tuple(sorted(positions)))
+            _LISTING_INDEXES[key] = indexed
+            _LISTING_INDEXES.move_to_end(key)
+            while len(_LISTING_INDEXES) > _LISTING_INDEX_CAPACITY:
+                _LISTING_INDEXES.popitem(last=False)
+    _listing, positions, ordered = indexed
+    selected: set[int] = set()
+    for path in paths:
+        exact = positions.get(path)
+        if exact is not None:
+            selected.add(exact)
+        prefix = path + "/"
+        cursor = bisect.bisect_left(ordered, prefix)
+        while cursor < len(ordered) and ordered[cursor].startswith(prefix):
+            selected.add(positions[ordered[cursor]])
+            cursor += 1
+    return tuple(listing[position] for position in sorted(selected))
 
 
 def _remembered_listing(
@@ -2271,8 +2314,12 @@ def _remembered_listing(
         sized = None if with_sizes else _TREE_LISTINGS.get((repository, oid, True))
     if sized is None:
         return None
-    # A sized listing carries every unsized field; only the size differs.
-    return tuple(replace(entry, size=None) for entry in sized)
+    # A sized listing carries every unsized field; only the size differs. The
+    # derived listing is remembered too, so repeated reads share one object.
+    unsized = tuple(replace(entry, size=None) for entry in sized)
+    if unsized:
+        _remember_listing(repository, oid, unsized)
+    return unsized
 
 
 def _remember_listing(
@@ -2325,6 +2372,7 @@ def _after_fork_in_parent() -> None:
 
 def _after_fork_in_child() -> None:
     global _BATCH_READERS_LOCK, _TREE_LISTINGS_LOCK, _VERIFIED_COMMITS_LOCK
+    global _LISTING_INDEXES_LOCK
     inherited = tuple(_BATCH_READERS.values())
     _BATCH_READERS.clear()
     for reader in inherited:
@@ -2334,6 +2382,7 @@ def _after_fork_in_child() -> None:
     _BATCH_READERS_LOCK = threading.Lock()
     _TREE_LISTINGS_LOCK = threading.Lock()
     _VERIFIED_COMMITS_LOCK = threading.Lock()
+    _LISTING_INDEXES_LOCK = threading.Lock()
 
 
 if hasattr(os, "register_at_fork"):
