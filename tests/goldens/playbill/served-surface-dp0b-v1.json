@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-23:claim-values-read",
-    "surface_digest": "sha256:0066a8dc50c687d47cca9df3d3df5ea9300808a888a7fdad0f52d3cc9dc91d2e"
+    "register_entry": "2026-09-23:claim-values-object-variants",
+    "surface_digest": "sha256:e8082f1aa5d030f17a6c7f2a866c5d66082feecb004cab5bb48a2f6b60b2e31a"
   },
   "surface": {
     "cli_leaves": [
@@ -1236,7 +1236,7 @@
         "request_model": "cruxible_client.contracts.claim_reads.ClaimValuesRequestV1",
         "request_schema_digest": "sha256:77843c0133d62eca613d204a09e5ad1a55c5a1f888c3aeca1f131fe84e506727",
         "response_model": "cruxible_client.contracts.claim_reads.ClaimValuesResultV1",
-        "response_schema_digest": "sha256:df854cb2ded436dda0c3e059dbbdc945f9b76967b4acd7598fb393608b94d222"
+        "response_schema_digest": "sha256:d4b4083065f0739e0450b92dca9b22ba8b48e422f97cb24a37664f181b360fa3"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.retire_claim",

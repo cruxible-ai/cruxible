@@ -93,8 +93,11 @@ class ClaimValueV1(BaseModel):
     predicate: str
     qualifier: str | None
     role: str
-    object_kind: Literal["literal", "subject"]
-    # The literal itself, or the object Subject's artifact path.
+    object_kind: Literal["literal", "subject", "exact_content"]
+    # The statement's object exactly as accepted (every variant's fields).
+    object: dict[str, Any]
+    # The literal itself; the object Subject's artifact path; or the exact
+    # content digest. ``object`` carries the selector or span.
     value: Any
     verdict: str
     status: str

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from typing import Any
 
 from cruxible_client.contracts import PlaybillAcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_client.contracts import PlaybillClaimViewV2
@@ -233,7 +234,6 @@ def service_read_claim_values(
     """
 
     from cruxible_client.contracts.claim_reads import MAX_CLAIM_VALUE_ROWS
-    from cruxible_client.contracts.claims import SubjectClaimObject
     from cruxible_client.contracts.errors import PlaybillFormatError as ValuesFormatError
     from cruxible_core.service.discovery.search import claim_resolution_statuses
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
@@ -276,30 +276,43 @@ def service_read_claim_values(
         verdicts_by_identity=verdicts,  # type: ignore[arg-type]
         read_context=context,
     )
-    rows = []
-    for claim in claims:
-        statement = claim.statement
-        verdict = verdicts.get(claim.identity.qualified)
-        subject_object = isinstance(statement.object, SubjectClaimObject)
-        rows.append(
-            ClaimValueV1(
-                claim_id=claim.identity.name,
-                subject_path=statement.subject.artifact_path,
-                predicate=statement.predicate,
-                qualifier=statement.qualifier,
-                role=statement.role,
-                object_kind="subject" if subject_object else "literal",
-                value=(
-                    statement.object.address.artifact_path  # type: ignore[union-attr]
-                    if subject_object
-                    else statement.object.value  # type: ignore[union-attr]
-                ),
-                verdict=str(getattr(verdict, "verdict", "unevaluated")),
-                status=statuses[claim.identity.name],
-            )
+    rows = tuple(
+        _claim_value_row(
+            claim,
+            verdict=verdicts.get(claim.identity.qualified),
+            status=statuses[claim.identity.name],
         )
+        for claim in claims
+    )
     return ClaimValuesResultV1(
         coordinate=ClientAcceptedCoordinate.model_validate(at.model_dump()),
         evaluation_time=evaluation_time,
-        values=tuple(rows),
+        values=rows,
+    )
+
+
+def _claim_value_row(claim: Any, *, verdict: object, status: str) -> ClaimValueV1:
+    """One Claim's value row, for every statement object variant."""
+
+    from cruxible_client.contracts.claims import ExactContentClaimObject, SubjectClaimObject
+
+    statement = claim.statement
+    claim_object = statement.object
+    if isinstance(claim_object, SubjectClaimObject):
+        value: object = claim_object.address.artifact_path
+    elif isinstance(claim_object, ExactContentClaimObject):
+        value = claim_object.content_digest
+    else:
+        value = claim_object.value
+    return ClaimValueV1(
+        claim_id=claim.identity.name,
+        subject_path=statement.subject.artifact_path,
+        predicate=statement.predicate,
+        qualifier=statement.qualifier,
+        role=statement.role,
+        object_kind=claim_object.kind,
+        object=claim_object.model_dump(mode="json"),
+        value=value,
+        verdict=str(getattr(verdict, "verdict", "unevaluated")),
+        status=status,
     )
