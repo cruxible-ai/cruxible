@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+from collections import OrderedDict
 from collections.abc import Iterator, Mapping, MutableSet
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -65,6 +67,7 @@ from cruxible_client.contracts.standing_mandates import (
     standing_mandate_path,
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
+from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.evidence.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.indexes.history.history_index import HistoryReader, RetainedRecordReader
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -186,6 +189,7 @@ class ClaimVerdictReadContext:
         default=None, init=False
     )
     _claim_types: dict[str, ClaimType] = dataclass_field(default_factory=dict, init=False)
+    _fingerprint: tuple[str | None] | None = dataclass_field(default=None, init=False)
     _attestation_versions: set[tuple[str, str]] = dataclass_field(default_factory=set, init=False)
 
     def __post_init__(self) -> None:
@@ -258,6 +262,16 @@ class ClaimVerdictReadContext:
             )
         assert self._history is not None
         return self._history
+
+    def availability_fingerprint(self) -> str | None:
+        """The CAS availability signal, observed once for this batch."""
+
+        if self._fingerprint is None:
+            from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
+
+            object.__setattr__(self, "_fingerprint", (verdict_input_fingerprint(self.instance),))
+        assert self._fingerprint is not None
+        return self._fingerprint[0]
 
     def claim_type(self, path: str) -> ClaimType:
         """The accepted ClaimType at ``path``, parsed once per batch."""
@@ -473,7 +487,41 @@ def _referent_digests(
     return subject_digest_value, object_digest
 
 
+_AVAILABILITY_CAPACITY = 65536
+_AVAILABILITY_MEMO: OrderedDict[tuple[str, str, str], bool] = OrderedDict()
+
+
 def _current_replay_available(
+    instance: ClaimReadSourceProtocol,
+    capture_digest_value: str,
+    *,
+    readers: Mapping[str, ExternalSourceReaderProtocol],
+    fingerprint: str | None = None,
+) -> bool:
+    """Whether a Capture's evidence can still be replayed from retained material.
+
+    ``fingerprint`` is the writer-owned CAS availability signal the verdict memo
+    already keys on. Under an unchanged signal the answer is reused; external
+    readers are never memoized, since their availability is not in the signal.
+    """
+
+    root = getattr(instance, "root", None)
+    key = (
+        None
+        if fingerprint is None or readers or not isinstance(root, Path)
+        else (str(root), capture_digest_value, fingerprint)
+    )
+    if key is not None:
+        remembered = memo_get(_AVAILABILITY_MEMO, key)
+        if remembered is not None:
+            return remembered
+    available = _replay_available(instance, capture_digest_value, readers=readers)
+    if key is not None:
+        memo_put(_AVAILABILITY_MEMO, key, available, capacity=_AVAILABILITY_CAPACITY)
+    return available
+
+
+def _replay_available(
     instance: ClaimReadSourceProtocol,
     capture_digest_value: str,
     *,
@@ -833,6 +881,7 @@ def service_evaluate_playbill_claim_verdict(
                     instance,
                     item.capture_digest,
                     readers=readers,
+                    fingerprint=read_context.availability_fingerprint() if batched else None,
                 )
             }
         )

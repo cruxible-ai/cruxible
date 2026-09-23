@@ -293,6 +293,9 @@ class PlaybillInstance:
         # review-context snapshot and access profile. Bounded by the floor service.
         self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self.floor_export_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
+        self._body_store_cache: (
+            tuple[tuple[Path, Path, tuple[int, int, int] | None], ContentAddressedBodyStore] | None
+        ) = None
         # Verified retained change-set records, keyed by their full accepted
         # location. Their bytes are immutable, so they survive head movement.
         self.verified_change_set_records: OrderedDict[
@@ -708,10 +711,26 @@ class PlaybillInstance:
         """Return PB-C's inert, access-controlled content-addressed body store."""
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
-        return ContentAddressedBodyStore(
+        try:
+            algorithm = _path_identity(paths["cas"] / "sha256")
+        except OSError:
+            algorithm = None
+        key = (paths["cas"], paths["leases"], algorithm)
+        cached = self._body_store_cache
+        if algorithm is not None and cached is not None and cached[0] == key:
+            return cached[1]
+        store = ContentAddressedBodyStore(
             paths["cas"],
             reservation_root=paths["leases"] / "procedure-material",
         )
+        try:
+            key = (paths["cas"], paths["leases"], _path_identity(paths["cas"] / "sha256"))
+        except OSError:
+            return store
+        # The store holds only confined, resolved paths; reuse it while they and
+        # its algorithm directory keep the same identity.
+        self._body_store_cache = (key, store)
+        return store
 
     @property
     def is_decommissioned(self) -> bool:

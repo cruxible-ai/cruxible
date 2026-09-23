@@ -231,3 +231,43 @@ def test_status_batches_select_attestations_once_for_every_claim(tmp_path, monke
     )
     assert len(calls) == 1
     assert {pair[0] for pair in calls[0]} >= {claim.identity.qualified for claim in live}
+
+
+def test_a_remembered_orientation_reads_no_claims(tmp_path, monkeypatch):
+    instance, _ = seed_claims(tmp_path)
+    playbill_search.reset_claim_resolution_memo()
+    first = playbill_search.service_search_playbill(
+        instance, request=_request(instance, mode="orient", kinds=("claim",))
+    )
+
+    def unread(*args, **kwargs):
+        pytest.fail("a remembered orientation must not read or parse Claims")
+
+    monkeypatch.setattr(ClaimVerdictReadContext, "claims", unread)
+    again = playbill_search.service_search_playbill(
+        instance, request=_request(instance, mode="orient", kinds=("claim",))
+    )
+    assert again.orientation == first.orientation
+    # Without the memo the ordinary read path is taken (and here refused).
+    playbill_search.reset_claim_resolution_memo()
+    with pytest.raises(pytest.fail.Exception):
+        playbill_search.service_search_playbill(
+            instance, request=_request(instance, mode="orient", kinds=("claim",))
+        )
+
+
+def test_remembered_replay_availability_follows_the_cas_signal(tmp_path):
+    from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
+
+    instance, _ = seed_claims(tmp_path)
+    claim = ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims()[0]
+    capture = claim.backing.capture_digests[0]
+    available = playbill_evidence._current_replay_available
+    signal = verdict_input_fingerprint(instance)
+    assert available(instance, capture, readers={}, fingerprint=signal) is True
+    # Removing the retained body changes the CAS signal; under the new signal the
+    # remembered answer is not reused.
+    instance.body_store()._path(capture).unlink()
+    changed = verdict_input_fingerprint(instance)
+    assert changed != signal
+    assert available(instance, capture, readers={}, fingerprint=changed) is False

@@ -32,6 +32,7 @@ def _fsync_directory(path: Path) -> None:
 _VERIFIED_CAPACITY = 65536
 _VERIFIED: OrderedDict[tuple[str, str], tuple[int, int, int, int, int]] = OrderedDict()
 _VERIFIED_LOCK = threading.Lock()
+_VALID_SHARDS: dict[tuple[str, str], tuple[int, int, int]] = {}
 
 
 def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
@@ -75,6 +76,20 @@ class ContentAddressedBodyStore:
         return directory / value.value
 
     def _validate_shard(self, directory: Path) -> None:
+        # A shard validated before is re-resolved only if its lstat identity
+        # (device, inode, mode) changed: a swapped-in symlink or directory differs.
+        try:
+            identity = directory.lstat()
+        except OSError:
+            identity = None
+        key = (str(self._algorithm_root), directory.name)
+        signature = (
+            None if identity is None else (identity.st_dev, identity.st_ino, identity.st_mode)
+        )
+        with _VERIFIED_LOCK:
+            known = _VALID_SHARDS.get(key)
+        if identity is not None and known == signature and stat.S_ISDIR(identity.st_mode):
+            return
         if directory.is_symlink() or not directory.is_dir():
             raise PlaybillCasError("CAS shard directory is not trustworthy")
         try:
@@ -83,6 +98,9 @@ class ContentAddressedBodyStore:
             raise PlaybillCasError("CAS shard directory cannot be resolved") from exc
         if resolved.parent != self._algorithm_root or resolved.name != directory.name:
             raise PlaybillCasError("CAS shard directory escapes the managed CAS root")
+        if signature is not None:
+            with _VERIFIED_LOCK:
+                _VALID_SHARDS[key] = signature
 
     def store(self, content: bytes) -> CasObjectMetadata:
         """Durably store inert bytes, idempotently, under their exact digest."""

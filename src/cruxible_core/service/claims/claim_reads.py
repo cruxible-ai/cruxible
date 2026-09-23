@@ -38,7 +38,10 @@ from cruxible_core.service.claims.claims import (
     _resolve_coordinate,
     materialize_playbill_claim_view,
 )
-from cruxible_core.service.evidence.evidence import _claim_read_history_index
+from cruxible_core.service.evidence.evidence import (
+    _claim_read_history_index,
+    _IndexedClaimLawEvidence,
+)
 
 
 def _cursor_selection(request: ClaimReadBatchRequestV1) -> str:
@@ -147,6 +150,11 @@ def service_read_claim_batch(
         claim_history = _claim_read_history_index(
             instance, coordinate=coordinate, records=projection.typed.records
         )
+        if isinstance(claim_history.law_evidence, _IndexedClaimLawEvidence):
+            # Every selected view's law evidence under one history snapshot.
+            claim_history.law_evidence.prefetch(
+                tuple(str(public.envelope["path"]) for public in public_views)
+            )
         evaluation_time = request.evaluation_time or (
             _accepted_generation_time(instance, coordinate) if public_views else None
         )

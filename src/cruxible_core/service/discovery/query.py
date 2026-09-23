@@ -61,6 +61,7 @@ from cruxible_core.query.engine import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
 from cruxible_core.service.discovery.query_definitions import accepted_query_definition
 from cruxible_core.service.evidence.evidence import (
     ClaimReadHistoryIndex,
@@ -139,6 +140,7 @@ def _fact_row(
     claim: ClaimArtifactAny,
     claim_types: dict[str, ClaimType],
     attestation_envelopes: tuple[ClaimAttestationV2, ...],
+    availability_fingerprint: str | None = None,
 ) -> ClaimFactRowV1:
     """Assemble one Claim's verdict inputs exactly as the verdict service does."""
 
@@ -170,6 +172,7 @@ def _fact_row(
                     instance,
                     item.capture_digest,
                     readers=readers,
+                    fingerprint=availability_fingerprint,
                 )
             }
         )
@@ -333,6 +336,7 @@ class _AcceptedQueryFactsRead:
                 if include_retired or claim.lifecycle.state == "live":
                     wanted.append(path)
             law_evidence.prefetch(tuple(wanted))
+        availability_fingerprint = verdict_input_fingerprint(self._instance)
         rows: list[ClaimFactRowV1] = []
         for path in sorted(self._claim_paths, key=lambda item: item.encode("utf-8")):
             # The full-history path historically looked up evidence before
@@ -359,6 +363,7 @@ class _AcceptedQueryFactsRead:
                     history=history,
                     claim=claim,
                     claim_types=self._claim_types,
+                    availability_fingerprint=availability_fingerprint,
                     attestation_envelopes=tuple(
                         self._attestations.get(
                             (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()
