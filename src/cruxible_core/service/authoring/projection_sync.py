@@ -333,6 +333,9 @@ class ProjectionCheckContext:
                 raise ProposalIntegrityError("selected projection coordinate is not accepted")
             self.generation = location.sequence
         self.facts = facts_reader or _AcceptedQueryFactsRead(instance, coordinate=coordinate)
+        # A caller-shared facts read is honored; otherwise each query builds only
+        # its referenced predicates' facts, exactly as the served query does.
+        self._shared_facts = facts_reader is not None
         self.verdicts = verdicts_by_identity
         self.queries: dict[bytes, ProjectionQueryBackingV1 | PlaybillError | ValueError] = {}
         self.statuses: Mapping[str, str] | None = resolution_statuses
@@ -491,7 +494,7 @@ class ProjectionCheckContext:
                 result = evaluate_accepted_query(
                     self.instance,
                     definition,
-                    facts=self.facts.build,
+                    facts=self.facts.build if self._shared_facts else None,
                     coordinate=self.coordinate,
                     evaluation_time=self.evaluation_time,
                     parameters={x.name: x.value for x in backing.resolved_parameter_bindings},
