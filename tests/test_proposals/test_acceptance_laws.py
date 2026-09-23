@@ -151,6 +151,9 @@ def test_claim_type_v1_v3_and_v4_survive_but_removed_v2_has_no_acceptance_law() 
 
 def test_role_demotion_inventory_covers_every_candidate_member_family() -> None:
     assert ROLE_DEMOTED_MEMBER_FAMILIES == (
+        "compiler-upgrade",
+        "resolution-contract",
+        "attestation",
         "approval-policy",
         "procedure-runtime-policy",
         "procedure",
@@ -160,7 +163,6 @@ def test_role_demotion_inventory_covers_every_candidate_member_family() -> None:
         "provider",
         "provider-interface",
         "source-acquisition-policy",
-        "standing-mandate",
         "procedure-mandate",
         "capture-contract",
         "claim",

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Annotated, Literal, TypeAlias
+from collections.abc import Iterable, Mapping
+from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -699,17 +700,10 @@ class ProposeChangeSetNodeV3(_StrictProcedureModel):
         return tuple(normalize_canonical(item) for item in value)
 
 
-class MandateSettlementNodeV3(_StrictProcedureModel):
-    kind: Literal["mandate_settlement"] = "mandate_settlement"
-    node_id: str
-    mandate: ProcedurePinBindingV1
-    target_law: ProcedurePinBindingV1
-    input: object
+class SettleChangeSetNodeV3(ProposeChangeSetNodeV3):
+    """Terminal settle for graph-v4/v5 Procedures; see SettleChangeSetNodeV6."""
 
-    @field_validator("input", mode="before")
-    @classmethod
-    def _input(cls, value: object) -> object:
-        return normalize_canonical(value)
+    kind: Literal["settle_change_set"] = "settle_change_set"  # type: ignore[assignment]
 
 
 class HaltNodeV3(_StrictProcedureModel):
@@ -732,7 +726,6 @@ ProcedureNodeV3 = Annotated[
     | CaptureEgressNodeV3
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV3
-    | MandateSettlementNodeV3
     | HaltNodeV3,
     Field(discriminator="kind"),
 ]
@@ -749,7 +742,7 @@ ProcedureNodeV4 = Annotated[
     | CaptureEgressNodeV3
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV3
-    | MandateSettlementNodeV3
+    | SettleChangeSetNodeV3
     | HaltNodeV3,
     Field(discriminator="kind"),
 ]
@@ -766,7 +759,7 @@ ProcedureNodeV5 = Annotated[
     | CaptureEgressNodeV3
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV3
-    | MandateSettlementNodeV3
+    | SettleChangeSetNodeV3
     | HaltNodeV3,
     Field(discriminator="kind"),
 ]
@@ -775,9 +768,50 @@ TERMINAL_REQUIRED_RUNGS = {
     "emit_capture": 0,
     "post_inbox": 1,
     "propose_change_set": 2,
-    "mandate_settlement": 3,
+    "settle_change_set": 3,
 }
 TERMINAL_NODE_KINDS = frozenset((*TERMINAL_REQUIRED_RUNGS, "halt", "return"))
+
+
+AuthorityVerb = Literal["observe", "propose", "settle"]
+# Authored surfaces and results speak these verbs; the numbers are internal ordering.
+AUTHORITY_RUNG: dict[str, Literal[1, 2, 3]] = {"observe": 1, "propose": 2, "settle": 3}
+RUNG_AUTHORITY: dict[int, AuthorityVerb] = {1: "observe", 2: "propose", 3: "settle"}
+#: What a served result names in place of an ordering value: a run capped below
+#: observation may egress nothing at all.
+EffectiveAuthority = Literal["none", "observe", "propose", "settle"]
+
+
+def required_authority(rung: int) -> AuthorityVerb:
+    """The verb a terminal's required rung serves as; capture (rung 0) observes too."""
+
+    return RUNG_AUTHORITY[max(rung, 1)]
+
+
+def authority_for_rung(rung: int) -> EffectiveAuthority:
+    """The verb an effective rung serves as, or none below observation."""
+
+    return "none" if rung < 0 else required_authority(rung)
+
+
+def derived_terminal_capability(
+    nodes: Iterable[object], *, child_rung: int = 0
+) -> Literal[1, 2, 3]:
+    """What a Procedure's own terminals (and any child it invokes) require it to do.
+
+    Authors do not state a Procedure's capability: it is the highest level any
+    terminal node or invoked child needs, and never below observe (1).
+    """
+
+    required = [child_rung]
+    for node in nodes:
+        kind = node.get("kind") if isinstance(node, Mapping) else getattr(node, "kind", None)
+        if isinstance(kind, str):
+            required.append(TERMINAL_REQUIRED_RUNGS.get(kind, 0))
+    level = max(1, *required)
+    if level > 3:
+        raise ValueError("a Procedure terminal requires an unknown authority level")
+    return cast(Literal[1, 2, 3], level)
 
 
 class ProcedureDefinitionV3(_StrictProcedureModel):
@@ -1118,6 +1152,17 @@ class ProposeChangeSetNodeV6(ProposeChangeSetNodeV3):
     _result = field_validator("result", mode="before")(normalize_canonical)
 
 
+class SettleChangeSetNodeV6(ProposeChangeSetNodeV6):
+    """Terminal settle: the proposal terminal's Claims, settled under delegated authority.
+
+    It carries no mandate: Core selects the one accepted settle ProcedureMandate
+    that covers the change, evaluates its condition, and falls back as that
+    mandate declares. Compiler revision 31.
+    """
+
+    kind: Literal["settle_change_set"] = "settle_change_set"  # type: ignore[assignment]
+
+
 class InvokeNodeV6(_StrictProcedureModel):
     """A call to an exact accepted Procedure under the enclosing run's limits."""
 
@@ -1145,7 +1190,7 @@ ProcedureNodeV6 = Annotated[
     | CaptureEgressNodeV6
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV6
-    | MandateSettlementNodeV3
+    | SettleChangeSetNodeV6
     | HaltNodeV3
     | SelectNodeV6
     | ReturnNodeV6
@@ -1225,7 +1270,6 @@ __all__ = [
     "GuardPredicateV1",
     "HaltNodeV3",
     "InboxEgressNodeV3",
-    "MandateSettlementNodeV3",
     "PredicateOperandV1",
     "ProcedureBudgetV3",
     "ProcedureDefinitionV3",

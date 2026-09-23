@@ -60,7 +60,7 @@ def test_typed_claim_source_parity_and_no_builtin_payload_copy(tmp_path):
     assert reader.principal("owner", active=True).principal_id == "owner"
     assert reader.principal_registry().semantic_root == instance.accepted_coordinate().semantic_root
     exported = canonical_logical_export(path)
-    assert exported["storage_schema_version"] == 6
+    assert exported["storage_schema_version"] == 7
     assert projection_logical_digest(path) == projection_logical_digest(path)
     connection.close()
 
@@ -84,7 +84,7 @@ def test_typed_reverse_and_full_address_indexes_are_present():
         )
     )
     searches = tuple(row[3] for row in branches if row[3].startswith("SEARCH "))
-    assert len(searches) == 16
+    assert len(searches) == 15
     assert all("(identity=?)" in detail for detail in searches)
     connection.close()
 
@@ -273,3 +273,27 @@ def test_claim_type_name_overlay_and_delta_match_cold_reconstruction(tmp_path):
                 warm.close()  # Roll back; each case starts from the same accepted projection.
         finally:
             projection.close()
+
+
+#: Each physical projection schema, pinned to the storage schema version it
+#: shipped under. A reopened instance rebuilds only when that version moves, so a
+#: schema change under an unchanged version leaves a serving pointer whose
+#: manifest name no longer matches its digest.
+STORAGE_SCHEMA_DIGESTS = {
+    6: "a9916f75438f179d3e775c72cd39390a5742474c91fca6b2e8e26b7f963a21db",
+    7: "67124ce0116d7204cf4a94ced9fc46733bd786663c8bb6439502ef71478404ee",
+}
+
+
+def test_a_physical_schema_change_moves_the_storage_schema_version():
+    import hashlib
+
+    from cruxible_core.indexes.typed_sqlite import complete_schema_sql
+
+    version = AssemblerRequest.model_fields["storage_schema_version"].default
+    digest = hashlib.sha256(complete_schema_sql().encode()).hexdigest()
+    assert STORAGE_SCHEMA_DIGESTS.get(version) == digest, (
+        "The typed projection schema changed: bump storage_schema_version and pin "
+        f"the new schema here ({version}: {digest})."
+    )
+    assert len(set(STORAGE_SCHEMA_DIGESTS.values())) == len(STORAGE_SCHEMA_DIGESTS)

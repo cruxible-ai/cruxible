@@ -51,10 +51,7 @@ from cruxible_core.exhaust.records import (
 )
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
-from cruxible_core.procedures.egress import (
-    TerminalEgressReceiptV1,
-    TerminalEgressReceiptV2,
-)
+from cruxible_core.procedures.egress import TerminalEgressReceiptV4
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
     ProcedureResolutionBook,
@@ -204,28 +201,28 @@ def _terminal_record(
             )
             if isinstance(payload, dict) and payload.get("verdict") == "delivered":
                 receipt_payload = payload.get("receipt")
-                if not isinstance(receipt_payload, dict):
+                if (
+                    not isinstance(receipt_payload, dict)
+                    or receipt_payload.get("tag") != "playbill-terminal-egress-receipt-v4"
+                ):
                     break
-                receipt_type = (
-                    TerminalEgressReceiptV2
-                    if receipt_payload.get("tag") == "playbill-terminal-egress-receipt-v2"
-                    else TerminalEgressReceiptV1
-                )
                 try:
-                    receipt = receipt_type.model_validate(receipt_payload)
+                    receipt = TerminalEgressReceiptV4.model_validate(receipt_payload)
                 except ValidationError:
                     break
+                # Only a settle terminal that actually settled counts; its
+                # fallback proposal settled nothing.
                 if (
                     receipt.run_id == evidence.run_id
                     and payload.get("node_id") == receipt.node_id
                     and payload.get("kind") == receipt.kind
-                    and receipt.kind == "mandate_settlement"
+                    and receipt.outcome == "settled"
                 ):
                     return stored
             break
     raise _refuse(
         "settlement_evidence_mismatch",
-        "Terminal evidence is not one delivered mandate-settlement record under the "
+        "Terminal evidence is not one delivered, settled settle_change_set record under the "
         "prediction Procedure mandate.",
     )
 

@@ -556,10 +556,8 @@ def test_source_is_served_on_both_run_lanes_only_in_graph_v4() -> None:
     assert "source" in SERVED_NODE_KINDS
     assert "source" in served_node_kinds(4)
     assert "source" not in served_node_kinds(3)
-    # Terminals, post_inbox, and mandate_settlement stay dark on both lanes.
-    assert SERVED_NODE_KINDS.isdisjoint(
-        {"emit_capture", "post_inbox", "propose_change_set", "mandate_settlement"}
-    )
+    # Terminals and post_inbox stay dark on both lanes.
+    assert SERVED_NODE_KINDS.isdisjoint({"emit_capture", "post_inbox", "propose_change_set"})
 
 
 def test_the_sdk_authors_a_source_node_on_v4_and_refuses_it_on_v3(tmp_path: Path) -> None:

@@ -174,7 +174,6 @@ def test_source_relocation_preserves_identity_and_local_diagnostics():
         output=request.output,
         budget=request.budget,
         hard_caps=request.hard_caps,
-        terminal_capability=request.terminal_capability,
         description=request.description,
     )
     old = accepted(historical)

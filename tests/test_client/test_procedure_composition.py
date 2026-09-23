@@ -311,15 +311,15 @@ def test_sdk_changeset_carries_procedure_line_and_mandate_together():
     changes = (
         ChangeSetDraft(pb)
         .procedure(definition=plan)
-        .line(name="demo", procedure="demo", acquisition_policy="demo", requested_terminal_rung=1)
+        .line(name="demo", procedure="demo", acquisition_policy="demo", max_authority="observe")
     )
     changes.procedure_mandate(
         ProcedureMandateInputV1(
             kind="procedure_mandate",
             name="demo",
             procedure_name="demo",
-            rung=2,
-            authority_ceiling=CAPS,
+            grants="propose",
+            resource_ceiling=CAPS,
             namespace=("captures",),
             valid_from=datetime(2026, 9, 19, tzinfo=UTC),
             expires_at=datetime(2026, 10, 19, tzinfo=UTC),
@@ -387,3 +387,19 @@ def test_sequence_through_sdk_authoring_acceptance_and_existing_executor(tmp_pat
     )
     assert result.status == "succeeded", result
     assert result.result == {"count": 7}
+
+
+def test_a_settle_step_ends_its_path_and_derives_settle_authority():
+    from cruxible_client.authoring.procedures import SettleChangeSet
+    from tests.test_procedures.test_procedure_proposal_delivery import item_template
+
+    plan = sequence(
+        Source("result", capture_contract="security.http", request={"url": "https://example.org"}),
+        Project("summary", contract_out=NUMBER, fields={"count": 1}),
+        SettleChangeSet("settle", candidate_templates=(item_template(),)),
+    ).bind(result=PROVIDER)
+    preview = plan.preview()
+    assert preview.ready_for_prepare, preview.errors
+    assert preview.terminals == ("settle",)
+    assert preview.nodes[-1]["kind"] == "settle_change_set"
+    assert plan.build().definition["terminal_capability"] == 3

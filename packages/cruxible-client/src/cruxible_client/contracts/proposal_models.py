@@ -342,6 +342,35 @@ class ProposalWithdrawalRecordV1(_StrictProposalModel):
         return value
 
 
+class ProposalSettleSubmissionV1(_StrictProposalModel):
+    """How a settle terminal submitted its proposal, retained for recovery.
+
+    `delegated` asks for acceptance under the named settle mandate; `fallback`
+    is the ordinary proposal that mandate declared when it did not authorize the
+    change, for `fallback_reason`. Recovery reads this back rather than
+    inferring it from whatever later happened to the proposal.
+    """
+
+    tag: Literal["playbill-proposal-settle-submission-v1"] = (
+        "playbill-proposal-settle-submission-v1"
+    )
+    mode: Literal["delegated", "fallback"]
+    mandate_digest: str
+    fallback_reason: str | None = None
+
+    @field_validator("mandate_digest")
+    @classmethod
+    def _mandate_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _reason(self) -> "ProposalSettleSubmissionV1":
+        if (self.mode == "fallback") != bool(self.fallback_reason):
+            raise ValueError("exactly a settle fallback names why it fell back")
+        return self
+
+
 class ProposalAdmissionRecord(_StrictProposalModel):
     tag: Literal["playbill-proposal-admission-v1"] = "playbill-proposal-admission-v1"
     proposal_id: str
@@ -359,6 +388,11 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     # did. Absent from the canonical record when unset, so every admission
     # already on disk re-renders and stays readable.
     rationale: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    # A settle terminal's submission mode; absent, like `rationale`, for every
+    # other proposal, so admissions already on disk keep their bytes.
+    settle_submission: ProposalSettleSubmissionV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("rationale")
     @classmethod
@@ -528,6 +562,7 @@ class ProposalTransportProtocol(Protocol):
 __all__ = [
     "AuthenticatedActor",
     "ProposalAdmissionRecord",
+    "ProposalSettleSubmissionV1",
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",
     "CHANGE_SET_RECORD_BYTES_PER_MEMBER",

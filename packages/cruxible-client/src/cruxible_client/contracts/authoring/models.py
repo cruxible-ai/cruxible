@@ -100,7 +100,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:387ec556e70dd5d4b373844ea4c59af92acfc1d94243253d9de85bd41cbe1f11"
+    "sha256:dd6cb0158e64fbd8e827d6a092fee305d9f6db51affeeb1428f6ebc6f70d13c6"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -914,19 +914,45 @@ class ProcedureRuntimePolicyAuthoringPayloadV1(_StrictAuthoringModel):
     procedure_runtime_policy: ProcedureRuntimePolicyV1
 
 
+class MandateScopeAuthoringV1(_StrictAuthoringModel):
+    """One ClaimType a settle grant covers, named by predicate; lowering pins its digest."""
+
+    tag: Literal["playbill-mandate-scope-authoring-v1"] = "playbill-mandate-scope-authoring-v1"
+    claim_type: str
+    change_kinds: tuple[Literal["create", "revise", "retire"], ...] = Field(min_length=1)
+    binding_subject_role: Literal["subject", "object"] = "subject"
+
+
+class MandateConditionAuthoringV1(_StrictAuthoringModel):
+    """The settle predicate, named by query; lowering pins the exact accepted query."""
+
+    tag: Literal["playbill-mandate-condition-authoring-v1"] = (
+        "playbill-mandate-condition-authoring-v1"
+    )
+    query_name: str
+    binding_parameter: str
+    fixed_parameters: dict[str, object] = Field(default_factory=dict)
+    required_fields: tuple[str, ...] = Field(min_length=1)
+    fallback: Literal["refuse", "propose"]
+
+
 class ProcedureMandateAuthoringPayloadV1(_StrictAuthoringModel):
-    """Decision-only grant input; lowering owns exact Procedure/predecessor digests."""
+    """Decision-only grant input; lowering owns every exact digest it pins."""
 
     tag: Literal["playbill-procedure-mandate-authoring-payload-v1"] = (
         "playbill-procedure-mandate-authoring-payload-v1"
     )
     name: str
     procedure_name: str
-    rung: Literal[2, 3]
-    authority_ceiling: ProcedureHardCapsV3
+    grants: Literal["propose", "settle"]
+    resource_ceiling: ProcedureHardCapsV3
     namespace: tuple[str, ...]
     valid_from: datetime
     expires_at: datetime
+    scope: tuple[MandateScopeAuthoringV1, ...] = ()
+    subject_scope: tuple[SemanticAddress, ...] | None = None
+    condition: MandateConditionAuthoringV1 | None = None
+    suspended: bool = False
     retire: bool = False
 
 
@@ -961,7 +987,8 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
     name: str
     procedure_name: str
     acquisition_policy_name: str
-    requested_terminal_rung: Literal[1, 2, 3]
+    # Caps this Line below its Procedure's capability; omitted, it is that capability.
+    max_authority: Literal["observe", "propose", "settle"] | None = None
     trigger_policy: TriggerPolicyV2
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     parameters: object = Field(default_factory=dict)
@@ -2975,6 +3002,8 @@ __all__ = [
     "ProcedureAuthoringPayloadV2",
     "ApprovalPolicyAuthoringPayloadV1",
     "ProcedureRuntimePolicyAuthoringPayloadV1",
+    "MandateConditionAuthoringV1",
+    "MandateScopeAuthoringV1",
     "ProcedureMandateAuthoringPayloadV1",
     "QueryDefinitionAuthoringPayloadV1",
     "AttestationAuthoringPayloadV1",

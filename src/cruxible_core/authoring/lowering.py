@@ -112,8 +112,11 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.procedure_mandates import (
-    ProcedureMandateV1,
-    parse_procedure_mandate,
+    MANDATE_CHANGE_KIND_ORDER,
+    MandateClaimScopeV1,
+    MandateConditionV1,
+    ProcedureMandateV2,
+    parse_procedure_mandate_any,
     procedure_mandate_digest,
     procedure_mandate_path,
     render_procedure_mandate,
@@ -139,9 +142,9 @@ from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest,
 )
 from cruxible_client.contracts.procedures.line_specs import (
+    RUNG_AUTHORITY,
     CaptureLandingTriggerPolicyV2,
-    LineSpecV3,
-    LineSpecV4,
+    LineSpecV5,
     WindowCloseTriggerPolicyV2,
     line_spec_digest,
     line_spec_path,
@@ -162,6 +165,7 @@ from cruxible_client.contracts.providers import parse_provider, provider_digest,
 from cruxible_client.contracts.query.definitions import (
     CLAIM_TYPE_PIN_ROLE,
     QueryDefinitionV1,
+    parse_query_definition,
     query_definition_digest,
     query_definition_path,
     render_query_definition,
@@ -2087,7 +2091,7 @@ def _render_line_member(
     the staged tree -- accepted at the base or authored earlier in the same
     set -- and lowering pins their exact digests. A Procedure that pins every
     Provider it names fills no slot, so the Line's slot bindings and Provider
-    closures are empty. Event input bindings lower to Line v4; other Lines retain v3.
+    closures are empty. Every Line lowers to v5, which states its authority as a verb.
     """
 
     procedure_target = procedure_path(payload.procedure_name)
@@ -2198,7 +2202,10 @@ def _render_line_member(
         slot_bindings=(),
         trigger_policy=payload.trigger_policy,
         acquisition_policy=policy_pin,
-        requested_terminal_rung=payload.requested_terminal_rung,
+        max_authority=(
+            payload.max_authority or RUNG_AUTHORITY[procedure.definition.terminal_capability]
+        ),
+        trigger_input=payload.trigger_input,
         budgets=budgets,
         epsilon=payload.epsilon,
         pins=tuple(
@@ -2217,11 +2224,7 @@ def _render_line_member(
             predecessor_digest=predecessor_digest,
         ),
     )
-    line = (
-        LineSpecV3.model_validate(line_fields)
-        if payload.trigger_input is None
-        else LineSpecV4.model_validate({**line_fields, "trigger_input": payload.trigger_input})
-    )
+    line = LineSpecV5.model_validate(line_fields)
     if previous_content is not None and _same_revision_content(line, previous):
         return path, previous_content, line_spec_digest(previous).tagged
     return path, render_line_spec(line), line_spec_digest(line).tagged
@@ -2255,27 +2258,90 @@ def _render_procedure_mandate_member(
     path = procedure_mandate_path(payload.name)
     previous_content = tree.get(path)
     predecessor_digest = None
+    previous = None
     if previous_content is not None:
-        previous = parse_procedure_mandate(previous_content, path=path)
+        previous = parse_procedure_mandate_any(previous_content, path=path)
         predecessor_digest = procedure_mandate_digest(previous).tagged
-    mandate = ProcedureMandateV1(
+    scope: list[MandateClaimScopeV1] = []
+    for index, item in enumerate(payload.scope):
+        type_path = claim_type_path(item.claim_type)
+        type_content = tree.get(type_path)
+        if type_content is None:
+            _refuse(
+                "playbill.authoring.procedure_mandate_claim_type_missing",
+                f"scope[{index}].claim_type",
+                f"Settle scope ClaimType {item.claim_type!r} is not accepted or staged.",
+                repair_kind="replace_claim_type",
+                repair_description="Name a ClaimType present at the authoring coordinate.",
+            )
+        claim_type = parse_claim_type(type_content, path=type_path)
+        scope.append(
+            MandateClaimScopeV1(
+                claim_type=ArtifactPin(
+                    role="claim-type",
+                    target=claim_type.identity,
+                    artifact_digest=claim_type_digest(claim_type).tagged,
+                ),
+                change_kinds=tuple(
+                    kind for kind in MANDATE_CHANGE_KIND_ORDER if kind in item.change_kinds
+                ),
+                binding_subject_role=item.binding_subject_role,
+            )
+        )
+    condition = None
+    if payload.condition is not None:
+        query_path = query_definition_path(payload.condition.query_name)
+        query_content = tree.get(query_path)
+        if query_content is None:
+            _refuse(
+                "playbill.authoring.procedure_mandate_condition_query_missing",
+                "condition.query_name",
+                f"Condition query {payload.condition.query_name!r} is not accepted or staged.",
+                repair_kind="replace_query_name",
+                repair_description="Name a QueryDefinition present at the authoring coordinate.",
+            )
+        query = parse_query_definition(query_content, path=query_path)
+        condition = MandateConditionV1(
+            query=ArtifactPin(
+                role="condition-query",
+                target=query.identity,
+                artifact_digest=query_definition_digest(query).tagged,
+            ),
+            binding_parameter=payload.condition.binding_parameter,
+            fixed_parameters=payload.condition.fixed_parameters,
+            required_fields=tuple(sorted(set(payload.condition.required_fields))),
+            fallback=payload.condition.fallback,
+        )
+    mandate = ProcedureMandateV2(
         identity=ArtifactIdentity(kind="ProcedureMandate", name=payload.name),
         procedure=ArtifactPin(
             role="procedure",
             target=procedure.identity,
             artifact_digest=procedure_artifact_digest(procedure).tagged,
         ),
-        rung=payload.rung,
-        authority_ceiling=payload.authority_ceiling,
+        grants=payload.grants,
+        resource_ceiling=payload.resource_ceiling,
         namespace=payload.namespace,
         valid_from=payload.valid_from,
         expires_at=payload.expires_at,
+        scope=tuple(sorted(scope, key=lambda item: item.claim_type.target.qualified.encode())),
+        subject_scope=(
+            None
+            if payload.subject_scope is None
+            else tuple(sorted(set(payload.subject_scope), key=lambda item: item.artifact_path))
+        ),
+        condition=condition,
+        suspended=payload.suspended,
         lifecycle=ArtifactLifecycle(
             state="retired" if payload.retire else "live",
             predecessor_digest=predecessor_digest,
         ),
     )
-    if previous_content is not None and _same_revision_content(mandate, previous):
+    if (
+        previous_content is not None
+        and previous is not None
+        and _same_revision_content(mandate, previous)
+    ):
         return path, previous_content, procedure_mandate_digest(previous).tagged
     return path, render_procedure_mandate(mandate), procedure_mandate_digest(mandate).tagged
 

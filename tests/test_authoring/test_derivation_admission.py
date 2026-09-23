@@ -109,7 +109,6 @@ def world(tmp_path):
         output=Result,
         budget=_budget().model_copy(update={"max_items": None}),
         hard_caps=_hard_caps(),
-        terminal_capability=2,
     )
     def derive(request, world):
         basis = world.project.work_item["wi-42"].status.one()

@@ -61,7 +61,6 @@ class ProcedureSourceRequestV1(_Closed):
     bindings: dict[str, SourceSelection] = Field(default_factory=dict)
     budget: ProcedureBudgetV3
     hard_caps: ProcedureHardCapsV3
-    terminal_capability: Literal[1, 2, 3] = 1
     description: str | None = None
 
 

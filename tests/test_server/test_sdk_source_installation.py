@@ -228,7 +228,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
                 name="source-line",
                 procedure="observe-parent",
                 acquisition_policy="source-reads",
-                requested_terminal_rung=2,
+                max_authority="propose",
                 parameters={"url": f"http://127.0.0.1:{server.server_port}/state.json"},
             )
             .procedure_mandate(
@@ -236,8 +236,8 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
                     kind="procedure_mandate",
                     name="source-authority",
                     procedure_name="observe-parent",
-                    rung=2,
-                    authority_ceiling=caps,
+                    grants="propose",
+                    resource_ceiling=caps,
                     namespace=("claims",),
                     valid_from=now - timedelta(days=1),
                     expires_at=now + timedelta(days=1),
@@ -302,7 +302,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
                 name="verify-line",
                 procedure="verify-parent",
                 acquisition_policy="source-reads",
-                requested_terminal_rung=2,
+                max_authority="propose",
                 parameters={"url": f"http://127.0.0.1:{server.server_port}/state.json"},
             )
         )
@@ -318,8 +318,8 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
                     kind="procedure_mandate",
                     name="verify-authority",
                     procedure_name="verify-parent",
-                    rung=2,
-                    authority_ceiling=caps,
+                    grants="propose",
+                    resource_ceiling=caps,
                     namespace=("claims",),
                     valid_from=now - timedelta(days=1),
                     expires_at=now + timedelta(days=1),

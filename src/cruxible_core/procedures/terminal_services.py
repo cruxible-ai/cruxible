@@ -10,17 +10,20 @@ from typing import TYPE_CHECKING
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
     CandidateMemberLawEvidenceV2,
+    CandidateRecordAnyVersion,
     canonical_candidate_timestamp,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.errors import PlaybillFormatError
-from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1
+from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
+from cruxible_client.contracts.proposal_models import ProposalSettleSubmissionV1
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV2,
     TerminalEgressError,
     TerminalEgressReceiptV2,
     TerminalEgressReceiptV3,
+    TerminalEgressReceiptV4,
     TerminalEgressRequestV2,
     require_procedure_mandate,
     require_procedure_mandate_at_head,
@@ -72,12 +75,25 @@ def _changed_paths(base: Mapping[str, bytes], candidate: Mapping[str, bytes]) ->
     )
 
 
-def proposal_terminal_payload_digest(tree: Mapping[str, bytes], paths: tuple[str, ...]) -> str:
-    """Retain the exact authored payload binding after candidate Git objects expire."""
+def proposal_terminal_payload_digest(
+    tree: Mapping[str, bytes],
+    paths: tuple[str, ...],
+    *,
+    settle: ProposalSettleSubmissionV1 | None = None,
+) -> str:
+    """Retain the exact authored payload binding after candidate Git objects expire.
+
+    A settle terminal's submission mode is bound too, so the admission cannot
+    be read back as the other mode than the one it was submitted under.
+    """
+    settle_binding: dict[str, object] = (
+        {} if settle is None else {"settle_submission": settle.model_dump(mode="json")}
+    )
     return typed_digest(
         Sha256Value,
         "playbill-procedure-proposal-payload-v1",
         {
+            **settle_binding,
             "members": [
                 {
                     "path": path,
@@ -86,7 +102,7 @@ def proposal_terminal_payload_digest(tree: Mapping[str, bytes], paths: tuple[str
                     else "sha256:" + hashlib.sha256(tree[path]).hexdigest(),
                 }
                 for path in sorted(paths, key=str.encode)
-            ]
+            ],
         },
     ).tagged
 
@@ -122,15 +138,49 @@ class ProposalTerminalAdapter:
         request: TerminalEgressRequestV2,
         admission: ProcedureRunAdmissionV1,
         candidate_tree: Mapping[str, bytes],
-        accepted_mandates: Mapping[str, ProcedureMandateV1],
+        accepted_mandates: Mapping[str, ProcedureMandateAny],
         item_paths: Mapping[str, str] | None = None,
         rationale: str | None = None,
         base_tree: Mapping[str, bytes] | None = None,
         changed_paths: tuple[str, ...] | None = None,
         delegation: ProcedureDelegation | None = None,
     ) -> TerminalEgressReceiptV2:
-        if request.kind != "propose_change_set":
-            raise EffectfulTerminalError("proposal adapter serves propose_change_set only")
+        result = self.submit(
+            request=request,
+            admission=admission,
+            candidate_tree=candidate_tree,
+            accepted_mandates=accepted_mandates,
+            rationale=rationale,
+            base_tree=base_tree,
+            changed_paths=changed_paths,
+            delegation=delegation,
+        )
+        return proposal_terminal_receipt(request, result=result, item_paths=item_paths)
+
+    def submit(
+        self,
+        *,
+        request: TerminalEgressRequestV2,
+        admission: ProcedureRunAdmissionV1,
+        candidate_tree: Mapping[str, bytes],
+        accepted_mandates: Mapping[str, ProcedureMandateAny],
+        rationale: str | None = None,
+        base_tree: Mapping[str, bytes] | None = None,
+        changed_paths: tuple[str, ...] | None = None,
+        delegation: ProcedureDelegation | None = None,
+        settle_submission: ProposalSettleSubmissionV1 | None = None,
+    ) -> ProposalResult:
+        """Submit the lowered candidate once, under the exact mandate, and return the result.
+
+        A settle terminal passes how it submits -- under its bound mandate's
+        delegated authority, or as that mandate's declared fallback -- and the
+        admission retains it; a proposal terminal passes none.
+        """
+        if (settle_submission is not None) != (request.kind == "settle_change_set"):
+            raise EffectfulTerminalError("exactly a settle terminal names its submission mode")
+
+        if request.kind not in {"propose_change_set", "settle_change_set"}:
+            raise EffectfulTerminalError("proposal adapter serves proposal and settle only")
         if changed_paths is None:
             # A caller that lowered the tree already knows exactly which paths
             # moved; only a caller handing over a bare tree pays for the diff.
@@ -187,13 +237,14 @@ class ProposalTerminalAdapter:
                         target_ref=proposal_terminal_ref(actor_id, request.operation_key),
                         proposed_base_oid=request.accepted_coordinate.git_oid,
                         source_compilation_digest=proposal_terminal_payload_digest(
-                            candidate_tree, changed
+                            candidate_tree, changed, settle=settle_submission
                         ),
                         rationale=rationale,
                     ),
                     candidate_tree=candidate_tree,
                     timestamp=canonical_candidate_timestamp(request.evaluation_time),
                     authorize=_authorize_at_head,
+                    settle_submission=settle_submission,
                 )
                 break
             except ProposalHeadMovedError:
@@ -201,11 +252,7 @@ class ProposalTerminalAdapter:
                 # re-establishes the mandate there before evaluating again.
                 if attempt == HEAD_CONTENTION_ATTEMPTS - 1:
                     raise
-        return proposal_terminal_receipt(
-            request,
-            result=result,
-            item_paths=item_paths,
-        )
+        return result
 
 
 def proposal_terminal_ref(actor_id: str, operation_key: str) -> str:
@@ -221,6 +268,58 @@ def proposal_terminal_receipt(
     item_paths: Mapping[str, str] | None,
 ) -> TerminalEgressReceiptV2:
     """Bind every terminal item to the exact candidate member it lowered into."""
+
+    children, candidate = _receipt_children(request, result=result, item_paths=item_paths)
+    assert request.operation_key is not None  # request shape
+    return TerminalEgressReceiptV3(
+        kind=request.kind,
+        run_id=request.run_id,
+        node_id=request.node_id,
+        disposition="received",
+        children=children,
+        operation_key=request.operation_key,
+        proposal_id=result.admission.proposal_id,
+        candidate_digest=candidate.candidate_digest,
+        target_paths=request.target_paths,
+    )
+
+
+def settle_terminal_receipt(
+    request: TerminalEgressRequestV2,
+    *,
+    result: ProposalResult,
+    item_paths: Mapping[str, str] | None,
+    accepted_git_oid: str | None,
+    fallback_reason: str | None = None,
+) -> TerminalEgressReceiptV4:
+    """A settle outcome: the accepted generation, or the ordinary proposal it fell back to."""
+
+    children, candidate = _receipt_children(request, result=result, item_paths=item_paths)
+    assert request.operation_key is not None and request.procedure_mandate_digest is not None
+    settled = accepted_git_oid is not None
+    return TerminalEgressReceiptV4(
+        kind=request.kind,
+        run_id=request.run_id,
+        node_id=request.node_id,
+        disposition="settled" if settled else "received",
+        children=children,
+        operation_key=request.operation_key,
+        proposal_id=result.admission.proposal_id,
+        candidate_digest=candidate.candidate_digest,
+        target_paths=request.target_paths,
+        outcome="settled" if settled else "proposed",
+        procedure_mandate_digest=request.procedure_mandate_digest,
+        accepted_git_oid=accepted_git_oid,
+        fallback_reason=fallback_reason,
+    )
+
+
+def _receipt_children(
+    request: TerminalEgressRequestV2,
+    *,
+    result: ProposalResult,
+    item_paths: Mapping[str, str] | None,
+) -> tuple[tuple[TerminalEgressChildReceiptV2, ...], CandidateRecordAnyVersion]:
 
     candidate = result.candidate
     if candidate is None:
@@ -256,18 +355,7 @@ def proposal_terminal_receipt(
                 path=path,
             )
         )
-    assert request.operation_key is not None  # request shape
-    return TerminalEgressReceiptV3(
-        kind=request.kind,
-        run_id=request.run_id,
-        node_id=request.node_id,
-        disposition="received",
-        children=tuple(children),
-        operation_key=request.operation_key,
-        proposal_id=result.admission.proposal_id,
-        candidate_digest=candidate.candidate_digest,
-        target_paths=request.target_paths,
-    )
+    return tuple(children), candidate
 
 
 __all__ = [

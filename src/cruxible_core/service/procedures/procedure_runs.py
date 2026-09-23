@@ -39,8 +39,11 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.procedure_mandates import (
     PROCEDURE_MANDATE_CLOCK_SKEW,
+    ProcedureMandateAny,
     ProcedureMandateV1,
+    ProcedureMandateV2,
 )
+from cruxible_client.contracts.procedure_mandates import mandate_rung as procedure_mandate_rung
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
     PROCEDURE_RUNTIME_POLICY_PATH,
@@ -67,10 +70,12 @@ from cruxible_client.contracts.procedures.line_specs import (
     CaptureLandingTriggerPolicyV2,
     LineSpecV2,
     LineSpecV4,
+    LineSpecV5,
     ManualTriggerPolicyV1,
     WindowCloseTriggerPolicyV2,
     evaluate_line_spec_law,
     line_identity_digest,
+    line_requested_rung,
     line_spec_digest,
     parse_line_spec,
 )
@@ -88,7 +93,9 @@ from cruxible_client.contracts.procedures.models import (
     RepeatNodeV4,
     SourceNodeV3,
     SourceNodeV4,
+    authority_for_rung,
     iter_pin_bindings,
+    required_authority,
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlanV2,
@@ -130,6 +137,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureTerminalEgressV1,
     ProcedureTerminalV1,
     ProviderBucketClassificationPlanV1,
+    current_refusal_code,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
     procedure_selection_decision_digest,
@@ -176,6 +184,7 @@ from cruxible_client.contracts.workspace_file import (
 )
 from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
 from cruxible_core.compiler.compiler import (
+    AUTHORITY_VERBS_COMPILER,
     CLAIM_EVIDENCE_COMPILER,
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
@@ -199,6 +208,7 @@ from cruxible_core.procedures.acquisition import (
     ACQUISITION_REFUSED,
 )
 from cruxible_core.procedures.egress import (
+    SERVED_AUTHORITY_TERMS,
     CaptureTerminalEgressSink,
     PreparedTerminalEgressV1,
     TerminalEgressReceiptV1,
@@ -1228,7 +1238,8 @@ def _line_external_occurrences(
         implementation_closures=getattr(accepted_line.line, "provider_implementation_closures", ()),
         supplied_source_inputs=(
             frozenset({accepted_line.line.trigger_input})
-            if isinstance(accepted_line.line, LineSpecV4)
+            if isinstance(accepted_line.line, LineSpecV4 | LineSpecV5)
+            and accepted_line.line.trigger_input is not None
             else frozenset()
         ),
     )
@@ -1972,6 +1983,13 @@ def _fold_terminal_egress(
     receipt = payload.get("receipt")
     proposal_id = None
     candidate_digest = None
+    settle: dict[str, object] = {}
+    if isinstance(receipt, dict) and receipt.get("tag") == "playbill-terminal-egress-receipt-v4":
+        settle = {
+            "settle_outcome": receipt.get("outcome"),
+            "accepted_git_oid": receipt.get("accepted_git_oid"),
+            "fallback_reason": receipt.get("fallback_reason"),
+        }
     if isinstance(receipt, dict):
         proposal_id = (
             receipt.get("proposal_id") if isinstance(receipt.get("proposal_id"), str) else None
@@ -2008,18 +2026,26 @@ def _fold_terminal_egress(
         else (() if current is None else current.target_paths)
     )
     verdict = _string("verdict") or "failed"
+    # The journal keeps the internal ordering; a served result speaks verbs.
+    if verdict == "refused_effective_rung":
+        verdict = "refused_effective_authority"
+    limiting_term = _string("limiting_term")
+    raw_refusal_code = _string("refusal_code")
     return ProcedureTerminalEgressV1(
         node_id=str(payload.get("node_id")),
         kind=cast(Any, _string("kind")),
         verdict=cast(Any, verdict),
-        required_rung=int(cast(int, payload.get("required_rung", 0))),
-        effective_rung=(
-            int(cast(int, payload["effective_rung"]))
+        required_authority=required_authority(int(cast(int, payload.get("required_rung", 0)))),
+        effective_authority=(
+            authority_for_rung(cast(int, payload["effective_rung"]))
             if isinstance(payload.get("effective_rung"), int)
-            else (None if current is None else current.effective_rung)
+            else (None if current is None else current.effective_authority)
         ),
-        limiting_term=_string("limiting_term")
-        or (None if current is None else current.limiting_term),
+        limiting_term=(
+            SERVED_AUTHORITY_TERMS[cast(Any, limiting_term)]
+            if limiting_term is not None
+            else (None if current is None else current.limiting_term)
+        ),
         operation_key=_string("operation_key")
         or (None if current is None else current.operation_key),
         procedure_mandate_digest=(
@@ -2029,9 +2055,16 @@ def _fold_terminal_egress(
         target_paths=target_paths,
         proposal_id=proposal_id,
         candidate_digest=candidate_digest,
-        refusal_code=_string("refusal_code") if verdict in {"refused", "failed"} else None,
+        refusal_code=(
+            current_refusal_code(raw_refusal_code)
+            if verdict in {"refused", "failed"} and raw_refusal_code is not None
+            else None
+        ),
         children=tuple(children) if children else (() if current is None else current.children),
         journal_coordinate=journal_coordinate,
+        settle_outcome=cast(Any, settle.get("settle_outcome")),
+        accepted_git_oid=cast(Any, settle.get("accepted_git_oid")),
+        fallback_reason=cast(Any, settle.get("fallback_reason")),
     )
 
 
@@ -3367,7 +3400,7 @@ def _accepted_line_mandates(
     *,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
-) -> tuple[tuple[str, ProcedureMandateV1], ...]:
+) -> tuple[tuple[str, ProcedureMandateAny], ...]:
     instant = utc_microseconds(evaluation_time)
     with instance.bind_accepted_projection(coordinate) as projection:
         result = []
@@ -3378,7 +3411,7 @@ def _accepted_line_mandates(
             (accepted.procedure.identity.qualified, accepted.artifact_digest, instant, instant),
         ):
             mandate = projection.typed.source(identity)
-            if not isinstance(mandate, ProcedureMandateV1):
+            if not isinstance(mandate, ProcedureMandateV1 | ProcedureMandateV2):
                 raise ProjectionIntegrityError(
                     "accepted ProcedureMandate source is absent or invalid"
                 )
@@ -3762,6 +3795,7 @@ def _run_playbill_line(
             CLAIM_EVIDENCE_COMPILER,
             SOURCE_CHECKED_COMPILER,
             TRIGGER_CAPTURE_COMPILER,
+            AUTHORITY_VERBS_COMPILER,
         },
     )
     capture_contracts = _accepted_capture_contracts(
@@ -3785,7 +3819,10 @@ def _run_playbill_line(
             details={"repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Line."},
         )
     landed_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
-    if isinstance(accepted_line.line, LineSpecV4):
+    if (
+        isinstance(accepted_line.line, LineSpecV4 | LineSpecV5)
+        and accepted_line.line.trigger_input is not None
+    ):
         from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
 
         try:
@@ -4103,10 +4140,10 @@ def _run_playbill_line(
         acquisition_plan=plan,
         acquisition_plan_digest=plan_digest,
     )
-    mandate_rung = max(mandate.rung for _digest, mandate in mandates)
+    mandate_rung = max(procedure_mandate_rung(mandate) for _digest, mandate in mandates)
     effective_rung = compute_effective_rung(
         procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
-        requested_terminal_rung=accepted_line.line.requested_terminal_rung,
+        requested_terminal_rung=line_requested_rung(accepted_line.line),
         selector_privacies={
             item.input.capture_digest: capture_contracts[
                 item.input.capture_contract_digest
@@ -4114,9 +4151,6 @@ def _run_playbill_line(
             for item in landed_materials
         },
         taint_labels=(),
-        mandate_grants={},
-        calibration_caps=(),
-        evaluation_time=evaluation_time,
         procedure_definition_digest=accepted.procedure.definition_digest,
         line_spec_digest=accepted_line.artifact_digest,
         sensitivity_policy_digest=sensitivity_policy_digest,

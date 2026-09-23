@@ -174,8 +174,11 @@ from cruxible_client.contracts.principals import (
 from cruxible_client.contracts.procedure_mandates import (
     AcceptedProcedureMandateV1,
     ProcedureMandateError,
+    ProcedureMandateV2,
+    ScopedClaimTypeV1,
     evaluate_procedure_mandate_law,
-    parse_procedure_mandate,
+    evaluate_procedure_mandate_v2_law,
+    parse_procedure_mandate_any,
     procedure_mandate_digest,
 )
 from cruxible_client.contracts.procedure_runtime_policy import (
@@ -205,6 +208,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalEvaluationRecord,
     ProposalReceiveLimits,
     ProposalResult,
+    ProposalSettleSubmissionV1,
     ProposalTransportProtocol,
     ProposalWithdrawalRecordV1,
     _StrictProposalModel,
@@ -233,13 +237,6 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.standing_mandates import (
-    AcceptedStandingMandateV1,
-    StandingMandateError,
-    evaluate_standing_mandate_law,
-    parse_standing_mandate,
-    standing_mandate_digest,
-)
 from cruxible_client.contracts.subjects import (
     AcceptedSubject,
     evaluate_subject_law,
@@ -350,7 +347,6 @@ _PROVIDER_INTERFACE_PATH_RE = re.compile(r"^provider-interfaces/[a-z][a-z0-9_.-]
 _SOURCE_ACQUISITION_POLICY_PATH_RE = re.compile(
     r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.json$"
 )
-_STANDING_MANDATE_PATH_RE = re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,255}\.json$")
 _PROCEDURE_MANDATE_PATH_RE = re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0,255}\.json$")
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
@@ -365,7 +361,6 @@ _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _PROVIDER_PATH_RE,
     _PROVIDER_INTERFACE_PATH_RE,
     _SOURCE_ACQUISITION_POLICY_PATH_RE,
-    _STANDING_MANDATE_PATH_RE,
     _PROCEDURE_MANDATE_PATH_RE,
     _CLAIM_PATH_RE,
     _PROCEDURE_PATH_RE,
@@ -1604,6 +1599,10 @@ class _AcceptedMember:
     policy_digests: tuple[str, ...] = ()
     query_receipt_digests: tuple[str, ...] = ()
     retired: bool = False
+    # Only removes authority (a narrowing, suspended or retired ProcedureMandate).
+    # A candidate made only of such members takes the approval fast path; it is
+    # recomputed by re-running the laws, never read back from a record.
+    approval_exempt: bool = False
 
 
 @dataclass(frozen=True)
@@ -1711,9 +1710,11 @@ def _accepted(
     policy_digests: tuple[str, ...] = (),
     query_receipt_digests: tuple[str, ...] = (),
     retired: bool = False,
+    approval_exempt: bool = False,
 ) -> _MemberVerdict:
     return _MemberVerdict(
         member=_AcceptedMember(
+            approval_exempt=approval_exempt,
             path=context.path,
             artifact_kind=installed.artifact_kind,
             predecessor_artifact_digest=predecessor_artifact_digest,
@@ -2179,40 +2180,8 @@ def _acquisition_policy_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
-def _standing_mandate_member(context: _MemberContext) -> _MemberVerdict:
-    mandate = parse_standing_mandate(context.content, path=context.path)
-    predecessor: AcceptedStandingMandateV1 | None = None
-    if context.parent_content is not None:
-        previous = parse_standing_mandate(context.parent_content, path=context.path)
-        predecessor = AcceptedStandingMandateV1(
-            path=context.path,
-            mandate=previous,
-            artifact_digest=standing_mandate_digest(previous).tagged,
-        )
-    law = evaluate_standing_mandate_law(
-        mandate,
-        path=context.path,
-        predecessor=predecessor,
-    )
-    if law.verdict == "refused":
-        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
-    if law.artifact_digest is None or law.required_tier is None:
-        raise ProposalIntegrityError("accepted StandingMandate law result is incomplete")
-    return _accepted(
-        context,
-        _installed(context, mandate.artifact_format),
-        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
-        candidate_artifact_digest=law.artifact_digest,
-        required_tier=law.required_tier,
-        approval_scope=law.approval_scope,
-        activation_policy="snapshot",
-        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
-        retired=mandate.lifecycle.state == "retired",
-    )
-
-
 def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
-    mandate = parse_procedure_mandate(context.content, path=context.path)
+    mandate = parse_procedure_mandate_any(context.content, path=context.path)
     accepted_procedure = context.resolved.procedures.get(mandate.procedure.target.qualified)
     if accepted_procedure is None:
         return _MemberVerdict(
@@ -2226,18 +2195,38 @@ def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
         )
     predecessor: AcceptedProcedureMandateV1 | None = None
     if context.parent_content is not None:
-        previous = parse_procedure_mandate(context.parent_content, path=context.path)
+        previous = parse_procedure_mandate_any(context.parent_content, path=context.path)
         predecessor = AcceptedProcedureMandateV1(
             path=context.path,
             mandate=previous,
             artifact_digest=procedure_mandate_digest(previous).tagged,
         )
-    law = evaluate_procedure_mandate_law(
-        mandate,
-        path=context.path,
-        predecessor=predecessor,
-        procedure=accepted_procedure,
-    )
+    if isinstance(mandate, ProcedureMandateV2):
+        law = evaluate_procedure_mandate_v2_law(
+            mandate,
+            path=context.path,
+            predecessor=predecessor,
+            procedure=accepted_procedure,
+            claim_types=_scoped_claim_types(context, mandate),
+            condition_query=_condition_query(context, mandate),
+        )
+    else:
+        if predecessor is not None and isinstance(predecessor.mandate, ProcedureMandateV2):
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.procedure_mandate.format_regression",
+                        "A v2 ProcedureMandate cannot be succeeded by a v1 mandate.",
+                        context.path,
+                    ),
+                )
+            )
+        law = evaluate_procedure_mandate_law(
+            mandate,
+            path=context.path,
+            predecessor=predecessor,
+            procedure=accepted_procedure,
+        )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
@@ -2252,6 +2241,50 @@ def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
         activation_policy="snapshot",
         result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
         retired=mandate.lifecycle.state == "retired",
+        approval_exempt=law.narrowing,
+    )
+
+
+def _scoped_claim_types(
+    context: _MemberContext, mandate: ProcedureMandateV2
+) -> dict[ArtifactIdentity, ScopedClaimTypeV1]:
+    """The candidate-state ClaimTypes a settle scope pins, reduced to what its law reads."""
+
+    scoped: dict[ArtifactIdentity, ScopedClaimTypeV1] = {}
+    for item in mandate.scope:
+        accepted = context.resolved.claim_types.get(item.claim_type.target.qualified)
+        if accepted is None:
+            continue
+        claim_type = accepted.claim_type
+        scoped[item.claim_type.target] = ScopedClaimTypeV1(
+            identity=claim_type.identity,
+            artifact_digest=accepted.artifact_digest,
+            object_kind=claim_type.object_kind,
+            allowed_subject_kinds=claim_type.allowed_subject_kinds,
+            allowed_object_subject_kinds=claim_type.allowed_object_subject_kinds,
+        )
+    return scoped
+
+
+def _condition_query(
+    context: _MemberContext, mandate: ProcedureMandateV2
+) -> AcceptedQueryDefinitionV1 | None:
+    """The candidate-state query a settle condition pins, or None when it is absent."""
+
+    from cruxible_client.contracts.query.definitions import (
+        query_definition_digest,
+        query_definition_path,
+    )
+
+    if mandate.condition is None:
+        return None
+    path = query_definition_path(mandate.condition.query.target.name)
+    content = context.candidate_tree.get(path)
+    if content is None:
+        return None
+    query = parse_query_definition(content, path=path)
+    return AcceptedQueryDefinitionV1(
+        path=path, query=query, artifact_digest=query_definition_digest(query).tagged
     )
 
 
@@ -2604,6 +2637,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
             artifact_digest=claim_type_digest(previous).tagged,
         )
     from cruxible_core.compiler.compiler import (
+        AUTHORITY_VERBS_COMPILER,
         CLAIM_EVIDENCE_COMPILER,
         SOURCE_CHECKED_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
@@ -2613,6 +2647,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         CLAIM_EVIDENCE_COMPILER,
         SOURCE_CHECKED_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
+        AUTHORITY_VERBS_COMPILER,
     }:
         if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
             getattr(rule, "allowed_reducer_digests", ())
@@ -3090,13 +3125,6 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         evaluate=_acquisition_policy_member,
     ),
     _MemberKind(
-        name="standing-mandate",
-        pattern=_STANDING_MANDATE_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
-        removal_message="PC-A2 does not activate artifact deletion semantics.",
-        evaluate=_standing_mandate_member,
-    ),
-    _MemberKind(
         name="procedure-mandate",
         pattern=_PROCEDURE_MANDATE_PATH_RE,
         removal_code="playbill.change_set.delete_unsupported",
@@ -3162,7 +3190,6 @@ ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "provider",
     "provider-interface",
     "source-acquisition-policy",
-    "standing-mandate",
     "procedure-mandate",
     "capture-contract",
     "claim",
@@ -3412,6 +3439,7 @@ def _evaluate_scoped_members(
     claim_law_provider: ClaimLawEvidenceProvider | None,
     attestation_principal_provider: AttestationPrincipalProvider | None,
     accepted_referents_provider: AcceptedReferentsProvider | None,
+    delegated_mandate_digest: str | None = None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -3458,7 +3486,6 @@ def _evaluate_scoped_members(
             ProviderFormatError,
             ProviderInterfaceFormatError,
             SourceAcquisitionPolicyError,
-            StandingMandateError,
             ProcedureMandateError,
             SubjectFormatError,
             ClaimTypeFormatError,
@@ -3719,7 +3746,34 @@ def _evaluate_scoped_members(
         )
     if tuple(item.path for item in accepted) != scope:
         raise ProposalIntegrityError("evaluator did not cover every scoped member")
-    approval_requirements = _approval_requirements(current_tree)
+    if delegated_mandate_digest is not None:
+        # A settle mandate replaces candidate approval only when, read from the
+        # parent state, it covers every member and its condition holds for each.
+        from cruxible_core.proposals.delegated_authority import delegated_authority_issues
+
+        issues = delegated_authority_issues(
+            mandate_digest=delegated_mandate_digest,
+            scope=scope,
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            current=current,
+            timestamp=timestamp,
+            facts=None if query_facts_provider is None else query_facts_provider(current),
+        )
+        if issues:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                tuple(_diagnostic(code, message) for code, message in issues),
+                rebased,
+                claim_admission_accounts=claim_admission_accounts,
+            )
+    approval_requirements = (
+        ()
+        if delegated_mandate_digest is not None
+        or (accepted and all(item.approval_exempt for item in accepted))
+        else _approval_requirements(current_tree)
+    )
     if wire_version == "playbill-validated-candidate-v1":
         record: CandidateRecordAnyVersion = _candidate_record_v1(
             accepted,
@@ -4038,6 +4092,7 @@ def evaluate_proposal_tree(
     claim_law_provider: ClaimLawEvidenceProvider | None = None,
     attestation_principal_provider: AttestationPrincipalProvider | None = None,
     accepted_referents_provider: AcceptedReferentsProvider | None = None,
+    delegated_mandate_digest: str | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -4167,6 +4222,7 @@ def evaluate_proposal_tree(
             attestation_principal_provider=attestation_principal_provider,
             accepted_referents_provider=accepted_referents_provider,
             principal_registry_provider=principal_registry_provider,
+            delegated_mandate_digest=delegated_mandate_digest,
         )
 
 
@@ -4290,6 +4346,7 @@ class ProposalService:
         ]
         | None = None,
         prepared: PreparedEvaluationScope | None = None,
+        settle_submission: ProposalSettleSubmissionV1 | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
 
@@ -4310,8 +4367,19 @@ class ProposalService:
 
         `prepared` may reuse a same-call evaluation; it never replaces the
         fresh authorization callback or the publication head check.
+
+        `settle_submission` is the settle terminal's alone, and is retained on
+        the admission. A `delegated` submission is evaluated under the named
+        mandate's delegated authority, so it carries no approval requirement and
+        only activation under the same mandate can reproduce it; a `fallback`
+        is evaluated as an ordinary proposal. No public door passes it.
         """
         self._require_writable()
+        delegated_mandate_digest = (
+            settle_submission.mandate_digest
+            if settle_submission is not None and settle_submission.mode == "delegated"
+            else None
+        )
         validate_candidate_timestamp(timestamp)
         if "propose" not in actor.capabilities:
             raise ProposalAdmissionError("authenticated actor lacks the propose capability")
@@ -4385,6 +4453,8 @@ class ProposalService:
                 bodies=self.bodies,
             )
         )
+        if delegated_mandate_digest is not None:
+            outcome = None
         if outcome is None:
             outcome = evaluate_proposal_tree(
                 base_tree=base_tree,
@@ -4405,6 +4475,7 @@ class ProposalService:
                 claim_law_provider=self.claim_law_provider,
                 attestation_principal_provider=self.attestation_principal_provider,
                 accepted_referents_provider=self.accepted_referents_provider,
+                delegated_mandate_digest=delegated_mandate_digest,
             )
         _require_executed_derivations(
             outcome, current_tree=current_tree, authorized=authorized_derivations
@@ -4486,6 +4557,7 @@ class ProposalService:
                 limits=self.receive_limits,
                 admitted_at=timestamp,
                 rationale=request.rationale,
+                settle_submission=settle_submission,
             )
             candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
             try:

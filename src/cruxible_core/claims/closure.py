@@ -74,7 +74,7 @@ from cruxible_client.contracts.merkle import (
 from cruxible_client.contracts.persistent import MapMutation, PersistentMap
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateError,
-    parse_procedure_mandate,
+    parse_procedure_mandate_any,
     procedure_mandate_digest,
 )
 from cruxible_client.contracts.procedures.artifacts import (
@@ -99,11 +99,6 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.standing_mandates import (
-    StandingMandateError,
-    parse_standing_mandate,
-    standing_mandate_digest,
-)
 from cruxible_client.contracts.subjects import (
     parse_subject,
     subject_digest,
@@ -132,7 +127,6 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "provider",
         "provider-interface",
         "source-acquisition-policy",
-        "standing-mandate",
         "claim",
         "procedure",
         "procedure-mandate",
@@ -284,17 +278,6 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 pins=policy.pins,
                 lifecycle=policy.lifecycle,
             )
-        if path.startswith("standing-mandates/"):
-            mandate = parse_standing_mandate(content, path=path)
-            return ArtifactDependencyStateV1(
-                path=path,
-                artifact_kind="standing-mandate",
-                artifact_tag=mandate.artifact_format,
-                identity=mandate.identity,
-                artifact_digest=standing_mandate_digest(mandate).tagged,
-                pins=mandate.pins,
-                lifecycle=mandate.lifecycle,
-            )
         if path.startswith("claims/"):
             claim = parse_claim(content, path=path)
             return ArtifactDependencyStateV1(
@@ -318,7 +301,7 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
                 lifecycle=procedure.lifecycle,
             )
         if path.startswith("procedure-mandates/"):
-            procedure_mandate = parse_procedure_mandate(content, path=path)
+            procedure_mandate = parse_procedure_mandate_any(content, path=path)
             return ArtifactDependencyStateV1(
                 path=path,
                 artifact_kind="procedure-mandate",
@@ -368,7 +351,6 @@ def _parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyS
         ProviderFormatError,
         ProviderInterfaceFormatError,
         SourceAcquisitionPolicyError,
-        StandingMandateError,
         SubjectFormatError,
         ClaimTypeFormatError,
         ProcedureFormatError,

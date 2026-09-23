@@ -212,9 +212,9 @@
   Procedures now author through the ordinary SDK path -- the accepted envelope
   always carried either graph generation, and its definition digest already
   dispatched on the declared format, so nothing about accepted bytes moved.
-  Effectful terminals (`emit_capture`, `post_inbox`, `propose_change_set`,
-  `mandate_settlement`) stay dark, and a graph-v3 Source keeps its existing
-  refusal because it names no interface or implementation for anything to plan.
+  Effectful terminals (`emit_capture`, `post_inbox`, `propose_change_set`) stay
+  dark, and a graph-v3 Source keeps its existing refusal because it names no
+  interface or implementation for anything to plan.
 
   A Source run is authorized by accepted state, not by the request: the
   SourceAcquisitionPolicy that governs it, the CaptureContract each node pins

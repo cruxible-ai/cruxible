@@ -773,10 +773,11 @@ The served lanes run deterministic `state_tap`, `transform`, `project`, `guard`,
 `repeat` and `halt` graphs, plus `source` on a graph-v4 definition: a Procedure
 may READ an external source through an accepted Provider. On the DIRECT lane
 the effectful terminals -- `emit_capture`, `post_inbox`, `propose_change_set`,
-`mandate_settlement` -- are not served, and `readiness` lists them as
+`settle_change_set` -- are not served, and `readiness` lists them as
 unsupported nodes before execution: a direct invocation carries no requested
 rung, no occurrence, and no mandate coordinate, and none is fabricated for it.
-The Line lane serves `propose_change_set`; see `playbill line`.
+The Line lane serves `propose_change_set`, and `settle_change_set` under a live
+settle ProcedureMandate; see `playbill line`.
 
 A Source run needs accepted state to authorize it: a live
 SourceAcquisitionPolicy, the CaptureContract each Source node pins, and the
@@ -941,7 +942,7 @@ never replayed automatically. Rebuilding the disposable event index similarly
 opens a new forward range, while retained pending work survives. A changed
 occurrence epoch needs an explicit new subscription. Rebinding within the same
 epoch preserves listening progress; pending work bound to an older Line version
-is closed as superseded rather than silently rebound. A Line v4 can bind its
+is closed as superseded rather than silently rebound. A Line v4 or v5 can bind its
 trigger Capture to a named Source input. Its `max_age` is checked at admission
 time, not backdated to when the trigger occurred.
 
@@ -983,6 +984,48 @@ Capture refuses `proposal_lowering_refused` naming the lowering diagnostic; a
 mandate that does not cover the request refuses `procedure_mandate_*` naming
 the failed law. None of these creates a proposal ref.
 
+A Line whose Procedure ends in a `settle_change_set` terminal lands the change
+without candidate approvals when, and only when, exactly one live settle
+ProcedureMandate for that Procedure covers every Claim the change touches: its
+namespace, its ClaimType scope and change kinds (`create`, `revise`,
+`retire`), and its Subject scope. No covering mandate refuses
+`settle_mandate_missing`; more than one refuses `settle_mandate_ambiguous`.
+The mandate's pinned condition query is then evaluated at the accepted parent
+for each changed Claim's target Subject; it must return exactly that Subject,
+with every required field present, unconflicted and untruncated. A false or
+incomplete condition follows the mandate's declared fallback: `propose`
+produces an ordinary proposal, reported with `settle_outcome: proposed` and a
+`fallback_reason`, while `refuse` refuses `settle_condition_refused` and
+creates no proposal ref. A holding condition publishes the change, reported
+with `settle_outcome: settled` and the `accepted_git_oid` it produced. The
+accepted record names the mandate digest, and replay re-derives the same
+authority from the parent state alone; the change carries no approvals.
+
+The settle mandate is the authority: any caller permitted to run the Line
+triggers the settlement, whatever its own tier, and no caller settles without
+one. A caller's tier can raise the run's reported authority above what its
+mandate grants, but the terminal still settles only under a covering settle
+mandate. A mandate that expired or was suspended before publication
+refuses `settle_publication_refused`, as does a delegated candidate that no
+longer reproduces under its mandate at publication.
+
+Each terminal is reported with the authority it needs (`required_authority`:
+`observe`, `propose` or `settle`) and the authority the run held
+(`effective_authority`, or `none`). A terminal the run's authority does not
+reach is reported `refused_effective_authority` with the `limiting_term` that
+capped it -- the Procedure's own terminals, the Line's `max_authority`,
+propagated sensitivity, the mandate grant, or calibration -- and the run
+refuses `terminal_authority_capped_by_<term>`.
+
+Known limitation: a settle run submits its delegated proposal against the
+accepted head and then activates it. If another generation is accepted between
+the two, activation refuses `settle_publication_refused`, and that proposal
+stays open but can never be activated, because its candidate no longer
+reproduces against the new head. Retrying the same operation recovers the
+same proposal and refuses the same way. Withdraw it with `playbill proposal
+withdraw`; the Line's next due occurrence settles against the current head
+under a new operation key.
+
 ## playbill predictions
 
 ~~~text
@@ -998,8 +1041,9 @@ contract must be accepted before it can bind an investigation or settlement.
 
 `settle` names that contract by ID and exact accepted reference. It checks later
 accepted observation evidence against the contract's selector, mechanical rule,
-and bound window. Terminal-backed settlement additionally verifies retained,
-delivered mandate-settlement evidence from the same investigation. It records
+and bound window. Terminal-backed settlement additionally requires one delivered
+`settle_change_set` receipt from the same investigation whose outcome is
+`settled`; one that fell back to a proposal does not qualify. It records
 the activation and resolution in operational exhaust; it does not create or
 mutate Claims. A failed attempt or an unevaluable
 observation does not settle the hypothesis as false. Effectful terminal nodes

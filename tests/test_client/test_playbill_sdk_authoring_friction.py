@@ -218,7 +218,7 @@ def test_line_trigger_input_is_an_explicit_authoring_decision(pb):
         name="consume-feed",
         procedure="consume",
         acquisition_policy="feed-policy",
-        requested_terminal_rung=1,
+        max_authority="observe",
         trigger_policy=trigger,
         trigger_input="feed",
     )

@@ -34,7 +34,9 @@ from cruxible_client.contracts.procedures.graph import (
     analyze_procedure_v4,
 )
 from cruxible_client.contracts.procedures.models import (
+    RUNG_AUTHORITY,
     TERMINAL_NODE_KINDS,
+    AuthorityVerb,
     GuardPredicateV1,
     ProcedureBudgetV3,
     ProcedureDefinitionV5,
@@ -43,6 +45,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedurePinSlotRefV1,
     ProcedureTransformSpecV1,
     TransformKindV1,
+    derived_terminal_capability,
 )
 from cruxible_client.contracts.procedures.source_program import (
     ProcedureSourceV1,
@@ -215,6 +218,13 @@ class ProposeChangeSet(Step):
     candidate_templates: tuple[object, ...]
 
 
+@dataclass(frozen=True, kw_only=True)
+class SettleChangeSet(Step):
+    """Settle the candidate Claims under the one covering settle mandate, or fall back."""
+
+    candidate_templates: tuple[object, ...]
+
+
 @dataclass(frozen=True)
 class Halt(Step):
     reason: str | None = None
@@ -229,6 +239,7 @@ _KINDS = {
     Guard: "guard",
     EmitCapture: "emit_capture",
     ProposeChangeSet: "propose_change_set",
+    SettleChangeSet: "settle_change_set",
     Halt: "halt",
 }
 
@@ -271,9 +282,10 @@ class ProcedureBranchValue(BaseModel):
 
 class ProcedureReturnPath(BaseModel):
     node_id: str
-    kind: Literal["pure", "capture", "proposal", "halt"]
+    kind: Literal["pure", "capture", "proposal", "settlement", "halt"]
     contract: ArtifactPin | ProcedurePinSlotRefV1
-    required_terminal_rung: int
+    # The authority the path's terminal needs; a pure or halting path needs none.
+    required_authority: AuthorityVerb | None
 
 
 class ProcedureChildCall(BaseModel):
@@ -291,7 +303,8 @@ class ProcedurePreview(BaseModel):
     contracts: tuple[CarriedContractInput, ...]
     contract_in: ArtifactPin | ProcedurePinSlotRefV1 | dict[str, Any]
     contract_out: ArtifactPin | ProcedurePinSlotRefV1 | dict[str, Any]
-    terminal_capability: Literal[1, 2, 3]
+    # The most this Procedure's terminals can do: observe, propose or settle.
+    authority: AuthorityVerb
     acquisition_policy: str | None
     nodes: tuple[ProcedureNodeV6 | dict[str, Any], ...]
     edges: dict[str, dict[str, str]] = Field(default_factory=dict)
@@ -380,7 +393,6 @@ class Sequence:
     budget: ProcedureBudgetV3
     hard_caps: ProcedureHardCapsV3
     returns: str | None = None
-    terminal_capability: Literal[1, 2, 3] = 1
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
     acquisition_policy: str | None = None
     description: str | None = None
@@ -474,7 +486,7 @@ class Sequence:
                     interface_digest=binding.interface_digest,
                     implementation_digest=binding.implementation_digest,
                 )
-            if isinstance(step, (Guard, EmitCapture, ProposeChangeSet, Halt)):
+            if isinstance(step, (Guard, EmitCapture, ProposeChangeSet, SettleChangeSet, Halt)):
                 if step.next is not None:
                     error(
                         step.name,
@@ -554,7 +566,7 @@ class Sequence:
             returns=returns,
             budget=self.budget.model_dump(mode="json"),
             hard_caps=self.hard_caps.model_dump(mode="json"),
-            terminal_capability=self.terminal_capability,
+            terminal_capability=derived_terminal_capability(nodes),
         )
         edges: dict[str, dict[str, str]] = {}
         try:
@@ -587,7 +599,7 @@ class Sequence:
             contracts=input_.contracts,
             contract_in=root_in,
             contract_out=root_out,
-            terminal_capability=self.terminal_capability,
+            authority=RUNG_AUTHORITY[derived_terminal_capability(nodes)],
             acquisition_policy=self.acquisition_policy,
             providers={
                 step.name: step.provider
@@ -641,6 +653,7 @@ __all__ = [
     "ProcedurePreview",
     "Project",
     "ProposeChangeSet",
+    "SettleChangeSet",
     "ProviderBinding",
     "Sequence",
     "Source",

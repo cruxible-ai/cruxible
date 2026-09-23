@@ -221,8 +221,8 @@ def procedure_mandate_example() -> ProcedureMandateInputV1:
         kind="procedure_mandate",
         name="replace-me",
         procedure_name="replace-me",
-        rung=2,
-        authority_ceiling=ProcedureHardCapsV3(
+        grants="propose",
+        resource_ceiling=ProcedureHardCapsV3(
             max_wall_clock=CanonicalDurationV1(microseconds=60_000_000),
             max_provider_calls=100,
             max_capture_bytes=10_000_000,

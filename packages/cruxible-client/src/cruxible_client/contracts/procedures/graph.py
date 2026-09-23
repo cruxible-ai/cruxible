@@ -20,7 +20,6 @@ from cruxible_client.contracts.procedures.models import (
     GuardNodeV3,
     InboxEgressNodeV3,
     InvokeNodeV6,
-    MandateSettlementNodeV3,
     ProcedureDefinitionAny,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
@@ -125,8 +124,6 @@ def _reference_templates(
         yield "input", node.input
     elif isinstance(node, ProposeChangeSetNodeV3):
         yield "candidate_templates", node.candidate_templates
-    elif isinstance(node, MandateSettlementNodeV3):
-        yield "input", node.input
 
 
 def _step_alias_references(value: object, *, location: str) -> Iterator[str]:

@@ -71,7 +71,6 @@ class GuardBuilderCommonV1(_StrictBuilderModel):
     refusal_message: str
     budget: ProcedureBudgetV3
     hard_caps: ProcedureHardCapsV3
-    terminal_capability: Literal[1, 2, 3] = 1
     authoring_source_digest: str
 
     @field_validator("observed_path")
@@ -286,7 +285,8 @@ def _expansion(
         returns="result",
         budget=spec.budget,
         hard_caps=spec.hard_caps,
-        terminal_capability=spec.terminal_capability,
+        # A guard builder emits no effectful terminal, so it only observes.
+        terminal_capability=1,
         annotations={
             "authoring_source_digest": spec.authoring_source_digest,
             "builder_kind": builder_kind,
