@@ -623,15 +623,7 @@ class GitLedger:
     def read_proposal_ref(self, target_ref: str) -> str | None:
         if not _PROPOSAL_REF_RE.fullmatch(target_ref):
             raise PlaybillGitError("proposal transport may read only canonical proposal refs")
-        result = _command(
-            ["git", f"--git-dir={self.path}", "rev-parse", "--verify", target_ref],
-            check=False,
-        )
-        if result.returncode != 0:
-            return None
-        oid = result.stdout.decode().strip()
-        self._validate_oid(oid)
-        return oid
+        return self._resolve_ref(target_ref)
 
     def retain_proposal_review(self, proposal_id: str, oid: str) -> None:
         """Protect a completed active admission independently of its reusable author ref."""
@@ -987,14 +979,33 @@ class GitLedger:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         return (detail or f"git {operation} exited {result.returncode}")[:500]
 
-    def _ref_exists(self, ref: str) -> bool:
-        return (
-            _command(
-                ["git", f"--git-dir={self.path}", "rev-parse", "--verify", "--quiet", ref],
-                check=False,
-            ).returncode
-            == 0
+    def _resolve_ref(self, ref: str) -> str | None:
+        """One full ref name's object ID, or None when the ref does not exist.
+
+        The files backend is read directly: a loose ref file, else the
+        packed-refs table. Git replaces both only by renaming a complete lock
+        file, so a read sees the old or the new value, never a torn one.
+        Anything this reader does not model -- a symbolic ref, the reftable
+        backend, an unexpected file -- is answered by Git itself.
+        """
+
+        found = _files_backend_ref(self.path, ref)
+        if found is None or isinstance(found, str):
+            if found is not None:
+                self._validate_oid(found)
+            return found
+        result = _command(
+            ["git", f"--git-dir={self.path}", "rev-parse", "--verify", "--quiet", ref],
+            check=False,
         )
+        if result.returncode != 0:
+            return None
+        oid = result.stdout.decode().strip()
+        self._validate_oid(oid)
+        return oid
+
+    def _ref_exists(self, ref: str) -> bool:
+        return self._resolve_ref(ref) is not None
 
     @staticmethod
     def _review_commit_environment(actor_id: str, timestamp: str) -> dict[str, str]:
@@ -1009,7 +1020,7 @@ class GitLedger:
 
     def review_commit_context(self) -> bytes:
         """Read the mutable Git configuration that affects review commit bytes."""
-        return self._git(["config", "--default", "UTF-8", "--get", "i18n.commitencoding"])
+        return self._config_read(["config", "--default", "UTF-8", "--get", "i18n.commitencoding"])
 
     def proposal_review_commit_oid(
         self, *, tree_oid: str, base_oid: str, actor_id: str, timestamp: str, message: str
@@ -1025,7 +1036,7 @@ class GitLedger:
         _validate_commit_message(message)
         values = dict(
             line.partition("=")[::2]
-            for line in self._git(
+            for line in self._config_read(
                 ["var", "-l"], environment=self._review_commit_environment(actor_id, timestamp)
             )
             .decode("utf-8")
@@ -1235,6 +1246,9 @@ class GitLedger:
 
     def tree_oid(self, commit_oid: str) -> str:
         self._validate_oid(commit_oid)
+        tree = self._commit_tree(commit_oid)
+        if tree is not None:
+            return tree
         oid = self._git(["rev-parse", f"{commit_oid}^{{tree}}"]).decode().strip()
         self._validate_oid(oid)
         return oid
@@ -1426,6 +1440,9 @@ class GitLedger:
 
     def _read_note(self, kind: str, oid: str) -> bytes | None:
         self._validate_oid(oid)
+        found = self._resident_note(kind, oid)
+        if found is not _ASK_GIT:
+            return cast(bytes | None, found)
         result = _command(
             [
                 "git",
@@ -1440,6 +1457,45 @@ class GitLedger:
         if result.returncode != 0:
             return None
         return result.stdout
+
+    def _resident_note(self, kind: str, oid: str) -> bytes | None | object:
+        """Walk the notes tree through the resident reader; no process per note.
+
+        Git notes stores a target at its full hex name under zero or more
+        two-hex-digit fanout directories (git/git notes.c
+        construct_path_with_fanout). At each level the remaining name is either
+        a note blob or the next fanout directory. A shape this walk does not
+        expect is left to ``git notes show``.
+        """
+
+        head = self._resolve_ref(self._note_ref(kind))
+        if head is None:
+            return None
+        tree = self._commit_tree(head)
+        if tree is None:
+            return _ASK_GIT
+        reader = _batch_reader(self.path)
+        remaining = oid
+        while True:
+            found = reader.objects((tree,))[tree]
+            if found is None or found[0] != "tree":
+                return _ASK_GIT
+            entries = _tree_entries(found[1], raw_length=len(oid) // 2)
+            if entries is None:
+                return _ASK_GIT
+            note = entries.get(remaining)
+            if note is not None:
+                mode, note_oid = note
+                if mode != b"100644":
+                    return _ASK_GIT
+                blob = reader.objects((note_oid,))[note_oid]
+                return None if blob is None or blob[0] != "blob" else blob[1]
+            fanout = entries.get(remaining[:2])
+            if fanout is None or len(remaining) <= 2:
+                return None
+            if fanout[0] != b"40000":
+                return _ASK_GIT
+            tree, remaining = fanout[1], remaining[2:]
 
     def write_generation_note(self, oid: str, content: bytes) -> None:
         """Durably attach one immutable descriptor note after the winning main CAS."""
@@ -1537,9 +1593,9 @@ class GitLedger:
         return {pair: found.get(pair) for pair in pairs}
 
     def read_main(self) -> str:
-        result = self._git(["rev-parse", "--verify", "refs/heads/main"])
-        oid = result.decode().strip()
-        self._validate_oid(oid)
+        oid = self._resolve_ref("refs/heads/main")
+        if oid is None:
+            raise PlaybillGitError("ledger has no main ref")
         return oid
 
     def parent_of(self, oid: str) -> str | None:
@@ -2129,9 +2185,49 @@ class GitLedger:
 
     def durability_policy(self) -> tuple[str, str]:
         return (
-            self._git(["config", "--get", "core.fsync"]).decode().strip(),
-            self._git(["config", "--get", "core.fsyncMethod"]).decode().strip(),
+            self._config_read(["config", "--get", "core.fsync"]).decode().strip(),
+            self._config_read(["config", "--get", "core.fsyncMethod"]).decode().strip(),
         )
+
+    def _config_read(
+        self, arguments: Sequence[str], *, environment: Mapping[str, str] | None = None
+    ) -> bytes:
+        """A read-only query of repository configuration, remembered per config file.
+
+        Every command runs with global and system configuration disabled, so the
+        repository's own config file is the only input besides the arguments and
+        the environment; the answer is reused while that file is unchanged. A
+        config that includes other files is always asked afresh.
+        """
+
+        config = self.path / "config"
+        before = _file_identity(config)
+        if before is None:
+            return self._git(arguments, environment=environment)
+        key = (
+            _repository_key(self.path),
+            before,
+            tuple(arguments),
+            tuple(sorted((environment or {}).items())),
+            tuple(os.environ.get(name) for name in _PASSTHROUGH_ENVIRONMENT),
+        )
+        with _CONFIG_READS_LOCK:
+            remembered = _CONFIG_READS.get(key)
+            if remembered is not None:
+                _CONFIG_READS.move_to_end(key)
+                return remembered
+        output = self._git(arguments, environment=environment)
+        try:
+            includes = b"[include" in config.read_bytes()
+        except OSError:
+            includes = True
+        if not includes and _file_identity(config) == before:
+            with _CONFIG_READS_LOCK:
+                _CONFIG_READS[key] = output
+                _CONFIG_READS.move_to_end(key)
+                while len(_CONFIG_READS) > _CONFIG_READS_CAPACITY:
+                    _CONFIG_READS.popitem(last=False)
+        return output
 
     def _validate_oid(self, oid: str) -> None:
         if not _OID_RE.fullmatch(oid):
@@ -2153,6 +2249,109 @@ class GitLedger:
             environment=environment,
         )
         return result.stdout
+
+
+def _tree_entries(body: bytes, *, raw_length: int) -> dict[str, tuple[bytes, str]] | None:
+    """Parse one tree object into name -> (mode, object ID); None when malformed."""
+
+    entries: dict[str, tuple[bytes, str]] = {}
+    position = 0
+    while position < len(body):
+        space = body.find(b" ", position)
+        end = body.find(b"\x00", space + 1)
+        if space < 0 or end < 0 or end + 1 + raw_length > len(body):
+            return None
+        mode = body[position:space]
+        name = body[space + 1 : end].decode("utf-8", errors="surrogateescape")
+        entries[name] = (mode, body[end + 1 : end + 1 + raw_length].hex())
+        position = end + 1 + raw_length
+    return entries
+
+
+_CONFIG_READS_CAPACITY = 64
+_CONFIG_READS: OrderedDict[tuple[object, ...], bytes] = OrderedDict()
+_CONFIG_READS_LOCK = threading.Lock()
+
+
+def _file_identity(path: Path) -> tuple[int, ...] | None:
+    try:
+        metadata = os.stat(path)
+    except OSError:
+        return None
+    return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
+
+
+_ASK_GIT: Final = object()
+_SAFE_REF_RE = re.compile(r"^refs/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$")
+_PACKED_REFS_CAPACITY = 16
+# Repository identity -> (packed-refs file identity, ref -> object ID).
+_PACKED_REFS: OrderedDict[tuple[str, int, int], tuple[tuple[int, ...], dict[str, str]]] = (
+    OrderedDict()
+)
+_PACKED_REFS_LOCK = threading.Lock()
+
+
+def _files_backend_ref(repository: Path, ref: str) -> str | None | object:
+    """Resolve a full ref from the files backend, or ``_ASK_GIT`` when unsure."""
+
+    if not _SAFE_REF_RE.fullmatch(ref) or ".." in ref or ref.endswith(".lock"):
+        return _ASK_GIT
+    if (repository / "reftable").exists():
+        return _ASK_GIT
+    try:
+        with open(repository / ref, "rb") as handle:
+            content = handle.read(200)
+    except (FileNotFoundError, NotADirectoryError):
+        content = None
+    except OSError:
+        return _ASK_GIT
+    if content is not None:
+        value = content.decode("ascii", errors="replace").strip()
+        return value if _OID_RE.fullmatch(value) else _ASK_GIT
+    return _packed_ref(repository, ref)
+
+
+def _packed_ref(repository: Path, ref: str) -> str | None | object:
+    path = repository / "packed-refs"
+    try:
+        metadata = os.stat(path)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return _ASK_GIT
+    identity = (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
+    key = _repository_key(repository)
+    with _PACKED_REFS_LOCK:
+        remembered = _PACKED_REFS.get(key)
+    if remembered is None or remembered[0] != identity:
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            return _ASK_GIT
+        table: dict[str, str] = {}
+        for line in raw.decode("utf-8", errors="replace").splitlines():
+            if not line or line.startswith(("#", "^")):
+                continue
+            oid, _space, name = line.partition(" ")
+            if not _OID_RE.fullmatch(oid):
+                return _ASK_GIT
+            table[name] = oid
+        # A packed-refs rewrite within the stat granularity could look
+        # unchanged; re-stat and only remember a table read between two
+        # identical observations.
+        try:
+            after = os.stat(path)
+        except OSError:
+            return _ASK_GIT
+        if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != identity:
+            return _ASK_GIT
+        remembered = (identity, table)
+        with _PACKED_REFS_LOCK:
+            _PACKED_REFS[key] = remembered
+            _PACKED_REFS.move_to_end(key)
+            while len(_PACKED_REFS) > _PACKED_REFS_CAPACITY:
+                _PACKED_REFS.popitem(last=False)
+    return remembered[1].get(ref)
 
 
 def _command_environment(environment: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -2476,7 +2675,7 @@ def _after_fork_in_parent() -> None:
 
 def _after_fork_in_child() -> None:
     global _BATCH_READERS_LOCK, _TREE_LISTINGS_LOCK, _VERIFIED_COMMITS_LOCK
-    global _LISTING_INDEXES_LOCK, _TREE_CHANGES_LOCK
+    global _LISTING_INDEXES_LOCK, _TREE_CHANGES_LOCK, _PACKED_REFS_LOCK, _CONFIG_READS_LOCK
     inherited = tuple(_BATCH_READERS.values())
     _BATCH_READERS.clear()
     for reader in inherited:
@@ -2488,6 +2687,8 @@ def _after_fork_in_child() -> None:
     _VERIFIED_COMMITS_LOCK = threading.Lock()
     _LISTING_INDEXES_LOCK = threading.Lock()
     _TREE_CHANGES_LOCK = threading.Lock()
+    _PACKED_REFS_LOCK = threading.Lock()
+    _CONFIG_READS_LOCK = threading.Lock()
 
 
 if hasattr(os, "register_at_fork"):
