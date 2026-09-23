@@ -13,6 +13,7 @@ import sqlite3
 import stat
 import threading
 import weakref
+from collections import OrderedDict
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
 from cruxible_core.compiler.upgrades import compiler_after_record
 from cruxible_core.derived.derived_runtime import BoundedCache
+from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.indexes.acquisition import open_working_snapshot
 from cruxible_core.ledger.recovery import RecoveredInstanceState
 from cruxible_core.proposals.settlement import (
@@ -160,12 +162,29 @@ class AcceptedMemberLocation:
     has_law_evidence: int
 
 
-class RetainedRecordReader:
-    """Request-owned validated records, shared across selections of their members."""
+VERIFIED_RECORD_CAPACITY = 256
 
-    def __init__(self, load_record: Callable[[str, str], bytes | None]) -> None:
+
+class RetainedRecordReader:
+    """Request-owned validated records, shared across selections of their members.
+
+    ``verified`` optionally extends the sharing past one request. A location names
+    the commit, record path, record digest, candidate digest and compiler, so
+    the bytes it verifies cannot change under it. Verified records are reused
+    while resident in the bounded instance cache. The cached models are private:
+    each request receives its own detached copy, because frozen models still
+    carry mutable nested containers.
+    """
+
+    def __init__(
+        self,
+        load_record: Callable[[str, str], bytes | None],
+        *,
+        verified: OrderedDict[AcceptedGenerationLocation, ChangeSetRecordAnyVersion] | None = None,
+    ) -> None:
         self._load = load_record
         self._records: dict[AcceptedGenerationLocation, ChangeSetRecordAnyVersion] = {}
+        self._verified = verified
 
     def read(
         self,
@@ -174,6 +193,12 @@ class RetainedRecordReader:
     ) -> ChangeSetRecordAnyVersion:
         if generation in self._records:
             return self._records[generation]
+        if self._verified is not None:
+            retained = memo_get(self._verified, generation)
+            if retained is not None:
+                detached = retained.model_copy(deep=True)
+                self._records[generation] = detached
+                return detached
         if generation.source_record_path is None:
             raise ProjectionIntegrityError("genesis has no member evidence record")
         raw = self._load(generation.git_oid, generation.source_record_path)
@@ -190,6 +215,13 @@ class RetainedRecordReader:
         ):
             raise ProjectionIntegrityError("accepted member source record binding differs")
         self._records[generation] = record
+        if self._verified is not None:
+            memo_put(
+                self._verified,
+                generation,
+                record.model_copy(deep=True),
+                capacity=VERIFIED_RECORD_CAPACITY,
+            )
         return record
 
 

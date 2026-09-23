@@ -61,6 +61,7 @@ from cruxible_core.query.engine import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
 from cruxible_core.service.discovery.query_definitions import accepted_query_definition
 from cruxible_core.service.evidence.evidence import (
     ClaimReadHistoryIndex,
@@ -68,6 +69,7 @@ from cruxible_core.service.evidence.evidence import (
     ClaimVerdictReadContext,
     _claim_read_history_index,
     _current_replay_available,
+    _IndexedClaimLawEvidence,
     _referent_digests,
     _reproduced_claim_adjudication_rule,
     accepted_claim_attestations,
@@ -138,6 +140,7 @@ def _fact_row(
     claim: ClaimArtifactAny,
     claim_types: dict[str, ClaimType],
     attestation_envelopes: tuple[ClaimAttestationV2, ...],
+    availability_fingerprint: str | None = None,
 ) -> ClaimFactRowV1:
     """Assemble one Claim's verdict inputs exactly as the verdict service does."""
 
@@ -169,6 +172,7 @@ def _fact_row(
                     instance,
                     item.capture_digest,
                     readers=readers,
+                    fingerprint=availability_fingerprint,
                 )
             }
         )
@@ -315,6 +319,24 @@ class _AcceptedQueryFactsRead:
                 )
             return evidence
 
+        # Read the law evidence of every row this build will emit under one
+        # history snapshot, instead of opening a history reader per Claim.
+        law_evidence = history.law_evidence
+        if isinstance(law_evidence, _IndexedClaimLawEvidence):
+            wanted: list[str] = []
+            for path in self._claim_paths:
+                claim = self._claims.get(path)
+                if claim is None:
+                    claim = parse_claim(tree[path], path=path)
+                    self._claims[path] = claim
+                if self._predicates is not None and (
+                    claim.statement.predicate not in self._predicates
+                ):
+                    continue
+                if include_retired or claim.lifecycle.state == "live":
+                    wanted.append(path)
+            law_evidence.prefetch(tuple(wanted))
+        availability_fingerprint = verdict_input_fingerprint(self._instance)
         rows: list[ClaimFactRowV1] = []
         for path in sorted(self._claim_paths, key=lambda item: item.encode("utf-8")):
             # The full-history path historically looked up evidence before
@@ -341,6 +363,7 @@ class _AcceptedQueryFactsRead:
                     history=history,
                     claim=claim,
                     claim_types=self._claim_types,
+                    availability_fingerprint=availability_fingerprint,
                     attestation_envelopes=tuple(
                         self._attestations.get(
                             (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()

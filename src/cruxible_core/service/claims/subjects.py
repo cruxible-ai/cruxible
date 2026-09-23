@@ -68,6 +68,19 @@ class PlaybillSubjectList(_StrictSubjectServiceModel):
     subjects: tuple[PlaybillSubjectView, ...]
 
 
+class PlaybillSubjectIndexEntry(_StrictSubjectServiceModel):
+    identity: str
+    subject_kind: str
+    subject_id: str
+    lifecycle: Literal["live", "retired"]
+
+
+class PlaybillSubjectIndex(_StrictSubjectServiceModel):
+    tag: Literal["playbill-subject-index-v1"] = "playbill-subject-index-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    subjects: tuple[PlaybillSubjectIndexEntry, ...]
+
+
 class PlaybillSubjectHistoryEntry(_StrictSubjectServiceModel):
     sequence: int
     coordinate: PlaybillAcceptedCoordinate
@@ -226,6 +239,30 @@ def service_list_playbill_subjects(
     )
 
 
+def service_list_playbill_subject_index(
+    instance: PlaybillInstance,
+    *,
+    at: PlaybillAcceptedCoordinate | None = None,
+) -> PlaybillSubjectIndex:
+    """Which Subjects exist at a coordinate, without compiling their facts."""
+
+    coordinate = _resolve_coordinate(instance, at)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        rows = projection.subject_index()
+    return PlaybillSubjectIndex(
+        coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        subjects=tuple(
+            PlaybillSubjectIndexEntry(
+                identity=identity,
+                subject_kind=subject_kind,
+                subject_id=subject_id,
+                lifecycle="retired" if lifecycle == "retired" else "live",
+            )
+            for identity, subject_kind, subject_id, lifecycle in rows
+        ),
+    )
+
+
 def _subject_path_from_identity(identity: str) -> str:
     parsed = parse_artifact_identity(identity)
     if parsed.kind != "Subject" or parsed.name.count("/") != 1:
@@ -290,9 +327,12 @@ __all__ = [
     "PlaybillSubjectHistoryEntry",
     "PlaybillSubjectIncomingClaimV1",
     "PlaybillSubjectIncomingGroupV1",
+    "PlaybillSubjectIndex",
+    "PlaybillSubjectIndexEntry",
     "PlaybillSubjectList",
     "PlaybillSubjectView",
     "service_get_playbill_subject",
+    "service_list_playbill_subject_index",
     "service_list_playbill_subjects",
     "service_playbill_subject_history",
 ]

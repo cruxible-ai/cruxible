@@ -22,7 +22,9 @@ class PlaybillWorkspaceAdvertisement(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-workspace-advertisement-v1"] = "playbill-workspace-advertisement-v1"
-    status: Literal["updated", "not_attached", "failed"]
+    #: ``scheduled`` means a write queued the refresh; it runs after the
+    #: response. Proposal inspection waits for it and reports the outcome.
+    status: Literal["updated", "scheduled", "not_attached", "failed"]
     workspace_path: str | None
     remote_name: Literal["playbill"] = "playbill"
     advertised_refs: tuple[str, ...] = ()
@@ -34,6 +36,10 @@ class PlaybillWorkspaceAdvertisement(BaseModel):
             self.workspace_path is None or self.failure_code is not None
         ):
             raise ValueError("updated workspace advertisement has an invalid result shape")
+        if self.status == "scheduled" and (
+            self.workspace_path is None or self.advertised_refs or self.failure_code is not None
+        ):
+            raise ValueError("scheduled workspace advertisement has an invalid result shape")
         if self.status == "not_attached" and (
             self.workspace_path is not None or self.advertised_refs or self.failure_code is not None
         ):

@@ -113,7 +113,10 @@ over the next.
 One authoring intent is one changeset. `pb.claim(...)` authors exactly one
 Claim; `pb.changes(rationale=...)` opens a changeset that `.claim(...)`,
 `.claim_type(...)`, `.subject(...)` and `.retire(...)` write into, and
-`.prepare()` compiles the whole set as one intent. `.subject(...)` and
+`.submit()` compiles the whole set as one intent and submits it in one request.
+`.prepare()` compiles and preflights without submitting, for when you want the
+diagnostics before a proposal exists; `.submit()` returns the same diagnostics
+on a refused intent, so it is the default. `.subject(...)` and
 `.claim_type(...)` return a ref to what they define, usable as `subject=`,
 `predicate=` or `value=` in that same set, so a set that defines a Subject and
 says something about it never retypes the address:
@@ -132,7 +135,7 @@ draft.claim(
     effective_period=None, revises=None, dispositions={},
     subject_definition=None, claim_type_definition=None,
 )
-intent = draft.prepare()
+intent = draft.submit()
 ~~~
 
 Such a ref asserts no reference expectation, because the artifact it names does

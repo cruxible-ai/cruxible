@@ -785,7 +785,11 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
     )
     proposal_id = proposed.proposal["admission"]["proposal_id"]
     proposal_key = proposal_id.removeprefix("sha256:")
-    assert proposed.workspace_advertisement.advertised_refs == (
+    instance = get_playbill_manager().get("inst_attached")
+    # Writes queue the advertisement; settling waits for it and reports it.
+    assert proposed.workspace_advertisement.status == "scheduled"
+    assert proposed.workspace_advertisement.workspace_path == str(workspace.resolve())
+    assert instance.settled_workspace_advertisement().advertised_refs == (
         "refs/remotes/playbill/accepted",
         f"refs/remotes/playbill/proposals/{proposal_key}",
     )
@@ -815,7 +819,6 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
         ).stdout
         == local_branches
     )
-    instance = get_playbill_manager().get("inst_attached")
     candidate_digest = proposed.proposal["evaluation"]["candidate_digest"]
     signed = _sign(owner, candidate_digest, instance.accepted_coordinate().semantic_root)
     service_submit_playbill_approval(
@@ -830,7 +833,10 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
         activated_by="operator",
     )
     assert activated.status == "accepted"
-    assert activated.workspace_advertisement.advertised_refs == ("refs/remotes/playbill/accepted",)
+    assert activated.workspace_advertisement.status == "scheduled"
+    assert instance.settled_workspace_advertisement().advertised_refs == (
+        "refs/remotes/playbill/accepted",
+    )
     assert subprocess.run(
         ["git", "-C", str(workspace), "branch", "--remotes", "--format=%(refname)"],
         check=True,
@@ -929,8 +935,10 @@ def test_propose_document_never_executes_workspace_instead_of_ssh_command(
     )
 
     assert proposed.proposal["admission"]["proposal_id"]
-    assert proposed.workspace_advertisement.status == "failed"
-    assert proposed.workspace_advertisement.failure_code == "remote_conflict"
+    assert proposed.workspace_advertisement.status == "scheduled"
+    settled = get_playbill_manager().get("inst_rce_regression").settled_workspace_advertisement()
+    assert settled.status == "failed"
+    assert settled.failure_code == "remote_conflict"
     assert not daemon_uid_marker.exists()
 
 

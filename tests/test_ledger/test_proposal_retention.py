@@ -78,8 +78,11 @@ def test_archive_retains_closed_candidates_while_accepted_and_active_work_surviv
 def test_missing_active_content_is_integrity_failure_not_expiration(tmp_path, closed):
     instance, owner = initialize_local(tmp_path)
     proposal = submit(instance, "missing bytes")
+    # Settle the queued ref refresh so it cannot restore what this test deletes.
+    instance.settled_workspace_advertisement()
     if closed:
         _settle(instance, owner, proposal, "withdrawal")
+        instance.settled_workspace_advertisement()
         instance._ledger._git(["update-ref", "-d", PROPOSAL_ARCHIVE_REF])
     else:
         instance._ledger._git(["update-ref", "-d", proposal.admission.target_ref])

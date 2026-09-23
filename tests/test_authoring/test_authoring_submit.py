@@ -46,7 +46,7 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
             failure_code="fetch_failed",
         )
 
-    instance.bind_workspace_advertiser(advertise)
+    instance.bind_workspace_advertiser(advertise, workspace_path=tmp_path)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     intent = coordinator.create(
@@ -59,9 +59,11 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
     retry = coordinator.submit(intent.intent_id, actor=actor)
 
     assert retry.status == first.status
-    assert advertisements == 2
-    assert first.workspace_advertisement.failure_code == "fetch_failed"
-    assert retry.workspace_advertisement.failure_code == "fetch_failed"
+    # Advertisement runs after the response; the settled outcome reports it.
+    assert first.workspace_advertisement.status == "scheduled"
+    assert retry.workspace_advertisement.status == "scheduled"
+    assert instance.settled_workspace_advertisement().failure_code == "fetch_failed"
+    assert advertisements >= 1
     assert first.status.state == "ready_to_activate"
     assert first.status.proposal_id is not None
     assert first.status.candidate_digest is not None
@@ -89,6 +91,7 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
     assert retry_receipt == receipt
     assert coordinator.status(intent.intent_id, actor=actor).state == "ready_to_activate"
 
+    instance.settled_workspace_advertisement()
     failing = True
     activated = service_activate_playbill_proposal(
         instance,
@@ -96,8 +99,10 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
         activated_by="owner",
     )
     assert activated.status == "accepted"
-    assert activated.workspace_advertisement.status == "failed"
-    assert activated.workspace_advertisement.failure_code == "unexpected_failure"
+    assert activated.workspace_advertisement.status == "scheduled"
+    settled = instance.settled_workspace_advertisement()
+    assert settled.status == "failed"
+    assert settled.failure_code == "unexpected_failure"
     accepted = coordinator.status(intent.intent_id, actor=actor)
     assert accepted.state == "accepted"
     assert accepted.accepted_generation == activated.accepted_coordinate

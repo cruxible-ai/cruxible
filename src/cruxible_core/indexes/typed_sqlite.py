@@ -109,8 +109,17 @@ def cold_claim_digest_resolver(
     return resolve
 
 
-def parse_static_owners(sources: Mapping[str, bytes], *, accepted: Any) -> ParsedProjectionTree:
-    """Parse exact owner contracts without making CAS availability an index authority."""
+def parse_static_owners(
+    sources: Mapping[str, bytes],
+    *,
+    accepted: Any,
+    verified_change_sets: tuple[tuple[str, Any], ...] | None = None,
+) -> ParsedProjectionTree:
+    """Parse exact owner contracts without making CAS availability an index authority.
+
+    ``verified_change_sets`` supplies the complete, already replay-verified record
+    prefix; ``sources`` then need not carry the change-set blobs.
+    """
     from dataclasses import replace
 
     from cruxible_client.contracts.documents import document_digest, parse_document
@@ -136,6 +145,7 @@ def parse_static_owners(sources: Mapping[str, bytes], *, accepted: Any) -> Parse
         registry=projection_registry_for_compiler(accepted.compiler),
         artifact_kinds=kinds,
         artifact_codec=codec,
+        verified_change_sets=verified_change_sets,
     )
     envelopes = list(parsed.envelopes)
     pins = {(pin.source_identity, pin.target_identity): pin for pin in parsed.pins}

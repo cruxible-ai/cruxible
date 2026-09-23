@@ -8,14 +8,16 @@ from datetime import datetime
 from typing import Protocol
 
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultAny
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
+    SubjectClaimObject,
     claim_path,
 )
 from cruxible_client.contracts.discovery import DiscoveryMatchBasisV1
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
-from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.semantic import SemanticAddress, SemanticSelector
 from cruxible_core.claims.claim_slots import ClaimSlotClassification, classify_claim_slot
 from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -101,6 +103,44 @@ def _resolution_key(claim: ClaimArtifactAny) -> bytes:
     )
 
 
+def _resolution_memo_key(
+    instance: PlaybillInstance,
+    *,
+    identities: tuple[str, ...],
+    at: PlaybillAcceptedCoordinate,
+    input_fingerprint: str | None,
+) -> tuple[str, str, str, str]:
+    return memo_key(
+        instance_root=str(instance.root),
+        coordinate_digest=canonical_bytes(at.model_dump(mode="json")).hex(),
+        claim_set_digest=claim_set_digest(identities),
+        input_fingerprint=input_fingerprint or "",
+    )
+
+
+def remembered_resolution_statuses(
+    instance: PlaybillInstance,
+    *,
+    identities: tuple[str, ...],
+    at: PlaybillAcceptedCoordinate,
+    evaluation_time: datetime,
+) -> dict[str, SearchStatus] | None:
+    """A still-valid remembered answer for exactly these Claims, without reading them."""
+
+    input_fingerprint = verdict_input_fingerprint(instance)
+    if input_fingerprint is None:
+        return None
+    remembered = memo_get(
+        _RESOLUTION_MEMO,
+        _resolution_memo_key(
+            instance, identities=identities, at=at, input_fingerprint=input_fingerprint
+        ),
+    )
+    if remembered is None or not interval_holds(remembered[2], evaluation_time=evaluation_time):
+        return None
+    return dict(remembered[0])
+
+
 def claim_resolution_statuses(
     instance: PlaybillInstance,
     *,
@@ -131,11 +171,11 @@ def claim_resolution_statuses(
     """
 
     input_fingerprint = verdict_input_fingerprint(instance)
-    key = memo_key(
-        instance_root=str(instance.root),
-        coordinate_digest=canonical_bytes(at.model_dump(mode="json")).hex(),
-        claim_set_digest=claim_set_digest(tuple(claim.identity.qualified for claim in claims)),
-        input_fingerprint=input_fingerprint or "",
+    key = _resolution_memo_key(
+        instance,
+        identities=tuple(claim.identity.qualified for claim in claims),
+        at=at,
+        input_fingerprint=input_fingerprint,
     )
     remembered = None if input_fingerprint is None else memo_get(_RESOLUTION_MEMO, key)
     if remembered is not None:
@@ -169,6 +209,30 @@ def claim_resolution_statuses(
 
     coordinate = _resolve_coordinate(instance, at)
     read_context = read_context or ClaimVerdictReadContext(instance, coordinate)
+    # One batched read of every live Claim and the artifacts its verdict reads
+    # (ClaimType and referents) instead of one read per verdict.
+    live = tuple(claim for group in live_groups.values() for claim in group)
+    read_context.prefetch(
+        tuple(
+            path
+            for claim in live
+            for path in (
+                claim_path(claim.identity.name),
+                claim_type_path(claim.statement.predicate),
+                claim.statement.subject.artifact_path,
+                *(
+                    (claim.statement.object.address.artifact_path,)
+                    if isinstance(claim.statement.object, SubjectClaimObject)
+                    else ()
+                ),
+            )
+        )
+    )
+    # Register the whole batch before any verdict, so batch-wide reads (such as
+    # attestation selection) cover every Claim at once, not one Claim per miss.
+    for claim in live:
+        read_context.claim(claim.identity.qualified)
+    read_context.prefetch_law_evidence(tuple(claim_path(claim.identity.name) for claim in live))
     for group in live_groups.values():
         first = group[0]
         resolution = resolve_playbill_claim_group(
@@ -243,10 +307,16 @@ def _claim_rows(
     if "claim" not in request.kinds:
         return ()
     coordinate = _resolve_coordinate(instance, _accepted_coordinate(request))
+    if request.mode == "orient" and request.subject is None:
+        remembered = _remembered_orientation_rows(instance, coordinate, request=request)
+        if remembered is not None:
+            return remembered
     read_context = ClaimVerdictReadContext(instance, coordinate)
     # Discovery needs Claim envelopes and current status, not the full fact
     # projection (including provenance/explanation payloads) for every row.
-    claims = read_context.claims()
+    # Resolution groups are keyed by subject and predicate, so a subject filter
+    # keeps every contender group whole: read and evaluate only those groups.
+    claims = read_context.claims(subject=request.subject)
     statuses = claim_resolution_statuses(
         instance,
         claims=claims,
@@ -271,6 +341,50 @@ def _claim_rows(
             )
         )
     return tuple(rows)
+
+
+def _remembered_orientation_rows(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    *,
+    request: PlaybillSearchRequestV1,
+) -> tuple[PlaybillSearchRowV1, ...] | None:
+    """Orientation only counts rows, so a remembered answer needs no Claim bytes.
+
+    The indexed Claim rows at this exact coordinate name the same Claim set a
+    full read would; when their statuses are remembered and still valid, rows
+    are built from the index alone. Any miss takes the ordinary read.
+    """
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        indexed = projection.typed.connection.execute(
+            "SELECT identity,subject_path,subject_selector_scheme,subject_selector_value,"
+            "predicate FROM claims ORDER BY identity"
+        ).fetchall()
+    identities = tuple(row[0] for row in indexed)
+    statuses = remembered_resolution_statuses(
+        instance,
+        identities=identities,
+        at=_accepted_coordinate(request),
+        evaluation_time=request.evaluation_time,
+    )
+    if statuses is None or set(statuses) != {i.removeprefix("Claim:") for i in identities}:
+        return None
+    return tuple(
+        PlaybillSearchRowV1(
+            kind="claim",
+            identity=identity.removeprefix("Claim:"),
+            address=SemanticAddress.claim_statement(claim_path(identity.removeprefix("Claim:"))),
+            status=statuses[identity.removeprefix("Claim:")],
+            subject=SemanticAddress(
+                artifact_path=subject_path,
+                selector=SemanticSelector(scheme=scheme, value=value),
+            ),
+            predicate=predicate,
+            title=predicate,
+        )
+        for identity, subject_path, scheme, value, predicate in indexed
+    )
 
 
 def _procedure_rows(

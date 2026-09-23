@@ -632,3 +632,51 @@ def test_proposal_file_reads_are_outside_history_snapshot(seeded, monkeypatch):
 
         monkeypatch.setattr(evidence, name, read_file)
     assert service_list_playbill_proposals(seeded).entries
+
+
+def test_history_rebuild_reads_only_each_successors_changed_members(tmp_path, monkeypatch):
+    """A rebuild re-derives each successor from its delta alone.
+
+    The replay-verified record prefix supplies change-set context, so a rebuild
+    neither reads nor authenticates whole historical trees, published or not,
+    and it produces exactly the rows the published projections give.
+    """
+
+    from cruxible_core.runtime import instance as instance_module
+
+    instance, _ = seed_claims(tmp_path)
+    index = instance._accepted_history_index
+
+    def rows():
+        with instance.accepted_history_reader():
+            pass
+        with sqlite3.connect(index.path) as db:
+            return (
+                db.execute("SELECT * FROM artifact_versions ORDER BY 1,2,3").fetchall(),
+                db.execute("SELECT * FROM accepted_member_locations ORDER BY 1,2").fetchall(),
+            )
+
+    published = rows()
+    trees: list[str] = []
+    read_tree = instance_module.read_registered_tree
+    bind = instance_module.bind_projection
+
+    def counted_tree(repository, oid, **kwargs):
+        trees.append(oid)
+        return read_tree(repository, oid, **kwargs)
+
+    def counted_bind(manifest, *, expected):
+        trees.append(expected.git_oid)
+        return bind(manifest, expected=expected)
+
+    monkeypatch.setattr(instance_module, "read_registered_tree", counted_tree)
+    monkeypatch.setattr(instance_module, "bind_projection", counted_bind)
+    index.path.unlink()
+    assert rows() == published
+    assert set(trees) <= {instance.accepted_history()[0].oid}
+    # Without any publication the successor rows are unchanged as well.
+    monkeypatch.setattr(
+        instance_module, "projection_manifest_name", lambda request: "missing-publication.json"
+    )
+    index.path.unlink()
+    assert rows() == published

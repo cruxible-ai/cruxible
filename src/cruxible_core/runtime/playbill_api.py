@@ -179,6 +179,7 @@ from cruxible_core.service.claims.claims import (
 from cruxible_core.service.claims.policies import list_playbill_policies_in_force
 from cruxible_core.service.claims.subjects import (
     service_get_playbill_subject,
+    service_list_playbill_subject_index,
     service_list_playbill_subjects,
     service_playbill_subject_history,
 )
@@ -464,7 +465,7 @@ def playbill_init(
         trust_root=instance.trust_root.model_dump(mode="json"),
         recovery_posture=instance.descriptor.recovery_posture,
         approval_policy_mode=instance.inspect().approval_policy_mode,
-        workspace_advertisement=instance.advertise_workspace(),
+        workspace_advertisement=instance.settled_workspace_advertisement(),
     )
 
 
@@ -689,7 +690,9 @@ def playbill_inspect_proposal(
     return contracts.PlaybillProposalInspection.model_validate(
         {
             **result.model_dump(mode="json"),
-            "workspace_advertisement": instance.advertise_workspace().model_dump(mode="json"),
+            "workspace_advertisement": instance.settled_workspace_advertisement().model_dump(
+                mode="json"
+            ),
         }
     )
 
@@ -1023,6 +1026,16 @@ def playbill_list_subjects(
     check_permission("cruxible_playbill_read", instance_id=instance_id)
     result = service_list_playbill_subjects(get_playbill_manager().get(instance_id), at=at)
     return contracts.PlaybillSubjectList.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_list_subject_index(
+    instance_id: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillSubjectIndex:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_list_playbill_subject_index(get_playbill_manager().get(instance_id), at=at)
+    return contracts.PlaybillSubjectIndex.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_get_subject(
@@ -1381,6 +1394,38 @@ def playbill_authoring_compile(
         program_stamp=program_stamp,
     )
     return _authoring_preflight_result(coordinator, actor=actor, result=result)
+
+
+def playbill_authoring_compile_and_submit(
+    instance_id: str,
+    *,
+    payload: AuthoringPayloadV1,
+    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...],
+    program_stamp: AuthoringProgramStampV1,
+    intent_id: str | None = None,
+) -> contracts.PlaybillAuthoringSubmitResult:
+    check_permission("cruxible_playbill_authoring_compile", instance_id=instance_id)
+    check_permission("cruxible_playbill_authoring_submit", instance_id=instance_id)
+    coordinator, actor = _authoring_coordinator(instance_id)
+    result = coordinator.compile_and_submit(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=canonical_candidate_timestamp(utc_now()),
+        intent_id=intent_id,
+        reference_expectations=reference_expectations,
+        program_stamp=program_stamp,
+    )
+    submitted = contracts.PlaybillAuthoringSubmitResult.model_validate(
+        result.model_dump(mode="json")
+    )
+    preflight = result.intent.last_preflight
+    if preflight is None:
+        return submitted
+    return submitted.model_copy(
+        update={
+            "preflight": _authoring_preflight_result(coordinator, actor=actor, result=preflight)
+        }
+    )
 
 
 def playbill_authoring_compile_input(

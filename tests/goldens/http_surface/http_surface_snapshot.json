@@ -42,6 +42,9 @@
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit": {
     "POST": "PlaybillAuthoringSubmitResult"
   },
+  "/api/v1/{instance_id}/playbill/authoring/submit": {
+    "POST": "PlaybillAuthoringSubmitResult"
+  },
   "/api/v1/{instance_id}/playbill/blocks/declare": {
     "POST": "PlaybillBlockDeclareResultV1"
   },
@@ -279,6 +282,9 @@
   },
   "/api/v1/{instance_id}/playbill/sources/proposals": {
     "POST": "PlaybillProposalInspection"
+  },
+  "/api/v1/{instance_id}/playbill/subject-index": {
+    "GET": "PlaybillSubjectIndex"
   },
   "/api/v1/{instance_id}/playbill/subjects": {
     "GET": "PlaybillSubjectList"

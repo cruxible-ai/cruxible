@@ -712,14 +712,16 @@ def resolve_playbill_claim_group(
     ):
         raise ProposalIntegrityError("Claim group read context differs from accepted state")
     type_path = claim_type_path(predicate)
-    content = (
-        instance.blob_at(coordinate.git_oid, type_path)
-        if read_context is None
-        else read_context.tree.get(type_path)
-    )
-    if content is None:
-        raise ClaimNotFoundError(f"ClaimType:{predicate}")
-    claim_type = parse_claim_type(content, path=type_path)
+    if read_context is None:
+        content = instance.blob_at(coordinate.git_oid, type_path)
+        if content is None:
+            raise ClaimNotFoundError(f"ClaimType:{predicate}")
+        claim_type = parse_claim_type(content, path=type_path)
+    else:
+        try:
+            claim_type = read_context.claim_type(type_path)
+        except ClaimNotFoundError as exc:
+            raise ClaimNotFoundError(f"ClaimType:{predicate}") from exc
     contenders: list[ResolutionContenderV1] = []
     verdicts: list[ClaimVerdictResultAny] = []
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)

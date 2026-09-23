@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
@@ -26,7 +26,7 @@ from cruxible_client.contracts.approval_policy import (
 )
 from cruxible_client.contracts.attestations import ApprovalSubmission
 from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import canonical_bytes, is_candidate_card_path
 from cruxible_client.contracts.claims import (
     ClaimLawEvidenceAny,
     claim_path,
@@ -73,7 +73,10 @@ from cruxible_core.compiler.compiler import (
     SUPPORTED_COMPILERS,
     current_compiler_coordinate,
 )
-from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
+from cruxible_core.compiler.projection_artifacts import (
+    ArtifactEnvelopeRow,
+    registered_path_kind,
+)
 from cruxible_core.compiler.projection_tree import TreeReadLimits, read_registered_tree
 from cruxible_core.curation.review_operational import ReviewOperationalStore
 from cruxible_core.derived.derived_state import (
@@ -96,6 +99,7 @@ from cruxible_core.indexes.history.history_index import (
     AcceptedGenerationLocation,
     AcceptedHistoryIndex,
     HistoryReader,
+    RetainedRecordReader,
 )
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
@@ -143,6 +147,7 @@ from cruxible_core.proposals.proposals import (
 )
 from cruxible_core.proposals.settlement import (
     ChangeActorBinding,
+    ChangeSetRecordAnyVersion,
     VerifiedGenerationBundle,
     prepare_generation,
     render_generation_descriptor,
@@ -232,6 +237,25 @@ def _validate_client_principals(
     return ordered, posture
 
 
+_VALIDATED_PATH_CAPACITY = 64
+_VALIDATED_PATHS: OrderedDict[
+    tuple[str, tuple[tuple[str, Any], ...]],
+    tuple[tuple[tuple[int, int, int, str], ...], dict[str, Path]],
+] = OrderedDict()
+
+
+def _path_identity(path: Path) -> tuple[int, int, int, str]:
+    """The leaf's own identity and the full path binding that reaches it.
+
+    The resolved path covers every ancestor: moving an ancestor away and
+    putting a symlink in its place keeps the leaf's inode but changes where the
+    path resolves, so a remembered validation no longer applies.
+    """
+
+    status = path.lstat()
+    return (status.st_dev, status.st_ino, status.st_mode, os.path.realpath(path))
+
+
 class PlaybillInstance:
     """A verified opt-in Playbill substrate rooted outside agent workspaces."""
 
@@ -268,6 +292,14 @@ class PlaybillInstance:
         self._promotion_verifier = promotion_verifier
         self._claim_attestation_store: ClaimAttestationEvidenceStore | None = None
         self._workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None
+        self._workspace_path: Path | None = None
+        # Advisory ref refreshes run after the write that asked for them. Requests
+        # made while one runs fold into a single following run.
+        self._advertisement_condition = threading.Condition()
+        self._advertisement_thread: threading.Thread | None = None
+        self._advertisement_requested = 0
+        self._advertisement_completed = 0
+        self._last_advertisement: PlaybillWorkspaceAdvertisement | None = None
         self._receive_limits = ProposalReceiveLimits()
         self._mirror_condition = threading.Condition()
         self._mirror_thread: threading.Thread | None = None
@@ -277,6 +309,15 @@ class PlaybillInstance:
         # review-context snapshot and access profile. Bounded by the floor service.
         self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self.floor_export_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
+        self._body_store_cache: (
+            tuple[tuple[Path, Path, tuple[int, int, int, str] | None], ContentAddressedBodyStore]
+            | None
+        ) = None
+        # Verified retained change-set records, keyed by their full accepted
+        # location. Their bytes are immutable, so they survive head movement.
+        self.verified_change_set_records: OrderedDict[
+            AcceptedGenerationLocation, ChangeSetRecordAnyVersion
+        ] = OrderedDict()
 
     @staticmethod
     def _accepted_query_facts(
@@ -562,8 +603,40 @@ class PlaybillInstance:
 
     @staticmethod
     def _validated_paths(root: Path, layout: StorageLayout) -> dict[str, Path]:
+        """Resolve and confine every managed storage directory.
+
+        A full validation is remembered with each path's lstat identity (device,
+        inode and mode) and the path it resolves to. Later calls reuse the result
+        only while every identity and resolved path is unchanged; a directory or
+        any ancestor replaced by a symlink or another inode takes the full
+        validation again.
+        """
+        entries = tuple(layout.model_dump().items())
+        key = (str(root), entries)
+        remembered = _VALIDATED_PATHS.get(key)
+        if remembered is not None:
+            identities, cached = remembered
+            try:
+                current = tuple(_path_identity(root / relative) for _name, relative in entries)
+            except OSError:
+                current = None
+            if current == identities:
+                return dict(cached)
+        paths = PlaybillInstance._validate_paths(root, entries)
+        try:
+            identities = tuple(_path_identity(root / relative) for _name, relative in entries)
+        except OSError:
+            return paths
+        _VALIDATED_PATHS[key] = (identities, dict(paths))
+        _VALIDATED_PATHS.move_to_end(key)
+        while len(_VALIDATED_PATHS) > _VALIDATED_PATH_CAPACITY:
+            _VALIDATED_PATHS.popitem(last=False)
+        return paths
+
+    @staticmethod
+    def _validate_paths(root: Path, entries: tuple[tuple[str, Any], ...]) -> dict[str, Path]:
         paths: dict[str, Path] = {}
-        for name, relative in layout.model_dump().items():
+        for name, relative in entries:
             path = root / relative
             if path.is_symlink():
                 raise PlaybillFormatError(f"managed storage path may not be a symlink: {name}")
@@ -659,10 +732,26 @@ class PlaybillInstance:
         """Return PB-C's inert, access-controlled content-addressed body store."""
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
-        return ContentAddressedBodyStore(
+        try:
+            algorithm = _path_identity(paths["cas"] / "sha256")
+        except OSError:
+            algorithm = None
+        key = (paths["cas"], paths["leases"], algorithm)
+        cached = self._body_store_cache
+        if algorithm is not None and cached is not None and cached[0] == key:
+            return cached[1]
+        store = ContentAddressedBodyStore(
             paths["cas"],
             reservation_root=paths["leases"] / "procedure-material",
         )
+        try:
+            key = (paths["cas"], paths["leases"], _path_identity(paths["cas"] / "sha256"))
+        except OSError:
+            return store
+        # The store holds only confined, resolved paths; reuse it while they and
+        # its algorithm directory keep the same identity.
+        self._body_store_cache = (key, store)
+        return store
 
     @property
     def is_decommissioned(self) -> bool:
@@ -1166,12 +1255,89 @@ class PlaybillInstance:
     def bind_workspace_advertiser(
         self,
         advertiser: Callable[[], PlaybillWorkspaceAdvertisement],
+        *,
+        workspace_path: Path | None,
     ) -> None:
         """Bind the manager-owned advisory Git hook for this process."""
 
         self._workspace_advertiser = advertiser
+        self._workspace_path = workspace_path
 
     def advertise_workspace(self) -> PlaybillWorkspaceAdvertisement:
+        """Queue the advisory ref refresh and return without waiting for Git.
+
+        Review refs, their notes and the workspace fetch are advisory: nothing a
+        write returns depends on them, and mirror publication reconciles them
+        itself before it snapshots refs. The refresh runs after the response.
+        """
+
+        with self._advertisement_condition:
+            self._advertisement_requested += 1
+            self._start_advertiser_locked()
+        if self._workspace_advertiser is None or self._workspace_path is None:
+            return NOT_ATTACHED_ADVERTISEMENT
+        return PlaybillWorkspaceAdvertisement(
+            status="scheduled", workspace_path=str(self._workspace_path)
+        )
+
+    def settled_workspace_advertisement(self) -> PlaybillWorkspaceAdvertisement:
+        """Wait for every refresh requested so far and report the latest outcome."""
+
+        with self._advertisement_condition:
+            if self._last_advertisement is None:
+                self._advertisement_requested += 1
+            target = self._advertisement_requested
+            self._start_advertiser_locked()
+            while self._advertisement_completed < target:
+                if self._advertisement_thread is None:
+                    # The worker could not start; refresh on this thread instead.
+                    break
+                self._advertisement_condition.wait()
+            else:
+                assert self._last_advertisement is not None
+                return self._last_advertisement
+        result = self._advertise_workspace_now()
+        with self._advertisement_condition:
+            if self._advertisement_completed < target:
+                self._advertisement_completed = target
+                self._last_advertisement = result
+            self._advertisement_condition.notify_all()
+        return result
+
+    def _start_advertiser_locked(self) -> None:
+        if self._advertisement_thread is not None:
+            self._advertisement_condition.notify_all()
+            return
+        # Not a daemon thread: a short-lived process finishes the refresh it
+        # queued before the interpreter exits.
+        thread = threading.Thread(
+            target=self._run_workspace_advertiser,
+            name=f"workspace-advertiser-{self.descriptor.instance_id}",
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            # Resource exhaustion is operational; the next request or settle
+            # retries, and a settle refreshes on its own thread.
+            return
+        self._advertisement_thread = thread
+
+    def _run_workspace_advertiser(self) -> None:
+        while True:
+            with self._advertisement_condition:
+                if self._advertisement_completed >= self._advertisement_requested:
+                    self._advertisement_thread = None
+                    self._advertisement_condition.notify_all()
+                    return
+                target = self._advertisement_requested
+            result = self._advertise_workspace_now()
+            with self._advertisement_condition:
+                if self._advertisement_completed < target:
+                    self._advertisement_completed = target
+                    self._last_advertisement = result
+                self._advertisement_condition.notify_all()
+
+    def _advertise_workspace_now(self) -> PlaybillWorkspaceAdvertisement:
         """Refresh advisory refs, or report that this instance has no attachment."""
 
         try:
@@ -1354,6 +1520,13 @@ class PlaybillInstance:
 
         return self._ledger.read_proposal_note(kind, oid)
 
+    def read_proposal_notes(
+        self, pairs: Sequence[tuple[str, str]]
+    ) -> dict[tuple[str, str], bytes | None]:
+        """Read several projected proposal notes in one fresh ledger read."""
+
+        return self._ledger.read_proposal_notes(pairs)
+
     def review_operational_store(self) -> ReviewOperationalStore:
         """Return the local append-only review observation store.
 
@@ -1434,39 +1607,55 @@ class PlaybillInstance:
                 publication_directory=paths["projections"],
                 bodies=ContentAddressedBodyStore(paths["cas"]),
             )
-            request = assembler.request(
-                output_staging_directory=paths["projections"]
-                / f".stage-history-{secrets.token_hex(12)}"
-            )
-            manifest = paths["projections"] / projection_manifest_name(request)
-            changed = (
-                None
-                if sequence == 0
-                else self._ledger.changed_tree_paths(
-                    recovered.history[sequence - 1].oid, generation.oid
+            if sequence == 0:
+                request = assembler.request(
+                    output_staging_directory=paths["projections"]
+                    / f".stage-history-{secrets.token_hex(12)}"
                 )
+                manifest = paths["projections"] / projection_manifest_name(request)
+                if manifest.exists():
+                    with bind_projection(manifest, expected=coordinate) as projection:
+                        projection.require_source_authentication(repository=self._ledger)
+                        return projection.artifact_envelopes(paths=None)
+                # Missing publications derive membership from retained contracts.
+                # Document bodies and promoted output availability are
+                # independent of accepted membership.
+                sources = {
+                    blob.path: blob.content
+                    for blob in read_registered_tree(
+                        self._ledger,
+                        generation.oid,
+                        limits=TreeReadLimits(),
+                        artifact_kinds=assembler.artifact_kinds,
+                    )
+                }
+                return parse_static_owners(sources, accepted=coordinate).envelopes
+            # A successor needs envelopes only for its changed members, published
+            # or not. Their bytes come from this generation; the replay-verified
+            # record prefix supplies change-set context, so no whole historical
+            # tree is read, authenticated or re-parsed once per generation.
+            changed = self._ledger.changed_tree_paths(
+                recovered.history[sequence - 1].oid, generation.oid
             )
-            if manifest.exists():
-                with bind_projection(manifest, expected=coordinate) as projection:
-                    projection.require_source_authentication(repository=self._ledger)
-                    return projection.artifact_envelopes(paths=changed)
-            # Missing historical publications derive
-            # membership from retained contracts. Document bodies and promoted
-            # output availability are independent of accepted membership.
-            sources = {
-                blob.path: blob.content
-                for blob in read_registered_tree(
-                    self._ledger,
-                    generation.oid,
-                    limits=TreeReadLimits(),
-                    artifact_kinds=assembler.artifact_kinds,
-                )
-            }
-            parsed = parse_static_owners(sources, accepted=coordinate)
-            selected = None if changed is None else frozenset(changed)
-            return tuple(
-                row for row in parsed.envelopes if selected is None or row.path in selected
+            member_paths = tuple(
+                path
+                for path in changed
+                if is_candidate_card_path(path)
+                or registered_path_kind(path, artifact_kinds=assembler.artifact_kinds)
+                != "changeset"
             )
+            verified = tuple(
+                (f"changesets/cs-{item.sequence:020d}.json", item.record)
+                for item in recovered.history[1 : sequence + 1]
+                if item.record is not None
+            )
+            parsed = parse_static_owners(
+                self._ledger.blobs_at(generation.oid, member_paths),
+                accepted=coordinate,
+                verified_change_sets=verified,
+            )
+            selected = frozenset(changed)
+            return tuple(row for row in parsed.envelopes if row.path in selected)
 
         with self._accepted_history_index.read(recovered, envelopes, at=at) as reader:
             yield reader
@@ -1587,6 +1776,11 @@ class PlaybillInstance:
         self.coordinate_for_oid(oid)
         return self._ledger.paths_at(oid)
 
+    def retained_record_reader(self) -> RetainedRecordReader:
+        """A record reader sharing this instance's verified change-set records."""
+
+        return RetainedRecordReader(self.blob_at, verified=self.verified_change_set_records)
+
     def blob_at(self, oid: str, path: str) -> bytes | None:
         """Read one accepted path without materializing its whole generation."""
 
@@ -1680,6 +1874,9 @@ class PlaybillInstance:
             self._ledger,
             bodies=self.body_store(),
             history=lambda: self.accepted_history_reader(at=at),
+            records=RetainedRecordReader(
+                self._ledger.blob_at, verified=self.verified_change_set_records
+            ),
         )
 
     def bind_accepted_projection(
@@ -1785,6 +1982,7 @@ class PlaybillInstance:
         actor_binding: ChangeActorBinding,
         proposal_actor_id: str,
         sequence: int,
+        candidate_tree_oid: str | None = None,
     ) -> VerifiedGenerationBundle:
         """Construct one verified generation without exposing the Git ledger to surfaces."""
 
@@ -1799,6 +1997,7 @@ class PlaybillInstance:
             self._ledger,
             base=base,
             candidate_tree=candidate_tree,
+            candidate_tree_oid=candidate_tree_oid,
             candidate=candidate,
             approval_submissions=approvals,
             bodies=self.body_store(),
@@ -1829,6 +2028,7 @@ class PlaybillInstance:
         approvals: tuple[ApprovalSubmission, ...],
         actor_binding: ChangeActorBinding,
         proposal_actor_id: str,
+        candidate_tree_oid: str | None = None,
     ) -> ActivationResult:
         """Publish one owned preparation and install its verified successor state.
 
@@ -1846,6 +2046,7 @@ class PlaybillInstance:
                 actor_binding=actor_binding,
                 proposal_actor_id=proposal_actor_id,
                 sequence=previous.head.sequence + 1,
+                candidate_tree_oid=candidate_tree_oid,
             )
             successor = (
                 prepared_generation_for_handoff(

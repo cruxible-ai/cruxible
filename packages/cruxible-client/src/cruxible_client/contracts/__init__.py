@@ -946,6 +946,25 @@ class PlaybillSubjectList(BaseModel):
     subjects: list[PlaybillSubjectView]
 
 
+class PlaybillSubjectIndexEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    identity: str
+    subject_kind: str
+    subject_id: str
+    lifecycle: Literal["live", "retired"]
+
+
+class PlaybillSubjectIndex(BaseModel):
+    """Which Subjects exist at one coordinate; no facts are compiled for it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-subject-index-v1"] = "playbill-subject-index-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    subjects: list[PlaybillSubjectIndexEntry]
+
+
 class PlaybillSubjectHistory(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1288,6 +1307,12 @@ class PlaybillAuthoringSubmitResult(BaseModel):
     # One row per submitted member, so a changeset answers the same two
     # questions once per member instead of once for the whole submission.
     members: tuple[dict[str, Any], ...] = ()
+    # The preflight this submit ran, when the request compiled and submitted in
+    # one call; a refused verdict carries the diagnostics compile would have.
+    preflight: PlaybillAuthoringPreflightResult | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class PlaybillInsertionPrepareResult(BaseModel):

@@ -426,10 +426,13 @@ def _reconcile_proposal_notes(
             # original admission commit. Both must agree with their complete
             # evidence group before settlement; neither is trusted as authority.
             aliases = {oid, grouped.review_oids[proposal.admission.proposal_id]}
-            for oid in sorted(aliases):
-                projections = tuple(grouped.note_bytes(oid).items())
-                for kind, expected in projections:
-                    stored = instance.read_proposal_note(kind, oid)
+            projections = {oid: tuple(grouped.note_bytes(oid).items()) for oid in sorted(aliases)}
+            notes = instance.read_proposal_notes(
+                tuple((kind, oid) for oid, rows in projections.items() for kind, _ in rows)
+            )
+            for oid, rows in projections.items():
+                for kind, expected in rows:
+                    stored = notes[kind, oid]
                     if stored == expected:
                         continue
                     if stored is not None:
@@ -479,6 +482,7 @@ def service_activate_playbill_proposal(
         candidate_tree=instance.proposal_tree(
             evaluation.evaluated_tree_oid, base_oid=base.git_oid, proposal_id=proposal_id
         ),
+        candidate_tree_oid=evaluation.evaluated_tree_oid,
         candidate=candidate,
         approvals=approvals,
         actor_binding=ChangeActorBinding(

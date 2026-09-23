@@ -104,3 +104,170 @@ def test_batch_context_rechecks_time_and_replay_and_rejects_wrong_coordinate(tmp
         playbill_evidence.service_evaluate_playbill_claim_verdict(
             instance, read_context=context, at=PlaybillAcceptedCoordinate.from_internal(old), **args
         )
+
+
+def test_verdicts_verify_each_retained_record_once_per_instance(tmp_path, monkeypatch):
+    from cruxible_core.indexes.history import history_index
+
+    instance, _ = seed_claims(tmp_path)
+    at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    parsed: list[str] = []
+    parse = history_index.parse_change_set_record
+
+    def counted(raw, *, path, **kwargs):
+        parsed.append(path)
+        return parse(raw, path=path, **kwargs)
+
+    monkeypatch.setattr(history_index, "parse_change_set_record", counted)
+
+    def statuses():
+        context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
+        assert context.history() is context.history()
+        playbill_search.reset_claim_resolution_memo()
+        return playbill_search.claim_resolution_statuses(
+            instance,
+            claims=context.claims(),
+            at=at,
+            evaluation_time=EVALUATION_TIME,
+            read_context=context,
+        )
+
+    instance.verified_change_set_records.clear()
+    first = statuses()
+    assert parsed and len(parsed) == len(set(parsed))
+    parsed.clear()
+    # A new request at a new memo key reuses the verified records.
+    assert statuses() == first
+    assert parsed == []
+
+
+def test_retained_records_answer_only_their_exact_location(tmp_path):
+    from dataclasses import replace
+
+    from cruxible_client.contracts.errors import ProjectionIntegrityError
+
+    instance, _ = seed_claims(tmp_path)
+    with instance.accepted_history_reader() as history:
+        location = history.generation(history.sequence)
+    record = instance.retained_record_reader().read(location)
+    expected = record.model_copy(deep=True)
+    # Each request gets a detached copy: mutating one cannot reach the next.
+    record.law_evidence[0].result.clear()
+    again = instance.retained_record_reader().read(location)
+    assert again == expected and again is not record
+    again.law_evidence[0].result.clear()
+    assert instance.retained_record_reader().read(location) == expected
+    retained = len(instance.verified_change_set_records)
+    forged = replace(location, source_record_digest="sha256:" + "0" * 64)
+    with pytest.raises(ProjectionIntegrityError, match="binding differs"):
+        instance.retained_record_reader().read(forged)
+    assert len(instance.verified_change_set_records) == retained
+
+
+def test_subject_search_evaluates_only_that_subjects_claims(tmp_path, monkeypatch):
+    instance, _ = seed_claims(tmp_path)
+    everything = playbill_search.service_search_playbill(
+        instance, request=_request(instance, mode="list", kinds=("claim",))
+    )
+    subject = next(
+        r.subject for r in everything.rows if r.subject.artifact_path.endswith("wi-42.json")
+    )
+    evaluated: list[str] = []
+    resolve = playbill_search.resolve_playbill_claim_group
+
+    def counted(instance, *, claims, **kwargs):
+        evaluated.extend(claim.statement.subject.artifact_path for claim in claims)
+        return resolve(instance, claims=claims, **kwargs)
+
+    monkeypatch.setattr(playbill_search, "resolve_playbill_claim_group", counted)
+    from cruxible_core.indexes.typed_state import TypedStateReader
+
+    selections: list[tuple[tuple[str, str], ...] | None] = []
+    attestations = TypedStateReader.claim_attestations
+
+    def selected(reader, *args, **kwargs):
+        selections.append(kwargs.get("claim_versions"))
+        return attestations(reader, *args, **kwargs)
+
+    monkeypatch.setattr(TypedStateReader, "claim_attestations", selected)
+    playbill_search.reset_claim_resolution_memo()
+    scoped = playbill_search.service_search_playbill(
+        instance, request=_request(instance, mode="list", kinds=("claim",), subject=subject)
+    )
+    assert scoped.rows == tuple(r for r in everything.rows if r.subject == subject)
+    assert evaluated and set(evaluated) == {subject.artifact_path}
+    # Attestations are selected for this subject's exact Claim versions only,
+    # never read for the whole population.
+    if playbill_evidence._serves_attestations(instance.accepted_coordinate()):
+        scoped_versions = {(f"Claim:{row.identity}", row.subject) for row in scoped.rows}
+        assert selections and None not in selections
+        assert {pair[0] for chunk in selections for pair in chunk} == {
+            identity for identity, _ in scoped_versions
+        }
+
+
+def test_status_batches_select_attestations_once_for_every_claim(tmp_path, monkeypatch):
+    from cruxible_core.indexes.typed_state import TypedStateReader
+
+    instance, _ = seed_claims(tmp_path)
+    claims = ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims()
+    live = [claim for claim in claims if claim.lifecycle.state != "retired"]
+    assert len(live) > 1
+    calls: list[tuple[tuple[str, str], ...]] = []
+    attestations = TypedStateReader.claim_attestations
+
+    def selected(reader, *args, **kwargs):
+        calls.append(kwargs["claim_versions"])
+        return attestations(reader, *args, **kwargs)
+
+    monkeypatch.setattr(TypedStateReader, "claim_attestations", selected)
+    playbill_search.reset_claim_resolution_memo()
+    # No caller context: the batch parses Claims itself, as the sync check does.
+    playbill_search.claim_resolution_statuses(
+        instance,
+        claims=claims,
+        at=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=EVALUATION_TIME,
+    )
+    assert len(calls) == 1
+    assert {pair[0] for pair in calls[0]} >= {claim.identity.qualified for claim in live}
+
+
+def test_a_remembered_orientation_reads_no_claims(tmp_path, monkeypatch):
+    instance, _ = seed_claims(tmp_path)
+    playbill_search.reset_claim_resolution_memo()
+    first = playbill_search.service_search_playbill(
+        instance, request=_request(instance, mode="orient", kinds=("claim",))
+    )
+
+    def unread(*args, **kwargs):
+        pytest.fail("a remembered orientation must not read or parse Claims")
+
+    monkeypatch.setattr(ClaimVerdictReadContext, "claims", unread)
+    again = playbill_search.service_search_playbill(
+        instance, request=_request(instance, mode="orient", kinds=("claim",))
+    )
+    assert again.orientation == first.orientation
+    # Without the memo the ordinary read path is taken (and here refused).
+    playbill_search.reset_claim_resolution_memo()
+    with pytest.raises(pytest.fail.Exception):
+        playbill_search.service_search_playbill(
+            instance, request=_request(instance, mode="orient", kinds=("claim",))
+        )
+
+
+def test_remembered_replay_availability_follows_the_cas_signal(tmp_path):
+    from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
+
+    instance, _ = seed_claims(tmp_path)
+    claim = ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims()[0]
+    capture = claim.backing.capture_digests[0]
+    available = playbill_evidence._current_replay_available
+    signal = verdict_input_fingerprint(instance)
+    assert available(instance, capture, readers={}, fingerprint=signal) is True
+    # Removing the retained body changes the CAS signal; under the new signal the
+    # remembered answer is not reused.
+    instance.body_store()._path(capture).unlink()
+    changed = verdict_input_fingerprint(instance)
+    assert changed != signal
+    assert available(instance, capture, readers={}, fingerprint=changed) is False
