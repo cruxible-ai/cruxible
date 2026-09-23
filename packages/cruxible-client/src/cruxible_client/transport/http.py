@@ -30,6 +30,8 @@ from cruxible_client.contracts.claim_reads import (
     ClaimBackingsResultV1,
     ClaimReadBatchRequestV1,
     ClaimReadBatchResultV1,
+    ClaimValuesRequestV1,
+    ClaimValuesResultV1,
 )
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import (
@@ -1278,6 +1280,19 @@ class CruxibleClient:
             json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, ClaimReadBatchResultV1)
+
+    def read_playbill_claim_values(
+        self,
+        instance_id: str,
+        *,
+        request: ClaimValuesRequestV1,
+    ) -> ClaimValuesResultV1:
+        """Live Claim values and verdicts for explicit Subjects, without full views."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claims/values",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, ClaimValuesResultV1)
 
     def get_playbill_claim_backings(
         self,

@@ -41,9 +41,11 @@ from cruxible_client.contracts.claim_reads import (
     ClaimBackingsResultV1,
     ClaimReadBatchRequestV1,
     ClaimReadBatchResultV1,
+    ClaimValuesRequestV1,
+    ClaimValuesResultV1,
 )
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.claims import ClaimRetireRequestV1
+from cruxible_client.contracts.claims import ClaimRetireRequestV1, claim_path
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
 from cruxible_client.contracts.discovery import (
     DiscoveryBudgetV1,
@@ -162,6 +164,7 @@ from cruxible_core.service.authoring.projection_sync import (
 from cruxible_core.service.claims.claim_reads import (
     service_read_claim_backings,
     service_read_claim_batch,
+    service_read_claim_values,
 )
 from cruxible_core.service.claims.claim_types import (
     service_get_playbill_claim_type,
@@ -1550,6 +1553,20 @@ def playbill_list_claims(
         include_retired=include_retired,
     )
     return contracts.PlaybillClaimList.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_read_claim_values(
+    instance_id: str, *, request: ClaimValuesRequestV1
+) -> ClaimValuesResultV1:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_read_claim_values(get_playbill_manager().get(instance_id), request=request)
+    _record_consumed_paths(
+        instance_id,
+        operation="playbill.claim.get",
+        coordinate=AcceptedCoordinate.model_validate(result.coordinate.model_dump()),
+        paths=tuple(claim_path(row.claim_id) for row in result.values),
+    )
+    return result
 
 
 def playbill_read_claim_batch(
