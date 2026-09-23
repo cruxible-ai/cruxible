@@ -170,9 +170,10 @@ class RetainedRecordReader:
 
     ``verified`` optionally extends the sharing past one request. A location names
     the commit, record path, record digest, candidate digest and compiler, so
-    the bytes it verifies cannot change under it: an instance that retains its
-    verified records keeps them across head movement and re-verifies only when
-    the process restarts.
+    the bytes it verifies cannot change under it. Verified records are reused
+    while resident in the bounded instance cache. The cached models are private:
+    each request receives its own detached copy, because frozen models still
+    carry mutable nested containers.
     """
 
     def __init__(
@@ -195,8 +196,9 @@ class RetainedRecordReader:
         if self._verified is not None:
             retained = memo_get(self._verified, generation)
             if retained is not None:
-                self._records[generation] = retained
-                return retained
+                detached = retained.model_copy(deep=True)
+                self._records[generation] = detached
+                return detached
         if generation.source_record_path is None:
             raise ProjectionIntegrityError("genesis has no member evidence record")
         raw = self._load(generation.git_oid, generation.source_record_path)
@@ -214,7 +216,12 @@ class RetainedRecordReader:
             raise ProjectionIntegrityError("accepted member source record binding differs")
         self._records[generation] = record
         if self._verified is not None:
-            memo_put(self._verified, generation, record, capacity=VERIFIED_RECORD_CAPACITY)
+            memo_put(
+                self._verified,
+                generation,
+                record.model_copy(deep=True),
+                capacity=VERIFIED_RECORD_CAPACITY,
+            )
         return record
 
 

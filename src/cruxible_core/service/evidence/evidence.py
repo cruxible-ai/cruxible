@@ -186,6 +186,7 @@ class ClaimVerdictReadContext:
         default=None, init=False
     )
     _claim_types: dict[str, ClaimType] = dataclass_field(default_factory=dict, init=False)
+    _attestation_versions: set[tuple[str, str]] = dataclass_field(default_factory=set, init=False)
 
     def __post_init__(self) -> None:
         from cruxible_core.indexes.evaluated_state import SelectedRows
@@ -276,26 +277,41 @@ class ClaimVerdictReadContext:
             law_evidence.prefetch(paths)
 
     def attestation_envelopes(self, claim: ClaimArtifactAny) -> tuple[ClaimAttestationV2, ...]:
-        """This exact Claim version's accepted attestations, read once per batch."""
+        """This exact Claim version's accepted attestations.
 
-        if self._attestations is None:
-            grouped: dict[tuple[str, str], list[ClaimAttestationV2]] = {}
-            with self.instance.bind_accepted_projection(self.coordinate) as projection:
-                for value in projection.typed.claim_attestations():
-                    grouped.setdefault(
-                        (
-                            value.statement.claim_identity.qualified,
-                            value.statement.claim_artifact_digest,
+        The first request reads attestations for every Claim version this batch
+        has selected, in bounded chunks, never the whole attestation population.
+        """
+
+        key = (claim.identity.qualified, claim_artifact_digest(claim).tagged)
+        if self._attestations is None or key not in self._attestation_versions:
+            versions = tuple(
+                dict.fromkeys(
+                    (
+                        *(
+                            (selected.identity.qualified, claim_artifact_digest(selected).tagged)
+                            for selected in self._claims.values()
                         ),
-                        [],
-                    ).append(value)
-            object.__setattr__(self, "_attestations", grouped)
-        assert self._attestations is not None
-        return tuple(
-            self._attestations.get(
-                (claim.identity.qualified, claim_artifact_digest(claim).tagged), ()
+                        key,
+                    )
+                )
             )
-        )
+            grouped = dict(self._attestations or {})
+            with self.instance.bind_accepted_projection(self.coordinate) as projection:
+                for start in range(0, len(versions), 400):
+                    chunk = versions[start : start + 400]
+                    for value in projection.typed.claim_attestations(claim_versions=chunk):
+                        grouped.setdefault(
+                            (
+                                value.statement.claim_identity.qualified,
+                                value.statement.claim_artifact_digest,
+                            ),
+                            [],
+                        ).append(value)
+            object.__setattr__(self, "_attestations", grouped)
+            self._attestation_versions.update(versions)
+        assert self._attestations is not None
+        return tuple(self._attestations.get(key, ()))
 
     def providers(self) -> Mapping[str, ProviderV1]:
         if self._providers is None:

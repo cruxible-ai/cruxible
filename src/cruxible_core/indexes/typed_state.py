@@ -921,7 +921,9 @@ class TypedStateReader:
         basis: str | None = None,
         current_claims_only: bool = False,
         claim_predicates: tuple[str, ...] | None = None,
+        claim_versions: tuple[tuple[str, str], ...] | None = None,
     ) -> tuple[ClaimAttestationV2, ...]:
+        """Accepted attestations; ``claim_versions`` selects exact (identity, digest) pairs."""
         from cruxible_client.contracts.accepted_attestations import (
             attestation_artifact_digest,
             parse_accepted_attestation,
@@ -932,6 +934,15 @@ class TypedStateReader:
 
         predicates: list[str] = []
         parameters: list[str] = []
+        if claim_versions is not None:
+            if not claim_versions:
+                return ()
+            predicates.append(
+                "(claim_identity,claim_artifact_digest) IN (VALUES "
+                + ",".join("(?,?)" for _ in claim_versions)
+                + ")"
+            )
+            parameters.extend(value for pair in claim_versions for value in pair)
         if claim_identity is not None:
             if claim_artifact_digest is None:
                 raise ValueError("attestation selection requires an exact Claim version")
@@ -971,6 +982,14 @@ class TypedStateReader:
                         value.statement.claim_identity.qualified != claim_identity
                         or value.statement.claim_artifact_digest != claim_artifact_digest
                     )
+                )
+                or (
+                    claim_versions is not None
+                    and (
+                        value.statement.claim_identity.qualified,
+                        value.statement.claim_artifact_digest,
+                    )
+                    not in claim_versions
                 )
             ):
                 raise ProjectionIntegrityError("attestation lookup differs from its signed member")

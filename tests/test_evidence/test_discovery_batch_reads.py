@@ -150,7 +150,13 @@ def test_retained_records_answer_only_their_exact_location(tmp_path):
     with instance.accepted_history_reader() as history:
         location = history.generation(history.sequence)
     record = instance.retained_record_reader().read(location)
-    assert instance.retained_record_reader().read(location) is record
+    expected = record.model_copy(deep=True)
+    # Each request gets a detached copy: mutating one cannot reach the next.
+    record.law_evidence[0].result.clear()
+    again = instance.retained_record_reader().read(location)
+    assert again == expected and again is not record
+    again.law_evidence[0].result.clear()
+    assert instance.retained_record_reader().read(location) == expected
     retained = len(instance.verified_change_set_records)
     forged = replace(location, source_record_digest="sha256:" + "0" * 64)
     with pytest.raises(ProjectionIntegrityError, match="binding differs"):
@@ -174,9 +180,27 @@ def test_subject_search_evaluates_only_that_subjects_claims(tmp_path, monkeypatc
         return resolve(instance, claims=claims, **kwargs)
 
     monkeypatch.setattr(playbill_search, "resolve_playbill_claim_group", counted)
+    from cruxible_core.indexes.typed_state import TypedStateReader
+
+    selections: list[tuple[tuple[str, str], ...] | None] = []
+    attestations = TypedStateReader.claim_attestations
+
+    def selected(reader, *args, **kwargs):
+        selections.append(kwargs.get("claim_versions"))
+        return attestations(reader, *args, **kwargs)
+
+    monkeypatch.setattr(TypedStateReader, "claim_attestations", selected)
     playbill_search.reset_claim_resolution_memo()
     scoped = playbill_search.service_search_playbill(
         instance, request=_request(instance, mode="list", kinds=("claim",), subject=subject)
     )
     assert scoped.rows == tuple(r for r in everything.rows if r.subject == subject)
     assert evaluated and set(evaluated) == {subject.artifact_path}
+    # Attestations are selected for this subject's exact Claim versions only,
+    # never read for the whole population.
+    if playbill_evidence._serves_attestations(instance.accepted_coordinate()):
+        scoped_versions = {(f"Claim:{row.identity}", row.subject) for row in scoped.rows}
+        assert selections and None not in selections
+        assert {pair[0] for chunk in selections for pair in chunk} == {
+            identity for identity, _ in scoped_versions
+        }
