@@ -94,7 +94,8 @@ class PlaybillInstanceManager:
                 workspace_root=workspace,
                 ledger_path=instance.root / instance.descriptor.storage.ledger,
                 ledger_object_format=instance.descriptor.git_object_format,
-            )
+            ),
+            workspace_path=workspace,
         )
 
     def initialize(

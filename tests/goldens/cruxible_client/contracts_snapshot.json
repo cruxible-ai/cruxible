@@ -1622,6 +1622,7 @@
               "status": {
                 "enum": [
                   "updated",
+                  "scheduled",
                   "not_attached",
                   "failed"
                 ],
@@ -8538,6 +8539,7 @@
               "status": {
                 "enum": [
                   "updated",
+                  "scheduled",
                   "not_attached",
                   "failed"
                 ],
@@ -14169,6 +14171,7 @@
               "status": {
                 "enum": [
                   "updated",
+                  "scheduled",
                   "not_attached",
                   "failed"
                 ],
@@ -14450,6 +14453,7 @@
               "status": {
                 "enum": [
                   "updated",
+                  "scheduled",
                   "not_attached",
                   "failed"
                 ],
@@ -15251,6 +15255,7 @@
               "status": {
                 "enum": [
                   "updated",
+                  "scheduled",
                   "not_attached",
                   "failed"
                 ],
@@ -15653,6 +15658,7 @@
               "status": {
                 "enum": [
                   "updated",
+                  "scheduled",
                   "not_attached",
                   "failed"
                 ],
@@ -16055,6 +16061,7 @@
               "status": {
                 "enum": [
                   "updated",
+                  "scheduled",
                   "not_attached",
                   "failed"
                 ],
@@ -20211,6 +20218,7 @@
               "status": {
                 "enum": [
                   "updated",
+                  "scheduled",
                   "not_attached",
                   "failed"
                 ],
@@ -24275,6 +24283,7 @@
               "status": {
                 "enum": [
                   "updated",
+                  "scheduled",
                   "not_attached",
                   "failed"
                 ],
@@ -43679,6 +43688,7 @@
               "status": {
                 "enum": [
                   "updated",
+                  "scheduled",
                   "not_attached",
                   "failed"
                 ],
@@ -44576,6 +44586,7 @@
               "status": {
                 "enum": [
                   "updated",
+                  "scheduled",
                   "not_attached",
                   "failed"
                 ],
@@ -59009,6 +59020,7 @@
               "status": {
                 "enum": [
                   "updated",
+                  "scheduled",
                   "not_attached",
                   "failed"
                 ],
@@ -59204,6 +59216,7 @@
           "schema": {
             "enum": [
               "updated",
+              "scheduled",
               "not_attached",
               "failed"
             ],
@@ -59285,6 +59298,7 @@
           "status": {
             "enum": [
               "updated",
+              "scheduled",
               "not_attached",
               "failed"
             ],

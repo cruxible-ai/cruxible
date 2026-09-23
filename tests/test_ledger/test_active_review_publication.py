@@ -198,6 +198,7 @@ def test_remote_closed_branch_recovery_uses_index_and_archive_without_evidence_r
         reason="closed after lost mirror acknowledgement",
         withdrawn_at=WITHDRAWN_AT,
     )
+    instance.settled_workspace_advertisement()
 
     def forbidden(*args, **kwargs):
         pytest.fail("mirror recovery reopened closed evidence")

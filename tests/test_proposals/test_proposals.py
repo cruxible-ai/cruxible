@@ -407,7 +407,7 @@ def test_submit_advertises_only_after_all_proposal_evidence_is_durable(tmp_path:
             failure_code="remote_conflict",
         )
 
-    instance.bind_workspace_advertiser(advertise)
+    instance.bind_workspace_advertiser(advertise, workspace_path=tmp_path)
     body = instance.store_document_body(b"body")
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
@@ -422,10 +422,13 @@ def test_submit_advertises_only_after_all_proposal_evidence_is_durable(tmp_path:
         timestamp=TIMESTAMP,
     )
 
+    settled = instance.settled_workspace_advertisement()
     instance._reconcile_proposal_review_refs()
 
-    assert calls == ["advertised", "advertised"]
-    assert result.workspace_advertisement.status == "failed"
+    # Requests made while a refresh runs fold into one following run.
+    assert calls and set(calls) == {"advertised"}
+    assert result.workspace_advertisement.status == "scheduled"
+    assert settled.failure_code == "remote_conflict"
     assert result.candidate is not None
     # Identical bytes, context and timestamp reproduce the same admission;
     # reusing a ref does not manufacture another historical commit.
@@ -439,7 +442,7 @@ def test_submit_survives_an_advertiser_that_raises(tmp_path: Path) -> None:
     def advertise() -> PlaybillWorkspaceAdvertisement:
         raise MemoryError("simulated advertiser failure")
 
-    instance.bind_workspace_advertiser(advertise)
+    instance.bind_workspace_advertiser(advertise, workspace_path=tmp_path)
     body = instance.store_document_body(b"body")
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
@@ -449,8 +452,10 @@ def test_submit_survives_an_advertiser_that_raises(tmp_path: Path) -> None:
     )
 
     assert result.candidate is not None
-    assert result.workspace_advertisement.status == "failed"
-    assert result.workspace_advertisement.failure_code == "unexpected_failure"
+    assert result.workspace_advertisement.status == "scheduled"
+    settled = instance.settled_workspace_advertisement()
+    assert settled.status == "failed"
+    assert settled.failure_code == "unexpected_failure"
     assert instance.proposal_evidence().read_admission(result.admission.proposal_id) is not None
 
 

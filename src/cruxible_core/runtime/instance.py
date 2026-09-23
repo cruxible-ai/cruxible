@@ -284,6 +284,14 @@ class PlaybillInstance:
         self._promotion_verifier = promotion_verifier
         self._claim_attestation_store: ClaimAttestationEvidenceStore | None = None
         self._workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None
+        self._workspace_path: Path | None = None
+        # Advisory ref refreshes run after the write that asked for them. Requests
+        # made while one runs fold into a single following run.
+        self._advertisement_condition = threading.Condition()
+        self._advertisement_thread: threading.Thread | None = None
+        self._advertisement_requested = 0
+        self._advertisement_completed = 0
+        self._last_advertisement: PlaybillWorkspaceAdvertisement | None = None
         self._receive_limits = ProposalReceiveLimits()
         self._mirror_condition = threading.Condition()
         self._mirror_thread: threading.Thread | None = None
@@ -1234,12 +1242,89 @@ class PlaybillInstance:
     def bind_workspace_advertiser(
         self,
         advertiser: Callable[[], PlaybillWorkspaceAdvertisement],
+        *,
+        workspace_path: Path | None,
     ) -> None:
         """Bind the manager-owned advisory Git hook for this process."""
 
         self._workspace_advertiser = advertiser
+        self._workspace_path = workspace_path
 
     def advertise_workspace(self) -> PlaybillWorkspaceAdvertisement:
+        """Queue the advisory ref refresh and return without waiting for Git.
+
+        Review refs, their notes and the workspace fetch are advisory: nothing a
+        write returns depends on them, and mirror publication reconciles them
+        itself before it snapshots refs. The refresh runs after the response.
+        """
+
+        with self._advertisement_condition:
+            self._advertisement_requested += 1
+            self._start_advertiser_locked()
+        if self._workspace_advertiser is None or self._workspace_path is None:
+            return NOT_ATTACHED_ADVERTISEMENT
+        return PlaybillWorkspaceAdvertisement(
+            status="scheduled", workspace_path=str(self._workspace_path)
+        )
+
+    def settled_workspace_advertisement(self) -> PlaybillWorkspaceAdvertisement:
+        """Wait for every refresh requested so far and report the latest outcome."""
+
+        with self._advertisement_condition:
+            if self._last_advertisement is None:
+                self._advertisement_requested += 1
+            target = self._advertisement_requested
+            self._start_advertiser_locked()
+            while self._advertisement_completed < target:
+                if self._advertisement_thread is None:
+                    # The worker could not start; refresh on this thread instead.
+                    break
+                self._advertisement_condition.wait()
+            else:
+                assert self._last_advertisement is not None
+                return self._last_advertisement
+        result = self._advertise_workspace_now()
+        with self._advertisement_condition:
+            if self._advertisement_completed < target:
+                self._advertisement_completed = target
+                self._last_advertisement = result
+            self._advertisement_condition.notify_all()
+        return result
+
+    def _start_advertiser_locked(self) -> None:
+        if self._advertisement_thread is not None:
+            self._advertisement_condition.notify_all()
+            return
+        # Not a daemon thread: a short-lived process finishes the refresh it
+        # queued before the interpreter exits.
+        thread = threading.Thread(
+            target=self._run_workspace_advertiser,
+            name=f"workspace-advertiser-{self.descriptor.instance_id}",
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            # Resource exhaustion is operational; the next request or settle
+            # retries, and a settle refreshes on its own thread.
+            return
+        self._advertisement_thread = thread
+
+    def _run_workspace_advertiser(self) -> None:
+        while True:
+            with self._advertisement_condition:
+                if self._advertisement_completed >= self._advertisement_requested:
+                    self._advertisement_thread = None
+                    self._advertisement_condition.notify_all()
+                    return
+                target = self._advertisement_requested
+            result = self._advertise_workspace_now()
+            with self._advertisement_condition:
+                if self._advertisement_completed < target:
+                    self._advertisement_completed = target
+                    self._last_advertisement = result
+                self._advertisement_condition.notify_all()
+
+    def _advertise_workspace_now(self) -> PlaybillWorkspaceAdvertisement:
         """Refresh advisory refs, or report that this instance has no attachment."""
 
         try:

@@ -464,7 +464,7 @@ def playbill_init(
         trust_root=instance.trust_root.model_dump(mode="json"),
         recovery_posture=instance.descriptor.recovery_posture,
         approval_policy_mode=instance.inspect().approval_policy_mode,
-        workspace_advertisement=instance.advertise_workspace(),
+        workspace_advertisement=instance.settled_workspace_advertisement(),
     )
 
 
@@ -689,7 +689,9 @@ def playbill_inspect_proposal(
     return contracts.PlaybillProposalInspection.model_validate(
         {
             **result.model_dump(mode="json"),
-            "workspace_advertisement": instance.advertise_workspace().model_dump(mode="json"),
+            "workspace_advertisement": instance.settled_workspace_advertisement().model_dump(
+                mode="json"
+            ),
         }
     )
 

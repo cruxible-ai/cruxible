@@ -23,7 +23,7 @@ from tests.test_ledger.test_activation import _sign
 
 
 def test_receipt_keeps_own_generation_when_advertisement_observes_later_acceptance(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ) -> None:
     instance, owner = seed_claims(tmp_path)
     first = submit_query_definition_candidate(
@@ -65,7 +65,9 @@ def test_receipt_keeps_own_generation_when_advertisement_observes_later_acceptan
         accept_proposal(instance, owner, second)
         return NOT_ATTACHED_ADVERTISEMENT
 
-    instance.bind_workspace_advertiser(publish_later_generation)
+    # Advertisement normally runs after the response; run this one inline so
+    # the later acceptance lands before the receipt is built.
+    monkeypatch.setattr(instance, "advertise_workspace", publish_later_generation)
     receipt = service_activate_playbill_proposal(
         instance,
         proposal_id=first.proposal.admission.proposal_id,
