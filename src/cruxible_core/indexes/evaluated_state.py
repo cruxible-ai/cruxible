@@ -44,12 +44,31 @@ class SelectedRows(Mapping[str, T], Generic[T]):
         keys: Callable[[], Iterable[str]],
         *,
         owner: EvaluationRows | SelectionSpec | None = None,
+        prefetch: Callable[[tuple[str, ...]], None] | None = None,
     ) -> None:
         self._get, self._keys = get, keys
         self.owner = owner
+        self._prefetch = prefetch
 
     def __getitem__(self, key: str) -> T:
         return self._get(key)
+
+    def prefetch(self, keys: tuple[str, ...]) -> None:
+        """Batch the sources of ``keys`` ahead of their per-key reads, when supported."""
+        if self._prefetch is not None:
+            self._prefetch(keys)
+
+    def _selected(self) -> tuple[str, ...]:
+        keys = tuple(self._keys())
+        # Reading every value: batch their sources instead of one read per key.
+        self.prefetch(keys)
+        return keys
+
+    def values(self) -> Any:
+        return [self._get(key) for key in self._selected()]
+
+    def items(self) -> Any:
+        return [(key, self._get(key)) for key in self._selected()]
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._keys())
@@ -278,7 +297,7 @@ class EvaluationRows:
 
     def artifact_rows(
         self, kind: str, convert: Callable[[str, bytes, str], T], *, path_key: bool = False
-    ) -> Mapping[str, T]:
+    ) -> SelectedRows[T]:
         table = self.table(OWNER_BY_KIND[kind].table)
         key = "path" if path_key else "identity"
 
@@ -286,12 +305,28 @@ class EvaluationRows:
             row = self.one(f"SELECT path,artifact_digest FROM {table} WHERE {key}=?", value)
             return convert(row[0], self.source_bytes(row[0]), row[1])
 
+        def prefetch(values: tuple[str, ...]) -> None:
+            paths: list[str] = []
+            for start in range(0, len(values), 500):
+                selected = values[start : start + 500]
+                paths.extend(
+                    row[0]
+                    for row in self.connection.execute(
+                        f"SELECT path FROM {table} WHERE {key} IN ("
+                        + ",".join("?" for _ in selected)
+                        + ")",
+                        selected,
+                    )
+                )
+            self.reader.prefetch_members(tuple(p for p in paths if p not in self.changed))
+
         return SelectedRows(
             get,
             lambda: (
                 row[0]
                 for row in self.connection.execute(f"SELECT {key} FROM {table} ORDER BY {key}")
             ),
+            prefetch=prefetch,
         )
 
     def overlay(self, edits: Mapping[str, bytes | None]) -> EvaluationRows:
@@ -594,6 +629,9 @@ class SelectionSpec:
             ),
             lambda: self.call(
                 lambda rows: tuple(rows.artifact_rows(kind, convert, path_key=path_key))
+            ),
+            prefetch=lambda keys: self.call(
+                lambda rows: rows.artifact_rows(kind, convert, path_key=path_key).prefetch(keys)
             ),
         )
 
