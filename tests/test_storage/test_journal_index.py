@@ -37,10 +37,16 @@ def test_append_response_lost_before_index_update_is_recovered(tmp_path: Path, m
     backend = _backend(tmp_path, "journal")
     _activate(backend)
     first = _append(backend, "first")
+    original_sync = JournalIndex.sync
+
+    def crash_after_write(self, *args, recover_tail=False):
+        # The writer's own pre-append tail recovery runs; the post-write update crashes.
+        if recover_tail:
+            return original_sync(self, *args, recover_tail=True)
+        raise RuntimeError("crash")
+
     with monkeypatch.context() as patch:
-        patch.setattr(
-            JournalIndex, "sync", lambda *args: (_ for _ in ()).throw(RuntimeError("crash"))
-        )
+        patch.setattr(JournalIndex, "sync", crash_after_write)
         with pytest.raises(RuntimeError, match="crash"):
             _append(backend, "second")
     reopened = LocalJournalBackend(backend.root)

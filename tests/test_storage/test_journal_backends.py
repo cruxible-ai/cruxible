@@ -428,6 +428,45 @@ def test_recovery_discards_only_an_incomplete_final_frame(tmp_path) -> None:
     assert path.stat().st_size == original_size
 
 
+def _write_partial_tail(path) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_APPEND)
+    try:
+        os.write(descriptor, (100).to_bytes(8, "big") + b"partial")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def test_readers_never_truncate_a_tail_that_may_still_be_written(tmp_path) -> None:
+    backend = _backend(tmp_path, "journal")
+    _activate(backend)
+    first = _append(backend, "first")
+    path = backend._record_log_path_for_testing(_stream(), "runs-2026-08")
+    # Another process's append in flight looks exactly like a crash tail.
+    _write_partial_tail(path)
+    size_with_tail = path.stat().st_size
+    reader = LocalJournalBackend(backend.root)
+    assert reader.select_records(_stream(), partition_id="runs-2026-08") == (first,)
+    assert reader.all_records(_stream(), "runs-2026-08") == (first,)
+    assert reader.read_head(_stream(), "runs-2026-08").record_digest == first.record_digest
+    assert path.stat().st_size == size_with_tail
+
+
+def test_writer_discards_a_crash_tail_a_reader_already_indexed_around(tmp_path) -> None:
+    backend = _backend(tmp_path, "journal")
+    _activate(backend)
+    first = _append(backend, "first")
+    path = backend._record_log_path_for_testing(_stream(), "runs-2026-08")
+    _write_partial_tail(path)
+    # The reader records the log signature, so the writer cannot rely on a change.
+    LocalJournalBackend(backend.root).read_head(_stream(), "runs-2026-08")
+    second = _append(backend, "second")
+    assert second.record.previous_record_digest == first.record_digest
+    reopened = LocalJournalBackend(backend.root)
+    reopened.index.path.unlink()
+    assert reopened.all_records(_stream(), "runs-2026-08") == (first, second)
+
+
 def test_complete_chain_tamper_is_corruption_not_crash_recovery(tmp_path) -> None:
     backend = _backend(tmp_path, "journal")
     _activate(backend)

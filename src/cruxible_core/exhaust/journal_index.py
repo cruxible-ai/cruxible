@@ -129,8 +129,15 @@ class JournalIndex:
             _fsync_directory(self.backend.root)
 
     def _sync(
-        self, conn: sqlite3.Connection, stream: JournalStreamIdentityV1, partition_id: str
+        self,
+        conn: sqlite3.Connection,
+        stream: JournalStreamIdentityV1,
+        partition_id: str,
+        *,
+        recover_tail: bool = False,
     ) -> None:
+        """Index complete frames; only a locked writer may discard a crash tail."""
+
         directory = self.backend._partition_directory(stream, partition_id, create=False)
         log = directory / "records.log"
         if not log.exists():
@@ -143,7 +150,11 @@ class JournalIndex:
             "SELECT * FROM partitions WHERE stream=? AND partition_id=?",
             (_key(stream), partition_id),
         ).fetchone()
-        if prior is not None and prior["signature"] == signature:
+        if (
+            prior is not None
+            and prior["signature"] == signature
+            and (not recover_tail or prior["end_offset"] == stat.st_size)
+        ):
             return
         offset, sequence, previous = 0, 0, journal_genesis_digest(stream, partition_id)
         # Only a strict append can reuse the verified prefix. Replacement or an
@@ -163,7 +174,8 @@ class JournalIndex:
             directory,
             stream=stream,
             partition_id=partition_id,
-            recover_tail=True,
+            recover_tail=recover_tail,
+            tolerate_tail=not recover_tail,
             offset=offset,
             sequence=sequence,
             previous=previous,
@@ -198,9 +210,15 @@ class JournalIndex:
             (_key(stream), partition_id, offset, sequence, previous, signature),
         )
 
-    def sync(self, stream: JournalStreamIdentityV1, partition_id: str) -> None:
+    def sync(
+        self,
+        stream: JournalStreamIdentityV1,
+        partition_id: str,
+        *,
+        recover_tail: bool = False,
+    ) -> None:
         with self.connection() as conn:
-            self._sync(conn, stream, partition_id)
+            self._sync(conn, stream, partition_id, recover_tail=recover_tail)
 
     def head(self, stream: JournalStreamIdentityV1, partition_id: str) -> JournalPartitionHeadV1:
         with self.connection() as conn:
