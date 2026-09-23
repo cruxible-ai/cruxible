@@ -966,7 +966,7 @@ class ClaimLawResult(_StrictClaimModel):
         return self
 
 
-def _diagnostic(code: str, message: str, *, path: str) -> ClaimLawResult:
+def _diagnostic(code: str, message: str, *, path: str, field: str | None = None) -> ClaimLawResult:
     return ClaimLawResult(
         verdict="refused",
         diagnostics=(
@@ -974,7 +974,11 @@ def _diagnostic(code: str, message: str, *, path: str) -> ClaimLawResult:
                 code=code,
                 severity="error",
                 message=message,
-                subject=SemanticAddress.whole_artifact(path),
+                subject=(
+                    SemanticAddress.whole_artifact(path)
+                    if field is None
+                    else SemanticAddress.claim_statement_field(path, field)
+                ),
             ),
         ),
     )
@@ -1730,14 +1734,18 @@ def evaluate_claim_law(
             "playbill.claim.subject_unresolved",
             "The Claim subject does not resolve to an exact Subject shell.",
             path=path,
+            field="subject",
         )
     if not claim_type_retirement_shape_exempt and not claim_type_accepts_subject(
         contract, subject.semantic_kind
     ):
         return _diagnostic(
             "playbill.claim.subject_kind_forbidden",
-            "The Claim subject kind is not admitted by its ClaimType.",
+            f"Subject kind {subject.semantic_kind!r} is not admitted by ClaimType "
+            f"{contract.predicate!r}; admitted kinds: "
+            f"{', '.join(contract.allowed_subject_kinds) or 'none'}.",
             path=path,
+            field="subject",
         )
     if claim.backing.referent_context.subject_content_digest != subject.artifact_digest:
         return _diagnostic(
@@ -1761,8 +1769,10 @@ def evaluate_claim_law(
     if not claim_type_retirement_shape_exempt and statement.object.kind != contract.object_kind:
         return _diagnostic(
             "playbill.claim.object_kind_mismatch",
-            "The Claim object kind differs from its ClaimType.",
+            f"The Claim object kind {statement.object.kind!r} differs from ClaimType "
+            f"{contract.predicate!r}, which states {contract.object_kind!r}.",
             path=path,
+            field="object",
         )
     if isinstance(statement.object, LiteralClaimObject):
         if not claim_type_retirement_shape_exempt and (
@@ -1771,8 +1781,9 @@ def evaluate_claim_law(
         ):
             return _diagnostic(
                 "playbill.claim.literal_schema_invalid",
-                "The Claim literal fails its exact ClaimType schema.",
+                f"The Claim literal fails the exact schema of ClaimType {contract.predicate!r}.",
                 path=path,
+                field="object",
             )
         if claim.backing.referent_context.object_content_digest is not None:
             return _diagnostic(
@@ -1792,6 +1803,7 @@ def evaluate_claim_law(
                 "playbill.claim.object_subject_unresolved",
                 "The Claim object Subject does not resolve.",
                 path=path,
+                field="object",
             )
         if (
             not claim_type_retirement_shape_exempt
@@ -1799,8 +1811,11 @@ def evaluate_claim_law(
         ):
             return _diagnostic(
                 "playbill.claim.object_subject_kind_forbidden",
-                "The object Subject kind is not admitted by its ClaimType.",
+                f"Object Subject kind {object_subject.semantic_kind!r} is not admitted by "
+                f"ClaimType {contract.predicate!r}; admitted kinds: "
+                f"{', '.join(contract.allowed_object_subject_kinds) or 'none'}.",
                 path=path,
+                field="object",
             )
         if claim.backing.referent_context.object_content_digest != object_subject.artifact_digest:
             return _diagnostic(
@@ -1826,13 +1841,21 @@ def evaluate_claim_law(
             path=path,
         )
 
-    if statement.predicate != contract.predicate or (
-        not claim_type_retirement_shape_exempt and statement.role not in contract.permitted_roles
-    ):
+    if statement.predicate != contract.predicate:
         return _diagnostic(
             "playbill.claim.statement_contract_mismatch",
-            "The Claim predicate or role differs from its ClaimType contract.",
+            f"The Claim predicate {statement.predicate!r} differs from its pinned ClaimType "
+            f"predicate {contract.predicate!r}.",
             path=path,
+            field="predicate",
+        )
+    if not claim_type_retirement_shape_exempt and statement.role not in contract.permitted_roles:
+        return _diagnostic(
+            "playbill.claim.role_not_permitted",
+            f"Role {statement.role!r} is not permitted by ClaimType {contract.predicate!r}; "
+            f"permitted roles: {', '.join(contract.permitted_roles)}.",
+            path=path,
+            field="role",
         )
     expected_shell_digest = claim_referent_context_digest(claim.backing.referent_context).tagged
     if claim_type_retirement_shape_exempt:

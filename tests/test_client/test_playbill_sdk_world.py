@@ -18,6 +18,7 @@ from cruxible_client.authoring.sdk_types import (
     Cardinality,
     ClaimObjectKind,
     ClaimRole,
+    ClaimRoleNotPermittedError,
     ClaimTypeRef,
     LiteralSchemaError,
     LiteralValue,
@@ -107,6 +108,13 @@ class _WorldClient:
         self.claim_reads: list[str] = []
         self.claim_predicates: dict[str, str] = {}
         self.retired_severity = False
+        self.claim_type_reads: list[str] = []
+
+    def get_playbill_claim_type(
+        self, _instance_id: str, predicate: str, *, at: Any = None
+    ) -> api.PlaybillClaimTypeView:
+        self.claim_type_reads.append(predicate)
+        return _claim_type(predicate)
 
     def search_playbill(self, _instance_id: str, **values: Any) -> api.PlaybillSearchResult:
         self.searches.append(dict(values))
@@ -617,6 +625,59 @@ def test_a_value_minted_under_one_claim_type_refuses_under_another(
     assert refused.value.passed_to == LANDED_AT
     assert SEVERITY in str(refused.value)
     assert LANDED_AT in str(refused.value)
+
+
+def _severity_claim(playbill: Playbill, predicate: Any, *, role: str) -> None:
+    world = playbill.world()
+    playbill.claim(
+        subject=world.sec.vulnerability["cve-2026-69247"],
+        predicate=predicate,
+        value="high",
+        role=role,
+        rationale="State a severity under a role the ClaimType does not permit.",
+        supported_by=None,
+        copied_from=None,
+        self_source="severity: high\n",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+
+
+def test_a_role_the_claim_type_does_not_permit_refuses_at_its_keyword(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    """The permitted roles a World ref carries answer without a read or a round trip."""
+
+    playbill, client = connection
+    world = playbill.world()
+    reads_before = len(client.claim_type_reads)
+    with pytest.raises(ClaimRoleNotPermittedError) as refused:
+        _severity_claim(playbill, world.sec.vuln.severity, role="normative")
+
+    error = refused.value
+    assert (error.predicate, error.role, error.permitted_roles) == (
+        SEVERITY,
+        "normative",
+        ("observation",),
+    )
+    assert error.code == "playbill.sdk.claim_role_not_permitted"
+    assert error.call_site is not None and error.call_site.expression == "role"
+    assert "permitted roles: observation" in str(error)
+    assert len(client.claim_type_reads) == reads_before
+
+
+def test_a_named_predicate_reads_its_roles_once_per_coordinate(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    playbill, client = connection
+    for _ in range(2):
+        with pytest.raises(ClaimRoleNotPermittedError):
+            _severity_claim(playbill, SEVERITY, role="normative")
+    assert client.claim_type_reads == [SEVERITY]
 
 
 def _admission_policy() -> Any:

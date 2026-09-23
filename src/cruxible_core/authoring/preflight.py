@@ -470,6 +470,8 @@ def _compiler_diagnostic(
     item: CompilerDiagnostic,
     *,
     member_by_path: Mapping[str, int],
+    claim_members: frozenset[int] = frozenset(),
+    singular_claim_path: str | None = None,
 ) -> AuthoringDiagnosticV1:
     """Address one compiler refusal at the change-set member that authored it.
 
@@ -479,15 +481,32 @@ def _compiler_diagnostic(
     this intent's own lowering attributes to one member is re-addressed to
     `members[n].<artifact path>`, with the bare path kept alongside in the
     repair. A singular intent owns every path it writes and is unchanged.
+
+    A refusal of one Claim statement field is addressed at the authored field
+    instead (`members[n].statement.role`, or `statement.role` for a singular
+    Claim intent): that is the payload path an SDK maps back to the keyword
+    which set it, and the artifact path stays alongside in the repair.
     """
 
     artifact_path = item.subject.artifact_path if item.subject is not None else None
+    field = (
+        item.subject.selector.value
+        if item.subject is not None and item.subject.selector.scheme == "claim-statement-field-v1"
+        else None
+    )
     member = None if artifact_path is None else member_by_path.get(artifact_path)
     offending = "payload" if artifact_path is None else artifact_path
     owner: dict[str, object] = {}
     if member is not None:
-        offending = f"members[{member}].{artifact_path}"
+        offending = (
+            f"members[{member}].statement.{field}"
+            if field is not None and member in claim_members
+            else f"members[{member}].{artifact_path}"
+        )
         owner = {"artifact_path": artifact_path, "member": member}
+    elif field is not None and artifact_path is not None and artifact_path == singular_claim_path:
+        offending = f"statement.{field}"
+        owner = {"artifact_path": artifact_path}
     return _diagnostic(
         code=item.code,
         stage="proposal_evaluation",
@@ -945,8 +964,26 @@ def compute_preflight(
                             timestamp=intent.canonical_timestamp,
                         )
                     evaluated_tree = evaluation.tree
+                    claim_members = (
+                        frozenset(
+                            index
+                            for index, member in enumerate(intent.payload.members)
+                            if isinstance(member, ClaimAuthoringPayloadV1)
+                        )
+                        if isinstance(intent.payload, ChangeSetAuthoringPayloadV1)
+                        else frozenset()
+                    )
                     diagnostics.extend(
-                        _compiler_diagnostic(item, member_by_path=lowered.member_by_path)
+                        _compiler_diagnostic(
+                            item,
+                            member_by_path=lowered.member_by_path,
+                            claim_members=claim_members,
+                            singular_claim_path=(
+                                claim_path(intent.semantic_identity)
+                                if isinstance(intent.payload, ClaimAuthoringPayloadV1)
+                                else None
+                            ),
+                        )
                         for item in evaluation.diagnostics
                     )
                 resolved_payload = lowered.resolved_authoring

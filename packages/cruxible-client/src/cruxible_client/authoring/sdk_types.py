@@ -426,6 +426,32 @@ class ExactContentTypeError(PlaybillSdkError):
         )
 
 
+class ClaimRoleNotPermittedError(PlaybillSdkError):
+    """A Claim role its ClaimType does not permit, refused before anything is sent."""
+
+    code = "playbill.sdk.claim_role_not_permitted"
+
+    def __init__(
+        self,
+        *,
+        predicate: str,
+        role: str,
+        permitted_roles: tuple[str, ...],
+        call_site: CallSite | None = None,
+    ) -> None:
+        self.predicate = predicate
+        self.role = role
+        self.permitted_roles = permitted_roles
+        self.call_site = call_site
+        location = (
+            "" if call_site is None else f" (role= at {call_site.logical_file}:{call_site.line})"
+        )
+        super().__init__(
+            f"ClaimType {predicate!r} does not permit role {role!r}{location}. "
+            f"Repair: pass one of its permitted roles: {', '.join(permitted_roles)}."
+        )
+
+
 class LiteralSchemaError(PlaybillSdkError):
     """A value refused by its ClaimType's declared literal schema."""
 

@@ -226,11 +226,18 @@ class LocalJournalBackend:
         stream: JournalStreamIdentityV1,
         partition_id: str,
         recover_tail: bool,
+        tolerate_tail: bool = False,
         offset: int = 0,
         sequence: int = 0,
         previous: str | None = None,
     ) -> Generator[tuple[int, int, StoredProcedureJournalRecordV1], None, None]:
-        """One verifier for rebuilds, tail catch-up, and indexed exact reads."""
+        """One verifier for rebuilds, tail catch-up, and indexed exact reads.
+
+        Only a writer holding the journal lock may ``recover_tail``: another
+        process's reader cannot tell a crash tail from an append still being
+        written, so a reader that must not refuse passes ``tolerate_tail`` and
+        stops at the last complete frame without truncating anything.
+        """
         path = directory / "records.log"
         if not path.exists():
             return
@@ -278,6 +285,8 @@ class LocalJournalBackend:
                 valid_end = offset
             if valid_end != size:
                 if not recover_tail:
+                    if tolerate_tail:
+                        return
                     raise PlaybillJournalIntegrityError("journal has an incomplete crash tail")
                 os.ftruncate(descriptor, valid_end)
                 os.fsync(descriptor)
@@ -292,7 +301,11 @@ class LocalJournalBackend:
         return tuple(
             stored
             for _, _, stored in LocalJournalBackend._read_frames(
-                directory, stream=stream, partition_id=partition_id, recover_tail=recover_tail
+                directory,
+                stream=stream,
+                partition_id=partition_id,
+                recover_tail=recover_tail,
+                tolerate_tail=not recover_tail,
             )
         )
 
@@ -312,6 +325,7 @@ class LocalJournalBackend:
         stream: JournalStreamIdentityV1,
         partition_id: str,
         *,
+        recover_tail: bool,
         create: bool = False,
     ) -> tuple[StoredProcedureJournalRecordV1, ...]:
         directory = self._partition_directory(
@@ -325,7 +339,7 @@ class LocalJournalBackend:
             directory,
             stream=stream,
             partition_id=partition_id,
-            recover_tail=True,
+            recover_tail=recover_tail,
         )
 
     def read_head(
@@ -437,6 +451,8 @@ class LocalJournalBackend:
             draft.partition_id,
             create=True,
         )
+        # Readers never truncate; the writer discards a crash tail before extending.
+        self.index.sync(draft.stream, draft.partition_id, recover_tail=True)
         records = self.select_records(
             draft.stream, partition_id=draft.partition_id, descending=True, limit=1
         )
@@ -562,6 +578,7 @@ class LocalJournalBackend:
             expected_head_digest=records[-1].record_digest,
         )
         imported_head = verify_journal_range(journal_range, records)
+        self.index.sync(first.stream, first.partition_id, recover_tail=True)
         current = self.read_head(first.stream, first.partition_id)
         if current != expected_head:
             raise PlaybillJournalConflictError("journal import local head changed or names a fork")
@@ -593,6 +610,7 @@ class LocalJournalBackend:
         self.index.sync(first.stream, first.partition_id)
         return imported_head
 
+    @journal_locked
     def recover_partition(
         self,
         stream: JournalStreamIdentityV1,
@@ -600,7 +618,7 @@ class LocalJournalBackend:
     ) -> JournalPartitionHeadV1:
         """Discard only an incomplete final frame and rebuild the derived index."""
 
-        self._records(stream, partition_id)
+        self._records(stream, partition_id, recover_tail=True)
         return self.read_head(stream, partition_id)
 
     def all_records(
@@ -610,7 +628,7 @@ class LocalJournalBackend:
     ) -> tuple[StoredProcedureJournalRecordV1, ...]:
         """Return the verified complete local prefix for index rebuilds and export planning."""
 
-        return self._records(stream, partition_id)
+        return self._records(stream, partition_id, recover_tail=False)
 
     def partition_ids(self, stream: JournalStreamIdentityV1) -> tuple[str, ...]:
         """List authenticated local partition identities for rebuild-only scans."""

@@ -77,7 +77,15 @@ def projection_factory():
             reads.append(path)
             return content
 
-        typed = TypedStateReader(connection, coordinate, SimpleNamespace(read_blob=read_blob))
+        def read_blobs(oids):
+            # The reader batches exact-source reads; each read still records its path.
+            return {oid: read_blob(oid) for oid in dict.fromkeys(oids)}
+
+        typed = TypedStateReader(
+            connection,
+            coordinate,
+            SimpleNamespace(read_blob=read_blob, read_blobs=read_blobs),
+        )
         return SimpleNamespace(typed=typed, accepted=coordinate, reads=reads)
 
     yield create
