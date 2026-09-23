@@ -425,6 +425,7 @@ def service_dispatch_line(
                                 detail = refusal.message
                                 if refusal.code in {
                                     "trigger_capture_stale",
+                                    "trigger_capture_over_budget",
                                     "trigger_capture_unavailable",
                                     "trigger_capture_forbidden",
                                     "trigger_capture_invalid",

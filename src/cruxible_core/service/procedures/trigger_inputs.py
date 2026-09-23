@@ -39,11 +39,17 @@ from cruxible_core.storage.cas import BodyAccessContext
 
 class TriggerCaptureRefused(PlaybillExecutionError):
     def __init__(
-        self, code: ProcedureAdmissionRefusalCodeV1, message: str, *, retryable: bool = False
+        self,
+        code: ProcedureAdmissionRefusalCodeV1,
+        message: str,
+        *,
+        retryable: bool = False,
+        details: dict[str, object] | None = None,
     ) -> None:
         super().__init__(message)
         self.refusal_code = code
         self.retryable = retryable
+        self.details = details or {}
 
 
 def bind_trigger_capture(
@@ -101,8 +107,17 @@ def bind_trigger_capture(
     if material is not None and "resource_budget_exceeded" in material.coverage.reason_codes:
         raise TriggerCaptureRefused(
             "trigger_capture_over_budget",
-            "The exact triggering Capture is over budget.",
-            retryable=True,
+            "The exact triggering Capture exceeds its bound read budget.",
+            details={
+                "line_max_capture_bytes": max_bytes,
+                "capture_contract_max_bytes": contract.selection_budget.max_bytes,
+                "effective_max_bytes": min(max_bytes, contract.selection_budget.max_bytes),
+                "limiting_budget": "line"
+                if max_bytes < contract.selection_budget.max_bytes
+                else "capture_contract"
+                if max_bytes > contract.selection_budget.max_bytes
+                else "line_and_capture_contract",
+            },
         )
     if (
         read.status != "verified"

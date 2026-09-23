@@ -47,7 +47,7 @@ from tests.test_procedures.test_procedure_source_runs import (
 )
 
 
-def world(tmp_path, *, window=False, **kwargs):
+def world(tmp_path, *, window=False, line_budget=None, with_owner=False, **kwargs):
     instance, owner, procedure, root, policy = _world(tmp_path, **kwargs)
     contract = kwargs.get("contract", capture_contract())
     selector = CaptureEventSelectorV1(
@@ -84,6 +84,11 @@ def world(tmp_path, *, window=False, **kwargs):
             ),
         }
     )
+    if line_budget is not None:
+        line = line.model_copy(
+            update={"budgets": {**line.budgets, "max_capture_bytes": line_budget}}
+        )
+
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_path,
         render_procedure_mandate,
@@ -99,7 +104,7 @@ def world(tmp_path, *, window=False, **kwargs):
         },
         name="trigger-source-line",
     )
-    return instance, root, line
+    return (instance, root, line, owner) if with_owner else (instance, root, line)
 
 
 def event_from(state):
@@ -285,7 +290,7 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
             instance, coordinate=instance.accepted_coordinate(), name=line.procedure.target.name
         )
         contract = capture_contract()
-        with pytest.raises(PlaybillExecutionError, match="over budget") as error:
+        with pytest.raises(PlaybillExecutionError, match="bound read budget") as error:
             bind_trigger_capture(
                 instance,
                 line=line,
@@ -297,7 +302,8 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
                 max_bytes=1,
             )
         assert error.value.refusal_code == "trigger_capture_over_budget"
-        assert error.value.retryable
+        assert not error.value.retryable
+        assert error.value.details["limiting_budget"] == "line"
         return
     refused = run_line(instance, line, event, at=now)
     assert refused.run_id is None and refused.status == "admission_refused", refused
@@ -521,3 +527,93 @@ def test_unusable_occurrence_closes_without_starving_later_capture(tmp_path, fai
             caller_rung=2,
         )
         assert retry.items[0].status == "admitted"
+
+
+def test_over_budget_occurrence_closes_then_requires_successor_for_retry(tmp_path):
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.line_dispatch import LineEvaluateRequestV1
+    from cruxible_client.contracts.procedures.line_specs import line_spec_digest
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+    from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+
+    instance, root, line, owner = world(
+        tmp_path,
+        contents=b'{"severity":"' + b"h" * 3000 + b'"}',
+        line_budget=1024,
+        with_owner=True,
+    )
+    actor = _actor(instance)
+    first, _ = _run(instance, root)
+    first_event = event_from(first)
+    (root / RELATIVE_PATH).write_text('{"severity":"low"}')
+    _run(instance, root, evaluation_time=NOW + timedelta(seconds=10))
+    now = NOW + timedelta(seconds=12)
+    evaluated = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequestV1(since=NOW, until=now),
+        actor=actor,
+        now=now,
+    )
+    first_id = next(
+        o.occurrence_id for o in evaluated.occurrences if o.binding.event == first_event
+    )
+    rejected = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequestV1(),
+        actor=actor,
+        now=now,
+        caller_rung=2,
+    ).items[0]
+    assert rejected.occurrence_id == first_id and rejected.status == "rejected"
+    assert rejected.refusal.code == "trigger_capture_over_budget"
+    assert not rejected.refusal.retryable
+    assert rejected.refusal.details["effective_max_bytes"] == 1024
+    assert rejected.refusal.details["limiting_budget"] == "line"
+    LineDispatchStore(instance).path.unlink()
+    small = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequestV1(),
+        actor=actor,
+        now=now,
+        caller_rung=2,
+    ).items[0]
+    assert small.status == "admitted" and small.occurrence_id != first_id
+    retry_request = LineDispatchRequestV1(occurrence_id=first_id, retry=True)
+    assert (
+        service_dispatch_line(
+            instance,
+            line.identity.name,
+            retry_request,
+            actor=actor,
+            now=now,
+            caller_rung=2,
+        )
+        .items[0]
+        .status
+        == "rejected"
+    )
+    successor = line.model_copy(
+        update={
+            "budgets": {**line.budgets, "max_capture_bytes": 4096},
+            "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(line).tagged),
+        }
+    )
+    _accept_more(
+        instance,
+        owner,
+        {line_spec_path(line.identity.name): render_line_spec(successor)},
+        name="larger-line-budget",
+    )
+    retried = service_dispatch_line(
+        instance,
+        line.identity.name,
+        retry_request,
+        actor=actor,
+        now=now,
+        caller_rung=2,
+    ).items[0]
+    assert retried.status == "admitted", retried
+    assert admission(instance, retried.run_id).admission.trigger_binding.event == first_event

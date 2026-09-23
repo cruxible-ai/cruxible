@@ -52,8 +52,10 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
         "Capture."
     ),
     "trigger_capture_over_budget": (
-        "Increase the permitted Capture read budget, then retry the "
-        "occurrence."
+        "If the Line budget is limiting, accept a successor Line with a larger budget, "
+        "then use line dispatch --occurrence-id DIGEST --retry. If the exact "
+        "CaptureContract cap is limiting, use a new contract and fresh Capture; "
+        "a Line budget increase cannot override that cap."
     ),
     "trigger_capture_forbidden": (
         "Accept a successor Line or acquisition policy that permits "
@@ -65,8 +67,7 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
         "retained material or use a new verified Capture."
     ),
     "trigger_capture_not_yet_observed": (
-        "Wait until the recorded observation time, then retry the "
-        "occurrence."
+        "Wait until the recorded observation time, then retry the occurrence."
     ),
     "line_binding_superseded": (
         "Explicitly retry this occurrence to bind the current Line in "

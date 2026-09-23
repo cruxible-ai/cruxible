@@ -3798,7 +3798,7 @@ def _run_playbill_line(
                 code=exc.refusal_code,
                 message=str(exc),
                 retryable=exc.retryable,
-                details={"input_name": accepted_line.line.trigger_input},
+                details={"input_name": accepted_line.line.trigger_input, **exc.details},
             )
         except (PlaybillError, ValueError) as exc:
             return _line_refusal_state(
