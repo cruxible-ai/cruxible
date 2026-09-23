@@ -1983,8 +1983,13 @@ class PlaybillInstance:
         proposal_actor_id: str,
         sequence: int,
         candidate_tree_oid: str | None = None,
+        mandate_digest: str | None = None,
     ) -> VerifiedGenerationBundle:
-        """Construct one verified generation without exposing the Git ledger to surfaces."""
+        """Construct one verified generation without exposing the Git ledger to surfaces.
+
+        ``mandate_digest`` names the settle ProcedureMandate whose delegated
+        authority replaces candidate approval; only the settle terminal passes it.
+        """
 
         self.require_writable()
         if any(member.artifact_kind == "compiler-upgrade" for member in candidate.members):
@@ -2004,6 +2009,7 @@ class PlaybillInstance:
             actor_binding=actor_binding,
             proposal_actor_id=proposal_actor_id,
             sequence=sequence,
+            mandate_digest=mandate_digest,
             promotion_verifier=self._promotion_verifier,
             producer_receipt_resolver=local_producer_receipt_resolver(
                 exhaust_root=self._validated_paths(self.root, self.descriptor.storage)["exhaust"],
@@ -2029,6 +2035,7 @@ class PlaybillInstance:
         actor_binding: ChangeActorBinding,
         proposal_actor_id: str,
         candidate_tree_oid: str | None = None,
+        mandate_digest: str | None = None,
     ) -> ActivationResult:
         """Publish one owned preparation and install its verified successor state.
 
@@ -2047,6 +2054,7 @@ class PlaybillInstance:
                 proposal_actor_id=proposal_actor_id,
                 sequence=previous.head.sequence + 1,
                 candidate_tree_oid=candidate_tree_oid,
+                mandate_digest=mandate_digest,
             )
             successor = (
                 prepared_generation_for_handoff(

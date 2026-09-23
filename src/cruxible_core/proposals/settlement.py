@@ -776,6 +776,7 @@ def prepare_generation(
         attestation_principal_provider=attestation_principal_provider,
         accepted_referents_provider=accepted_referents_provider,
         principal_registry_provider=principal_registry_provider,
+        delegated_mandate_digest=mandate_digest,
         historical_law_coordinates={
             member.path: (
                 member.law_identifier,

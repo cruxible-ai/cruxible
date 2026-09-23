@@ -3487,6 +3487,7 @@ def _evaluate_scoped_members(
     claim_law_provider: ClaimLawEvidenceProvider | None,
     attestation_principal_provider: AttestationPrincipalProvider | None,
     accepted_referents_provider: AcceptedReferentsProvider | None,
+    delegated_mandate_digest: str | None = None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -3794,9 +3795,32 @@ def _evaluate_scoped_members(
         )
     if tuple(item.path for item in accepted) != scope:
         raise ProposalIntegrityError("evaluator did not cover every scoped member")
+    if delegated_mandate_digest is not None:
+        # A settle mandate replaces candidate approval only when, read from the
+        # parent state, it covers every member and its condition holds for each.
+        from cruxible_core.proposals.delegated_authority import delegated_authority_issues
+
+        issues = delegated_authority_issues(
+            mandate_digest=delegated_mandate_digest,
+            scope=scope,
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            current=current,
+            timestamp=timestamp,
+            facts=None if query_facts_provider is None else query_facts_provider(current),
+        )
+        if issues:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                tuple(_diagnostic(code, message) for code, message in issues),
+                rebased,
+                claim_admission_accounts=claim_admission_accounts,
+            )
     approval_requirements = (
         ()
-        if accepted and all(item.approval_exempt for item in accepted)
+        if delegated_mandate_digest is not None
+        or (accepted and all(item.approval_exempt for item in accepted))
         else _approval_requirements(current_tree)
     )
     if wire_version == "playbill-validated-candidate-v1":
@@ -4117,6 +4141,7 @@ def evaluate_proposal_tree(
     claim_law_provider: ClaimLawEvidenceProvider | None = None,
     attestation_principal_provider: AttestationPrincipalProvider | None = None,
     accepted_referents_provider: AcceptedReferentsProvider | None = None,
+    delegated_mandate_digest: str | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -4246,6 +4271,7 @@ def evaluate_proposal_tree(
             attestation_principal_provider=attestation_principal_provider,
             accepted_referents_provider=accepted_referents_provider,
             principal_registry_provider=principal_registry_provider,
+            delegated_mandate_digest=delegated_mandate_digest,
         )
 
 
