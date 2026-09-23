@@ -96,6 +96,11 @@ class _Client:
             envelope={"object_kind": self.claim_type_object_kinds.get(predicate, "literal")},
         )
 
+    def playbill_whoami(self, _instance_id: str) -> object:
+        from types import SimpleNamespace
+
+        return SimpleNamespace(coordinate=_COORDINATE)
+
     def search_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSearchResult:
         return api.PlaybillSearchResult(
             mode=values["mode"],

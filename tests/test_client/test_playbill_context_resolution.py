@@ -508,6 +508,13 @@ def test_sdk_connect_consumes_the_shared_workspace_resolution(
         encoding="utf-8",
     )
     connection: dict[str, object] = {}
+    head = contracts.PlaybillAcceptedCoordinate(
+        git_oid="a" * 40,
+        semantic_root="sha256:" + "1" * 64,
+        generation_root="sha256:" + "2" * 64,
+        compiler_digest="sha256:" + "3" * 64,
+    )
+    heads_read: list[str] = []
 
     class StubClient:
         def __init__(self, **values: object) -> None:
@@ -516,11 +523,16 @@ def test_sdk_connect_consumes_the_shared_workspace_resolution(
         def _version_info(self) -> tuple[str, str]:
             return AUTHORING_SDK_VERSION, SDK_CONTRACT_SNAPSHOT_DIGEST
 
+        def playbill_whoami(self, instance_id: str) -> object:
+            from types import SimpleNamespace
+
+            heads_read.append(instance_id)
+            return SimpleNamespace(coordinate=head)
+
         def close(self) -> None:
             pass
 
     monkeypatch.setattr("cruxible_client.authoring.sdk.CruxibleClient", StubClient)
-    monkeypatch.setattr(Playbill, "refresh", lambda self: None)
 
     playbill = Playbill.connect(context=context_path, workspace=workspace)
 
@@ -528,3 +540,6 @@ def test_sdk_connect_consumes_the_shared_workspace_resolution(
     assert connection["socket_path"] == str(socket)
     assert playbill._instance_id == "inst_workspace"
     assert playbill._workspace == workspace
+    # Connecting reads the head once for the resolved instance; it does not orient.
+    assert heads_read == ["inst_workspace"]
+    assert playbill.coordinate.git_oid == head.git_oid

@@ -107,7 +107,6 @@ checks run.
 | `CRUXIBLE_SERVER_BEARER_TOKEN` | Used when `token` is omitted; never creates a principal or grants rights. |
 | `CRUXIBLE_CLI_CONTEXT_PATH` | Otherwise `~/.cruxible/client-context.json`. |
 | `CRUXIBLE_CLIENT_TIMEOUT_S` | Ordinary HTTP read/write timeout: 180 seconds; connect/pool: 5 seconds. |
-| `CRUXIBLE_CLIENT_CONNECT_TIMEOUT_S` | Connect-time orientation read/write timeout: 900 seconds, at least the ordinary budget. |
 | Default access profile | `sdk-default`, classes `("instance", "public")`, disclose restricted existence `True`. |
 
 Explicit target/instance/workspace arguments participate in the shared context
