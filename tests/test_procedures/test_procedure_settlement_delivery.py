@@ -111,6 +111,10 @@ def _condition(*, only_subject: str | None) -> QueryDefinitionV1:
     )
 
 
+#: The key that governs each settle world, for tests that approve ordinarily.
+OWNERS: dict[Path, Any] = {}
+
+
 def settle_world(  # type: ignore[no-untyped-def]
     tmp_path: Path,
     *,
@@ -184,6 +188,7 @@ def settle_world(  # type: ignore[no-untyped-def]
         )
         members[procedure_mandate_path(mandate.identity.name)] = render_procedure_mandate(mandate)
     fixtures._accept_more(instance, owner, members, name="settle-world")
+    OWNERS[instance.root] = owner
     return instance, root, line
 
 
@@ -348,3 +353,143 @@ def test_a_crashed_settlement_recovers_one_accepted_result(
         service_recover_proposal_egress(instance, recorded_at=fixtures.NOW + timedelta(minutes=2))
         == {}
     )
+
+
+def _fallback_codes(egress: Any) -> set[str]:
+    return set((egress.fallback_reason or "").split(", "))
+
+
+def test_a_repeated_fallback_delivery_reports_the_same_proposed_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from cruxible_core.procedures import proposal_delivery as delivery_module
+
+    receipts = []
+    original = delivery_module.ProposalTerminalEgressSink.deliver_terminal_egress
+
+    def twice(self, **kwargs):  # type: ignore[no-untyped-def]
+        first = original(self, **kwargs)
+        second = original(self, **kwargs)
+        receipts.append((first, second))
+        return second
+
+    monkeypatch.setattr(
+        delivery_module.ProposalTerminalEgressSink, "deliver_terminal_egress", twice
+    )
+    instance, root, line = settle_world(tmp_path, only_subject="someone-else")
+    base = instance.accepted_coordinate()
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    ((first, second),) = receipts
+    assert first == second and first.outcome == "proposed"  # type: ignore[attr-defined]
+    assert instance.accepted_coordinate() == base
+
+
+def test_a_fallback_accepted_by_ordinary_review_is_still_reported_as_proposed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from cruxible_core.procedures import proposal_delivery as delivery_module
+    from cruxible_core.service.authoring.documents import (
+        service_activate_playbill_proposal,
+        service_submit_playbill_approval,
+    )
+    from tests.test_ledger.test_activation import _sign
+
+    receipts = []
+    original = delivery_module.ProposalTerminalEgressSink.deliver_terminal_egress
+
+    def accept_between(self, **kwargs):  # type: ignore[no-untyped-def]
+        first = original(self, **kwargs)
+        approval = _sign(
+            OWNERS[self.instance.root],
+            first.candidate_digest,
+            self.instance.accepted_coordinate().semantic_root,
+        )
+        service_submit_playbill_approval(
+            self.instance,
+            proposal_id=first.proposal_id,
+            attestation=approval.attestation,
+            authenticated_submitter="owner",
+        )
+        service_activate_playbill_proposal(
+            self.instance, proposal_id=first.proposal_id, activated_by="owner"
+        )
+        second = original(self, **kwargs)
+        receipts.append((first, second))
+        return second
+
+    monkeypatch.setattr(
+        delivery_module.ProposalTerminalEgressSink, "deliver_terminal_egress", accept_between
+    )
+    instance, root, line = settle_world(tmp_path, only_subject="someone-else")
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    ((first, second),) = receipts
+    # Ordinary review accepted the fallback; it never became a mandate settlement.
+    assert instance.accepted_history()[-1].record.mandate_digest is None
+    assert first == second and second.outcome == "proposed"  # type: ignore[attr-defined]
+    assert second.accepted_git_oid is None  # type: ignore[attr-defined]
+    assert "playbill.settle.condition_false" in _fallback_codes(second)
+
+
+def test_a_crashed_fallback_recovers_its_proposal_as_proposed(tmp_path: Path, monkeypatch) -> None:
+    from datetime import timedelta
+
+    from cruxible_core.procedures import terminal_services
+    from cruxible_core.procedures.execution import ProcedureExecutor
+    from cruxible_core.service.procedures.procedure_runs import service_get_playbill_procedure_run
+    from cruxible_core.service.proposals.proposal_egress import service_recover_proposal_egress
+
+    instance, root, line = settle_world(tmp_path, only_subject="someone-else")
+    crashed = {"value": False}
+    original_submit = terminal_services.ProposalTerminalAdapter.submit
+    original_append = ProcedureExecutor._append_event
+
+    def crashing_submit(self, **kwargs):  # type: ignore[no-untyped-def]
+        original_submit(self, **kwargs)
+        crashed["value"] = True
+        raise _Crash()
+
+    def dead_append(self, admission, records, event_kind, payload):  # type: ignore[no-untyped-def]
+        if crashed["value"]:
+            raise _Crash()
+        return original_append(self, admission, records, event_kind, payload)
+
+    monkeypatch.setattr(terminal_services.ProposalTerminalAdapter, "submit", crashing_submit)
+    monkeypatch.setattr(ProcedureExecutor, "_append_event", dead_append)
+    with pytest.raises(_Crash):
+        run_settle(instance, root, line)
+    monkeypatch.undo()
+    (admitted,) = [
+        record
+        for record in instance.proposal_evidence().list_admissions()
+        if "/procedure-" in record.target_ref
+    ]
+    assert admitted.settle_submission is not None
+    assert admitted.settle_submission.mode == "fallback"
+
+    recovered = service_recover_proposal_egress(
+        instance, recorded_at=fixtures.NOW + timedelta(minutes=1)
+    )
+    ((run_id, disposition),) = recovered.items()
+    assert disposition == "delivered"
+    (egress,) = service_get_playbill_procedure_run(instance, run_id=run_id).terminal_egress
+    assert egress.settle_outcome == "proposed" and egress.accepted_git_oid is None
+    assert egress.proposal_id == admitted.proposal_id
+    assert "playbill.settle.condition_false" in _fallback_codes(egress)
+
+
+def test_a_settled_delivery_finds_its_generation_without_walking_history(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from cruxible_core.runtime.instance import PlaybillInstance
+
+    instance, root, line = settle_world(tmp_path)
+
+    def no_walk(self):  # type: ignore[no-untyped-def]
+        raise AssertionError("settlement enumerated accepted history")
+
+    monkeypatch.setattr(PlaybillInstance, "accepted_history", no_walk)
+    state = run_settle(instance, root, line)
+    assert state.status == "succeeded", state.terminal
+    assert _egress(state).settle_outcome == "settled"

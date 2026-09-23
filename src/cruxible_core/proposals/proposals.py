@@ -208,6 +208,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalEvaluationRecord,
     ProposalReceiveLimits,
     ProposalResult,
+    ProposalSettleSubmissionV1,
     ProposalTransportProtocol,
     ProposalWithdrawalRecordV1,
     _StrictProposalModel,
@@ -4345,7 +4346,7 @@ class ProposalService:
         ]
         | None = None,
         prepared: PreparedEvaluationScope | None = None,
-        delegated_mandate_digest: str | None = None,
+        settle_submission: ProposalSettleSubmissionV1 | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
 
@@ -4367,12 +4368,18 @@ class ProposalService:
         `prepared` may reuse a same-call evaluation; it never replaces the
         fresh authorization callback or the publication head check.
 
-        `delegated_mandate_digest` is the settle terminal's alone: the candidate
-        is evaluated under that mandate's delegated authority, so it carries no
-        approval requirement and only activation under the same mandate can
-        reproduce it. No public door passes it.
+        `settle_submission` is the settle terminal's alone, and is retained on
+        the admission. A `delegated` submission is evaluated under the named
+        mandate's delegated authority, so it carries no approval requirement and
+        only activation under the same mandate can reproduce it; a `fallback`
+        is evaluated as an ordinary proposal. No public door passes it.
         """
         self._require_writable()
+        delegated_mandate_digest = (
+            settle_submission.mandate_digest
+            if settle_submission is not None and settle_submission.mode == "delegated"
+            else None
+        )
         validate_candidate_timestamp(timestamp)
         if "propose" not in actor.capabilities:
             raise ProposalAdmissionError("authenticated actor lacks the propose capability")
@@ -4550,6 +4557,7 @@ class ProposalService:
                 limits=self.receive_limits,
                 admitted_at=timestamp,
                 rationale=request.rationale,
+                settle_submission=settle_submission,
             )
             candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
             try:

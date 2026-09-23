@@ -62,7 +62,10 @@ from cruxible_client.contracts.procedures.proposal_items import (
     ProcedureClaimProposalItemV1,
     ProcedureClaimProposalItemV2,
 )
-from cruxible_client.contracts.proposal_models import ProposalResult
+from cruxible_client.contracts.proposal_models import (
+    ProposalResult,
+    ProposalSettleSubmissionV1,
+)
 from cruxible_core.authoring import lowering as authoring_lowering
 from cruxible_core.authoring.lowering import AuthoringLoweringError, LoweredAuthoring
 from cruxible_core.procedures.egress import (
@@ -710,7 +713,16 @@ class ProposalTerminalEgressSink:
             proposal_lowering_digest(prepared.changed_members) != lowering_digest
             or admission_record.source_compilation_digest
             != proposal_terminal_payload_digest(
-                prepared.candidate_tree, prepared.prepared.target_paths
+                prepared.candidate_tree,
+                prepared.prepared.target_paths,
+                settle=admission_record.settle_submission,
+            )
+            or (admission_record.settle_submission is not None)
+            != (request.kind == "settle_change_set")
+            or (
+                admission_record.settle_submission is not None
+                and admission_record.settle_submission.mandate_digest
+                != request.procedure_mandate_digest
             )
         ):
             raise ProposalDeliveryRefused(
@@ -738,9 +750,10 @@ class ProposalTerminalEgressSink:
         """Settle under the one covering mandate, or fall back exactly as it declares.
 
         The condition is checked before anything is written, so a failing
-        condition never leaves a refused proposal under the operation key. A
-        recovered operation first reports an already-accepted outcome; only an
-        uncommitted one is authorized again.
+        condition never leaves a refused proposal under the operation key. The
+        submission mode is retained on the proposal's admission, so a repeated
+        or recovered delivery reports what was actually submitted -- a fallback
+        stays a fallback even after it is accepted through ordinary review.
         """
 
         digest = request.procedure_mandate_digest
@@ -751,15 +764,6 @@ class ProposalTerminalEgressSink:
                 "The settle terminal's bound mandate is no longer an accepted settle grant.",
             )
         assert digest is not None
-        submission = dict(
-            request=request,
-            admission=admission,
-            candidate_tree=prepared.candidate_tree,
-            accepted_mandates=self.accepted_mandates,
-            rationale=prepared.rationale,
-            changed_paths=prepared.prepared.target_paths,
-            delegation=self.delegation,
-        )
         result = existing
         if result is None:
             head = self.instance.accepted_coordinate()
@@ -772,37 +776,53 @@ class ProposalTerminalEgressSink:
                 timestamp=canonical_candidate_timestamp(request.evaluation_time),
                 facts=self.instance._accepted_query_facts(self.instance, head),
             )
-            if issues:
-                codes = sorted({code for code, _message in issues})
-                if mandate.condition.fallback == "refuse":
-                    raise ProposalDeliveryRefused(
-                        "settle_condition_refused",
-                        "The settle mandate does not authorize this change and declares no "
-                        "proposal fallback.",
-                        details={"codes": codes, "messages": [m for _code, m in issues]},
-                    )
-                fallback = adapter.submit(**submission)  # type: ignore[arg-type]
-                return settle_terminal_receipt(
-                    request,
-                    result=fallback,
-                    item_paths=prepared.item_paths,
-                    accepted_git_oid=None,
-                    fallback_reason=", ".join(codes),
+            codes = sorted({code for code, _message in issues})
+            if issues and mandate.condition.fallback == "refuse":
+                raise ProposalDeliveryRefused(
+                    "settle_condition_refused",
+                    "The settle mandate does not authorize this change and declares no "
+                    "proposal fallback.",
+                    details={"codes": codes, "messages": [m for _code, m in issues]},
                 )
-            result = adapter.submit(**submission, delegated_mandate_digest=digest)  # type: ignore[arg-type]
-        accepted_oid = self._accepted_oid(result)
+            submission = (
+                ProposalSettleSubmissionV1(
+                    mode="fallback", mandate_digest=digest, fallback_reason=", ".join(codes)
+                )
+                if issues
+                else ProposalSettleSubmissionV1(mode="delegated", mandate_digest=digest)
+            )
+            result = adapter.submit(
+                request=request,
+                admission=admission,
+                candidate_tree=prepared.candidate_tree,
+                accepted_mandates=self.accepted_mandates,
+                rationale=prepared.rationale,
+                changed_paths=prepared.prepared.target_paths,
+                delegation=self.delegation,
+                settle_submission=submission,
+            )
+        settle = result.admission.settle_submission
+        assert settle is not None  # submitted above, or verified by recover_existing
+        if settle.mode == "fallback":
+            return settle_terminal_receipt(
+                request,
+                result=result,
+                item_paths=prepared.item_paths,
+                accepted_git_oid=None,
+                fallback_reason=settle.fallback_reason,
+            )
+        if result.candidate is None:
+            raise ProposalDeliveryRefused(
+                "settle_publication_refused",
+                "The delegated candidate was refused at submission.",
+                details={
+                    "proposal_id": result.admission.proposal_id,
+                    "codes": [item.code for item in result.evaluation.diagnostics],
+                },
+            )
+        accepted_oid = self._accepted_oid(result.candidate.candidate_digest, digest=digest)
         if accepted_oid is None:
             accepted_oid = self._activate(result, request=request, mandate=mandate, digest=digest)
-            if accepted_oid is None:
-                # A recovered proposal that does not reproduce under the mandate
-                # was the declared fallback: it stays an ordinary proposal.
-                return settle_terminal_receipt(
-                    request,
-                    result=result,
-                    item_paths=prepared.item_paths,
-                    accepted_git_oid=None,
-                    fallback_reason="playbill.settle.recovered_as_proposal",
-                )
         return settle_terminal_receipt(
             request,
             result=result,
@@ -810,17 +830,25 @@ class ProposalTerminalEgressSink:
             accepted_git_oid=accepted_oid,
         )
 
-    def _accepted_oid(self, result: ProposalResult) -> str | None:
-        """The accepted generation that already carries this exact candidate, if any."""
+    def _accepted_oid(self, candidate_digest: str, *, digest: str) -> str | None:
+        """The accepted generation that settled this exact candidate under this mandate.
 
-        if result.candidate is None:
-            return None
-        candidate_digest = result.candidate.candidate_digest
-        for generation in reversed(self.instance.accepted_history()):
-            record = generation.record
-            if record is not None and record.candidate_digest == candidate_digest:
-                return generation.oid
-        return None
+        Found through the history index, never a history walk; its retained
+        record must name the same mandate, or it is not this settlement.
+        """
+
+        with self.instance.accepted_history_reader() as history:
+            location = history.generation_for_candidate(candidate_digest)
+            if location is None:
+                return None
+            record = history.read_generation_record(location.sequence, self.instance.blob_at)
+        if record.mandate_digest != digest:
+            raise ProposalDeliveryRefused(
+                "effectful_operation_payload_mismatch",
+                "The delegated candidate was accepted, but not under this settle mandate.",
+                details={"accepted_git_oid": location.git_oid},
+            )
+        return location.git_oid
 
     def _activate(
         self,
@@ -829,7 +857,7 @@ class ProposalTerminalEgressSink:
         request: TerminalEgressRequestV2,
         mandate: ProcedureMandateV2,
         digest: str,
-    ) -> str | None:
+    ) -> str:
         from cruxible_client.contracts.errors import SettlementIntegrityError
         from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 
@@ -848,8 +876,6 @@ class ProposalTerminalEgressSink:
                 mandate_digest=digest,
             )
         except SettlementIntegrityError:
-            if result.candidate is not None and result.candidate.approval_requirements:
-                return None
             raise ProposalDeliveryRefused(
                 "settle_publication_refused",
                 "The delegated candidate no longer reproduces under its mandate at publication.",

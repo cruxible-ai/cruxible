@@ -16,6 +16,7 @@ from cruxible_client.contracts.candidates import (
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
+from cruxible_client.contracts.proposal_models import ProposalSettleSubmissionV1
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV2,
@@ -74,12 +75,25 @@ def _changed_paths(base: Mapping[str, bytes], candidate: Mapping[str, bytes]) ->
     )
 
 
-def proposal_terminal_payload_digest(tree: Mapping[str, bytes], paths: tuple[str, ...]) -> str:
-    """Retain the exact authored payload binding after candidate Git objects expire."""
+def proposal_terminal_payload_digest(
+    tree: Mapping[str, bytes],
+    paths: tuple[str, ...],
+    *,
+    settle: ProposalSettleSubmissionV1 | None = None,
+) -> str:
+    """Retain the exact authored payload binding after candidate Git objects expire.
+
+    A settle terminal's submission mode is bound too, so the admission cannot
+    be read back as the other mode than the one it was submitted under.
+    """
+    settle_binding: dict[str, object] = (
+        {} if settle is None else {"settle_submission": settle.model_dump(mode="json")}
+    )
     return typed_digest(
         Sha256Value,
         "playbill-procedure-proposal-payload-v1",
         {
+            **settle_binding,
             "members": [
                 {
                     "path": path,
@@ -88,7 +102,7 @@ def proposal_terminal_payload_digest(tree: Mapping[str, bytes], paths: tuple[str
                     else "sha256:" + hashlib.sha256(tree[path]).hexdigest(),
                 }
                 for path in sorted(paths, key=str.encode)
-            ]
+            ],
         },
     ).tagged
 
@@ -154,14 +168,16 @@ class ProposalTerminalAdapter:
         base_tree: Mapping[str, bytes] | None = None,
         changed_paths: tuple[str, ...] | None = None,
         delegation: ProcedureDelegation | None = None,
-        delegated_mandate_digest: str | None = None,
+        settle_submission: ProposalSettleSubmissionV1 | None = None,
     ) -> ProposalResult:
         """Submit the lowered candidate once, under the exact mandate, and return the result.
 
-        A settle terminal passes its bound mandate as ``delegated_mandate_digest``
-        so the candidate is evaluated under delegated authority; a settle
-        fallback and every proposal terminal pass none.
+        A settle terminal passes how it submits -- under its bound mandate's
+        delegated authority, or as that mandate's declared fallback -- and the
+        admission retains it; a proposal terminal passes none.
         """
+        if (settle_submission is not None) != (request.kind == "settle_change_set"):
+            raise EffectfulTerminalError("exactly a settle terminal names its submission mode")
 
         if request.kind not in {"propose_change_set", "settle_change_set"}:
             raise EffectfulTerminalError("proposal adapter serves proposal and settle only")
@@ -221,14 +237,14 @@ class ProposalTerminalAdapter:
                         target_ref=proposal_terminal_ref(actor_id, request.operation_key),
                         proposed_base_oid=request.accepted_coordinate.git_oid,
                         source_compilation_digest=proposal_terminal_payload_digest(
-                            candidate_tree, changed
+                            candidate_tree, changed, settle=settle_submission
                         ),
                         rationale=rationale,
                     ),
                     candidate_tree=candidate_tree,
                     timestamp=canonical_candidate_timestamp(request.evaluation_time),
                     authorize=_authorize_at_head,
-                    delegated_mandate_digest=delegated_mandate_digest,
+                    settle_submission=settle_submission,
                 )
                 break
             except ProposalHeadMovedError:

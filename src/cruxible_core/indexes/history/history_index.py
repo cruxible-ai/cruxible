@@ -293,6 +293,14 @@ class HistoryReader:
         ).fetchall()
         return AcceptedGenerationLocation(*rows[0]) if len(rows) == 1 else None
 
+    def generation_for_candidate(self, candidate_digest: str) -> AcceptedGenerationLocation | None:
+        """The one accepted generation that published this exact candidate, by index."""
+        rows = self._connection.execute(
+            "SELECT * FROM accepted_generations WHERE candidate_digest=? AND sequence<=? LIMIT 2",
+            (candidate_digest, self.sequence),
+        ).fetchall()
+        return AcceptedGenerationLocation(*rows[0]) if len(rows) == 1 else None
+
     def candidate_accepted(self, candidate_digest: str) -> bool:
         return (
             self._connection.execute(
