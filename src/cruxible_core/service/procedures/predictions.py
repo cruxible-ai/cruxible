@@ -54,6 +54,7 @@ from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.procedures.egress import (
     TerminalEgressReceiptV1,
     TerminalEgressReceiptV2,
+    TerminalEgressReceiptV4,
 )
 from cruxible_core.procedures.resolution import (
     ProcedureProofReferenceV1,
@@ -206,26 +207,34 @@ def _terminal_record(
                 receipt_payload = payload.get("receipt")
                 if not isinstance(receipt_payload, dict):
                     break
-                receipt_type = (
-                    TerminalEgressReceiptV2
-                    if receipt_payload.get("tag") == "playbill-terminal-egress-receipt-v2"
-                    else TerminalEgressReceiptV1
+                receipt_types: dict[str, type[TerminalEgressReceiptV1]] = {
+                    "playbill-terminal-egress-receipt-v4": TerminalEgressReceiptV4,
+                    "playbill-terminal-egress-receipt-v2": TerminalEgressReceiptV2,
+                }
+                receipt_type = receipt_types.get(
+                    str(receipt_payload.get("tag")), TerminalEgressReceiptV1
                 )
                 try:
                     receipt = receipt_type.model_validate(receipt_payload)
                 except ValidationError:
                     break
+                # A settle terminal counts only when it actually settled; its
+                # fallback proposal settled nothing. The scaffolded kind remains
+                # readable for retained evidence.
+                settled = (
+                    isinstance(receipt, TerminalEgressReceiptV4) and receipt.outcome == "settled"
+                ) or receipt.kind == "mandate_settlement"
                 if (
                     receipt.run_id == evidence.run_id
                     and payload.get("node_id") == receipt.node_id
                     and payload.get("kind") == receipt.kind
-                    and receipt.kind == "mandate_settlement"
+                    and settled
                 ):
                     return stored
             break
     raise _refuse(
         "settlement_evidence_mismatch",
-        "Terminal evidence is not one delivered mandate-settlement record under the "
+        "Terminal evidence is not one delivered, settled settle_change_set record under the "
         "prediction Procedure mandate.",
     )
 
