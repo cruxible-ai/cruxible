@@ -134,7 +134,7 @@ def verify_logical_digest(connection: sqlite3.Connection, expected: str) -> None
 
     sums = compute_table_sums(connection)
     if stored_table_sums(connection) != sums:
-        raise ProjectionIntegrityError("projection logical sums differ from its rows")
+        raise ProjectionIntegrityError("projection logical digest sums differ from its rows")
     if logical_digest_from_sums(connection, sums).tagged != expected:
         raise ProjectionIntegrityError("projection canonical logical digest mismatch")
 
