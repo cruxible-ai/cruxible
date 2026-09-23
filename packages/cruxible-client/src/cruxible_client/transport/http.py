@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import os
-import threading
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
-from typing import Any, Literal, TypeVar, cast
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Literal, TypeVar
 
 import httpx
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -30,6 +28,8 @@ from cruxible_client.contracts.claim_reads import (
     ClaimBackingsResultV1,
     ClaimReadBatchRequestV1,
     ClaimReadBatchResultV1,
+    ClaimValuesRequestV1,
+    ClaimValuesResultV1,
 )
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import (
@@ -67,13 +67,6 @@ _CLAIM_RETIRE_RESPONSE: TypeAdapter[contracts.PlaybillClaimRetireResponse] = Typ
 # The per-request budget an ordinary call is given.
 CLIENT_TIMEOUT_ENV = "CRUXIBLE_CLIENT_TIMEOUT_S"
 DEFAULT_CLIENT_TIMEOUT_S = 180.0
-# Connecting an SDK session orients against the whole accepted world, so its
-# cost tracks the size of the instance rather than the size of the call. It gets
-# its own, larger budget: a healthy instance must not read as an unreachable
-# server just because it holds a lot of Claims. Raising the ordinary budget
-# above this one raises this one too.
-CONNECT_TIMEOUT_ENV = "CRUXIBLE_CLIENT_CONNECT_TIMEOUT_S"
-DEFAULT_CONNECT_TIMEOUT_S = 900.0
 
 
 def _budget(name: str, default: float) -> float:
@@ -94,50 +87,16 @@ def _default_timeout() -> httpx.Timeout:
     return httpx.Timeout(connect=5.0, read=budget, write=budget, pool=5.0)
 
 
-def connect_orientation_timeout() -> httpx.Timeout:
-    """Return the read budget one connect-time orientation is allowed."""
-
-    budget = max(
-        _budget(CONNECT_TIMEOUT_ENV, DEFAULT_CONNECT_TIMEOUT_S),
-        _budget(CLIENT_TIMEOUT_ENV, DEFAULT_CLIENT_TIMEOUT_S),
-    )
-    return httpx.Timeout(connect=5.0, read=budget, write=budget, pool=5.0)
-
-
 class _TransportGuard:
     def __init__(self, client: httpx.Client, target: str) -> None:
         self._client = client
         self._target = target
-        # The override covers every request the calling thread issues inside
-        # the block, so it is held per thread: a client shared between threads
-        # must not hand one thread's orientation budget to another thread's
-        # ordinary call.
-        self._budget_state = threading.local()
-
-    @property
-    def _override(self) -> httpx.Timeout | None:
-        return cast("httpx.Timeout | None", getattr(self._budget_state, "override", None))
-
-    @contextmanager
-    def budget(self, timeout: httpx.Timeout) -> Iterator[None]:
-        previous = self._override
-        self._budget_state.override = timeout
-        try:
-            yield
-        finally:
-            self._budget_state.override = previous
 
     def _guard(self, method: str, *args: Any, **kwargs: Any) -> httpx.Response:
-        if self._override is not None:
-            kwargs.setdefault("timeout", self._override)
         try:
             response: httpx.Response = getattr(self._client, method)(*args, **kwargs)
         except (httpx.ReadTimeout, httpx.WriteTimeout) as exc:
-            budget = (
-                os.environ.get(CLIENT_TIMEOUT_ENV, str(int(DEFAULT_CLIENT_TIMEOUT_S)))
-                if self._override is None
-                else str(int(self._override.read or DEFAULT_CONNECT_TIMEOUT_S))
-            )
+            budget = os.environ.get(CLIENT_TIMEOUT_ENV, str(int(DEFAULT_CLIENT_TIMEOUT_S)))
             raise ServerUnreachableError(
                 self._target,
                 (
@@ -159,24 +118,6 @@ class _TransportGuard:
 
     def close(self) -> None:
         self._client.close()
-
-
-@contextmanager
-def connect_orientation_budget(client: object) -> Iterator[None]:
-    """Give one connect-time orientation its own, larger read budget.
-
-    Written as a function rather than a client method because the daemon
-    surface catalog is frozen: adding a public method to ``CruxibleClient``
-    would widen a pinned surface. A client that exposes no guarded transport
-    (a test double, say) simply runs the block under whatever budget it has.
-    """
-
-    guard = getattr(client, "_client", None)
-    if not isinstance(guard, _TransportGuard):
-        yield
-        return
-    with guard.budget(connect_orientation_timeout()):
-        yield
 
 
 class CruxibleClient:
@@ -1278,6 +1219,19 @@ class CruxibleClient:
             json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, ClaimReadBatchResultV1)
+
+    def read_playbill_claim_values(
+        self,
+        instance_id: str,
+        *,
+        request: ClaimValuesRequestV1,
+    ) -> ClaimValuesResultV1:
+        """Live Claim values and verdicts for explicit Subjects, without full views."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claims/values",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, ClaimValuesResultV1)
 
     def get_playbill_claim_backings(
         self,

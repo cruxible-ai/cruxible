@@ -218,7 +218,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.errors import CoreError
-from cruxible_client.transport.http import CruxibleClient, connect_orientation_budget
+from cruxible_client.transport.http import CruxibleClient
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.projection_package import ProjectionPackage
@@ -1594,18 +1594,16 @@ class Playbill:
                 ),
                 clock=lambda: datetime.now(UTC),
             )
-            # Orientation walks the whole accepted world, so its cost tracks the
-            # size of the instance, not the size of a call. It gets its own read
-            # budget (CRUXIBLE_CLIENT_CONNECT_TIMEOUT_S) so a healthy but large
-            # instance cannot read as an unreachable server.
-            with connect_orientation_budget(client):
-                if at is None:
-                    result.refresh()
-                else:
-                    result._coordinate = AcceptedCoordinate.model_validate(
-                        at.model_dump(mode="json")
-                    )
-                    result._pinned = True
+            # A session needs only the current head, not an orientation of the
+            # whole accepted world: one identity read names it. Orient
+            # explicitly (``orient()`` / ``refresh()``) when the overview is wanted.
+            if at is None:
+                result._coordinate = AcceptedCoordinate.model_validate(
+                    client.playbill_whoami(resolved.instance_id).coordinate.model_dump(mode="json")
+                )
+            else:
+                result._coordinate = AcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+                result._pinned = True
         except BaseException:
             client.close()
             raise

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Mapping, MutableMapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
@@ -56,7 +57,7 @@ from cruxible_core.service.claims.verdict_memo import (
     memo_key,
     verdict_input_fingerprint,
 )
-from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext, VerdictReads
 
 
 class PlaybillSearchError(PlaybillError):
@@ -88,10 +89,30 @@ _RESOLUTION_MEMO: (
 ) = OrderedDict()
 
 
-def reset_claim_resolution_memo() -> None:
-    """Forget every remembered derivation; activation and tests call this."""
+# Per-slot answers carried across coordinates. Each entry keeps the exact read
+# set its verdicts consulted and the values those reads returned; it is served
+# at another coordinate only after every read is re-read and matches, and only
+# inside its time-invariance interval. Bounded; nothing depends on it.
+_SLOT_MEMO_CAPACITY = 16384
+_SLOT_MEMO: "OrderedDict[tuple[str, str, bytes], _RememberedSlot]" = OrderedDict()
+
+
+@dataclass(frozen=True)
+class _RememberedSlot:
+    members: tuple[str, ...]
+    reads: VerdictReads
+    observed: dict[tuple[str, ...], object]
+    interval: tuple[datetime | None, datetime | None]
+    statuses: dict[str, SearchStatus]
+    verdicts: dict[str, ClaimVerdictResultAny]
+
+
+def reset_claim_resolution_memo(*, slots: bool = True) -> None:
+    """Forget remembered derivations; activation keeps the validated slot answers."""
 
     _RESOLUTION_MEMO.clear()
+    if slots:
+        _SLOT_MEMO.clear()
 
 
 def _resolution_key(claim: ClaimArtifactAny) -> bytes:
@@ -209,9 +230,46 @@ def claim_resolution_statuses(
 
     coordinate = _resolve_coordinate(instance, at)
     read_context = read_context or ClaimVerdictReadContext(instance, coordinate)
-    # One batched read of every live Claim and the artifacts its verdict reads
-    # (ClaimType and referents) instead of one read per verdict.
-    live = tuple(claim for group in live_groups.values() for claim in group)
+    root = str(instance.root)
+    compiler = coordinate.compiler.rule_digest
+
+    # Slots answered at an earlier coordinate are reused when every read their
+    # verdicts made still returns the same value here: one batched re-read of
+    # all their inputs instead of re-deriving them.
+    pending = dict(live_groups)
+    if remember:
+        candidates: dict[bytes, _RememberedSlot] = {}
+        for slot_key, group in live_groups.items():
+            entry = _SLOT_MEMO.get((root, compiler, slot_key))
+            if (
+                entry is not None
+                and entry.members == _slot_members(group)
+                and interval_holds(entry.interval, evaluation_time=evaluation_time)
+            ):
+                candidates[slot_key] = entry
+        if candidates:
+            union = VerdictReads()
+            for entry in candidates.values():
+                union.update(entry.reads)
+            current = read_context.snapshot(union)
+            for slot_key, entry in candidates.items():
+                if all(current.get(read) == value for read, value in entry.observed.items()):
+                    _SLOT_MEMO.move_to_end((root, compiler, slot_key))
+                    statuses.update(entry.statuses)
+                    verdicts.update(
+                        {
+                            identity: verdict.model_copy(
+                                update={"evaluation_time": evaluation_time}
+                            )
+                            for identity, verdict in entry.verdicts.items()
+                        }
+                    )
+                    boundaries.update(bound for bound in entry.interval if bound is not None)
+                    del pending[slot_key]
+
+    # One batched read of every Claim still to derive and the artifacts its
+    # verdict reads (ClaimType and referents) instead of one read per verdict.
+    live = tuple(claim for group in pending.values() for claim in group)
     read_context.prefetch(
         tuple(
             path
@@ -233,19 +291,26 @@ def claim_resolution_statuses(
     for claim in live:
         read_context.claim(claim.identity.qualified)
     read_context.prefetch_law_evidence(tuple(claim_path(claim.identity.name) for claim in live))
-    for group in live_groups.values():
+    derived: dict[bytes, tuple[VerdictReads, set[datetime], dict[str, SearchStatus]]] = {}
+    for slot_key, group in pending.items():
         first = group[0]
-        resolution = resolve_playbill_claim_group(
-            instance,
-            subject=first.statement.subject,
-            predicate=first.statement.predicate,
-            coordinate=coordinate,
-            evaluated_at=evaluation_time,
-            claims=tuple(group),
-            verdicts_by_identity=verdicts,
-            time_boundaries=boundaries if remember else None,
-            read_context=read_context,
-        )
+        group_boundaries: set[datetime] = set()
+        reads = read_context.record() if remember else None
+        try:
+            resolution = resolve_playbill_claim_group(
+                instance,
+                subject=first.statement.subject,
+                predicate=first.statement.predicate,
+                coordinate=coordinate,
+                evaluated_at=evaluation_time,
+                claims=tuple(group),
+                verdicts_by_identity=verdicts,
+                time_boundaries=group_boundaries if remember else None,
+                read_context=read_context,
+            )
+        finally:
+            read_context.stop()
+        boundaries.update(group_boundaries)
         groups_by_qualifier: dict[str | None, list[ClaimArtifactAny]] = defaultdict(list)
         for claim in group:
             groups_by_qualifier[claim.statement.qualifier].append(claim)
@@ -255,7 +320,43 @@ def claim_resolution_statuses(
             for classification in (classify_claim_slot(members),)
             for claim in members
         }
-        _apply_resolution_statuses(resolution, statuses, slots=slots)
+        group_statuses: dict[str, SearchStatus] = {}
+        _apply_resolution_statuses(resolution, group_statuses, slots=slots)
+        statuses.update(group_statuses)
+        if reads is not None and reads.inconsistent:
+            # Inconsistent observations: nothing from this derivation is remembered.
+            remember = False
+        if reads is not None and not reads.inconsistent:
+            derived[slot_key] = (reads, group_boundaries, group_statuses)
+    if derived:
+        union = VerdictReads()
+        for reads, _bounds, _statuses in derived.values():
+            union.update(reads)
+        observed = read_context.snapshot(union)
+        for slot_key, (reads, group_boundaries, group_statuses) in derived.items():
+            group = live_groups[slot_key]
+            _SLOT_MEMO[(root, compiler, slot_key)] = _RememberedSlot(
+                members=_slot_members(group),
+                reads=reads,
+                observed={
+                    **{read: observed.get(read) for read in (*reads.keys(), ("compiler",))},
+                    # Availability as the verdicts used it, not as re-read now.
+                    **{
+                        ("capture", digest): used
+                        for digest, used in reads.used_availability.items()
+                    },
+                },
+                interval=invariance_interval(group_boundaries, evaluation_time=evaluation_time),
+                statuses=dict(group_statuses),
+                verdicts={
+                    claim.identity.qualified: verdicts[claim.identity.qualified]
+                    for claim in group
+                    if claim.identity.qualified in verdicts
+                },
+            )
+            _SLOT_MEMO.move_to_end((root, compiler, slot_key))
+        while len(_SLOT_MEMO) > _SLOT_MEMO_CAPACITY:
+            _SLOT_MEMO.popitem(last=False)
     if remember:
         memo_put(
             _RESOLUTION_MEMO,
@@ -268,6 +369,10 @@ def claim_resolution_statuses(
             capacity=MEMO_CAPACITY,
         )
     return statuses
+
+
+def _slot_members(group: list[ClaimArtifactAny]) -> tuple[str, ...]:
+    return tuple(sorted(claim.identity.qualified for claim in group))
 
 
 def _apply_resolution_statuses(

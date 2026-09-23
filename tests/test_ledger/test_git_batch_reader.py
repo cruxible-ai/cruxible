@@ -183,3 +183,59 @@ def test_a_tree_written_over_its_parent_equals_a_write_from_empty(tmp_path, obje
         assert ledger._list_tree(over_parent, with_sizes=sized) == ledger._read_tree_listing(
             over_parent, with_sizes=sized, paths=None
         )
+
+
+def test_a_path_restricted_listing_from_memory_matches_git(tmp_path, monkeypatch):
+    ledger = _ledger(tmp_path / "ledger.git")
+    tree = {"a.json": b"1", "claims/x.json": b"22", "claims/y/z.json": b"3", "claims-z.json": b"4"}
+    tree_oid = ledger._write_tree(tree)
+    commit = ledger._git(["commit-tree", tree_oid, "-m", "one"]).decode().strip()
+    selections = (("a.json",), ("claims",), ("claims/y",), ("claims/x.json", "missing.json"))
+    expected = {
+        (oid, paths): ledger._read_tree_listing(oid, with_sizes=False, paths=paths)
+        for oid in (tree_oid, commit)
+        for paths in selections
+    }
+    listed = []
+    read = GitLedger._read_tree_listing
+
+    def counted(self, oid, **kwargs):
+        listed.append(oid)
+        return read(self, oid, **kwargs)
+
+    monkeypatch.setattr(GitLedger, "_read_tree_listing", counted)
+    for (oid, paths), entries in expected.items():
+        assert ledger._list_tree(oid, with_sizes=False, paths=paths) == entries
+    assert listed == []
+
+
+class _CountingPath(str):
+    checks = 0
+
+    def startswith(self, *args, **kwargs):  # type: ignore[override]
+        _CountingPath.checks += 1
+        return super().startswith(*args, **kwargs)
+
+
+def _listing(count: int) -> tuple[ledger_git.GitTreeEntry, ...]:
+    paths = sorted(
+        {"claims/x.json", "claims/y/z.json", *(f"filler/{n:06d}.json" for n in range(count))}
+    )
+    return tuple(
+        ledger_git.GitTreeEntry(
+            path=_CountingPath(path), mode="100644", object_type="blob", oid="0" * 40, size=None
+        )
+        for path in paths
+    )
+
+
+def test_a_remembered_selection_does_not_grow_with_unrelated_entries():
+    work = {}
+    for count in (10, 10000):
+        listing = _listing(count)
+        ledger_git._select_from_listing(listing, ("warm",))  # build the index once
+        _CountingPath.checks = 0
+        selected = ledger_git._select_from_listing(listing, ("claims/x.json", "claims/y"))
+        assert [entry.path for entry in selected] == ["claims/x.json", "claims/y/z.json"]
+        work[count] = _CountingPath.checks
+    assert work[10] == work[10000]

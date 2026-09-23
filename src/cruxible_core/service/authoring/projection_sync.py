@@ -43,7 +43,6 @@ from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
-from cruxible_core.query.backends import claim_row_visibility
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query import _AcceptedQueryFactsRead, evaluate_accepted_query
 from cruxible_core.service.discovery.query_definitions import (
@@ -51,6 +50,7 @@ from cruxible_core.service.discovery.query_definitions import (
     accepted_query_definition,
 )
 from cruxible_core.service.discovery.search import claim_resolution_statuses
+from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from cruxible_core.service.floor.projection_lineage import (
     ClaimLineageNode as _ClaimNode,
 )
@@ -333,6 +333,9 @@ class ProjectionCheckContext:
                 raise ProposalIntegrityError("selected projection coordinate is not accepted")
             self.generation = location.sequence
         self.facts = facts_reader or _AcceptedQueryFactsRead(instance, coordinate=coordinate)
+        # A caller-shared facts read is honored; otherwise each query builds only
+        # its referenced predicates' facts, exactly as the served query does.
+        self._shared_facts = facts_reader is not None
         self.verdicts = verdicts_by_identity
         self.queries: dict[bytes, ProjectionQueryBackingV1 | PlaybillError | ValueError] = {}
         self.statuses: Mapping[str, str] | None = resolution_statuses
@@ -387,39 +390,94 @@ class ProjectionCheckContext:
                 continue
 
     def _claim_status(self, identity: ArtifactIdentity) -> str:
-        facts = self.facts.build()
-        if self.statuses is None:
-            self.statuses = claim_resolution_statuses(
-                self.instance,
-                claims=tuple(
-                    row.accepted.claim
-                    for row in facts.claims
-                    if row.accepted.claim.identity.qualified in self.claim_ids
-                ),
-                at=self.accepted,
-                evaluation_time=self.evaluation_time,
-                verdicts_by_identity=self.verdicts,
-            )
         if self.visible_claim_ids is None:
-            subjects = {s.path: s for s in facts.subjects}
-            providers = {p.identity.qualified: p for p in facts.providers}
-            self.visible_claim_ids = frozenset(
-                row.accepted.claim.identity.qualified
-                for row in facts.claims
-                if row.accepted.claim.identity.qualified in self.claim_ids
-                and claim_row_visibility(
-                    row,
-                    subject=subjects.get(row.subject_path),
-                    providers=providers,
-                    policy=PROJECTION_VISIBILITY_POLICY,
-                    evaluation_time=self.evaluation_time,
-                )
-                is not None
-            )
+            self._resolve_backed_claims()
+        assert self.visible_claim_ids is not None
         if identity.qualified not in self.visible_claim_ids:
             raise ValueError("Claim backing is not visible under the evaluation policy")
         assert self.statuses is not None
         return self.statuses[identity.name]
+
+    def _accepted_subject_paths(self, paths: tuple[str, ...]) -> set[str]:
+        """Which of these Subject paths are accepted at this coordinate."""
+
+        present: set[str] = set()
+        with self.instance.bind_accepted_projection(self.coordinate) as projection:
+            for start in range(0, len(paths), 500):
+                chunk = paths[start : start + 500]
+                present.update(
+                    str(row[0])
+                    for row in projection.typed.connection.execute(
+                        "SELECT path FROM subjects WHERE path IN ("
+                        + ",".join("?" for _ in chunk)
+                        + ")",
+                        chunk,
+                    )
+                )
+        return present
+
+    def _resolve_backed_claims(self) -> None:
+        """Statuses and visibility of every live backed Claim, from their slot verdicts.
+
+        Visibility is the query path's rule -- the statement Subject is accepted,
+        and the verdict (in its compat form) and currency are ones the policy
+        shows -- applied to the same verdicts the slot derivation computes, so no
+        per-Claim query fact rows are built for it.
+        """
+
+        from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
+        from cruxible_client.contracts.claims import claim_path
+
+        context = ClaimVerdictReadContext(self.instance, self.coordinate)
+        wanted = tuple(sorted(self.claim_ids))
+        with self.instance.bind_accepted_projection(self.coordinate) as projection:
+            connection = projection.typed.connection
+            accepted: set[str] = set()
+            for start in range(0, len(wanted), 500):
+                chunk = wanted[start : start + 500]
+                accepted.update(
+                    str(row[0])
+                    for row in connection.execute(
+                        "SELECT identity FROM claims WHERE lifecycle='live' AND identity IN ("
+                        + ",".join("?" for _ in chunk)
+                        + ")",
+                        chunk,
+                    )
+                )
+        identities = tuple(sorted(accepted))
+        context.prefetch(tuple(claim_path(item.removeprefix("Claim:")) for item in identities))
+        claims = tuple(context.claim(item) for item in identities)
+        verdicts: MutableMapping[str, ClaimVerdictResultAny] = (
+            self.verdicts if self.verdicts is not None else {}
+        )
+        if self.statuses is None or not all(
+            claim.identity.qualified in verdicts for claim in claims
+        ):
+            statuses = claim_resolution_statuses(
+                self.instance,
+                claims=claims,
+                at=self.accepted,
+                evaluation_time=self.evaluation_time,
+                verdicts_by_identity=verdicts,
+                read_context=context,
+            )
+            if self.statuses is None:
+                self.statuses = statuses
+        present = self._accepted_subject_paths(
+            tuple(sorted({claim.statement.subject.artifact_path for claim in claims}))
+        )
+        policy = PROJECTION_VISIBILITY_POLICY
+        visible = set()
+        for claim in claims:
+            verdict = verdicts.get(claim.identity.qualified)
+            if verdict is None or claim.statement.subject.artifact_path not in present:
+                continue
+            if (
+                claim_verdict_v1_compat(verdict).verdict in policy.visible_verdicts
+                and verdict.currency in policy.visible_currency
+            ):
+                visible.add(claim.identity.qualified)
+        self.visible_claim_ids = frozenset(visible)
 
     def _query(self, backing: ProjectionQueryBackingV1) -> ProjectionQueryBackingV1:
         key = canonical_bytes(
@@ -436,7 +494,7 @@ class ProjectionCheckContext:
                 result = evaluate_accepted_query(
                     self.instance,
                     definition,
-                    facts=self.facts.build,
+                    facts=self.facts.build if self._shared_facts else None,
                     coordinate=self.coordinate,
                     evaluation_time=self.evaluation_time,
                     parameters={x.name: x.value for x in backing.resolved_parameter_bindings},

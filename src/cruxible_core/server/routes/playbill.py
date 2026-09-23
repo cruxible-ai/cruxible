@@ -18,6 +18,8 @@ from cruxible_client.contracts.claim_reads import (
     ClaimBackingsResultV1,
     ClaimReadBatchRequestV1,
     ClaimReadBatchResultV1,
+    ClaimValuesRequestV1,
+    ClaimValuesResultV1,
 )
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillFormatError
@@ -1071,6 +1073,13 @@ async def list_claims(
 @router.post("/{instance_id}/playbill/claims/read-batch", response_model=ClaimReadBatchResultV1)
 def read_claim_batch(instance_id: str, req: ClaimReadBatchRequestV1) -> ClaimReadBatchResultV1:
     return playbill_api.playbill_read_claim_batch(
+        resolve_server_instance_id(instance_id), request=req
+    )
+
+
+@router.post("/{instance_id}/playbill/claims/values", response_model=ClaimValuesResultV1)
+def read_claim_values(instance_id: str, req: ClaimValuesRequestV1) -> ClaimValuesResultV1:
+    return playbill_api.playbill_read_claim_values(
         resolve_server_instance_id(instance_id), request=req
     )
 

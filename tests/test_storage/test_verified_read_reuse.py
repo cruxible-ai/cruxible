@@ -31,7 +31,7 @@ def test_a_file_replaced_just_before_a_warm_read_is_refused(tmp_path, monkeypatc
     opened = os.open
 
     def replace_then_open(target, flags, *args, **kwargs):
-        if Path(target) == path:
+        if str(target) == path.name:
             evil = path.with_name("evil")
             evil.write_bytes(b"evil")
             os.replace(evil, path)
@@ -52,15 +52,38 @@ def test_a_file_rewritten_in_place_after_warming_is_refused(tmp_path):
         store.read(digest, access=READ)
 
 
-def test_a_swapped_ancestor_of_a_warm_shard_is_refused(tmp_path):
-    store, digest, path = _store(tmp_path)
-    algorithm = store._algorithm_root
+@pytest.mark.parametrize("level", ["algorithm", "cas", "managed"])
+def test_a_swapped_ancestor_never_redirects_a_retained_store(tmp_path, level):
+    store, digest, _path = _store(tmp_path)
+    ancestor = {
+        "algorithm": store._algorithm_root,
+        "cas": store._algorithm_root.parent,
+        "managed": store._algorithm_root.parent.parent,
+    }[level]
     outside = tmp_path / "outside"
     outside.mkdir()
-    # The shard keeps its inode; only where the path resolves changes.
-    os.replace(algorithm, outside / "sha256")
-    algorithm.symlink_to(outside / "sha256", target_is_directory=True)
-    with pytest.raises(PlaybillCasError, match="escapes"):
+    # Move the directory out of custody and put a symlink to an empty stand-in
+    # at its path: the retained store must keep addressing what it validated.
+    os.replace(ancestor, outside / "moved")
+    stand_in = outside / "stand-in"
+    stand_in.mkdir()
+    ancestor.symlink_to(stand_in, target_is_directory=True)
+
+    assert store.read(digest, access=READ) == b"good"
+    written = store.store(b"written after the swap").digest
+    assert store.read(written, access=READ) == b"written after the swap"
+    assert list(stand_in.rglob("*")) == []
+
+
+def test_a_symlinked_shard_or_object_is_refused(tmp_path):
+    store, digest, path = _store(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / path.name).write_bytes(b"good")
+    shard = path.parent
+    os.replace(shard, tmp_path / "moved-shard")
+    shard.symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(PlaybillCasError, match="not trustworthy"):
         store.read(digest, access=READ)
 
 

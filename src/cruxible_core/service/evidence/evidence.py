@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -169,6 +169,69 @@ def _accepted_claim_artifact(claim: ClaimArtifactAny) -> AcceptedClaim:
     )
 
 
+@dataclass
+class VerdictReads:
+    """Everything one slot's verdicts read, named so it can be re-read later.
+
+    A remembered slot answer is reused at another coordinate only when every
+    one of these reads returns what it returned then (see
+    ``ClaimVerdictReadContext.snapshot``), so the keys must cover every input a
+    verdict consults: accepted artifacts by path, the accepted attestation set
+    of each Claim version, each Claim path's latest law record, every provider
+    looked up (present or absent), and each capture's replay availability.
+    """
+
+    paths: set[str] = dataclass_field(default_factory=set)
+    attestation_versions: set[tuple[str, str]] = dataclass_field(default_factory=set)
+    law_paths: set[str] = dataclass_field(default_factory=set)
+    providers: set[str] = dataclass_field(default_factory=set)
+    captures: set[str] = dataclass_field(default_factory=set)
+    # The replay availability each verdict actually used. Availability is the
+    # one input outside the accepted coordinate, so a remembered answer is keyed
+    # on what was used, never on a later re-read.
+    used_availability: dict[str, bool] = dataclass_field(default_factory=dict)
+    # Set when one Capture was observed both available and unavailable while
+    # this slot was derived: its verdicts rest on inconsistent observations and
+    # must not be remembered.
+    inconsistent: bool = False
+
+    def update(self, other: VerdictReads) -> None:
+        self.paths |= other.paths
+        self.attestation_versions |= other.attestation_versions
+        self.law_paths |= other.law_paths
+        self.providers |= other.providers
+        self.captures |= other.captures
+        self.used_availability.update(other.used_availability)
+        self.inconsistent = self.inconsistent or other.inconsistent
+
+    def keys(self) -> tuple[tuple[str, ...], ...]:
+        return (
+            *(("path", path) for path in sorted(self.paths)),
+            *(("attestations", *version) for version in sorted(self.attestation_versions)),
+            *(("law", path) for path in sorted(self.law_paths)),
+            *(("provider", identity) for identity in sorted(self.providers)),
+            *(("capture", digest) for digest in sorted(self.captures)),
+        )
+
+
+class _RecordingProviders(Mapping[str, ProviderV1]):
+    """Provider lookups attributed to the slot being resolved, absent ones included."""
+
+    def __init__(self, providers: Mapping[str, ProviderV1], reads: VerdictReads) -> None:
+        self._providers = providers
+        self._reads = reads
+
+    def __getitem__(self, identity: str) -> ProviderV1:
+        self._reads.providers.add(identity)
+        return self._providers[identity]
+
+    def __iter__(self) -> Iterator[str]:
+        raise ProposalIntegrityError("a remembered verdict cannot depend on every provider")
+
+    def __len__(self) -> int:
+        raise ProposalIntegrityError("a remembered verdict cannot depend on every provider")
+
+
 @dataclass(frozen=True)
 class ClaimVerdictReadContext:
     """One request's immutable accepted inputs; never retains current evidence.
@@ -189,8 +252,9 @@ class ClaimVerdictReadContext:
         default=None, init=False
     )
     _claim_types: dict[str, ClaimType] = dataclass_field(default_factory=dict, init=False)
-    _fingerprint: tuple[str | None] | None = dataclass_field(default=None, init=False)
     _attestation_versions: set[tuple[str, str]] = dataclass_field(default_factory=set, init=False)
+    _recording: VerdictReads | None = dataclass_field(default=None, init=False)
+    _store: Any = dataclass_field(default=None, init=False)
 
     def __post_init__(self) -> None:
         from cruxible_core.indexes.evaluated_state import SelectedRows
@@ -243,6 +307,7 @@ class ClaimVerdictReadContext:
 
     def claim(self, identity: str) -> ClaimArtifactAny:
         identity = "Claim:" + identity.removeprefix("Claim:")
+        self.note_paths(claim_path(identity.removeprefix("Claim:")))
         if identity not in self._claims:
             path = claim_path(identity.removeprefix("Claim:"))
             content = self._tree.get(path)
@@ -263,19 +328,10 @@ class ClaimVerdictReadContext:
         assert self._history is not None
         return self._history
 
-    def availability_fingerprint(self) -> str | None:
-        """The CAS availability signal, observed once for this batch."""
-
-        if self._fingerprint is None:
-            from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
-
-            object.__setattr__(self, "_fingerprint", (verdict_input_fingerprint(self.instance),))
-        assert self._fingerprint is not None
-        return self._fingerprint[0]
-
     def claim_type(self, path: str) -> ClaimType:
         """The accepted ClaimType at ``path``, parsed once per batch."""
 
+        self.note_paths(path)
         if path not in self._claim_types:
             content = self._tree.get(path)
             if content is None:
@@ -298,6 +354,8 @@ class ClaimVerdictReadContext:
         """
 
         key = (claim.identity.qualified, claim_artifact_digest(claim).tagged)
+        if self._recording is not None:
+            self._recording.attestation_versions.add(key)
         if self._attestations is None or key not in self._attestation_versions:
             versions = tuple(
                 dict.fromkeys(
@@ -335,7 +393,98 @@ class ClaimVerdictReadContext:
                 accepted_claim_providers(self.instance, coordinate=self.coordinate),
             )
         assert self._providers is not None
+        if self._recording is not None:
+            return _RecordingProviders(self._providers, self._recording)
         return self._providers
+
+    def body_store(self) -> Any:
+        """The instance's body store, obtained (and its storage binding checked) once."""
+
+        if self._store is None:
+            object.__setattr__(self, "_store", self.instance.body_store())
+        return self._store
+
+    def record(self) -> VerdictReads:
+        """Attribute every following read to a fresh slot read set, until ``stop``."""
+
+        reads = VerdictReads()
+        object.__setattr__(self, "_recording", reads)
+        return reads
+
+    def stop(self) -> None:
+        object.__setattr__(self, "_recording", None)
+
+    def note_paths(self, *paths: str | None) -> None:
+        if self._recording is not None:
+            self._recording.paths.update(path for path in paths if path is not None)
+
+    def note_law(self, path: str) -> None:
+        if self._recording is not None:
+            self._recording.law_paths.add(path)
+
+    def note_capture(self, digest: str, available: bool | None = None) -> None:
+        if self._recording is not None:
+            self._recording.captures.add(digest)
+            if available is not None:
+                seen = self._recording.used_availability.setdefault(digest, available)
+                if seen != available:
+                    self._recording.inconsistent = True
+
+    def snapshot(self, reads: VerdictReads) -> dict[tuple[str, ...], object]:
+        """Re-read every named input at this context's coordinate, in batches.
+
+        The same function records a slot's reads and later validates them, so a
+        remembered answer and its check always agree on what each read means.
+        """
+
+        values: dict[tuple[str, ...], object] = {}
+        paths = tuple(sorted(reads.paths))
+        providers = tuple(sorted(reads.providers))
+        versions = tuple(sorted(reads.attestation_versions))
+        with self.instance.bind_accepted_projection(self.coordinate) as projection:
+            connection = projection.typed.connection
+            for kind, column, keys in (
+                ("path", "path", paths),
+                ("provider", "identity", providers),
+            ):
+                found: dict[str, str] = {}
+                for start in range(0, len(keys), 500):
+                    chunk = keys[start : start + 500]
+                    found.update(
+                        (str(key), str(digest))
+                        for key, digest in connection.execute(
+                            f"SELECT {column}, artifact_digest FROM artifact_lookup WHERE "
+                            f"{column} IN (" + ",".join("?" for _ in chunk) + ")",
+                            chunk,
+                        )
+                    )
+                for key in keys:
+                    values[(kind, key)] = found.get(key)
+            attested: dict[tuple[str, str], list[str]] = {version: [] for version in versions}
+            for start in range(0, len(versions), 400):
+                selected = versions[start : start + 400]
+                for identity, digest, envelope in connection.execute(
+                    "SELECT claim_identity, claim_artifact_digest, envelope_digest "
+                    "FROM attestations WHERE (claim_identity, claim_artifact_digest) IN (VALUES "
+                    + ",".join("(?,?)" for _ in selected)
+                    + ")",
+                    tuple(item for version in selected for item in version),
+                ):
+                    attested[(str(identity), str(digest))].append(str(envelope))
+            for version, envelopes in attested.items():
+                values[("attestations", *version)] = tuple(sorted(envelopes))
+        if reads.law_paths:
+            with self.instance.accepted_history_reader(
+                at=AcceptedCoordinate.from_internal(self.coordinate)
+            ) as history:
+                for path, head in history.claim_law_heads(tuple(sorted(reads.law_paths))).items():
+                    values[("law", path)] = head
+        for digest in sorted(reads.captures):
+            values[("capture", digest)] = _current_replay_available(
+                self.instance, digest, readers={}, store=self.body_store()
+            )
+        values[("compiler",)] = self.coordinate.compiler.rule_digest
+        return values
 
 
 class _AcceptedClaimProviders(Mapping[str, ProviderV1]):
@@ -488,7 +637,20 @@ def _referent_digests(
 
 
 _AVAILABILITY_CAPACITY = 65536
-_AVAILABILITY_MEMO: OrderedDict[tuple[str, str, str], bool] = OrderedDict()
+# (instance root, capture digest) -> (answer, the CAS objects it consulted with
+# the file identity each had then, or None when absent).
+_AVAILABILITY_MEMO: OrderedDict[
+    tuple[str, str],
+    tuple[bool, tuple[tuple[str, tuple[int, int, int, int, int] | None], ...]],
+] = OrderedDict()
+
+
+def _cas_file_identity(store: Any, digest: str) -> tuple[int, int, int, int, int] | None:
+    try:
+        identity = store.file_identity(digest)
+    except ValueError:
+        return None
+    return cast(tuple[int, int, int, int, int] | None, identity)
 
 
 def _current_replay_available(
@@ -496,28 +658,59 @@ def _current_replay_available(
     capture_digest_value: str,
     *,
     readers: Mapping[str, ExternalSourceReaderProtocol],
-    fingerprint: str | None = None,
+    store: Any = None,
 ) -> bool:
     """Whether a Capture's evidence can still be replayed from retained material.
 
-    ``fingerprint`` is the writer-owned CAS availability signal the verdict memo
-    already keys on. Under an unchanged signal the answer is reused; external
-    readers are never memoized, since their availability is not in the signal.
+    The answer is a function of the CAS objects it consults (the Capture body
+    and, for CAS-backed sources, the source or commitment bytes) and of
+    immutable ledger objects. It is remembered per Capture with the file
+    identity of each consulted CAS object and reused only while every identity
+    is unchanged, so any write, removal or rewrite of those files is observed.
+    Answers that consulted an external reader are never remembered.
     """
 
     root = getattr(instance, "root", None)
-    key = (
-        None
-        if fingerprint is None or readers or not isinstance(root, Path)
-        else (str(root), capture_digest_value, fingerprint)
-    )
+    store = store if store is not None else instance.body_store()
+    key = None if readers or not isinstance(root, Path) else (str(root), capture_digest_value)
     if key is not None:
         remembered = memo_get(_AVAILABILITY_MEMO, key)
         if remembered is not None:
-            return remembered
-    available = _replay_available(instance, capture_digest_value, readers=readers)
-    if key is not None:
-        memo_put(_AVAILABILITY_MEMO, key, available, capacity=_AVAILABILITY_CAPACITY)
+            answer, consulted = remembered
+            if all(_cas_file_identity(store, digest) == seen for digest, seen in consulted):
+                return answer
+    first: list[str] = []
+    available = _replay_available(
+        instance, capture_digest_value, readers=readers, store=store, consulted=first
+    )
+    if key is None or "external" in first:
+        return available
+
+    def observe(
+        consulted: list[str],
+    ) -> tuple[tuple[str, tuple[int, int, int, int, int] | None], ...]:
+        return tuple(
+            (digest, _cas_file_identity(store, digest)) for digest in dict.fromkeys(consulted)
+        )
+
+    # An answer is remembered only with observations that bracket a derivation
+    # of it: identities read, the answer derived again, identities read again.
+    # Anything that moved in between shows as different identities (nothing is
+    # remembered) or is already reflected in the second answer, which is what
+    # this call returns either way.
+    before = observe(first)
+    second: list[str] = []
+    available = _replay_available(
+        instance, capture_digest_value, readers=readers, store=store, consulted=second
+    )
+    after = observe(second)
+    if second == first and after == before:
+        memo_put(
+            _AVAILABILITY_MEMO,
+            key,
+            (available, after),
+            capacity=_AVAILABILITY_CAPACITY,
+        )
     return available
 
 
@@ -526,8 +719,12 @@ def _replay_available(
     capture_digest_value: str,
     *,
     readers: Mapping[str, ExternalSourceReaderProtocol],
+    store: Any = None,
+    consulted: list[str] | None = None,
 ) -> bool:
-    store = instance.body_store()
+    store = store if store is not None else instance.body_store()
+    noted = consulted if consulted is not None else []
+    noted.append(capture_digest_value)
     if not store.verify(capture_digest_value):
         return False
     envelope = parse_capture_envelope(
@@ -537,7 +734,8 @@ def _replay_available(
         )
     )
     if isinstance(envelope.source, CasSourceReferenceV1):
-        return store.verify(envelope.source.content_digest)
+        noted.append(envelope.source.content_digest)
+        return bool(store.verify(envelope.source.content_digest))
     if isinstance(envelope.source, LedgerSourceReferenceV1):
         try:
             material = (
@@ -555,8 +753,11 @@ def _replay_available(
             material is not None
             and "sha256:" + hashlib.sha256(material).hexdigest() == envelope.commitment.digest
         )
+    noted.append(envelope.commitment.digest)
     if envelope.commitment.materialization == "cas" and store.verify(envelope.commitment.digest):
         return True
+    # An external reader decides the rest; its availability is not in the CAS.
+    noted.append("external")
     reader = readers.get(envelope.source.source_identity)
     return reader is not None and reader.replay_available(envelope.source)
 
@@ -863,6 +1064,7 @@ def service_evaluate_playbill_claim_verdict(
     tree = read_context.tree
     accepted = _accepted_claim_artifact(read_context.claim(claim_identity))
     history = read_context.history()
+    read_context.note_law(accepted.path)
     evidence = history.law_evidence.get(accepted.path)
     if evidence is None:
         raise ProposalIntegrityError("accepted Claim has no verdict law evidence")
@@ -881,18 +1083,26 @@ def service_evaluate_playbill_claim_verdict(
                     instance,
                     item.capture_digest,
                     readers=readers,
-                    fingerprint=read_context.availability_fingerprint() if batched else None,
+                    store=read_context.body_store() if batched else None,
                 )
             }
         )
         for item in evidence.verdict_captures
     )
+    for item in captures:
+        read_context.note_capture(item.capture_digest, item.current_replay_available)
     if evidence.verdict_result is not None:
         verify_claim_verdict_freshness(
             evidence.verdict_result,
             rule=rule,
             captures=evidence.verdict_captures,
         )
+    read_context.note_paths(
+        accepted.claim.statement.subject.artifact_path,
+        accepted.claim.statement.object.address.artifact_path
+        if isinstance(accepted.claim.statement.object, SubjectClaimObject)
+        else None,
+    )
     subject_content_digest, object_content_digest = _referent_digests(tree, accepted.claim)
     referent_current = (
         accepted.claim.backing.referent_context.subject_content_digest == subject_content_digest
