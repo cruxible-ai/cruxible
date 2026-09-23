@@ -52,6 +52,9 @@ def test_warm_list_is_source_free_and_fixed_inspect_reads_only_selected(tmp_path
                 timestamp=f"2026-08-11T12:30:{amount + number:02d}.000000Z",
             )
         service_list_playbill_proposals(instance)
+        # Submits schedule a background workspace advertisement that reads
+        # evidence; let it finish so only the list and inspect are measured.
+        instance.settled_workspace_advertisement()
         reads = []
         original = ProposalEvidenceStore.read_record_bytes
 
