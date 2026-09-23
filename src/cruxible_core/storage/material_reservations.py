@@ -234,12 +234,20 @@ def reserve_admission_material_body(
     )
     store = ProcedureMaterialReservationStore(bodies.reservation_root)
     with store.locked():
+        existing = store._path(reservation.reservation_id).exists()
         store.reserve_locked(reservation)
-        metadata = bodies.store(content)
-        if metadata.digest != reservation.body_digest:
-            raise ProcedureMaterialReservationError(
-                "CAS store did not reproduce its pending material reservation"
-            )
+        try:
+            metadata = bodies.store(content)
+            if metadata.digest != reservation.body_digest:
+                raise ProcedureMaterialReservationError(
+                    "CAS store did not reproduce its pending material reservation"
+                )
+        except Exception:
+            # A failed call cannot hand its new lease to the admission owner.
+            # Preserve an existing lease, and leave process-crash recovery unchanged.
+            if not existing:
+                store.release_locked(reservation.reservation_id)
+            raise
     return reservation
 
 

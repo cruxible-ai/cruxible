@@ -488,3 +488,27 @@ def test_exact_range_rejects_truncation_substitution_and_discontinuity(tmp_path)
     truncated["expected_head_digest"] = second.record_digest
     with pytest.raises(PlaybillJournalError, match="expected head"):
         backend.read_exact_range(type(journal_range).model_validate(truncated))
+
+
+def test_failed_admission_material_store_releases_new_lease(tmp_path, monkeypatch):
+    cas_root = tmp_path / "failed-store-cas"
+    cas_root.mkdir()
+    bodies = ContentAddressedBodyStore(cas_root)
+    store = ProcedureMaterialReservationStore(bodies.reservation_root)
+
+    def fail(_content):
+        assert tuple(bodies.reservation_root.glob("*.json"))
+        raise OSError("CAS write failed")
+
+    monkeypatch.setattr(bodies, "store", fail)
+    with pytest.raises(OSError, match="CAS write failed"):
+        reserve_admission_material_body(
+            bodies=bodies,
+            instance_id="instance-a",
+            run_id="failed-store",
+            admission_binding_digest=_digest("failed-store"),
+            input_name="capture",
+            plane="landed_capture",
+            content=b"{}",
+        )
+    assert store.active() == ()
