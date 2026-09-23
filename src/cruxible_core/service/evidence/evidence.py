@@ -242,7 +242,6 @@ class ClaimVerdictReadContext:
         default=None, init=False
     )
     _claim_types: dict[str, ClaimType] = dataclass_field(default_factory=dict, init=False)
-    _fingerprint: tuple[str | None] | None = dataclass_field(default=None, init=False)
     _attestation_versions: set[tuple[str, str]] = dataclass_field(default_factory=set, init=False)
     _recording: VerdictReads | None = dataclass_field(default=None, init=False)
     _store: Any = dataclass_field(default=None, init=False)
@@ -318,16 +317,6 @@ class ClaimVerdictReadContext:
             )
         assert self._history is not None
         return self._history
-
-    def availability_fingerprint(self) -> str | None:
-        """The CAS availability signal, observed once for this batch."""
-
-        if self._fingerprint is None:
-            from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
-
-            object.__setattr__(self, "_fingerprint", (verdict_input_fingerprint(self.instance),))
-        assert self._fingerprint is not None
-        return self._fingerprint[0]
 
     def claim_type(self, path: str) -> ClaimType:
         """The accepted ClaimType at ``path``, parsed once per batch."""
@@ -477,7 +466,7 @@ class ClaimVerdictReadContext:
                 for path, head in history.claim_law_heads(tuple(sorted(reads.law_paths))).items():
                     values[("law", path)] = head
         for digest in sorted(reads.captures):
-            values[("capture", digest)] = _replay_available(
+            values[("capture", digest)] = _current_replay_available(
                 self.instance, digest, readers={}, store=self.body_store()
             )
         values[("compiler",)] = self.coordinate.compiler.rule_digest
@@ -634,7 +623,20 @@ def _referent_digests(
 
 
 _AVAILABILITY_CAPACITY = 65536
-_AVAILABILITY_MEMO: OrderedDict[tuple[str, str, str], bool] = OrderedDict()
+# (instance root, capture digest) -> (answer, the CAS objects it consulted with
+# the file identity each had then, or None when absent).
+_AVAILABILITY_MEMO: OrderedDict[
+    tuple[str, str],
+    tuple[bool, tuple[tuple[str, tuple[int, int, int, int, int] | None], ...]],
+] = OrderedDict()
+
+
+def _cas_file_identity(store: Any, digest: str) -> tuple[int, int, int, int, int] | None:
+    try:
+        status = store._path(digest).lstat()
+    except (OSError, ValueError):
+        return None
+    return (status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
 
 
 def _current_replay_available(
@@ -642,29 +644,44 @@ def _current_replay_available(
     capture_digest_value: str,
     *,
     readers: Mapping[str, ExternalSourceReaderProtocol],
-    fingerprint: str | None = None,
     store: Any = None,
 ) -> bool:
     """Whether a Capture's evidence can still be replayed from retained material.
 
-    ``fingerprint`` is the writer-owned CAS availability signal the verdict memo
-    already keys on. Under an unchanged signal the answer is reused; external
-    readers are never memoized, since their availability is not in the signal.
+    The answer is a function of the CAS objects it consults (the Capture body
+    and, for CAS-backed sources, the source or commitment bytes) and of
+    immutable ledger objects. It is remembered per Capture with the file
+    identity of each consulted CAS object and reused only while every identity
+    is unchanged, so any write, removal or rewrite of those files is observed.
+    Answers that consulted an external reader are never remembered.
     """
 
     root = getattr(instance, "root", None)
-    key = (
-        None
-        if fingerprint is None or readers or not isinstance(root, Path)
-        else (str(root), capture_digest_value, fingerprint)
-    )
+    store = store if store is not None else instance.body_store()
+    key = None if readers or not isinstance(root, Path) else (str(root), capture_digest_value)
     if key is not None:
         remembered = memo_get(_AVAILABILITY_MEMO, key)
         if remembered is not None:
-            return remembered
-    available = _replay_available(instance, capture_digest_value, readers=readers, store=store)
-    if key is not None:
-        memo_put(_AVAILABILITY_MEMO, key, available, capacity=_AVAILABILITY_CAPACITY)
+            answer, consulted = remembered
+            if all(_cas_file_identity(store, digest) == seen for digest, seen in consulted):
+                return answer
+    consulted_digests: list[str] = []
+    available = _replay_available(
+        instance, capture_digest_value, readers=readers, store=store, consulted=consulted_digests
+    )
+    if key is not None and "external" not in consulted_digests:
+        memo_put(
+            _AVAILABILITY_MEMO,
+            key,
+            (
+                available,
+                tuple(
+                    (digest, _cas_file_identity(store, digest))
+                    for digest in dict.fromkeys(consulted_digests)
+                ),
+            ),
+            capacity=_AVAILABILITY_CAPACITY,
+        )
     return available
 
 
@@ -674,8 +691,11 @@ def _replay_available(
     *,
     readers: Mapping[str, ExternalSourceReaderProtocol],
     store: Any = None,
+    consulted: list[str] | None = None,
 ) -> bool:
     store = store if store is not None else instance.body_store()
+    noted = consulted if consulted is not None else []
+    noted.append(capture_digest_value)
     if not store.verify(capture_digest_value):
         return False
     envelope = parse_capture_envelope(
@@ -685,6 +705,7 @@ def _replay_available(
         )
     )
     if isinstance(envelope.source, CasSourceReferenceV1):
+        noted.append(envelope.source.content_digest)
         return bool(store.verify(envelope.source.content_digest))
     if isinstance(envelope.source, LedgerSourceReferenceV1):
         try:
@@ -703,8 +724,11 @@ def _replay_available(
             material is not None
             and "sha256:" + hashlib.sha256(material).hexdigest() == envelope.commitment.digest
         )
+    noted.append(envelope.commitment.digest)
     if envelope.commitment.materialization == "cas" and store.verify(envelope.commitment.digest):
         return True
+    # An external reader decides the rest; its availability is not in the CAS.
+    noted.append("external")
     reader = readers.get(envelope.source.source_identity)
     return reader is not None and reader.replay_available(envelope.source)
 
@@ -1032,7 +1056,6 @@ def service_evaluate_playbill_claim_verdict(
                     instance,
                     item.capture_digest,
                     readers=readers,
-                    fingerprint=read_context.availability_fingerprint() if batched else None,
                     store=read_context.body_store() if batched else None,
                 )
             }
