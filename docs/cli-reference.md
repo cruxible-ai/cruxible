@@ -988,6 +988,38 @@ Capture refuses `proposal_lowering_refused` naming the lowering diagnostic; a
 mandate that does not cover the request refuses `procedure_mandate_*` naming
 the failed law. None of these creates a proposal ref.
 
+A Line whose Procedure ends in a `settle_change_set` terminal lands the change
+without candidate approvals when, and only when, exactly one live settle
+ProcedureMandate for that Procedure covers every Claim the change touches: its
+namespace, its ClaimType scope and change kinds (`create`, `revise`,
+`retire`), and its Subject scope. No covering mandate refuses
+`settle_mandate_missing`; more than one refuses `settle_mandate_ambiguous`.
+The mandate's pinned condition query is then evaluated at the accepted parent
+for each changed Claim's target Subject; it must return exactly that Subject,
+with every required field present, unconflicted and untruncated. A false or
+incomplete condition follows the mandate's declared fallback: `propose`
+produces an ordinary proposal, reported with `settle_outcome: proposed` and a
+`fallback_reason`, while `refuse` refuses `settle_condition_refused` and
+creates no proposal ref. A holding condition publishes the change, reported
+with `settle_outcome: settled` and the `accepted_git_oid` it produced. The
+accepted record names the mandate digest, and replay re-derives the same
+authority from the parent state alone; the change carries no approvals.
+
+Settling needs the rung-3 authority tier: only an `ADMIN` caller can run a
+settle Line, whatever its mandate grants. A lower tier is capped at the rung
+its tier holds. A mandate that expired or was suspended before publication
+refuses `settle_publication_refused`, as does a delegated candidate that no
+longer reproduces under its mandate at publication.
+
+Known limitation: a settle run submits its delegated proposal against the
+accepted head and then activates it. If another generation is accepted between
+the two, activation refuses `settle_publication_refused`, and that proposal
+stays open but can never be activated, because its candidate no longer
+reproduces against the new head. Retrying the same operation recovers the
+same proposal and refuses the same way. Withdraw it with `playbill proposal
+withdraw`; the Line's next due occurrence settles against the current head
+under a new operation key.
+
 ## playbill predictions
 
 ~~~text
@@ -1003,8 +1035,9 @@ contract must be accepted before it can bind an investigation or settlement.
 
 `settle` names that contract by ID and exact accepted reference. It checks later
 accepted observation evidence against the contract's selector, mechanical rule,
-and bound window. Terminal-backed settlement additionally verifies retained,
-delivered mandate-settlement evidence from the same investigation. It records
+and bound window. Terminal-backed settlement additionally requires one delivered
+`settle_change_set` receipt from the same investigation whose outcome is
+`settled`; one that fell back to a proposal does not qualify. It records
 the activation and resolution in operational exhaust; it does not create or
 mutate Claims. A failed attempt or an unevaluable
 observation does not settle the hypothesis as false. Effectful terminal nodes
