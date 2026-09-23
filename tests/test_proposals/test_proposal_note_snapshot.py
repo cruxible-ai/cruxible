@@ -27,6 +27,8 @@ def test_selected_note_group_uses_one_snapshot_and_only_selected_sources(tmp_pat
     selected = _submit(instance, "selected")
     for number in range(4):
         _submit(instance, f"other-{number}", timestamp=f"2026-08-11T12:31:0{number}.000000Z")
+    # The advisory refresh the submissions queued reads the index too; let it finish.
+    instance.settled_workspace_advertisement()
     evidence = instance.proposal_evidence()
     index = evidence.index
     read = index.read

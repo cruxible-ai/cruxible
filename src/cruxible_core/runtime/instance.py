@@ -253,7 +253,7 @@ def _path_identity(path: Path) -> tuple[int, int, int, str]:
     """
 
     status = path.lstat()
-    return (status.st_dev, status.st_ino, status.st_mode, os.path.realpath(path))
+    return (status.st_dev, status.st_ino, status.st_mode, str(path.resolve(strict=True)))
 
 
 class PlaybillInstance:

@@ -78,6 +78,9 @@ def test_retirement_misses_old_bytes_and_rebuilds_lifecycle_revision_and_proofs(
         actor=AuthenticatedActor(actor_id="owner"),
     )
     _activate(instance, owner, result)
+    # Verified history is derived once per new generation (parsing its changed
+    # members); bring it current so only the projection parse is counted.
+    instance.coordinate_for_oid(instance.accepted_coordinate().git_oid)
     calls = []
     original = claims.parse_claim
 
