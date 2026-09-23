@@ -77,7 +77,7 @@ ordinary Python objects whose methods execute during authoring.
 | `source`, `AcquisitionResult` | Acquire an observation through a Source interface. | Source intrinsic and contract-derived result. |
 | `require` | Explicit refusal condition. | Source intrinsic over Guard semantics. |
 | `claim_candidate`, `ClaimCandidate` | Construct a governed Claim candidate without submitting it. | Source counterpart of the existing Claim authoring contract. |
-| `emit_capture`, `propose_change_set`, `halt` | Terminal return expressions. | Source syntax over existing terminal categories. |
+| `emit_capture`, `propose_change_set`, `settle_change_set`, `halt` | Terminal return expressions. | Source syntax over existing terminal categories. |
 | `invoke`, `InvocationOutcome[T]` | Invoke an exact accepted child Procedure. | Implemented sequential child execution. |
 | `parallel` | Concurrent independent branches with a join. | Reserved sketch; no final callable signature or default failure policy. |
 | `ProcedurePreview`, `CompositionDiagnostic`, `ProcedureCompositionError` | Existing inspection/error types extended with source information. | Shared public inspection/error types; extended with source information. |
@@ -468,7 +468,7 @@ use ordinary Python; only the retained literal definition is the Procedure.
 | `if`, `elif`, `else` | Conditional graph routing. Both arms are compiled/validated; only the selected arm executes its runtime operations. |
 | `require(...)` statement | Explicit Guard refusal; code/message required. |
 | `return value` | Successful pure completion under the output contract. |
-| `return emit_capture(...)` / `return propose_change_set(...)` | Governed terminal completion. |
+| `return emit_capture(...)` / `return propose_change_set(...)` / `return settle_change_set(...)` | Governed terminal completion. |
 | `return halt(...)` | Explicit halt without a successful output. |
 | Return inside a conditional arm | Supported by the proposal; surviving paths continue, terminated paths do not. |
 | Function docstring and comments | Retained for review; not executed. |
@@ -834,6 +834,7 @@ separate intrinsic for every changeset operation is not specified here.
 | `return value` | Success with the declared output value. | Pure completion; no artificial capture/proposal is needed. |
 | `return emit_capture(...)` | Successful capture terminal plus declared result. | Registers/retains evidence through existing authorized terminal machinery. |
 | `return propose_change_set(...)` | Proposal terminal plus declared result when submission succeeds. | Submits a governed proposal. Does not approve or accept it. |
+| `return settle_change_set(...)` | Settle terminal plus declared result when delivery succeeds. | Accepts the change under the one covering settle ProcedureMandate when its condition holds, or falls back as that mandate declares. |
 | `return halt(reason)` | Explicit halt without successful output. | Does not manufacture an output satisfying the declared success contract. |
 
 A terminal expression must be returned and must end that path. No later step on
@@ -844,8 +845,8 @@ there is no accidental Python `None` success.
 The chosen terminal capability and execution lane must permit every reachable
 terminal. Current direct Procedure runs do not supply the accepted Line lane's
 capture/proposal authority. Source syntax does not remove that restriction.
-`PostInbox` and `SettleChangeSet` have no source frontend specified here; their
-existence in other contracts is not a promise of SDK support.
+`PostInbox` has no source frontend specified here; its existence in other
+contracts is not a promise of SDK support.
 
 ### `emit_capture`
 
@@ -890,6 +891,26 @@ dispositions, or governance. The result describes the computation under its
 bindings; it does not assert that the proposal was accepted. Existing no-change
 and refusal outcomes must remain distinguishable in the terminal record rather
 than being disguised as acceptance.
+
+### `settle_change_set`
+
+```text
+settle_change_set(
+    *,
+    candidates: tuple[Value[ClaimCandidate], ...] | list[Value[ClaimCandidate]],
+    result: Value[O],
+) -> TerminalReturn[O]
+```
+
+The same arguments and candidate rules as `propose_change_set`; the Procedure's
+derived authority becomes `settle`. It names no mandate. On a Line, Core selects
+the one live settle ProcedureMandate covering every changed Claim, evaluates that
+mandate's pinned condition query for each target, and either accepts the change
+with no candidate approvals or follows the mandate's declared fallback (an
+ordinary proposal, or a refusal). The run's terminal egress reports
+`settle_outcome` as `settled` with the `accepted_git_oid`, or `proposed` with the
+`fallback_reason`. The Sequence step is `SettleChangeSet(name,
+candidate_templates=...)`.
 
 ### `halt`
 
@@ -1222,6 +1243,7 @@ from cruxible_client.authoring.source import (
     emit_capture,
     claim_candidate,
     propose_change_set,
+    settle_change_set,
     halt,
 )
 ```

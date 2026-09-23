@@ -316,7 +316,7 @@ class _Compiler:
         self.maps.append(SourceMapEntry(node_id=node_id, span=self.span(at)))
         self.tail = (
             []
-            if kind in {"return", "emit_capture", "propose_change_set", "halt"}
+            if kind in {"return", "emit_capture", "propose_change_set", "settle_change_set", "halt"}
             else [(node, "next")]
         )
         return node
@@ -1152,10 +1152,16 @@ class _Compiler:
             )
         )
 
-    def proposal_terminal(self, call: ast.Call, stmt: ast.Return) -> None:
+    def proposal_terminal(
+        self,
+        call: ast.Call,
+        stmt: ast.Return,
+        *,
+        kind: Literal["propose_change_set", "settle_change_set"] = "propose_change_set",
+    ) -> None:
         fields = {k.arg: k.value for k in call.keywords}
         if call.args or set(fields) != {"candidates", "result"}:
-            self.fail(call, "propose_change_set needs candidates and a typed result")
+            self.fail(call, f"{kind} needs candidates and a typed result")
         candidates = fields["candidates"]
         if not isinstance(candidates, ast.Tuple | ast.List) or not candidates.elts:
             self.fail(candidates, "Provide a nonempty list of typed Claim candidates")
@@ -1173,7 +1179,7 @@ class _Compiler:
                 "return_contract",
             )
         self.append(
-            "propose_change_set",
+            kind,
             stmt,
             candidate_templates=templates,
             claim_types=[
@@ -1384,6 +1390,7 @@ class _Compiler:
                         "emit_capture",
                         "claim_candidate",
                         "propose_change_set",
+                        "settle_change_set",
                     }
                     or stmt.targets[0].id in self.program.contracts
                 ):
@@ -1547,6 +1554,12 @@ class _Compiler:
                     and stmt.value.func.id == "propose_change_set"
                 ):
                     self.proposal_terminal(stmt.value, stmt)
+                elif (
+                    isinstance(stmt.value, ast.Call)
+                    and isinstance(stmt.value.func, ast.Name)
+                    and stmt.value.func.id == "settle_change_set"
+                ):
+                    self.proposal_terminal(stmt.value, stmt, kind="settle_change_set")
                 else:
                     value = self.value(stmt.value)
                     if (

@@ -202,6 +202,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     ManualTriggerPolicyV1,
     TriggerPolicyV2,
 )
+from cruxible_client.contracts.procedures.results import ProcedureTerminalEgressV1
 from cruxible_client.contracts.procedures.windows import (
     TriggerEventReferenceV1,
 )
@@ -2882,7 +2883,12 @@ class Playbill:
             # Effectful terminals are served on the Line lane: direct runs
             # refuse them at admission. The shared compiler enforces that each
             # terminal ends its path; the SDK must allow authoring that path.
-            allowed = allowed | {"source", "emit_capture", "propose_change_set"}
+            allowed = allowed | {
+                "source",
+                "emit_capture",
+                "propose_change_set",
+                "settle_change_set",
+            }
         if definition.definition.get("graph_format") == 5:
             allowed = allowed | {"call"}
         nodes = definition.definition.get("nodes")
@@ -2906,8 +2912,9 @@ class Playbill:
                 capability=f"procedure nodes {unsupported}",
                 repair=(
                     "Use only state_tap, transform, project, guard, repeat, and halt nodes "
-                    "on the served SDK lane, plus source, emit_capture, and propose_change_set "
-                    "on a graph-v4/v5 definition, and call on a graph-v5 definition."
+                    "on the served SDK lane, plus source, emit_capture, propose_change_set, "
+                    "and settle_change_set on a graph-v4/v5 definition, and call on a graph-v5 "
+                    "definition."
                 ),
             )
         return ProcedureDraft(
@@ -3825,6 +3832,16 @@ class ProcedureRun:
     @property
     def outcome(self) -> api.PlaybillProcedureRunState:
         return self._raw.model_copy(deep=True)
+
+    @property
+    def terminal_egress(self) -> tuple[ProcedureTerminalEgressV1, ...]:
+        """What each terminal did, with the authority it needed and the run held.
+
+        A settle terminal reports `settle_outcome`: `settled` with the
+        `accepted_git_oid`, or `proposed` with its `proposal_id` and
+        `fallback_reason`.
+        """
+        return tuple(item.model_copy(deep=True) for item in self._raw.terminal_egress)
 
     @property
     def receipt(self) -> str | None:

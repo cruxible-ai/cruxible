@@ -358,10 +358,10 @@ for constructors, a complete local example, and execution methods.
 
 | Surface | Supported behavior |
 |---|---|
-| Sequence / ProcedureInput authoring | StateTap, Source, graph-v5 Call, Transform, Project, Guard, EmitCapture, ProposeChangeSet, Halt; bounded Repeat through ProcedureInput. |
+| Sequence / ProcedureInput authoring | StateTap, Source, graph-v5 Call, Transform, Project, Guard, EmitCapture, ProposeChangeSet, SettleChangeSet, Halt; bounded Repeat through ProcedureInput. |
 | Direct Procedure run | State reads, acquisition, contracted Calls on graph v5, deterministic computation, routing, bounded Repeat, and Halt. |
-| Accepted Line occurrence | The same execution machinery plus authorized EmitCapture and ProposeChangeSet terminal paths. |
-| Not served by this SDK authoring surface | PostInbox and SettleChangeSet, despite their presence in graph contracts. |
+| Accepted Line occurrence | The same execution machinery plus authorized EmitCapture, ProposeChangeSet and SettleChangeSet terminal paths; SettleChangeSet needs one covering settle ProcedureMandate. |
+| Not served by this SDK authoring surface | PostInbox, despite its presence in graph contracts. |
 
 Terminals end their path and cannot have successors. Capture emission retains
 evidence; it does not assert or accept a Claim. Proposal emission submits through

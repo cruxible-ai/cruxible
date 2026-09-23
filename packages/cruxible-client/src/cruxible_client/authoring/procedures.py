@@ -218,6 +218,13 @@ class ProposeChangeSet(Step):
     candidate_templates: tuple[object, ...]
 
 
+@dataclass(frozen=True, kw_only=True)
+class SettleChangeSet(Step):
+    """Settle the candidate Claims under the one covering settle mandate, or fall back."""
+
+    candidate_templates: tuple[object, ...]
+
+
 @dataclass(frozen=True)
 class Halt(Step):
     reason: str | None = None
@@ -232,6 +239,7 @@ _KINDS = {
     Guard: "guard",
     EmitCapture: "emit_capture",
     ProposeChangeSet: "propose_change_set",
+    SettleChangeSet: "settle_change_set",
     Halt: "halt",
 }
 
@@ -274,9 +282,10 @@ class ProcedureBranchValue(BaseModel):
 
 class ProcedureReturnPath(BaseModel):
     node_id: str
-    kind: Literal["pure", "capture", "proposal", "halt"]
+    kind: Literal["pure", "capture", "proposal", "settlement", "halt"]
     contract: ArtifactPin | ProcedurePinSlotRefV1
-    required_terminal_rung: int
+    # The authority the path's terminal needs; a pure or halting path needs none.
+    required_authority: AuthorityVerb | None
 
 
 class ProcedureChildCall(BaseModel):
@@ -477,7 +486,7 @@ class Sequence:
                     interface_digest=binding.interface_digest,
                     implementation_digest=binding.implementation_digest,
                 )
-            if isinstance(step, (Guard, EmitCapture, ProposeChangeSet, Halt)):
+            if isinstance(step, (Guard, EmitCapture, ProposeChangeSet, SettleChangeSet, Halt)):
                 if step.next is not None:
                     error(
                         step.name,
@@ -644,6 +653,7 @@ __all__ = [
     "ProcedurePreview",
     "Project",
     "ProposeChangeSet",
+    "SettleChangeSet",
     "ProviderBinding",
     "Sequence",
     "Source",

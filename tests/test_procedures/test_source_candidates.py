@@ -336,3 +336,22 @@ def test_claim_selectors_refuse_unbounded_or_misleading_arguments(selector):
             budget=_budget(),
             hard_caps=_hard_caps(),
         )
+
+
+def test_settle_change_set_compiles_to_a_settle_terminal_that_derives_settle_authority():
+    program = source_program()
+    settling = program.model_copy(
+        update={"text": program.text.replace("propose_change_set(", "settle_change_set(")}
+    )
+    compiled = compile_source(
+        settling,
+        name="example",
+        input=INPUT,
+        output=OUTPUT,
+        budget=_budget(),
+        hard_caps=_hard_caps(),
+    )
+    terminal = compiled.definition.nodes[-1]
+    assert terminal.kind == "settle_change_set"
+    assert terminal.claim_types[0].target.qualified == "ClaimType:security.advisory.severity"
+    assert compiled.definition.terminal_capability == 3

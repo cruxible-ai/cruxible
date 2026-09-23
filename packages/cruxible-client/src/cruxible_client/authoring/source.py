@@ -191,15 +191,17 @@ class ProcedureBlueprint:
             InvokeNodeV6,
             SelectNodeV6,
             StateTapNodeV6,
+            required_authority,
         )
 
         definition = compiled.definition
         source = None if definition is None else definition.source
         edges = compiled.edges
-        terminal_kinds: dict[str, Literal["pure", "capture", "proposal", "halt"]] = {
+        terminal_kinds: dict[str, Literal["pure", "capture", "proposal", "settlement", "halt"]] = {
             "return": "pure",
             "emit_capture": "capture",
             "propose_change_set": "proposal",
+            "settle_change_set": "settlement",
             "halt": "halt",
         }
         return ProcedurePreview(
@@ -275,7 +277,11 @@ class ProcedureBlueprint:
                     node_id=n.node_id,
                     kind=terminal_kinds[n.kind],
                     contract=definition.contract_out,
-                    required_terminal_rung=TERMINAL_REQUIRED_RUNGS.get(n.kind, 0),
+                    required_authority=(
+                        required_authority(TERMINAL_REQUIRED_RUNGS[n.kind])
+                        if n.kind in TERMINAL_REQUIRED_RUNGS
+                        else None
+                    ),
                 )
                 for n in compiled.nodes
                 if n.kind in terminal_kinds
@@ -402,6 +408,7 @@ invoke = _intrinsic
 emit_capture = _intrinsic
 claim_candidate = _intrinsic
 propose_change_set = _intrinsic
+settle_change_set = _intrinsic
 halt = _intrinsic
 
 __all__ = [
@@ -415,5 +422,6 @@ __all__ = [
     "emit_capture",
     "claim_candidate",
     "propose_change_set",
+    "settle_change_set",
     "halt",
 ]

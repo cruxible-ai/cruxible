@@ -3187,6 +3187,7 @@ successor. Every consumed alias must exist on every path reaching its consumer.
 | Guard | Forward routing or refusal | on_false defaults to `$abort`; on_true defaults to continuation |
 | EmitCapture | Register output evidence, end path | Served through accepted Lines |
 | ProposeChangeSet | Submit governed candidate templates, end path | Served through Lines with mandate/authority; does not accept |
+| SettleChangeSet | Settle candidate templates under the one covering settle mandate, end path | Served through Lines; falls back as that mandate declares |
 | Halt | End path without successful return value | No successor |
 
 Contracts are accepted references or carried Contract definitions. Previous()
@@ -3205,8 +3206,8 @@ when diagnostics remain. Unbound providers are errors, not hidden defaults.
 | Direct graph v3 | StateTap, Transform, Project, Guard, Repeat, Halt |
 | Direct graph v4 | Those kinds plus explicitly bound Source |
 | Direct graph v5 | Those kinds plus Call |
-| Accepted Line | Adds authorized EmitCapture and ProposeChangeSet paths |
-| Not served by this SDK authoring API | PostInbox and SettleChangeSet |
+| Accepted Line | Adds authorized EmitCapture, ProposeChangeSet and SettleChangeSet paths |
+| Not served by this SDK authoring API | PostInbox |
 
 Bounded Repeat is available in shared ProcedureInput but has no Sequence step
 class. Current Sequence has no general value-merge, nested invoke, recursion,
@@ -3383,6 +3384,19 @@ Import: `cruxible_client.authoring.procedures.EmitCapture`. [Source](src/cruxibl
 ## `ProposeChangeSet`
 
 Import: `cruxible_client.authoring.procedures.ProposeChangeSet`. [Source](src/cruxible_client/authoring/procedures.py#L169)
+
+| Field | Type | Default / construction |
+|---|---|---|
+| `name` | `str` | `Required` |
+| `next` | `str \| None` | `None` |
+| `node_id` | `str \| None` | `dataclass_field(default=None, kw_only=True)` |
+| `candidate_templates` | `tuple[object, ...]` | `Required` |
+
+<a id="api-settlechangeset"></a>
+
+## `SettleChangeSet`
+
+Import: `cruxible_client.authoring.procedures.SettleChangeSet`. [Source](src/cruxible_client/authoring/procedures.py#L222)
 
 | Field | Type | Default / construction |
 |---|---|---|

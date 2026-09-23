@@ -1013,6 +1013,14 @@ mandate. A mandate that expired or was suspended before publication
 refuses `settle_publication_refused`, as does a delegated candidate that no
 longer reproduces under its mandate at publication.
 
+Each terminal is reported with the authority it needs (`required_authority`:
+`observe`, `propose` or `settle`) and the authority the run held
+(`effective_authority`, or `none`). A terminal the run's authority does not
+reach is reported `refused_effective_authority` with the `limiting_term` that
+capped it -- the Procedure's own terminals, the Line's `max_authority`,
+propagated sensitivity, the mandate grant, or calibration -- and the run
+refuses `terminal_authority_capped_by_<term>`.
+
 Known limitation: a settle run submits its delegated proposal against the
 accepted head and then activates it. If another generation is accepted between
 the two, activation refuses `settle_publication_refused`, and that proposal
