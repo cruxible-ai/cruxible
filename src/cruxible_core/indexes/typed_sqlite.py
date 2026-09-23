@@ -198,7 +198,8 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
     """Cold completeness proof for static owner selection; requires no live CAS.
 
     Covers all member commitments, every registered typed owner field, principal
-    rows and both pin kinds. Citation envelope availability is evaluated under
+    rows, both pin kinds, the reuse vocabulary index and the carried tree
+    inventory. Citation envelope availability is evaluated under
     its own live source rules, outside this proof.
     """
     from cruxible_core.compiler.compiler import (
@@ -241,6 +242,7 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
             "principals",
             "pins",
             "claim_type_names",
+            "vocabulary_terms",
             *(owner.table for owner in OWNER_CODECS),
         ):
             info = expected.execute(f"PRAGMA table_info({table})").fetchall()
@@ -255,6 +257,18 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
                 raise ProjectionIntegrityError(
                     f"typed projection {table} rows differ from accepted source"
                 )
+        # The carried reader-limit totals successors build on: every file of
+        # the accepted tree, cards included.
+        inventory = projection._connection.execute(
+            "SELECT file_count,byte_total FROM main.tree_inventory WHERE singleton=1"
+        ).fetchone()
+        if inventory is None or tuple(inventory) != (
+            len(sources),
+            sum(len(content) for content in sources.values()),
+        ):
+            raise ProjectionIntegrityError(
+                "typed projection tree_inventory rows differ from accepted source"
+            )
     finally:
         expected.close()
 

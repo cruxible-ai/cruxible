@@ -51,6 +51,8 @@ def _publication(tmp_path):
         "UPDATE subjects SET revision=100",
         "DELETE FROM subjects WHERE identity='Subject:test/dependent'",
         "UPDATE members SET byte_length=byte_length+1",
+        "DELETE FROM vocabulary_terms",
+        "UPDATE tree_inventory SET file_count=0, byte_total=0",
     ],
 )
 def test_self_consistent_forged_rows_and_manifest_refuse_source_authentication(tmp_path, mutation):
