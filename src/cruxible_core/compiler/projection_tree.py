@@ -192,17 +192,25 @@ def read_registered_delta(
     successor passes iff its changes do: per-entry gates here, the aggregate
     limits through the parent's carried (file count, byte total), and case-fold
     sibling collisions only at the levels where an added path introduces a name.
-    Returns the included blobs and the successor's inventory.
+    Every metadata gate -- paths, modes, per-file and aggregate sizes,
+    collisions -- runs before any payload is read. Returns the included blobs
+    and the successor's inventory.
     """
+    # Every gate that needs only metadata runs before any payload is read:
+    # sizes come from Git's object headers, never from loading the bytes.
     wanted = [change.oid for change in changes if change.oid is not None]
     wanted += [change.previous_oid for change in changes if change.previous_oid is not None]
-    contents = repository.read_blobs(tuple(dict.fromkeys(wanted)))
+    sizes: dict[str, int] = {}
+    for oid, info in repository.object_sizes(wanted).items():
+        if info is None or info[0] != "blob":
+            raise ProjectionFormatError(f"ledger tree names a missing or non-blob object: {oid}")
+        sizes[oid] = info[1]
     files, total = parent_inventory
     for change in changes:
         if change.previous_oid is not None:
             files -= 1
-            total -= len(contents[change.previous_oid])
-    blobs: list[GitTreeBlob] = []
+            total -= sizes[change.previous_oid]
+    admitted: list[GitTreeChange] = []
     for change in sorted(changes, key=lambda item: item.path.encode("utf-8")):
         if change.oid is None:
             continue
@@ -220,17 +228,13 @@ def read_registered_delta(
             raise ProjectionFormatError(
                 f"ledger tree contains forbidden {_forbidden_kind(change.mode)}: {path}"
             )
-        content = contents[change.oid]
-        if len(content) > limits.max_blob_bytes:
-            raise ProjectionFormatError(
-                f"ledger blob exceeds per-file byte limit: {path} ({len(content)})"
-            )
+        size = sizes[change.oid]
+        if size > limits.max_blob_bytes:
+            raise ProjectionFormatError(f"ledger blob exceeds per-file byte limit: {path} ({size})")
         files += 1
-        total += len(content)
+        total += size
         if path in include_paths:
-            if content.startswith(_LFS_POINTER_PREFIX):
-                raise ProjectionFormatError(f"Git LFS pointer is not an artifact payload: {path}")
-            blobs.append(GitTreeBlob(path=path, oid=change.oid, content=content))
+            admitted.append(change)
     if files < 0 or total < 0:
         raise ProjectionFormatError("ledger tree delta removes more than its parent held")
     if files > limits.max_files:
@@ -255,6 +259,19 @@ def read_registered_delta(
                     raise ProjectionFormatError(
                         "ledger tree paths are not canonical and collision-free"
                     )
+    admitted_oids = {change.path: change.oid for change in admitted if change.oid is not None}
+    contents = repository.read_blobs(tuple(dict.fromkeys(admitted_oids.values())))
+    blobs: list[GitTreeBlob] = []
+    for change in admitted:
+        oid = admitted_oids[change.path]
+        content = contents[oid]
+        if len(content) != sizes[oid]:
+            raise ProjectionFormatError(f"ledger blob size changed while reading: {change.path}")
+        if content.startswith(_LFS_POINTER_PREFIX):
+            raise ProjectionFormatError(
+                f"Git LFS pointer is not an artifact payload: {change.path}"
+            )
+        blobs.append(GitTreeBlob(path=change.path, oid=oid, content=content))
     return tuple(blobs), (files, total)
 
 

@@ -34,9 +34,14 @@ class _Repository:
     def __init__(self, base: tuple[str, ...], head: tuple[str, ...], blobs: dict[str, bytes]):
         self._trees = {"base": _listing(*base), "head": _listing(*head)}
         self._blobs = blobs
+        self.read: list[str] = []
 
     def read_blobs(self, oids):
+        self.read.extend(oids)
         return {oid: self._blobs[oid] for oid in oids}
+
+    def object_sizes(self, oids):
+        return {oid: ("blob", len(self._blobs[oid])) for oid in oids}
 
     def tree_has_path(self, oid, path):
         return _listing_has_path(self._trees[oid], path)
@@ -138,3 +143,54 @@ def test_forbidden_modes_and_case_fold_siblings_are_refused() -> None:
                 artifact_kinds=KINDS,
                 include_paths=frozenset(),
             )
+
+
+def test_a_file_child_never_hides_a_later_sibling_directory() -> None:
+    # "A.MD" is a file; "A.MD-" is a directory sorting after it. Skipping from
+    # the file as if it were a directory would miss "A.MD-" entirely.
+    listing = _listing("cards/A.MD", "cards/A.MD-/x.md", "cards/a.md-/y.md")
+    assert _listing_child_names(listing, "cards") == ("A.MD", "A.MD-", "a.md-")
+    content = b"{}"
+    repository = _Repository(
+        ("cards/A.MD", "cards/A.MD-/x.md"),
+        ("cards/A.MD", "cards/A.MD-/x.md", "cards/a.md-/y.md"),
+        {_oid(content): content},
+    )
+    with pytest.raises(ProjectionFormatError, match="collision-free"):
+        read_registered_delta(
+            repository,
+            (_change("cards/a.md-/y.md", content),),
+            base_oid="base",
+            head_oid="head",
+            parent_inventory=(2, 4),
+            limits=TreeReadLimits(),
+            artifact_kinds=KINDS,
+            include_paths=frozenset(),
+        )
+    # The whole-inventory reader refuses the same tree.
+    from cruxible_client.contracts.canonical import normalize_manifest_paths
+
+    with pytest.raises(Exception, match="case-fold"):
+        normalize_manifest_paths(["cards/A.MD", "cards/A.MD-/x.md", "cards/a.md-/y.md"])
+
+
+def test_rejected_deltas_never_read_a_payload() -> None:
+    big, small = b"x" * 64, b"{}"
+    repository = _Repository((), (), {_oid(big): big, _oid(small): small})
+    for changes, limits, message in (
+        ((_change("cards/big.json", big),), TreeReadLimits(max_blob_bytes=10), "per-file"),
+        ((_change("cards/a.json", small),), TreeReadLimits(max_total_bytes=1), "total-byte"),
+        ((_change("cards/a.json", small, mode="120000"),), TreeReadLimits(), "symlink"),
+    ):
+        with pytest.raises(ProjectionFormatError, match=message):
+            read_registered_delta(
+                repository,
+                changes,
+                base_oid="base",
+                head_oid="head",
+                parent_inventory=(0, 0),
+                limits=limits,
+                artifact_kinds=KINDS,
+                include_paths=frozenset({"cards/big.json", "cards/a.json"}),
+            )
+    assert repository.read == []
