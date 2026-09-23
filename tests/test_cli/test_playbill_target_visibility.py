@@ -766,11 +766,11 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
                 ],
             )
 
-        def list_playbill_subjects(
+        def list_playbill_subject_index(
             self, instance_id: str, **_values: object
-        ) -> contracts.PlaybillSubjectList:
+        ) -> contracts.PlaybillSubjectIndex:
             assert instance_id == "inst_read"
-            return contracts.PlaybillSubjectList(coordinate=coordinate, subjects=[])
+            return contracts.PlaybillSubjectIndex(coordinate=coordinate, subjects=[])
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = CliRunner().invoke(

@@ -1344,6 +1344,8 @@ def test_completed_proposal_retry_survives_closed_ref_cleanup_and_restart(
             reason="closed before egress acknowledgement",
             withdrawn_at="2026-09-16T12:00:00Z",
         )
+    # Closed author refs are released by the advisory refresh after the write.
+    instance.settled_workspace_advertisement()
     assert instance.proposal_ref_target(target) is None
     instance._ledger._git(["reflog", "expire", "--expire=now", "--all"])
     instance._ledger._git(["gc", "--prune=now"])
