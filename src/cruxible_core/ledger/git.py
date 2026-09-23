@@ -12,6 +12,7 @@ import signal
 import subprocess
 import tempfile
 import threading
+import zlib
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -109,17 +110,6 @@ class GitTreeChange:
 # One `ls-tree` invocation carries a bounded pathspec so a large request
 # cannot overrun the system argument limit.
 _PATHSPEC_BATCH = 256
-
-# Bound temporary material per Git invocation. A single already-admissible blob
-# larger than the byte target travels alone rather than gaining a new size gate.
-_BLOB_WRITE_BATCH_OBJECTS = 256
-_BLOB_WRITE_BATCH_BYTES = 32 * 1024 * 1024
-
-
-def _quoted_stdin_path(path: Path) -> bytes:
-    """Git's C-quoted path form, independent of TMPDIR's filesystem spelling."""
-
-    return b'"' + b"".join(f"\\{byte:03o}".encode("ascii") for byte in os.fsencode(path)) + b'"'
 
 
 def _validate_commit_message(message: str) -> None:
@@ -322,33 +312,140 @@ class GitLedger:
             return hashlib.sha1(header + content).hexdigest()  # noqa: S324
         return hashlib.sha256(header + content).hexdigest()
 
-    def _absent_objects(self, oids: Sequence[str]) -> set[str]:
-        """Report which of these exact object IDs the repository does not hold."""
+    def _object_oid(self, kind: str, body: bytes) -> str:
+        header = f"{kind} {len(body)}".encode("ascii") + b"\x00"
+        if self.object_format() == "sha1":
+            return hashlib.sha1(header + body).hexdigest()  # noqa: S324 - Git identity
+        return hashlib.sha256(header + body).hexdigest()
 
-        ordered = tuple(dict.fromkeys(oids))
-        if not ordered:
-            return set()
-        output = self._git(
-            ["cat-file", "--batch-check"],
-            input_bytes=("\n".join(ordered) + "\n").encode("ascii"),
-        )
-        absent: set[str] = set()
-        try:
-            rows = output.decode("ascii").splitlines()
-        except UnicodeDecodeError as exc:
-            raise PlaybillGitError("Git object existence output is malformed") from exc
-        if len(rows) != len(ordered):
-            raise PlaybillGitError("Git object existence output does not match its request")
-        for expected_oid, row in zip(ordered, rows, strict=True):
-            fields = row.split()
-            if not fields or fields[0] != expected_oid:
-                raise PlaybillGitError("Git object existence output does not match its request")
-            if len(fields) == 2 and fields[1] == "missing":
-                absent.add(expected_oid)
+    def _store_loose_objects(self, objects: Mapping[str, tuple[str, bytes]]) -> None:
+        """Write objects exactly as Git writes a loose object, without a Git process.
+
+        Each object is the zlib stream of ``<type> <size>\\0<body>`` at
+        ``objects/<2 hex>/<rest>``: written to a temporary file in that
+        directory, fsynced, then hard-linked into place, which is Git's own
+        create-only publication (an existing object is left untouched). The
+        directory is fsynced too, so the durability matches ``core.fsync``
+        covering loose objects. Git reads these like any object it wrote.
+        """
+
+        root = self.path / "objects"
+        touched: set[Path] = set()
+        for oid, (kind, body) in objects.items():
+            if self._object_oid(kind, body) != oid:
+                raise PlaybillGitError("object bytes differ from their content address")
+            directory = root / oid[:2]
+            final = directory / oid[2:]
+            if final.exists():
                 continue
-            if len(fields) != 3 or fields[1] != "blob":
-                raise PlaybillGitError(f"ledger object is not a blob: {expected_oid}")
-        return absent
+            directory.mkdir(mode=0o755, exist_ok=True)
+            header = f"{kind} {len(body)}".encode("ascii") + b"\x00"
+            descriptor, temporary = tempfile.mkstemp(prefix="tmp_obj_", dir=directory)
+            try:
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(zlib.compress(header + body))
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.chmod(temporary, 0o444)
+                try:
+                    os.link(temporary, final)
+                except FileExistsError:
+                    pass
+            finally:
+                os.unlink(temporary)
+            touched.add(directory)
+        for directory in touched:
+            _fsync_directory(directory)
+
+    def _tree_entries_of(self, tree_oid: str) -> dict[str, tuple[bytes, str]]:
+        found = _batch_reader(self.path).objects((tree_oid,))[tree_oid]
+        if found is None or found[0] != "tree":
+            raise PlaybillGitError(f"ledger tree object is unavailable: {tree_oid}")
+        raw_length = 20 if self.object_format() == "sha1" else 32
+        entries = _tree_entries(found[1], raw_length=raw_length)
+        if entries is None:
+            raise PlaybillGitError(f"ledger tree object is malformed: {tree_oid}")
+        return entries
+
+    def _apply_to_tree(
+        self,
+        tree_oid: str | None,
+        changes: Mapping[str, str | None],
+        written: dict[str, tuple[str, bytes]],
+    ) -> str | None:
+        """The tree ``tree_oid`` with ``changes`` applied: blob ID, or None to remove.
+
+        Only the directories on a changed path are read and rewritten; every
+        other subtree keeps its object ID. Entries sort as Git sorts them (a
+        directory compares as its name plus ``/``), modes are Git's ``100644``
+        and ``40000``, and a directory left empty disappears, as ``write-tree``
+        omits it. Returns None for an empty tree.
+        """
+
+        entries = {} if tree_oid is None else self._tree_entries_of(tree_oid)
+        files: dict[str, str | None] = {}
+        subtrees: dict[str, dict[str, str | None]] = {}
+        for path, oid in changes.items():
+            head, separator, rest = path.partition("/")
+            if separator:
+                subtrees.setdefault(head, {})[rest] = oid
+            else:
+                files[head] = oid
+        for name, oid in files.items():
+            current = entries.get(name)
+            if current is not None and current[0] == b"40000":
+                raise PlaybillGitError(f"ledger path is both a file and a directory: {name}")
+            if oid is None:
+                entries.pop(name, None)
+            else:
+                entries[name] = (b"100644", oid)
+        for name, nested in subtrees.items():
+            current = entries.get(name)
+            if current is not None and current[0] != b"40000":
+                raise PlaybillGitError(f"ledger path is both a file and a directory: {name}")
+            child = self._apply_to_tree(None if current is None else current[1], nested, written)
+            if child is None:
+                entries.pop(name, None)
+            else:
+                entries[name] = (b"40000", child)
+        if not entries:
+            return None
+        body = b"".join(
+            mode
+            + b" "
+            + name.encode("utf-8", errors="surrogateescape")
+            + b"\x00"
+            + bytes.fromhex(oid)
+            for name, (mode, oid) in sorted(
+                entries.items(),
+                key=lambda item: (
+                    item[0].encode("utf-8", errors="surrogateescape")
+                    + (b"/" if item[1][0] == b"40000" else b"")
+                ),
+            )
+        )
+        oid = self._object_oid("tree", body)
+        written[oid] = ("tree", body)
+        return oid
+
+    def _commit_changes_to_tree(
+        self,
+        base_tree: str | None,
+        changes: Mapping[str, str | None],
+        blobs: Mapping[str, bytes],
+    ) -> str:
+        """Store new blobs and the rewritten trees; return the new root tree ID."""
+
+        written: dict[str, tuple[str, bytes]] = {
+            oid: ("blob", content) for oid, content in blobs.items()
+        }
+        root = self._apply_to_tree(base_tree, changes, written)
+        if root is None:
+            body = b""
+            root = self._object_oid("tree", body)
+            written[root] = ("tree", body)
+        self._store_loose_objects(written)
+        return root
 
     def _write_tree(
         self,
@@ -366,9 +463,8 @@ class GitLedger:
         Successive accepted trees differ in a handful of members, so hashing and
         re-storing every member would make each write cost O(members) Git
         processes for bytes the repository already holds. Blob addresses are
-        computed in process, one batched existence check names the members Git
-        is actually missing, bounded Git writes store those blobs, and one
-        batched index update builds the tree. The
+        computed in process; only changed members' blobs and the directories on
+        their paths are written, as loose objects, with no Git process. The
         resulting tree object ID is byte-for-byte the one a member-by-member
         write produces.
         """
@@ -392,20 +488,9 @@ class GitLedger:
                 if entry.object_type == "blob"
             }
             held = frozenset(entry.oid for entry in parent_entries.values())
-        absent = self._absent_objects(tuple(oid for oid in oids.values() if oid not in held))
-        missing: dict[str, bytes] = {}
-        for path in ordered:
-            blob_oid = oids[path]
-            if blob_oid not in absent:
-                continue
-            if blob_oid in missing and missing[blob_oid] != contents[path]:
-                raise PlaybillGitError("different blob bytes share a computed content address")
-            missing[blob_oid] = contents[path]
-        self._write_missing_blobs(missing)
-
-        # Starting from the parent's own tree keeps Git's cache of every subtree
-        # this write leaves alone, so only changed paths and their parents are
-        # rehashed. The result is the same tree object a from-empty write makes.
+        # Starting from the parent's own tree keeps every subtree this write
+        # leaves alone, so only changed paths and their parent directories are
+        # rewritten. The result is the same tree object a from-empty write makes.
         start = None if accepted_parent is None else self._commit_tree(accepted_parent)
         staged = (
             ordered
@@ -419,27 +504,19 @@ class GitLedger:
             ]
         )
         removed = [] if start is None else [path for path in parent_entries if path not in contents]
-        zero = "0" * (40 if self.object_format() == "sha1" else 64)
-        index_info = b"".join(
-            b"100644 " + oids[path].encode("ascii") + b"\t" + path.encode("utf-8") + b"\x00"
-            for path in staged
-        ) + b"".join(
-            b"0 " + zero.encode("ascii") + b"\t" + path.encode("utf-8") + b"\x00"
-            for path in removed
+        blobs: dict[str, bytes] = {}
+        for path in staged:
+            blob_oid = oids[path]
+            if blob_oid in held:
+                continue
+            if blob_oid in blobs and blobs[blob_oid] != contents[path]:
+                raise PlaybillGitError("different blob bytes share a computed content address")
+            blobs[blob_oid] = contents[path]
+        oid = self._commit_changes_to_tree(
+            start,
+            {**{path: oids[path] for path in staged}, **{path: None for path in removed}},
+            blobs,
         )
-        with tempfile.TemporaryDirectory(prefix="playbill-tree-index-") as temporary:
-            environment = {"GIT_INDEX_FILE": str(Path(temporary) / "index")}
-            self._git(
-                ["read-tree", "--empty"] if start is None else ["read-tree", start],
-                environment=environment,
-            )
-            if index_info:
-                self._git(
-                    ["update-index", "-z", "--index-info"],
-                    input_bytes=index_info,
-                    environment=environment,
-                )
-            oid = self._git(["write-tree"], environment=environment).decode().strip()
         self._validate_oid(oid)
         # This process just wrote every entry of this tree: record its listing so
         # the readers that follow (projection assembly) need not re-list it.
@@ -459,9 +536,9 @@ class GitLedger:
     def _extend_tree(self, base_tree: str, tree: Mapping[str, bytes]) -> str:
         """Write ``tree`` as ``base_tree`` plus the members ``base_tree`` lacks.
 
-        Loading the stored tree into the index keeps Git's cache of its unchanged
-        subtrees, so only the added paths and their parent trees are hashed and
-        written, instead of every member of the whole tree.
+        Only the added paths' blobs and their parent directories are written;
+        every untouched subtree keeps its object ID, so the cost follows the
+        added members rather than the size of the whole tree.
         """
 
         self._validate_oid(base_tree)
@@ -474,30 +551,13 @@ class GitLedger:
         if set(ordered_added) != set(added):
             raise PlaybillGitError("extended tree adds a path that is not normalized")
         oids = {path: self._blob_oid(tree[path]) for path in ordered_added}
-        absent = self._absent_objects(tuple(oids.values()))
-        missing: dict[str, bytes] = {}
+        blobs: dict[str, bytes] = {}
         for path in ordered_added:
             blob_oid = oids[path]
-            if blob_oid not in absent:
-                continue
-            if blob_oid in missing and missing[blob_oid] != tree[path]:
+            if blob_oid in blobs and blobs[blob_oid] != tree[path]:
                 raise PlaybillGitError("different blob bytes share a computed content address")
-            missing[blob_oid] = tree[path]
-        self._write_missing_blobs(missing)
-        index_info = b"".join(
-            b"100644 " + oids[path].encode("ascii") + b"\t" + path.encode("utf-8") + b"\x00"
-            for path in ordered_added
-        )
-        with tempfile.TemporaryDirectory(prefix="playbill-tree-index-") as temporary:
-            environment = {"GIT_INDEX_FILE": str(Path(temporary) / "index")}
-            self._git(["read-tree", base_tree], environment=environment)
-            if index_info:
-                self._git(
-                    ["update-index", "-z", "--index-info"],
-                    input_bytes=index_info,
-                    environment=environment,
-                )
-            oid = self._git(["write-tree"], environment=environment).decode().strip()
+            blobs[blob_oid] = tree[path]
+        oid = self._commit_changes_to_tree(base_tree, dict(oids), blobs)
         self._validate_oid(oid)
         entries = {entry.path: entry for entry in base}
         for path in ordered_added:
@@ -511,54 +571,6 @@ class GitLedger:
         listing = tuple(entries[path] for path in normalize_manifest_paths(list(entries)))
         _remember_listing(_repository_key(self.path), oid, listing)
         return oid
-
-    def _write_missing_blobs(self, missing: Mapping[str, bytes]) -> None:
-        """Have system Git write unique blobs in bounded, exact-byte batches."""
-
-        batch: list[tuple[str, bytes]] = []
-        size = 0
-        for oid, content in missing.items():
-            if batch and (
-                len(batch) >= _BLOB_WRITE_BATCH_OBJECTS
-                or size + len(content) > _BLOB_WRITE_BATCH_BYTES
-            ):
-                self._write_blob_batch(batch)
-                batch = []
-                size = 0
-            batch.append((oid, content))
-            size += len(content)
-        if batch:
-            self._write_blob_batch(batch)
-
-    def _write_blob_batch(self, batch: Sequence[tuple[str, bytes]]) -> None:
-        # Filenames are private ordinal names, never authored ledger paths.
-        # --no-filters matches the former --stdin behavior even if this repository
-        # or a temporary parent directory contains Git attribute rules.
-        try:
-            with tempfile.TemporaryDirectory(prefix="playbill-tree-blobs-") as temporary:
-                paths: list[bytes] = []
-                for index, (_oid, content) in enumerate(batch):
-                    path = Path(temporary) / f"{index:04x}"
-                    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                    with os.fdopen(fd, "wb") as stream:
-                        stream.write(content)
-                    paths.append(_quoted_stdin_path(path))
-                output = self._git(
-                    ["hash-object", "-w", "--stdin-paths", "--no-filters"],
-                    input_bytes=b"\n".join(paths) + b"\n",
-                )
-        except OSError as exc:
-            raise PlaybillGitError("temporary Git blob batch could not be written") from exc
-        try:
-            written = output.decode("ascii").splitlines()
-        except UnicodeDecodeError as exc:
-            raise PlaybillGitError("Git blob write output is malformed") from exc
-        if len(written) != len(batch):
-            raise PlaybillGitError("Git blob write output does not match its request")
-        for actual_oid, (expected_oid, _content) in zip(written, batch, strict=True):
-            self._validate_oid(actual_oid)
-            if actual_oid != expected_oid:
-                raise PlaybillGitError("stored blob differs from its computed content address")
 
     def create_proposal_commit(
         self,
@@ -2266,6 +2278,14 @@ def _tree_entries(body: bytes, *, raw_length: int) -> dict[str, tuple[bytes, str
         entries[name] = (mode, body[end + 1 : end + 1 + raw_length].hex())
         position = end + 1 + raw_length
     return entries
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 _CONFIG_READS_CAPACITY = 64
