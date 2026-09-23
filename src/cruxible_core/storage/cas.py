@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import stat
 import threading
+import weakref
 from collections import OrderedDict
 from pathlib import Path
 
@@ -17,15 +18,6 @@ from cruxible_client.contracts.cas_contracts import (
 )
 from cruxible_client.contracts.errors import PlaybillCasError
 
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
 # Objects already hashed against their address, with the file identity observed
 # when they were: (device, inode, size, mtime, ctime). Bytes are reused without
 # re-hashing only when one open descriptor shows that same identity before and
@@ -33,9 +25,6 @@ def _fsync_directory(path: Path) -> None:
 _VERIFIED_CAPACITY = 65536
 _VERIFIED: OrderedDict[tuple[str, str], tuple[int, int, int, int, int]] = OrderedDict()
 _VERIFIED_LOCK = threading.Lock()
-# Validated shard directories and their lstat identity (device, inode, mode).
-_VALID_SHARD_CAPACITY = 4096
-_VALID_SHARDS: OrderedDict[tuple[str, str], tuple[int, int, int]] = OrderedDict()
 
 
 def _after_fork_in_child() -> None:
@@ -58,11 +47,13 @@ def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
     )
 
 
-def _read_descriptor(path: Path) -> tuple[os.stat_result, bytes, os.stat_result] | None:
+def _read_descriptor(
+    name: str, *, dir_fd: int
+) -> tuple[os.stat_result, bytes, os.stat_result] | None:
     """Read one regular file through a single descriptor, with its identity around the read."""
 
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
     except OSError:
         return None
     try:
@@ -81,7 +72,14 @@ def _read_descriptor(path: Path) -> tuple[os.stat_result, bytes, os.stat_result]
 
 
 class ContentAddressedBodyStore:
-    """Managed SHA-256 body store; storing bytes grants no canonical authority."""
+    """Managed SHA-256 body store; storing bytes grants no canonical authority.
+
+    The algorithm directory is validated once and then held open. Every shard
+    and object is reached relative to that descriptor, never refusing to follow
+    a symlink, so no later change to the directory's ancestors -- a directory
+    moved away and replaced by a symlink -- can redirect a read or a write: the
+    store keeps addressing exactly the directory it validated.
+    """
 
     def __init__(self, root: Path, *, reservation_root: Path | None = None) -> None:
         if root.is_symlink() or not root.is_dir():
@@ -98,100 +96,113 @@ class ContentAddressedBodyStore:
             raise PlaybillCasError("CAS algorithm directory is not trustworthy")
         os.chmod(algorithm, 0o700)
         self._algorithm_root = algorithm.resolve(strict=True)
-        root_identity = self._algorithm_root.lstat()
-        self._algorithm_identity = (
-            root_identity.st_dev,
-            root_identity.st_ino,
-            root_identity.st_mode,
-        )
+        descriptor = os.open(self._algorithm_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        opened, named = os.fstat(descriptor), self._algorithm_root.lstat()
+        if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+            os.close(descriptor)
+            raise PlaybillCasError("CAS algorithm directory changed while it was opened")
+        self._root_fd = descriptor
+        weakref.finalize(self, os.close, descriptor)
 
     @staticmethod
     def digest_bytes(content: bytes) -> CasDigest:
         return digest_bytes(content)
 
-    def _path(self, digest: str) -> Path:
-        value = CasDigest.from_tagged(digest)
-        directory = self._algorithm_root / value.value[:2]
-        if directory.exists() or directory.is_symlink():
-            self._validate_shard(directory)
-        return directory / value.value
+    @staticmethod
+    def _names(digest: str) -> tuple[str, str]:
+        value = CasDigest.from_tagged(digest).value
+        return value[:2], value
 
-    def _validate_shard(self, directory: Path) -> None:
-        # A shard validated before is trusted only while its lstat identity
-        # (device, inode, mode) and the algorithm root's are both unchanged: a
-        # swapped-in symlink or directory at either level differs. Ancestors
-        # above the algorithm root are the instance's storage-path binding,
-        # checked where the store is obtained.
+    def _path(self, digest: str) -> Path:
+        """Where an object is named on disk, for diagnostics; access never uses it."""
+
+        shard, name = self._names(digest)
+        return self._algorithm_root / shard / name
+
+    def _shard(self, shard: str, *, create: bool = False) -> int | None:
+        """Open one shard directory relative to the held algorithm directory."""
+
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
         try:
-            identity = directory.lstat()
-            root = self._algorithm_root.lstat()
-        except OSError:
-            identity = None
-        key = (str(self._algorithm_root), directory.name)
-        signature = (
-            None if identity is None else (identity.st_dev, identity.st_ino, identity.st_mode)
-        )
-        with _VERIFIED_LOCK:
-            known = _VALID_SHARDS.get(key)
-        if (
-            identity is not None
-            and known == signature
-            and stat.S_ISDIR(identity.st_mode)
-            and (root.st_dev, root.st_ino, root.st_mode) == self._algorithm_identity
-        ):
-            return
-        if directory.is_symlink() or not directory.is_dir():
-            raise PlaybillCasError("CAS shard directory is not trustworthy")
-        try:
-            resolved = directory.resolve(strict=True)
+            return os.open(shard, flags, dir_fd=self._root_fd)
+        except FileNotFoundError:
+            if not create:
+                return None
         except OSError as exc:
-            raise PlaybillCasError("CAS shard directory cannot be resolved") from exc
-        if resolved.parent != self._algorithm_root or resolved.name != directory.name:
-            raise PlaybillCasError("CAS shard directory escapes the managed CAS root")
-        if signature is not None:
-            with _VERIFIED_LOCK:
-                _VALID_SHARDS[key] = signature
-                _VALID_SHARDS.move_to_end(key)
-                while len(_VALID_SHARDS) > _VALID_SHARD_CAPACITY:
-                    _VALID_SHARDS.popitem(last=False)
+            raise PlaybillCasError("CAS shard directory is not trustworthy") from exc
+        try:
+            os.mkdir(shard, 0o700, dir_fd=self._root_fd)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            raise PlaybillCasError("CAS shard directory could not be created") from exc
+        try:
+            descriptor = os.open(shard, flags, dir_fd=self._root_fd)
+        except OSError as exc:
+            raise PlaybillCasError("CAS shard directory is not trustworthy") from exc
+        os.fsync(self._root_fd)
+        return descriptor
+
+    def _object_status(self, digest: str) -> os.stat_result | None:
+        shard, name = self._names(digest)
+        descriptor = self._shard(shard)
+        if descriptor is None:
+            return None
+        try:
+            return os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        finally:
+            os.close(descriptor)
+
+    def file_identity(self, digest: str) -> tuple[int, int, int, int, int] | None:
+        """The stored object's file identity, or None when it is absent."""
+
+        status = self._object_status(digest)
+        return None if status is None else _file_identity(status)
 
     def store(self, content: bytes) -> CasObjectMetadata:
         """Durably store inert bytes, idempotently, under their exact digest."""
 
         digest = self.digest_bytes(content)
-        path = self._path(digest.tagged)
-        directory = path.parent
-        directory.mkdir(mode=0o700, exist_ok=True)
-        if directory.is_symlink() or not directory.is_dir():
-            raise PlaybillCasError("CAS shard directory is not trustworthy")
-        os.chmod(directory, 0o700)
-        if path.exists() or path.is_symlink():
-            self._verified_bytes(path, digest.tagged)
-            return CasObjectMetadata(
-                digest=digest.tagged,
-                present=True,
-                byte_length=len(content),
-                redacted=False,
-            )
-        descriptor: int | None = None
+        shard, name = self._names(digest.tagged)
+        directory = self._shard(shard, create=True)
+        assert directory is not None
         try:
-            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            view = memoryview(content)
-            while view:
-                written = os.write(descriptor, view)
-                if written <= 0:  # pragma: no cover - defensive OS contract
-                    raise PlaybillCasError("CAS write made no progress")
-                view = view[written:]
-            os.fsync(descriptor)
-        except FileExistsError:
-            self._verified_bytes(path, digest.tagged)
-        except OSError as exc:
-            raise PlaybillCasError("CAS body could not be stored durably") from exc
+            os.fchmod(directory, 0o700)
+            try:
+                existing = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            except FileNotFoundError:
+                existing = None
+            if existing is not None:
+                self._verified_bytes(digest.tagged)
+            else:
+                descriptor: int | None = None
+                try:
+                    descriptor = os.open(
+                        name,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                        0o600,
+                        dir_fd=directory,
+                    )
+                    view = memoryview(content)
+                    while view:
+                        written = os.write(descriptor, view)
+                        if written <= 0:  # pragma: no cover - defensive OS contract
+                            raise PlaybillCasError("CAS write made no progress")
+                        view = view[written:]
+                    os.fchmod(descriptor, 0o600)
+                    os.fsync(descriptor)
+                except FileExistsError:
+                    self._verified_bytes(digest.tagged)
+                except OSError as exc:
+                    raise PlaybillCasError("CAS body could not be stored durably") from exc
+                finally:
+                    if descriptor is not None:
+                        os.close(descriptor)
+                os.fsync(directory)
         finally:
-            if descriptor is not None:
-                os.close(descriptor)
-        os.chmod(path, 0o600)
-        _fsync_directory(directory)
+            os.close(directory)
         return CasObjectMetadata(
             digest=digest.tagged,
             present=True,
@@ -199,44 +210,51 @@ class ContentAddressedBodyStore:
             redacted=False,
         )
 
-    def _known(self, path: Path, digest: str) -> bool:
+    def _memo_key(self, digest: str) -> tuple[str, str]:
+        return (str(self._path(digest)), digest)
+
+    def _known(self, digest: str) -> bool:
         """Whether this exact file was already verified and has not changed since."""
 
-        try:
-            metadata = path.lstat()
-        except OSError:
-            return False
-        if not stat.S_ISREG(metadata.st_mode):
+        status = self._object_status(digest)
+        if status is None or not stat.S_ISREG(status.st_mode):
             return False
         with _VERIFIED_LOCK:
-            known = _VERIFIED.get((str(path), digest))
-        return known == _file_identity(metadata)
+            known = _VERIFIED.get(self._memo_key(digest))
+        return known == _file_identity(status)
 
-    def _verified_bytes(self, path: Path, digest: str) -> bytes:
+    def _verified_bytes(self, digest: str) -> bytes:
         # Bytes are only ever returned from one open descriptor whose identity
         # is checked before and after the read, so what is returned is exactly
         # the file that was hashed (or is hashed here), unwritten in between.
-        with _VERIFIED_LOCK:
-            known = _VERIFIED.get((str(path), digest))
-        if known is not None:
-            read = _read_descriptor(path)
-            if read is not None:
-                before, content, after = read
-                if _file_identity(before) == known == _file_identity(after):
-                    return content
-        self._validate_shard(path.parent)
-        if path.is_symlink() or not path.is_file():
-            raise PlaybillCasError("CAS object must be a regular file")
-        read = _read_descriptor(path)
-        if read is None:
-            raise PlaybillCasError("CAS object cannot be read")
-        before, content, after = read
+        shard, name = self._names(digest)
+        directory = self._shard(shard)
+        if directory is None:
+            raise PlaybillCasError("CAS object is missing")
+        try:
+            key = self._memo_key(digest)
+            with _VERIFIED_LOCK:
+                known = _VERIFIED.get(key)
+            read = _read_descriptor(name, dir_fd=directory)
+            if read is None:
+                try:
+                    status = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                except FileNotFoundError as exc:
+                    raise PlaybillCasError("CAS object is missing") from exc
+                if not stat.S_ISREG(status.st_mode):
+                    raise PlaybillCasError("CAS object must be a regular file")
+                raise PlaybillCasError("CAS object cannot be read")
+            before, content, after = read
+        finally:
+            os.close(directory)
+        if known is not None and _file_identity(before) == known == _file_identity(after):
+            return content
         if self.digest_bytes(content).tagged != digest:
             raise PlaybillCasError("CAS object bytes do not match their content address")
         if _file_identity(before) == _file_identity(after):
             with _VERIFIED_LOCK:
-                _VERIFIED[(str(path), digest)] = _file_identity(after)
-                _VERIFIED.move_to_end((str(path), digest))
+                _VERIFIED[key] = _file_identity(after)
+                _VERIFIED.move_to_end(key)
                 while len(_VERIFIED) > _VERIFIED_CAPACITY:
                     _VERIFIED.popitem(last=False)
         return content
@@ -244,33 +262,29 @@ class ContentAddressedBodyStore:
     def verify(self, digest: str) -> bool:
         """Verify exact bytes without disclosing them or their length."""
 
-        path = self._path(digest)
-        if self._known(path, digest):
+        if self._known(digest):
             return True
-        if not path.exists() and not path.is_symlink():
+        if self._object_status(digest) is None:
             return False
-        self._verified_bytes(path, digest)
+        self._verified_bytes(digest)
         return True
 
     def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
         if not access.can_read_body:
             raise PlaybillCasError("body access is denied")
-        path = self._path(digest)
-        if not path.exists() and not path.is_symlink():
+        if self._object_status(digest) is None:
             raise PlaybillCasError("CAS object is missing")
-        return self._verified_bytes(path, digest)
+        return self._verified_bytes(digest)
 
     def metadata(self, digest: str, *, access: BodyAccessContext) -> CasObjectMetadata:
-        path = self._path(digest)
-        present = path.exists() or path.is_symlink()
-        if not present:
+        if self._object_status(digest) is None:
             return CasObjectMetadata(
                 digest=digest,
                 present=False,
                 byte_length=None,
                 redacted=not access.can_read_body,
             )
-        content = self._verified_bytes(path, digest)
+        content = self._verified_bytes(digest)
         return CasObjectMetadata(
             digest=digest,
             present=True,
@@ -281,15 +295,20 @@ class ContentAddressedBodyStore:
     def erase(self, digest: str) -> bool:
         """Delete one exact verified body; semantic envelopes must be preserved elsewhere."""
 
-        path = self._path(digest)
-        if not path.exists() and not path.is_symlink():
+        if self._object_status(digest) is None:
             return False
-        self._verified_bytes(path, digest)
+        self._verified_bytes(digest)
+        shard, name = self._names(digest)
+        directory = self._shard(shard)
+        if directory is None:
+            return False
         try:
-            path.unlink()
+            os.unlink(name, dir_fd=directory)
+            os.fsync(directory)
         except OSError as exc:
             raise PlaybillCasError("CAS body could not be erased") from exc
-        _fsync_directory(path.parent)
+        finally:
+            os.close(directory)
         return True
 
 

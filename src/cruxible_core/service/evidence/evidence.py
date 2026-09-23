@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -640,10 +640,10 @@ _AVAILABILITY_MEMO: OrderedDict[
 
 def _cas_file_identity(store: Any, digest: str) -> tuple[int, int, int, int, int] | None:
     try:
-        status = store._path(digest).lstat()
-    except (OSError, ValueError):
+        identity = store.file_identity(digest)
+    except ValueError:
         return None
-    return (status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
+    return cast(tuple[int, int, int, int, int] | None, identity)
 
 
 def _current_replay_available(
