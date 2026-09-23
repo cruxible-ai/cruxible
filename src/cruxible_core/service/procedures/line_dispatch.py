@@ -40,6 +40,11 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 
 
+# Idle polls need not retain a record per tick. A crash may leave at most this
+# checkpoint interval uncovered; restart never advances beyond durable coverage.
+_IDLE_COVERAGE_INTERVAL = timedelta(minutes=1)
+
+
 def _positions(instance: PlaybillInstance) -> dict[str, Any]:
     journal, _ = _journal(instance)
     return journal.index.positions(_stream(instance))
@@ -264,6 +269,16 @@ def service_match_listening_lines(
                 store.append(conn, "stop", session, actor=actor, now=now)
                 continue
             _enqueue(store, conn, result, actor, now)
+            if (
+                result.status != "incomplete"
+                and session.get("scan") is None
+                and scan["through"] == session["positions"]
+                and result.detail == session.get("detail")
+                and now - evaluated_until < _IDLE_COVERAGE_INTERVAL
+            ):
+                # Pending transitions have already landed independently. Time-only
+                # progress can wait; event progress and partial scans cannot.
+                continue
             session["detail"] = result.detail
             if result.status != "incomplete":
                 session.update(evaluated_until=scan["until"], positions=scan["through"], scan=None)

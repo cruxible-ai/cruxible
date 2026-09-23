@@ -511,3 +511,51 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
     )
     assert second_result.items[0].status == "admitted"
     assert first_result.items[0].run_id != second_result.items[0].run_id
+
+
+def test_idle_coverage_is_checkpointed_and_restart_claims_only_durable_range(tmp_path):
+    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    actor = _actor(instance)
+    session = service_listen_line(
+        instance,
+        line.identity.name,
+        LineListenRequestV1(action="start"),
+        actor=actor,
+        now=READ_TIME,
+        daemon_id="first",
+    )
+    store = LineDispatchStore(instance)
+    initial = store.journal.read_head(store.stream, "dispatch")
+    for seconds in range(1, 60):
+        service_match_listening_lines(
+            instance, actor=actor, now=READ_TIME + timedelta(seconds=seconds), daemon_id="first"
+        )
+    assert store.journal.read_head(store.stream, "dispatch") == initial
+    service_match_listening_lines(
+        instance, actor=actor, now=READ_TIME + timedelta(seconds=60), daemon_id="first"
+    )
+    checkpoint = store.journal.read_head(store.stream, "dispatch")
+    assert checkpoint != initial
+    # Actual event progress is retained immediately, even inside the idle interval.
+    capture(instance, procedure, at=READ_TIME + timedelta(seconds=61))
+    service_match_listening_lines(
+        instance, actor=actor, now=READ_TIME + timedelta(seconds=62), daemon_id="first"
+    )
+    with store.locked() as conn:
+        durable = json.loads(conn.execute("SELECT payload FROM sessions").fetchone()[0])
+        assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == 1
+    service_match_listening_lines(
+        instance, actor=actor, now=READ_TIME + timedelta(seconds=63), daemon_id="first"
+    )
+    store.path.unlink()
+    service_match_listening_lines(
+        instance, actor=actor, now=READ_TIME + timedelta(seconds=65), daemon_id="second"
+    )
+    with store.locked() as conn:
+        old = json.loads(
+            conn.execute(
+                "SELECT payload FROM sessions WHERE session_id=?", (session.session_id,)
+            ).fetchone()[0]
+        )
+        assert old["stops_at"] == durable["evaluated_until"]
+        assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == 1
