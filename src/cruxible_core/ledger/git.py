@@ -1792,10 +1792,25 @@ class GitLedger:
         paths: Sequence[str] | None = None,
     ) -> tuple[GitTreeEntry, ...]:
         self._validate_oid(oid)
-        if paths is not None:
-            return self._read_tree_listing(oid, with_sizes=with_sizes, paths=paths)
         # A whole listing of one object ID never changes: reuse it per repository.
         repository = _repository_key(self.path)
+        if paths is not None:
+            # Answer a path-restricted listing from a remembered whole listing
+            # of this object (or of the tree its commit names) when there is
+            # one, with a literal pathspec's semantics: the exact path, or every
+            # entry beneath it when it names a directory.
+            whole = _remembered_listing(repository, oid, with_sizes=with_sizes)
+            if whole is None:
+                tree = self._commit_tree(oid)
+                if tree is not None:
+                    whole = _remembered_listing(repository, tree, with_sizes=with_sizes)
+            if whole is None:
+                return self._read_tree_listing(oid, with_sizes=with_sizes, paths=paths)
+            wanted = set(paths)
+            beneath = tuple(path + "/" for path in paths)
+            return tuple(
+                entry for entry in whole if entry.path in wanted or entry.path.startswith(beneath)
+            )
         cached = _remembered_listing(repository, oid, with_sizes=with_sizes)
         if cached is not None:
             return cached

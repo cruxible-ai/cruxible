@@ -183,3 +183,27 @@ def test_a_tree_written_over_its_parent_equals_a_write_from_empty(tmp_path, obje
         assert ledger._list_tree(over_parent, with_sizes=sized) == ledger._read_tree_listing(
             over_parent, with_sizes=sized, paths=None
         )
+
+
+def test_a_path_restricted_listing_from_memory_matches_git(tmp_path, monkeypatch):
+    ledger = _ledger(tmp_path / "ledger.git")
+    tree = {"a.json": b"1", "claims/x.json": b"22", "claims/y/z.json": b"3", "claims-z.json": b"4"}
+    tree_oid = ledger._write_tree(tree)
+    commit = ledger._git(["commit-tree", tree_oid, "-m", "one"]).decode().strip()
+    selections = (("a.json",), ("claims",), ("claims/y",), ("claims/x.json", "missing.json"))
+    expected = {
+        (oid, paths): ledger._read_tree_listing(oid, with_sizes=False, paths=paths)
+        for oid in (tree_oid, commit)
+        for paths in selections
+    }
+    listed = []
+    read = GitLedger._read_tree_listing
+
+    def counted(self, oid, **kwargs):
+        listed.append(oid)
+        return read(self, oid, **kwargs)
+
+    monkeypatch.setattr(GitLedger, "_read_tree_listing", counted)
+    for (oid, paths), entries in expected.items():
+        assert ledger._list_tree(oid, with_sizes=False, paths=paths) == entries
+    assert listed == []
