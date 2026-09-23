@@ -2359,6 +2359,29 @@ Every live contender is retained. If the explicit budget is exceeded,
 no partial attribute cache is installed and the caller can narrow the
 selection or increase `max_claims`.
 
+<a id="api-world-values"></a>
+
+### `World.values`
+
+```text
+values(
+    *,
+    subjects: Sequence[str | SubjectRef],
+    predicates: Sequence[str | ClaimTypeRef] = (),
+) -> tuple[ClaimValueV1, ...]
+```
+
+Each live Claim's value and verdict for these Subjects, in one request and
+without full Claim views -- the cheaper read when only values and verdicts are
+needed. Every live contender of each selected slot is returned. Each
+`ClaimValueV1` carries `claim_id`, `subject_path`, `predicate`, `qualifier`,
+`role`, `object_kind` (`literal`, `subject` or `exact_content`), `object` (the
+statement object exactly as accepted, including a Subject object's selector or
+an exact-content span), `value` (the literal, the object Subject's artifact
+path, or the content digest), the current `verdict` and the resolution
+`status`. Bounds: at most 1024 Subjects and 64 predicates per request, and at
+most 8192 returned Claims; a larger selection refuses rather than truncating.
+
 <a id="api-worldsubject"></a>
 
 ## `WorldSubject`
@@ -7503,7 +7526,9 @@ context does not rewind operational state.
 
 World attributes return live Claim contenders rather than silently selecting a
 scalar. Use `world.prefetch(subjects=(...), predicates=(...))` for bounded reads
-of known selections, then inspect each Claim's value and verdict. A returned
+of known selections, then inspect each Claim's value and verdict; when only
+values and verdicts are needed, `world.values(subjects=(...), predicates=(...))`
+returns them without full Claim views. A returned
 Claim's `subject` path can be passed directly to `pb.claim(subject=...)` or a
 changeset Claim writer when revising it. Acceptance and
 evidential support are distinct: an accepted Claim may remain unsupported under
