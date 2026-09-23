@@ -2,7 +2,6 @@
 
 from contextlib import contextmanager
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
@@ -101,14 +100,9 @@ def test_warm_lookup_still_checks_repository_path_and_coordinate_members(instanc
             generation_root=head.generation_root,
             compiler_digest="sha256:" + "0" * 64,
         )
-    original = Path.resolve
-
-    def missing(path, *, strict=False):
-        if path == instance._ledger.path and strict:
-            raise FileNotFoundError("ledger directory disappeared")
-        return original(path, strict=strict)
-
-    monkeypatch.setattr(Path, "resolve", missing)
+    # The ledger directory disappearing after a warm lookup is still reported.
+    ledger = instance._ledger.path
+    ledger.rename(ledger.with_name(ledger.name + ".moved"))
     with pytest.raises(PlaybillFormatError, match="missing: ledger"):
         instance.coordinate_for_oid(head.git_oid)
     with pytest.raises(PlaybillFormatError, match="missing: ledger"):
