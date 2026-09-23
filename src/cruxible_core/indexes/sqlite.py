@@ -471,6 +471,23 @@ class ProjectionHandle:
             for row in rows
         )
 
+    def subject_index(self) -> tuple[tuple[str, str, str, str], ...]:
+        """Every Subject's identity, kind, ID and lifecycle, straight from the index.
+
+        Listing Subjects with their facts compiles every Subject's projection;
+        a caller that only needs to know which Subjects exist reads this.
+        """
+
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        return tuple(
+            (str(identity), str(kind), str(subject_id), str(lifecycle))
+            for identity, kind, subject_id, lifecycle in self.typed.connection.execute(
+                "SELECT identity, subject_kind, subject_id, lifecycle FROM subjects "
+                "ORDER BY identity"
+            )
+        )
+
     def claim(self, identity: str) -> ClaimProjectionView | None:
         """Read one canonical first-class Claim at this accepted coordinate."""
 

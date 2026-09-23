@@ -591,6 +591,23 @@ def propose_subject(
 
 
 @router.get(
+    "/{instance_id}/playbill/subject-index",
+    response_model=contracts.PlaybillSubjectIndex,
+)
+def list_subject_index(
+    instance_id: str,
+    git_oid: str | None = None,
+    semantic_root: str | None = None,
+    generation_root: str | None = None,
+    compiler_digest: str | None = None,
+) -> contracts.PlaybillSubjectIndex:
+    return playbill_api.playbill_list_subject_index(
+        resolve_server_instance_id(instance_id),
+        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
+    )
+
+
+@router.get(
     "/{instance_id}/playbill/subjects",
     response_model=contracts.PlaybillSubjectList,
 )

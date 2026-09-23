@@ -57987,6 +57987,239 @@
         "predicate"
       ]
     },
+    "PlaybillSubjectIndex": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "subjects": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subjects",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSubjectIndexEntry"
+            },
+            "title": "Subjects",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-subject-index-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-subject-index-v1",
+            "default": "playbill-subject-index-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillSubjectIndexEntry": {
+            "additionalProperties": false,
+            "properties": {
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "lifecycle": {
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "Lifecycle",
+                "type": "string"
+              },
+              "subject_id": {
+                "title": "Subject Id",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "subject_kind",
+              "subject_id",
+              "lifecycle"
+            ],
+            "title": "PlaybillSubjectIndexEntry",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Which Subjects exist at one coordinate; no facts are compiled for it.",
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "subjects": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSubjectIndexEntry"
+            },
+            "title": "Subjects",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-subject-index-v1",
+            "default": "playbill-subject-index-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "subjects"
+        ],
+        "title": "PlaybillSubjectIndex",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "subjects"
+      ]
+    },
+    "PlaybillSubjectIndexEntry": {
+      "fields": {
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "title": "Identity",
+            "type": "string"
+          }
+        },
+        "lifecycle": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "lifecycle",
+          "required": true,
+          "schema": {
+            "enum": [
+              "live",
+              "retired"
+            ],
+            "title": "Lifecycle",
+            "type": "string"
+          }
+        },
+        "subject_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_id",
+          "required": true,
+          "schema": {
+            "title": "Subject Id",
+            "type": "string"
+          }
+        },
+        "subject_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_kind",
+          "required": true,
+          "schema": {
+            "title": "Subject Kind",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "title": "Identity",
+            "type": "string"
+          },
+          "lifecycle": {
+            "enum": [
+              "live",
+              "retired"
+            ],
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_kind": {
+            "title": "Subject Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "subject_kind",
+          "subject_id",
+          "lifecycle"
+        ],
+        "title": "PlaybillSubjectIndexEntry",
+        "type": "object"
+      },
+      "required_fields": [
+        "identity",
+        "lifecycle",
+        "subject_id",
+        "subject_kind"
+      ]
+    },
     "PlaybillSubjectList": {
       "fields": {
         "coordinate": {

@@ -849,6 +849,19 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillSubjectList)
 
+    def list_playbill_subject_index(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillSubjectIndex:
+        """Which Subjects exist at a coordinate, without their compiled facts."""
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/subject-index",
+            params=self._playbill_coordinate_params(at),
+        )
+        return self._parse_model(response, contracts.PlaybillSubjectIndex)
+
     def get_playbill_subject(
         self,
         instance_id: str,

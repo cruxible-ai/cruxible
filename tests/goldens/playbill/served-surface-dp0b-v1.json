@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-23:write-loop-latency",
-    "surface_digest": "sha256:e312c6413cddf64f36d9267a0bc95cc87a73a4ac6cfdb308807058eec3d7764a"
+    "register_entry": "2026-09-23:subject-index-read",
+    "surface_digest": "sha256:86630ec048e9a91514de83b7ac40c58234dfb1aca24b027a73c32b45aae906d2"
   },
   "surface": {
     "cli_leaves": [
@@ -843,6 +843,7 @@
       "playbill_list_principals",
       "playbill_list_proposals",
       "playbill_list_query_definitions",
+      "playbill_list_subject_index",
       "playbill_list_subjects",
       "playbill_migrate_claim_type",
       "playbill_next",
@@ -1935,6 +1936,18 @@
         "request_schema_digest": "sha256:bac9b913dd06a78ba0a952f22910f5551eed47dcc0a2fc624c317122213b591e",
         "response_model": "cruxible_client.contracts.PlaybillProposalInspection",
         "response_schema_digest": "sha256:7f953c376e25f6c778af7f608ce1e73e22be31a1c12a0e03411a6f947792b42f"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.list_subject_index",
+        "facade_operations": [
+          "playbill_list_subject_index"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/playbill/subject-index",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.PlaybillSubjectIndex",
+        "response_schema_digest": "sha256:3413c2f4bb4384fe4312eb95e9b1eeee98e100b66103c7ed1b797c6b842a1afb"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.list_subjects",

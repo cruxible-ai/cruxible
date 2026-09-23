@@ -232,6 +232,8 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillSubjectHistory",
         "PlaybillSubjectIncomingClaimV1",
         "PlaybillSubjectIncomingGroupV1",
+        "PlaybillSubjectIndex",
+        "PlaybillSubjectIndexEntry",
         "PlaybillSubjectList",
         "PlaybillSubjectView",
         "PlaybillWhoAmI",

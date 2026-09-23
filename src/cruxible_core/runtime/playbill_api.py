@@ -179,6 +179,7 @@ from cruxible_core.service.claims.claims import (
 from cruxible_core.service.claims.policies import list_playbill_policies_in_force
 from cruxible_core.service.claims.subjects import (
     service_get_playbill_subject,
+    service_list_playbill_subject_index,
     service_list_playbill_subjects,
     service_playbill_subject_history,
 )
@@ -1025,6 +1026,16 @@ def playbill_list_subjects(
     check_permission("cruxible_playbill_read", instance_id=instance_id)
     result = service_list_playbill_subjects(get_playbill_manager().get(instance_id), at=at)
     return contracts.PlaybillSubjectList.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_list_subject_index(
+    instance_id: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillSubjectIndex:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_list_playbill_subject_index(get_playbill_manager().get(instance_id), at=at)
+    return contracts.PlaybillSubjectIndex.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_get_subject(

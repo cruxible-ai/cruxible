@@ -392,6 +392,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "check_playbill_source_bundle",
         "propose_playbill_source_bundle",
         "propose_playbill_subject",
+        "list_playbill_subject_index",
         "list_playbill_subjects",
         "get_playbill_subject",
         "playbill_subject_history",

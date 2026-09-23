@@ -271,6 +271,9 @@
   "/api/v1/{instance_id}/playbill/sources/proposals": {
     "POST": "PlaybillProposalInspection"
   },
+  "/api/v1/{instance_id}/playbill/subject-index": {
+    "GET": "PlaybillSubjectIndex"
+  },
   "/api/v1/{instance_id}/playbill/subjects": {
     "GET": "PlaybillSubjectList"
   },

@@ -79,46 +79,19 @@ def _claim_type(predicate: str, **overrides: object) -> api.PlaybillClaimTypeVie
     )
 
 
-def _subject_view(
+def _subject_entry(
     subject_kind: str,
     subject_id: str,
     *,
-    state: str = "live",
-) -> api.PlaybillSubjectView:
-    """The Subject projection exactly as the served list verb renders it."""
+    lifecycle: str = "live",
+) -> api.PlaybillSubjectIndexEntry:
+    """One Subject exactly as the served index renders it."""
 
-    return api.PlaybillSubjectView(
-        coordinate=_COORDINATE,
-        envelope={
-            "identity": f"Subject:{subject_kind}/{subject_id}",
-            "kind": "subject",
-            "format_tag": "playbill-subject-v1",
-            "path": f"subjects/{subject_kind}/{subject_id}.json",
-            "artifact_digest": _DIGEST,
-            "predecessor_digest": None,
-            "revision": 1,
-        },
-        facts=[
-            {
-                "schema_id": "playbill.subject.identity",
-                "schema_version": 1,
-                "fact_key": "stable_referent",
-                "value": {
-                    "subject_kind": subject_kind,
-                    "subject_id": subject_id,
-                    "identity": {
-                        "kind": "Subject",
-                        "name": f"{subject_kind}/{subject_id}",
-                    },
-                },
-            },
-            {
-                "schema_id": "playbill.subject.lifecycle",
-                "schema_version": 1,
-                "fact_key": "accepted_shell",
-                "value": {"lifecycle": {"state": state}},
-            },
-        ],
+    return api.PlaybillSubjectIndexEntry(
+        identity=f"Subject:{subject_kind}/{subject_id}",
+        subject_kind=subject_kind,
+        subject_id=subject_id,
+        lifecycle=lifecycle,  # type: ignore[arg-type]
     )
 
 
@@ -192,17 +165,17 @@ class _WorldClient:
             ],
         )
 
-    def list_playbill_subjects(
+    def list_playbill_subject_index(
         self, _instance_id: str, *, at: Any = None
-    ) -> api.PlaybillSubjectList:
+    ) -> api.PlaybillSubjectIndex:
         self.subject_list_calls += 1
-        return api.PlaybillSubjectList(
+        return api.PlaybillSubjectIndex(
             coordinate=at or self.coordinate,
             subjects=[
-                _subject_view("sec.package", "cryptography"),
-                _subject_view("sec.vulnerability", "cve-2026-69247"),
-                _subject_view("dev.batch", "p2c"),
-                _subject_view("dev.batch", "retired_batch", state="retired"),
+                _subject_entry("sec.package", "cryptography"),
+                _subject_entry("sec.vulnerability", "cve-2026-69247"),
+                _subject_entry("dev.batch", "p2c"),
+                _subject_entry("dev.batch", "retired_batch", lifecycle="retired"),
             ],
         )
 
