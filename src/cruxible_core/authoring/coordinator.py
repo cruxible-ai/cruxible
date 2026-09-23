@@ -501,24 +501,69 @@ class AuthoringIntentCoordinator:
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> PreflightResultV1:
         self.instance.require_writable()
-        view = (
-            self.create(
+        view = self._compose(
+            actor=actor,
+            payload=payload,
+            canonical_timestamp=canonical_timestamp,
+            intent_id=intent_id,
+            reference_expectations=reference_expectations,
+            program_stamp=program_stamp,
+        )
+        return self.preflight(view.intent.intent_id, actor=actor)
+
+    def compile_and_submit(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        payload: AuthoringPayloadV1,
+        canonical_timestamp: str,
+        intent_id: str | None = None,
+        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+        program_stamp: AuthoringProgramStampV1 | None = None,
+    ) -> AuthoringSubmitResultV1:
+        """Create or replace the intent and submit it in one call.
+
+        Submit always computes and binds its own preflight, so a separate compile
+        preflight first would only repeat it. A refused preflight returns the
+        unsubmitted intent with that preflight bound, as compile would have.
+        """
+
+        self.instance.require_writable()
+        view = self._compose(
+            actor=actor,
+            payload=payload,
+            canonical_timestamp=canonical_timestamp,
+            intent_id=intent_id,
+            reference_expectations=reference_expectations,
+            program_stamp=program_stamp,
+        )
+        return self.submit(view.intent.intent_id, actor=actor)
+
+    def _compose(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        payload: AuthoringPayloadV1,
+        canonical_timestamp: str,
+        intent_id: str | None,
+        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None,
+        program_stamp: AuthoringProgramStampV1 | None,
+    ) -> AuthoringIntentViewV1:
+        if intent_id is None:
+            return self.create(
                 actor=actor,
                 payload=payload,
                 canonical_timestamp=canonical_timestamp,
                 reference_expectations=reference_expectations,
                 program_stamp=program_stamp,
             )
-            if intent_id is None
-            else self.replace_payload(
-                intent_id,
-                actor=actor,
-                payload=payload,
-                reference_expectations=reference_expectations,
-                program_stamp=program_stamp,
-            )
+        return self.replace_payload(
+            intent_id,
+            actor=actor,
+            payload=payload,
+            reference_expectations=reference_expectations,
+            program_stamp=program_stamp,
         )
-        return self.preflight(view.intent.intent_id, actor=actor)
 
     def compile_input(
         self,

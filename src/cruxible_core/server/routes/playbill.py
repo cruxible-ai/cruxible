@@ -940,6 +940,23 @@ async def preflight_authoring_intent(
 
 
 @router.post(
+    "/{instance_id}/playbill/authoring/submit",
+    response_model=contracts.PlaybillAuthoringSubmitResult,
+)
+def compile_and_submit_authoring(
+    instance_id: str,
+    req: PlaybillAuthoringCompileRequestV3,
+) -> contracts.PlaybillAuthoringSubmitResult:
+    return playbill_api.playbill_authoring_compile_and_submit(
+        resolve_server_instance_id(instance_id),
+        payload=req.payload,
+        reference_expectations=req.reference_expectations,
+        program_stamp=req.program_stamp,
+        intent_id=req.intent_id,
+    )
+
+
+@router.post(
     "/{instance_id}/playbill/authoring/intents/{intent_id}/submit",
     response_model=contracts.PlaybillAuthoringSubmitResult,
 )

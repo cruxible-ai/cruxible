@@ -543,6 +543,30 @@ class _IntentDraft:
         )
         return Intent.from_preflight(self._playbill, self, result)
 
+    def submit(self) -> Intent:
+        """Compile and submit in one request; the daemon preflights once.
+
+        Equivalent to ``prepare().submit()`` without the separate preflight and
+        its round trips. A refused preflight returns an unsubmitted intent whose
+        ``refused`` and ``diagnostics`` report it, exactly as ``prepare()`` does.
+        """
+
+        result = self._playbill._client.submit_playbill_authoring(
+            self._playbill._instance_id,
+            payload=self.payload.model_dump(mode="json"),
+            reference_expectations=[
+                item.model_dump(mode="json") for item in self.reference_expectations
+            ],
+            program_stamp=self.program_stamp.model_dump(mode="json"),
+        )
+        return Intent(
+            self._playbill,
+            self,
+            result.intent,
+            preflight=result.preflight,
+            candidate_status=result.status,
+        )
+
 
 @dataclass(frozen=True)
 class ClaimDraft(_IntentDraft):
@@ -1066,6 +1090,11 @@ class ChangeSetDraft:
         """Compile and preflight the whole changeset as one intent."""
 
         return self._compiled().prepare()
+
+    def submit(self) -> Intent:
+        """Compile and submit the whole changeset as one intent in one request."""
+
+        return self._compiled().submit()
 
     def _compiled(self) -> _IntentDraft:
         """Fold every member into exactly one intent draft."""

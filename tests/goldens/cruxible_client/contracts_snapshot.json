@@ -8335,6 +8335,25 @@
             "type": "array"
           }
         },
+        "preflight": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "preflight",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAuthoringPreflightResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "status": {
           "has_default": false,
           "has_default_factory": false,
@@ -8418,6 +8437,53 @@
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
           },
+          "PlaybillAuthoringPreflightResult": {
+            "additionalProperties": false,
+            "properties": {
+              "certificate": {
+                "additionalProperties": true,
+                "title": "Certificate",
+                "type": "object"
+              },
+              "frontier": {
+                "additionalProperties": true,
+                "title": "Frontier",
+                "type": "object"
+              },
+              "lint": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "tag": {
+                "const": "playbill-authoring-preflight-result-v1",
+                "default": "playbill-authoring-preflight-result-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "verdict": {
+                "enum": [
+                  "passed",
+                  "refused"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "verdict",
+              "certificate",
+              "frontier"
+            ],
+            "title": "PlaybillAuthoringPreflightResult",
+            "type": "object"
+          },
           "PlaybillCandidateStatus": {
             "additionalProperties": false,
             "properties": {
@@ -8495,6 +8561,30 @@
               "current_accepted_coordinate"
             ],
             "title": "PlaybillCandidateStatus",
+            "type": "object"
+          },
+          "PlaybillClaimTypeProposalLint": {
+            "additionalProperties": false,
+            "properties": {
+              "tag": {
+                "const": "playbill-claim-type-proposal-lint-v1",
+                "default": "playbill-claim-type-proposal-lint-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Warnings",
+                "type": "array"
+              }
+            },
+            "required": [
+              "warnings"
+            ],
+            "title": "PlaybillClaimTypeProposalLint",
             "type": "object"
           },
           "PlaybillWorkspaceAdvertisement": {
@@ -8604,6 +8694,17 @@
             },
             "title": "Members",
             "type": "array"
+          },
+          "preflight": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAuthoringPreflightResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "status": {
             "$ref": "#/$defs/PlaybillCandidateStatus"

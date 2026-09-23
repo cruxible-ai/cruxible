@@ -91,6 +91,7 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
             "AuthoringIntentCoordinator.preflight",
             "AuthoringIntentCoordinator.compile",
             "AuthoringIntentCoordinator.compile_input",
+            "AuthoringIntentCoordinator.compile_and_submit",
             "AuthoringIntentCoordinator.rebase",
             "AuthoringIntentCoordinator.submit",
             "AuthoringIntentCoordinator.abandon_insertion",

@@ -1385,6 +1385,38 @@ def playbill_authoring_compile(
     return _authoring_preflight_result(coordinator, actor=actor, result=result)
 
 
+def playbill_authoring_compile_and_submit(
+    instance_id: str,
+    *,
+    payload: AuthoringPayloadV1,
+    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...],
+    program_stamp: AuthoringProgramStampV1,
+    intent_id: str | None = None,
+) -> contracts.PlaybillAuthoringSubmitResult:
+    check_permission("cruxible_playbill_authoring_compile", instance_id=instance_id)
+    check_permission("cruxible_playbill_authoring_submit", instance_id=instance_id)
+    coordinator, actor = _authoring_coordinator(instance_id)
+    result = coordinator.compile_and_submit(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=canonical_candidate_timestamp(utc_now()),
+        intent_id=intent_id,
+        reference_expectations=reference_expectations,
+        program_stamp=program_stamp,
+    )
+    submitted = contracts.PlaybillAuthoringSubmitResult.model_validate(
+        result.model_dump(mode="json")
+    )
+    preflight = result.intent.last_preflight
+    if preflight is None:
+        return submitted
+    return submitted.model_copy(
+        update={
+            "preflight": _authoring_preflight_result(coordinator, actor=actor, result=preflight)
+        }
+    )
+
+
 def playbill_authoring_compile_input(
     instance_id: str,
     *,

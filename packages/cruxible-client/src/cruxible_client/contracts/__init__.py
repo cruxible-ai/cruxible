@@ -1261,6 +1261,12 @@ class PlaybillAuthoringSubmitResult(BaseModel):
     # One row per submitted member, so a changeset answers the same two
     # questions once per member instead of once for the whole submission.
     members: tuple[dict[str, Any], ...] = ()
+    # The preflight this submit ran, when the request compiled and submitted in
+    # one call; a refused verdict carries the diagnostics compile would have.
+    preflight: PlaybillAuthoringPreflightResult | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class PlaybillInsertionPrepareResult(BaseModel):

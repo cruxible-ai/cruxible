@@ -1131,6 +1131,30 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillAuthoringPreflightResult)
 
+    def submit_playbill_authoring(
+        self,
+        instance_id: str,
+        *,
+        payload: Mapping[str, Any],
+        reference_expectations: Sequence[Mapping[str, Any]],
+        program_stamp: Mapping[str, Any],
+        intent_id: str | None = None,
+    ) -> contracts.PlaybillAuthoringSubmitResult:
+        """Compile and submit in one request; the daemon preflights once, on submit."""
+        request = AuthoringIntentCompileRequestV3.model_validate(
+            {
+                "payload": dict(payload),
+                "reference_expectations": [dict(item) for item in reference_expectations],
+                "program_stamp": dict(program_stamp),
+                "intent_id": intent_id,
+            }
+        )
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/authoring/submit",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.PlaybillAuthoringSubmitResult)
+
     def compile_playbill_authoring_input(
         self,
         instance_id: str,

@@ -1131,7 +1131,7 @@ The backend resolves the Line identity; callers do not pass its digest.
 Import: `cruxible_client.authoring.sdk.ChangeSetDraft`. [Source](src/cruxible_client/authoring/sdk.py#L663)
 
 Obtained from `pb.changes(rationale=...)`. Methods stage members; `prepare()`
-preflights the whole set. `claim`, `procedure`, `query_definition`, `line`, policy,
+preflights the whole set and `submit()` compiles and submits it in one request. `claim`, `procedure`, `query_definition`, `line`, policy,
 contract, and attestation methods return this builder for chaining unless their
 signature returns a pending ref. The pending Subject/ClaimType references may
 be used by sibling Claims without pretending they already exist in accepted state.
@@ -1508,9 +1508,11 @@ Compile and preflight the whole changeset as one intent.
 ## Drafts, intents, proposals, and approvals
 
 `ClaimDraft`, `ProcedureDraft`, `QueryDraft`, and `SubjectDraft` inherit
-`prepare() -> Intent`. They expose `payload`, `reference_expectations`,
+`prepare() -> Intent` and `submit() -> Intent`. They expose `payload`, `reference_expectations`,
 `program_stamp`, and `source_map` for inspection. `prepare()` performs server
-compilation/preflight; the program stamp is structured authoring provenance,
+compilation/preflight; `submit()` compiles and submits in one request, with the
+daemon preflighting once, and a refused intent carries the same `refused` and
+`diagnostics` that `prepare()` reports; the program stamp is structured authoring provenance,
 not retained executable Python source. `ClaimTypeDraft.propose(...)` and
 `SubjectDraft.propose(...)` are direct proposal helpers and submit immediately;
 they are not synonyms for local staging.

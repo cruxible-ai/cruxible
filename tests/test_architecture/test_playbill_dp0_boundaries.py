@@ -380,6 +380,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "preflight_playbill_authoring_intent",
         "rebase_playbill_authoring_intent",
         "resume_playbill_authoring_intent",
+        "submit_playbill_authoring",
         "submit_playbill_authoring_intent",
         "list_playbill_documents",
         "get_playbill_document",
