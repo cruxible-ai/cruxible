@@ -5924,7 +5924,6 @@ explain_playbill_claim(
     *,
     at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
     evaluation_time: str | None = None,
-    workspace_observation: Mapping[str, Any] | None = None,
 ) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3
 ```
 

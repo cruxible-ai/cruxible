@@ -252,7 +252,6 @@ class PlaybillProposeQueryDefinitionRequest(_StrictPlaybillRequest):
 class PlaybillClaimExplainRequest(_StrictPlaybillRequest):
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime | None = None
-    workspace_observation: dict[str, Any] | None = None
 
 
 class PlaybillProposalReadmitRequest(_StrictPlaybillRequest):

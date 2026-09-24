@@ -588,7 +588,7 @@ cruxible playbill claim attest IDENTITY --support|--contradict|--unsure [--note 
 cruxible playbill claim list [--subject PATH] [--predicate P] [--include-retired]
 cruxible playbill claim get IDENTITY [--brief]
 cruxible playbill claim history IDENTITY
-cruxible playbill claim explain IDENTITY [--evaluation-time TS] [--workspace-root DIR]
+cruxible playbill claim explain IDENTITY [--evaluation-time TS]
 ~~~
 
 Claims are authored through `playbill authoring create`/`compile`; the retired
@@ -599,16 +599,10 @@ time. explain returns the verdict together with the law evidence and source
 handles it was computed from. When the Claim shares anything with a retired
 Claim, explain also carries a `retirement_context` section, which the CLI prints
 beneath the verdict. It is review context, not queue work, so `next` does not
-report it. The section lists:
-
-- each retired Claim the Claim shares a capture, an exact external source, or
-  a same-version cited span with, with the relation kind, the shared capture,
-  and the retired Claim and citation witnesses;
-- for a retired Claim, each passage it cited that is still in a document's
-  current bytes and that no live Claim covers.
-
-Overlaps that exist only in a source's current bytes need the same workspace
-observation `next` takes, so the CLI observes `--workspace-root` the same way.
+report it. It lists each retired Claim the Claim shares a capture, an exact
+external source, or a same-version cited span with, with the relation kind, the
+shared capture, and the retired Claim and citation witnesses. It is read from
+accepted state alone, like the rest of the explanation.
 A real dependency on a retired Claim stays a `claim_dependency_stale` row in
 `next`.
 

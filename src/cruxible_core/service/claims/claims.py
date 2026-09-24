@@ -105,12 +105,10 @@ from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.retirement_context import (
     ClaimRetirementContextV1,
     claim_retirement_context,
-    validate_retirement_workspace_observation,
 )
 from cruxible_core.storage.cas import BodyAccessContext
 
 if TYPE_CHECKING:
-    from cruxible_core.service.discovery.next import PlaybillNextWorkspaceObservationV1
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
 
@@ -853,7 +851,6 @@ def service_explain_playbill_claim(
     identity: str,
     at: PlaybillAcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
-    workspace_observation: PlaybillNextWorkspaceObservationV1 | Mapping[str, object] | None = None,
 ) -> PlaybillClaimExplanationV2 | PlaybillClaimExplanationV3:
     from cruxible_core.service.evidence.evidence import (
         ClaimVerdictReadContext,
@@ -861,7 +858,6 @@ def service_explain_playbill_claim(
         service_evaluate_playbill_claim_verdict,
     )
 
-    observation = validate_retirement_workspace_observation(workspace_observation)
     coordinate = _resolve_coordinate(instance, at)
     evaluated_at = evaluation_time or datetime.now(UTC)
     read = service_get_playbill_claim(
@@ -944,8 +940,6 @@ def service_explain_playbill_claim(
         instance,
         coordinate=coordinate,
         claim_identity=claim.identity.qualified,
-        cited_sources=frozenset(context[2] for context in capture_context.values()),
-        observation=observation,
     )
     coverage = CoverageDescriptorV1(
         requested_facets=("governance", "provenance", "sources"),

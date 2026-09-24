@@ -43,9 +43,7 @@ def _claim_v1() -> contracts.PlaybillClaimView:
     )
 
 
-def test_claim_get_and_explain_render_one_actionable_line_per_capture(
-    monkeypatch, tmp_path
-) -> None:
+def test_claim_get_and_explain_render_one_actionable_line_per_capture(monkeypatch) -> None:
     class StubClient:
         def get_playbill_claim(self, instance_id, identity, *, evaluation_time=None):
             assert (instance_id, identity) == ("inst_cli", "CLM-" + "a" * 32)
@@ -70,18 +68,8 @@ def test_claim_get_and_explain_render_one_actionable_line_per_capture(
                 ),
             )
 
-        def explain_playbill_claim(
-            self,
-            instance_id,
-            identity,
-            *,
-            at=None,
-            evaluation_time=None,
-            workspace_observation=None,
-        ):
+        def explain_playbill_claim(self, instance_id, identity, *, evaluation_time=None):
             assert (instance_id, identity) == ("inst_cli", "CLM-" + "a" * 32)
-            assert workspace_observation is not None
-            assert "source_observations" not in workspace_observation
             return contracts.PlaybillClaimExplanationV2(
                 tag="playbill-claim-explanation-v2",
                 coordinate=COORDINATE,
@@ -109,7 +97,6 @@ def test_claim_get_and_explain_render_one_actionable_line_per_capture(
                             "retired_citation_witnesses": [CITATION],
                         }
                     ],
-                    "retired_source_spans": [],
                 },
             )
 
@@ -129,7 +116,7 @@ def test_claim_get_and_explain_render_one_actionable_line_per_capture(
 
     explain_result = CliRunner().invoke(
         cli,
-        [*common, "explain", "CLM-" + "a" * 32, "--workspace-root", str(tmp_path)],
+        [*common, "explain", "CLM-" + "a" * 32],
     )
     assert explain_result.exit_code == 0, explain_result.output
     assert explain_result.output.count(f"Capture {CAPTURE}") == 1

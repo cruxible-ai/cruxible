@@ -5,52 +5,25 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruxible_client.authoring.workspace import _coverage_v3_fields
-from cruxible_client.contracts.documents import (
-    DocumentAuthority,
-    DocumentLifecycle,
-    DocumentShell,
-    document_digest,
-)
 from cruxible_core.claims.claim_retirement import service_retire_claim
-from cruxible_core.coverage.adapter import observe_working_source
 from cruxible_core.coverage.contracts import (
     CoverageAccessProfileV1,
-    CoverageCommitmentScanProofV1,
-    LogicalSourceIdentityV1,
-    PlaybillCitationWindowObservationV1,
 )
-from cruxible_core.coverage.indexes import WorkingOccurrenceV1
 from cruxible_core.evidence.citation_relations import (
     RELATION_RETIRED_CONFLICT_SCHEMA,
     retired_activation_live_candidates,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor
-from cruxible_core.service.authoring.documents import (
-    service_activate_playbill_proposal,
-    service_propose_playbill_document,
-    service_submit_playbill_approval,
-)
 from cruxible_core.service.claims.claims import service_explain_playbill_claim
 from cruxible_core.service.claims.retirement_context import ClaimRetirementContextV1
-from cruxible_core.service.discovery.coverage import service_resolve_playbill_coverage
 from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,
-    PlaybillNextSourceObservationV4,
-    PlaybillNextWorkspaceObservationV1,
     service_playbill_next,
 )
 from tests.core_support._citation_relations_oracle import (
     RELATION_USE_SCHEMA,
     build_citation_relation_facts,
 )
-from tests.core_support._published_world import (
-    published_world as _published_world,
-)
-from tests.core_support._published_world import (
-    retire_claim as _retire,
-)
-from tests.core_support._support import client_material
 from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
 from tests.test_claims.test_claim_retirement import (
     _activate as _activate_retirement,
@@ -58,7 +31,6 @@ from tests.test_claims.test_claim_retirement import (
 from tests.test_claims.test_claim_retirement import (
     _request as _retirement_request,
 )
-from tests.test_ledger.test_activation import _sign
 from tests.test_proposals.test_retirement_citing_advisory import (
     COPY_CLAIM_ID,
     SOURCE_CLAIM_ID,
@@ -86,25 +58,16 @@ def _retire_claim(instance, owner, claim_id: str) -> None:  # type: ignore[no-un
     instance.refresh()
 
 
-def _next(instance, workspace=None):  # type: ignore[no-untyped-def]
+def _next(instance):  # type: ignore[no-untyped-def]
     return service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
-            evaluation_time=EVALUATION_TIME,
-            access_profile=_access(),
-            workspace_observation=workspace,
-        ),
+        request=PlaybillNextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=_access()),
     )
 
 
-def retirement_context(  # type: ignore[no-untyped-def]
-    instance, claim_id: str, workspace=None
-) -> ClaimRetirementContextV1 | None:
+def retirement_context(instance, claim_id: str) -> ClaimRetirementContextV1 | None:  # type: ignore[no-untyped-def]
     explanation = service_explain_playbill_claim(
-        instance,
-        identity=claim_id,
-        evaluation_time=EVALUATION_TIME,
-        workspace_observation=workspace,
+        instance, identity=claim_id, evaluation_time=EVALUATION_TIME
     )
     return explanation.retirement_context
 
@@ -127,11 +90,9 @@ def test_shared_capture_is_explain_context_not_queue_work_and_retirement_clears_
     ]
     context = retirement_context(instance, live_claim_id)
     assert context is not None
-    assert context.retired_source_spans == ()
     (relation,) = context.shared_with_retired
     assert relation.relation_kind == "capture"
     assert relation.relation_key == f"capture:{relation.live_capture_digest}"
-    assert relation.working_span is None
     assert relation.retired_claim_count == 1
     assert relation.retired_claim_witnesses == (f"Claim:{first}",)
     assert relation.retired_citation_count == 1
@@ -217,251 +178,12 @@ def test_span_sweep_scans_active_live_set_once_per_retired_activation_epoch() ->
     assert visits == len(active_live)
 
 
-def _accept_document(
-    instance,  # type: ignore[no-untyped-def]
-    *,
-    shell: DocumentShell,
-    proposal_name: str,
-    timestamp: str,
-) -> None:
-    proposal = service_propose_playbill_document(
-        instance,
-        shell=shell,
-        actor_id="owner",
-        proposal_name=proposal_name,
-        timestamp=timestamp,
-    )
-    candidate = proposal.proposal.candidate
-    assert candidate is not None
-    approval = _sign(
-        client_material(instance.root.parent, instance),
-        candidate.candidate_digest,
-        instance.accepted_coordinate().semantic_root,
-    )
-    service_submit_playbill_approval(
-        instance,
-        proposal_id=proposal.proposal.admission.proposal_id,
-        attestation=approval.attestation,
-        authenticated_submitter="owner",
-    )
-    assert (
-        service_activate_playbill_proposal(
-            instance,
-            proposal_id=proposal.proposal.admission.proposal_id,
-            activated_by="owner",
-        ).status
-        == "accepted"
-    )
-    instance.refresh()
+def test_a_copied_claim_shares_its_retired_source_span(tmp_path: Path) -> None:
+    instance, _owner, _coordinator, _actor = copied_from_world(tmp_path)
 
-
-def _workspace_observation(
-    instance,  # type: ignore[no-untyped-def]
-    *,
-    content: bytes,
-    expect_no_claim_cards: bool = False,
-) -> PlaybillNextWorkspaceObservationV1:
-    source_id = "repo.work-items"
-    source = LogicalSourceIdentityV1(plane="external", identity=source_id)
-    coverage = service_resolve_playbill_coverage(
-        instance,
-        instance_id=instance.descriptor.instance_id,
-        observations=(observe_working_source(source, content),),
-    )
-    assert len(coverage.spans) == 1
-    if expect_no_claim_cards:
-        assert all(not card.citation_associations for card in coverage.spans[0].cards), (
-            "retired citations may supply windows but never retired Claim cards"
-        )
-    occurrences, proofs, windows, notes = _coverage_v3_fields(
-        coverage.spans[0].model_dump(mode="json"),
-        source_id=source_id,
-        content=content,
-    )
-    return PlaybillNextWorkspaceObservationV1(
-        source_observations=(
-            PlaybillNextSourceObservationV4(
-                source_id=source_id,
-                document_id="work-items",
-                observed_source_digest=observe_working_source(source, content).content_digest,
-                byte_length=len(content),
-                marker_summaries=(),
-                occurrences=tuple(WorkingOccurrenceV1.model_validate(item) for item in occurrences),
-                commitment_scan_proofs=tuple(
-                    CoverageCommitmentScanProofV1.model_validate(item) for item in proofs
-                ),
-                citation_window_observations=tuple(
-                    PlaybillCitationWindowObservationV1.model_validate(item) for item in windows
-                ),
-                scan_notes=notes,
-                marker_notes=(),
-            ),
-        )
-    )
-
-
-def retired_source_world(root: Path):  # type: ignore[no-untyped-def]
-    instance, owner, claim_id = _published_world(root)
-    content = b"ready"
-    body = instance.store_document_body(content)
-    document = DocumentShell(
-        identity="document:work-items",
-        document_kind="work-items",
-        title="Work items",
-        media_type="text/markdown",
-        body_digest=body.digest,
-        authority=DocumentAuthority(required_tier="governed_write"),
-        governance_scope=("project:playbill",),
-        lifecycle=DocumentLifecycle(revision=1),
-    )
-    _accept_document(
-        instance,
-        shell=document,
-        proposal_name="add-work-items-document",
-        timestamp="2026-08-21T12:00:02.000000Z",
-    )
-    _retire(instance, owner, claim_id)
-    instance.refresh()
-    return instance, document, content, claim_id
-
-
-def test_retired_source_window_is_explained_without_retired_claim_cards_and_repair_clears(
-    tmp_path: Path,
-) -> None:
-    instance, document, content, claim_id = retired_source_world(tmp_path)
-    observation = _workspace_observation(
-        instance,
-        content=content,
-        expect_no_claim_cards=True,
-    )
-
-    # A retired passage still in a document is context on the retired Claim.
-    assert not [
-        item
-        for item in _next(instance, observation).items
-        if item.subject_identity.startswith("document:")
-    ]
-    context = retirement_context(instance, claim_id, observation)
+    assert retirement_context(instance, SOURCE_CLAIM_ID) is None
+    context = retirement_context(instance, COPY_CLAIM_ID)
     assert context is not None
-    assert context.shared_with_retired == ()
-    (span,) = context.retired_source_spans
-    assert span.document_id == "work-items"
-    assert span.source_id == "repo.work-items"
-    assert (span.start_byte, span.end_byte) == (0, len(content))
-    assert span.retired_claim_witnesses == (f"Claim:{claim_id}",)
-    assert span.retired_claim_count == span.retired_citation_count == 1
-    assert len(span.occurrence_identity_witnesses) == 1
-    # Without an observation the daemon reads no workspace and names no passage.
-    assert retirement_context(instance, claim_id) is None
-
-    replacement = b"status: replaced"
-    replacement_body = instance.store_document_body(replacement)
-    successor = document.model_copy(
-        update={
-            "body_digest": replacement_body.digest,
-            "predecessor_digest": document_digest(document).tagged,
-            "lifecycle": DocumentLifecycle(revision=2),
-        }
-    )
-    _accept_document(
-        instance,
-        shell=successor,
-        proposal_name="replace-retired-passage",
-        timestamp="2026-08-21T12:02:00.000000Z",
-    )
-    replacement_observation = _workspace_observation(instance, content=replacement)
-    assert retirement_context(instance, claim_id, replacement_observation) is None
-
-
-def test_ambiguous_relocation_is_silent_instead_of_guessing(tmp_path: Path) -> None:
-    instance, _document, _content, claim_id = retired_source_world(tmp_path)
-    ambiguous = _workspace_observation(instance, content=b"ready ready")
-
-    assert retirement_context(instance, claim_id, ambiguous) is None
-
-
-def test_live_copy_association_suppresses_retired_source_staleness(tmp_path: Path) -> None:
-    instance, owner, _coordinator, _actor = copied_from_world(tmp_path)
-    content = b"status: ready"
-    body = instance.store_document_body(content)
-    document = DocumentShell(
-        identity="document:work-items",
-        document_kind="work-items",
-        title="Work items",
-        media_type="text/markdown",
-        body_digest=body.digest,
-        authority=DocumentAuthority(required_tier="governed_write"),
-        governance_scope=("project:playbill",),
-        lifecycle=DocumentLifecycle(revision=1),
-    )
-    _accept_document(
-        instance,
-        shell=document,
-        proposal_name="add-covered-work-items-document",
-        timestamp="2026-08-21T12:03:00.000000Z",
-    )
-    observation = _workspace_observation(instance, content=content)
-
-    assert retirement_context(instance, SOURCE_CLAIM_ID, observation) is None
-    context = retirement_context(instance, COPY_CLAIM_ID, observation)
-    assert context is not None
-    assert context.retired_source_spans == ()
     assert [relation.relation_kind for relation in context.shared_with_retired] == [
         "same_version_span"
     ]
-
-
-def test_observed_span_overlap_names_retired_neighbours_and_leaves_live_cover_quiet() -> None:
-    from types import SimpleNamespace
-
-    from cruxible_core.indexes.evidence.citation_sql import CitationSourceUse
-    from cruxible_core.service.claims.retirement_context import (
-        _span_overlaps,
-        _uncovered_retired_spans,
-    )
-
-    def use(claim: str, citation: str, lifecycle: str) -> CitationSourceUse:
-        return CitationSourceUse(
-            capture_digest="sha256:" + citation * 64,
-            citation_id="sha256:" + citation * 64,
-            claim_artifact_digest="sha256:" + "f" * 64,
-            claim_identity=claim,
-            lifecycle=lifecycle,
-            commitment_digest="sha256:" + citation * 64,
-            byte_length=4,
-            source_identity="repo.work-items",
-            coordinate_type="unused",
-            selector_type="unused",
-        )
-
-    live = use("Claim:CLM-live", "1", "live")
-    overlapped = use("Claim:CLM-old", "2", "retired")
-    touching = use("Claim:CLM-edge", "3", "retired")
-    stranded = use("Claim:CLM-gone", "4", "retired")
-    placed = [
-        (4, 8, live, SimpleNamespace(identity_digest="sha256:" + "a" * 64)),
-        (6, 10, overlapped, SimpleNamespace(identity_digest="sha256:" + "b" * 64)),
-        (0, 4, touching, SimpleNamespace(identity_digest="sha256:" + "c" * 64)),
-        (20, 24, stranded, SimpleNamespace(identity_digest="sha256:" + "d" * 64)),
-    ]
-
-    (relation,) = _span_overlaps("Claim:CLM-live", "repo.work-items", placed)  # type: ignore[arg-type]
-    assert relation.relation_kind == "current_span_overlap"
-    assert relation.relation_key is None
-    assert relation.working_span is not None
-    assert (relation.working_span.start_byte, relation.working_span.end_byte) == (4, 8)
-    assert relation.retired_claim_witnesses == ("Claim:CLM-old",)
-    assert "relation_key" not in relation.model_dump(mode="json")
-
-    def spans(identity: str):  # type: ignore[no-untyped-def]
-        return _uncovered_retired_spans(
-            identity,
-            document_id="work-items",
-            source_id="repo.work-items",
-            placed=placed,  # type: ignore[arg-type]
-        )
-
-    assert spans("Claim:CLM-old") == [], "a live span covers it"
-    assert [(item.start_byte, item.end_byte) for item in spans("Claim:CLM-edge")] == [(0, 4)]
-    assert [(item.start_byte, item.end_byte) for item in spans("Claim:CLM-gone")] == [(20, 24)]
-    assert spans("Claim:CLM-live") == []

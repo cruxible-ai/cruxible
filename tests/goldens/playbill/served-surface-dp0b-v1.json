@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-24:next-unsure-holds",
-    "surface_digest": "sha256:7eabdbe0cc7f1eaa945ef1d3f6dba6e88ccff424989fc1fa62d2c951d3edc413"
+    "register_entry": "2026-09-24:explain-accepted-state-only",
+    "surface_digest": "sha256:0fe497e92cd1a9186b5506fec06ad30721f671e73c3c28d1e796d625036c1870"
   },
   "surface": {
     "cli_leaves": [
@@ -1270,7 +1270,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/claims/{identity}/explanation",
         "request_model": "cruxible_core.server.playbill_request_models.PlaybillClaimExplainRequest",
-        "request_schema_digest": "sha256:bb7c9856312ea7bb837ec75456b70ba64d48fc05816b211734de4000335c80aa",
+        "request_schema_digest": "sha256:61a0f3b3e9f425b9e34463e1c0c6036b68841d6c712fa9c6f6f218c4a5de3abe",
         "response_model": "types.UnionType[cruxible_client.contracts.PlaybillClaimExplanationV2,cruxible_client.contracts.PlaybillClaimExplanationV3]",
         "response_schema_digest": "sha256:e1bcc224706414ed78d867a8c41e0679180d6fe4fff6325ca65101e818de7106"
       },
