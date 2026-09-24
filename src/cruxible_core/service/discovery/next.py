@@ -890,6 +890,9 @@ def _claim_attestation_threshold_items(
                 latest_door_by_principal[principal_id] = (event, payload)
         superseded_accepted = frozenset(latest_door_by_principal)
         for rule in policy.rules:
+            if rule.minimum_independent_control_components == 0:
+                # A zero threshold escalates nothing; the rule is disabled.
+                continue
             matching_accepted = tuple(
                 item
                 for item in current

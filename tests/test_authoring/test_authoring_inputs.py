@@ -696,3 +696,39 @@ def test_a_procedure_input_names_its_acquisition_policy_and_lowering_owns_the_di
         if item.code == "playbill.authoring.artifact_reference_unresolved"
     }
     assert offending == {"acquisition_policy"}
+
+
+def test_a_zero_attestation_threshold_lints_as_a_disabled_rule(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    template = claim_type_input_template()
+    policy = ClaimAttestationConsequencePolicyV1(
+        rules=(
+            ClaimAttestationConsequenceRuleV1(
+                rule_id="never-escalates",
+                stance="unsure",
+                minimum_independent_control_components=0,
+            ),
+        )
+    )
+    value = ClaimTypeInputV1.model_validate(
+        {
+            **template.model_dump(mode="json"),
+            "attestation_consequence_policy": policy.model_dump(mode="json"),
+        }
+    )
+
+    result = service_propose_playbill_claim_type_input(
+        instance,
+        input=value,
+        actor_id="owner",
+        proposal_name="zero-threshold",
+        timestamp=TIMESTAMP,
+    )
+
+    (warning,) = result.lint.warnings
+    assert warning.code == "playbill.claim_type.attestation_threshold_disabled"
+    assert warning.field_path == (
+        "$.attestation_consequence_policy.rules[0].minimum_independent_control_components"
+    )
+    assert warning.replacement_rule_fragment == {"minimum_independent_control_components": 1}
+    assert warning.contract_identity is None and warning.contract_digest is None

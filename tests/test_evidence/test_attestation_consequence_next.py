@@ -426,7 +426,8 @@ def test_nonqualifying_attestation_sets_are_silent(
 
 @pytest.mark.parametrize(
     ("minimum", "attestation_count", "expected_rows"),
-    ((0, 0, 1), (1, 1, 1), (2, 1, 0), (2, 2, 1)),
+    # A zero threshold disables the rule: it escalates nothing, however many attest.
+    ((0, 0, 0), (0, 2, 0), (1, 1, 1), (2, 1, 0), (2, 2, 1)),
 )
 def test_thresholds_zero_one_and_two_count_distinct_principals(
     tmp_path: Path,

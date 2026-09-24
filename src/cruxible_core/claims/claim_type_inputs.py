@@ -89,11 +89,13 @@ class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
     code: Literal[
         "playbill.claim_type.evidence_policy_admits_no_accepted_contract",
         "playbill.claim_type.anticipated_source_contract_omitted",
+        "playbill.claim_type.attestation_threshold_disabled",
     ]
     field_path: str
     source_id: str | None = None
-    contract_identity: str
-    contract_digest: str
+    # Evidence-policy warnings name the contract they concern; others name none.
+    contract_identity: str | None = None
+    contract_digest: str | None = None
     replacement_rule_fragment: dict[str, object]
 
 
@@ -261,6 +263,24 @@ def lint_claim_type_input(
                 replacement_rule_fragment={"capture_contract_digests": [contract_digest]},
             )
         )
+    consequence = (
+        value.attestation_consequence_policy
+        if isinstance(value, ClaimTypeInputV1)
+        else value.attestation_consequence_policy
+    )
+    for index, rule in enumerate(() if consequence is None else consequence.rules):
+        # A threshold of zero escalates nothing: `next` treats the rule as disabled.
+        if rule.minimum_independent_control_components == 0:
+            warnings.append(
+                ClaimTypeLintWarningV1(
+                    code="playbill.claim_type.attestation_threshold_disabled",
+                    field_path=(
+                        f"$.attestation_consequence_policy.rules[{index}]"
+                        ".minimum_independent_control_components"
+                    ),
+                    replacement_rule_fragment={"minimum_independent_control_components": 1},
+                )
+            )
     warnings.sort(key=lambda item: canonical_bytes(item.model_dump(mode="json")))
     return ClaimTypeProposalLintV1(warnings=tuple(warnings))
 
