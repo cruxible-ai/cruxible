@@ -394,3 +394,136 @@ def test_a_deliberate_disarm_is_not_a_stall_but_undrained_armed_work_is(tmp_path
         instance, line.identity.name, actor=_actor(instance), now=start + timedelta(minutes=30)
     )
     assert _stalled(instance, start + timedelta(minutes=31)) == ()
+
+
+def test_each_automatic_admission_uses_the_authority_resolved_for_it(tmp_path, monkeypatch):
+    import cruxible_core.service.procedures.line_dispatch as dispatch_service
+
+    instance, line, procedure, start = _armed_world(tmp_path, principal=CREDENTIAL)
+    instance_id = instance.descriptor.instance_id
+    records = [_credential(instance_id=instance_id, permission_mode=PermissionMode.ADMIN)]
+    monkeypatch.setattr(
+        line_arms,
+        "get_runtime_credential_store",
+        lambda: SimpleNamespace(get=lambda _id: records[-1]),
+    )
+    for offset in (1, 2):
+        capture(instance, procedure, at=start + timedelta(seconds=offset))
+    _match(instance, start + timedelta(seconds=3))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=3))
+    original = dispatch_service.service_run_playbill_line
+    seen: list[int] = []
+
+    def downgrade_after_first(*args, **kwargs):  # type: ignore[no-untyped-def]
+        seen.append(kwargs["caller_rung"])
+        result = original(*args, **kwargs)
+        records.append(
+            _credential(instance_id=instance_id, permission_mode=PermissionMode.GOVERNED_WRITE)
+        )
+        return result
+
+    monkeypatch.setattr(dispatch_service, "service_run_playbill_line", downgrade_after_first)
+    dispatch_armed_line(_manager(instance), instance_id, arm, now=start + timedelta(seconds=4))
+
+    assert seen == [PermissionMode.ADMIN.value - 1, PermissionMode.GOVERNED_WRITE.value - 1]
+
+
+def test_a_disarm_that_lands_before_the_admission_record_prevents_the_run(tmp_path, monkeypatch):
+    import cruxible_core.service.procedures.line_dispatch as dispatch_service
+
+    instance, line, procedure, start = _armed_world(tmp_path)
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
+    entered, proceed = Event(), Event()
+    original = dispatch_service.service_run_playbill_line
+
+    def paused(*args, **kwargs):  # type: ignore[no-untyped-def]
+        # Past every pre-admission check, before the admission is recorded.
+        entered.set()
+        assert proceed.wait(15)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(dispatch_service, "service_run_playbill_line", paused)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            dispatch_armed_line,
+            _manager(instance),
+            instance.descriptor.instance_id,
+            arm,
+            now=start + timedelta(seconds=3),
+        )
+        assert entered.wait(15)
+        try:
+            stopped = service_disarm_line(
+                instance,
+                line.identity.name,
+                actor=_actor(instance),
+                now=start + timedelta(seconds=4),
+            )
+            assert stopped.state == "stopped"
+        finally:
+            proceed.set()
+        future.result()
+
+    assert _admissions(instance) == 0
+    assert service_line_arm_status(instance, line.identity.name).pending_explicit == 1
+
+
+def test_a_same_epoch_revision_accepted_during_matching_never_runs_under_the_old_arm(
+    tmp_path, monkeypatch
+):
+    import cruxible_core.service.procedures.line_dispatch as dispatch_service
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_spec_digest,
+        line_spec_path,
+        render_line_spec,
+    )
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, line, procedure, owner = line_world(
+        tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR), with_owner=True
+    )
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=READ_TIME - timedelta(seconds=1),
+        daemon_id="daemon",
+    )
+    capture(instance, procedure)
+    successor = line.model_copy(
+        update={
+            "parameters": {"status": "closed"},
+            "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(line).tagged),
+        }
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[line_spec_path(line.identity.name)] = render_line_spec(successor)
+    original = dispatch_service.service_check_line_trigger
+
+    def revised_meanwhile(*args, **kwargs):  # type: ignore[no-untyped-def]
+        _accept_tree(
+            instance,
+            owner,
+            tree,
+            timestamp="2026-08-28T15:02:00.000000Z",
+            proposal_name="revision-during-matching",
+        )
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(dispatch_service, "service_check_line_trigger", revised_meanwhile)
+    _match(instance, READ_TIME + timedelta(seconds=2))
+    for arm in armed_work(instance, now=READ_TIME + timedelta(seconds=3)):
+        dispatch_armed_line(
+            _manager(instance),
+            instance.descriptor.instance_id,
+            arm,
+            now=READ_TIME + timedelta(seconds=3),
+        )
+
+    assert _admissions(instance) == 0
+    status = service_line_arm_status(instance, line.identity.name)
+    assert (status.state, status.stop_reason) == ("stopped", "line_changed")

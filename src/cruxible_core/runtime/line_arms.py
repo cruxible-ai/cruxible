@@ -134,9 +134,10 @@ def dispatch_armed_line(
         timestamp=now,
     )
 
-    def recheck() -> None:
+    def recheck() -> tuple[GovernedActorContext, int]:
+        # Each admission runs under authority resolved for it, not the first one's.
         require_active_segment(instance, arm["session_id"])
-        arm_authority(instance_id, principal, now=now)
+        return arm_authority(instance_id, principal, now=now)
 
     try:
         actor, caller_rung = arm_authority(instance_id, principal, now=now)
@@ -154,6 +155,7 @@ def dispatch_armed_line(
             provider_runtime_operator=manager.provider_runtime_operator(),
             workspace_file_reader=reader,
             session_id=arm["session_id"],
+            pinned_line_artifact_digest=arm["line_artifact_digest"],
             before_admission=recheck,
         )
     except LineArmSegmentEnded:

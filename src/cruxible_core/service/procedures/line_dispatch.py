@@ -9,8 +9,10 @@ only way to act on anything else.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
+from functools import partial
 from types import SimpleNamespace
 from typing import Any, Literal
 from uuid import uuid4
@@ -41,7 +43,11 @@ from cruxible_client.contracts.repairs import served_repair_for_refusal
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.governance.actor_context import GovernedActorContext
-from cruxible_core.procedures.line_admission import line_admission_guard
+from cruxible_core.procedures.line_admission import (
+    LINE_ARM_ADMISSION_GATE,
+    line_admission_guard,
+    line_arm_boundary,
+)
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 from cruxible_core.service.procedures.procedure_runs import (
@@ -63,6 +69,7 @@ _ARM_FIELDS = (
     "armed_by",
 )
 _EPOCH_CHANGED = "The Line's trigger epoch changed; rearm to match the new epoch."
+_LINE_CHANGED = "The Line changed; rearm to run its new version automatically."
 
 # Idle polls need not retain a record per tick. A crash may leave at most this
 # checkpoint interval uncovered; restart never advances beyond durable coverage.
@@ -156,6 +163,15 @@ def require_active_segment(instance: PlaybillInstance, session_id: str) -> None:
         raise LineArmSegmentEnded("the arm that matched this work is no longer active")
 
 
+@contextmanager
+def _segment_gate(instance: PlaybillInstance, line_id: str, session_id: str) -> Iterator[None]:
+    """Hold the arm boundary while the admission is recorded, if the arm still stands."""
+
+    with line_arm_boundary(instance.root, line_id):
+        require_active_segment(instance, session_id)
+        yield
+
+
 def _open_segment(
     store: LineDispatchStore,
     conn: Any,
@@ -247,7 +263,7 @@ def service_arm_line(
     )
     identity = line_identity_digest(accepted.line.identity)
     store = LineDispatchStore(instance)
-    with store.locked() as conn:
+    with line_arm_boundary(instance.root, identity), store.locked() as conn:
         current = _active_session(conn, identity)
         if current is not None:
             _stop(
@@ -287,9 +303,10 @@ def service_disarm_line(
     accepted = _accepted_line_by_reference(
         instance, coordinate=instance.accepted_coordinate(), reference=line
     )
+    identity = line_identity_digest(accepted.line.identity)
     store = LineDispatchStore(instance)
-    with store.locked() as conn:
-        current = _active_session(conn, line_identity_digest(accepted.line.identity))
+    with line_arm_boundary(instance.root, identity), store.locked() as conn:
+        current = _active_session(conn, identity)
         if current is None:
             raise PlaybillExecutionError("this Line is not armed")
         data = _stop(
@@ -332,6 +349,12 @@ def service_stop_line_arm(
     instance.require_writable()
     store = LineDispatchStore(instance)
     with store.locked() as conn:
+        found = conn.execute(
+            "SELECT line_id FROM sessions WHERE session_id=?", (session_id,)
+        ).fetchone()
+    if found is None:
+        return
+    with line_arm_boundary(instance.root, found[0]), store.locked() as conn:
         row = conn.execute(
             "SELECT active,payload FROM sessions WHERE session_id=?", (session_id,)
         ).fetchone()
@@ -431,7 +454,7 @@ def service_match_listening_lines(
         elif accepted.artifact_digest != session["line_artifact_digest"]:
             # The arm is pinned to the version it was armed under: a changed
             # Line is never adopted implicitly, even within the same epoch.
-            stop = ("line_changed", "The Line changed; rearm to run its new version automatically.")
+            stop = ("line_changed", _LINE_CHANGED)
         if stop is not None:
             with store.locked() as conn:
                 current = _active_session(conn, session["line_id"])
@@ -538,6 +561,19 @@ def service_match_listening_lines(
                     now=now,
                 )
                 continue
+            if result.line_artifact_digest != session["line_artifact_digest"]:
+                # A same-epoch revision accepted while this check ran: what it
+                # matched belongs to a version the arm is not bound to.
+                _stop(
+                    store,
+                    conn,
+                    session,
+                    reason="line_changed",
+                    detail=_LINE_CHANGED,
+                    actor=actor,
+                    now=now,
+                )
+                continue
             _enqueue(store, conn, result, actor, now, session_id=session["session_id"])
             if (
                 result.status != "incomplete"
@@ -569,14 +605,17 @@ def service_dispatch_line(
     provider_runtime_operator: Any = None,
     workspace_file_reader: Any = None,
     session_id: str | None = None,
-    before_admission: Callable[[], object] | None = None,
+    pinned_line_artifact_digest: str | None = None,
+    before_admission: Callable[[], tuple[GovernedActorContext, int]] | None = None,
 ) -> LineDispatchResultV1:
     """Admit pending occurrences, explicitly or for one armed segment.
 
-    `session_id` limits dispatch to the work that armed segment matched itself.
-    `before_admission` runs immediately before each admission and raises
-    :class:`LineArmAuthorityLost` when the arming authority no longer holds;
-    the occurrence it was about to admit stays pending.
+    `session_id` limits dispatch to the work that armed segment matched itself,
+    under the Line version it is pinned to. `before_admission` runs immediately
+    before each admission and returns the actor and caller rung that admission
+    uses -- authority is re-resolved every time, never carried over -- or
+    raises :class:`LineArmAuthorityLost`, leaving the occurrence pending. The
+    admission record itself is ordered against a disarm.
     """
 
     instance.require_writable()
@@ -648,6 +687,13 @@ def service_dispatch_line(
                     )
                     with store.locked() as conn:
                         store.append(conn, "reconciled", data, actor=actor, now=now)
+                if pinned_line_artifact_digest is not None and (
+                    current.artifact_digest != pinned_line_artifact_digest
+                    or data["line_artifact_digest"] != pinned_line_artifact_digest
+                ):
+                    # Automatic dispatch runs only the version it was armed under;
+                    # the occurrence stays pending for an explicit decision.
+                    raise LineArmAuthorityLost("line_changed", _LINE_CHANGED)
                 if current.artifact_digest != data["line_artifact_digest"]:
                     refusal = ProcedureAdmissionRefusalV1(
                         code="line_binding_superseded",
@@ -662,8 +708,16 @@ def service_dispatch_line(
                     detail = refusal.message
                 else:
                     binding = occurrence.binding
-                    if before_admission is not None:
-                        before_admission()
+                    run_actor, run_rung = (
+                        (actor, caller_rung) if before_admission is None else before_admission()
+                    )
+                    gate = (
+                        None
+                        if session_id is None
+                        else LINE_ARM_ADMISSION_GATE.set(
+                            partial(_segment_gate, instance, identity, session_id)
+                        )
+                    )
                     try:
                         result = service_run_playbill_line(
                             instance,
@@ -673,8 +727,8 @@ def service_dispatch_line(
                                 occurrence_id=occurrence.occurrence_id,
                                 trigger_event=binding.event if binding else None,
                             ),
-                            actor_context=actor,
-                            caller_rung=caller_rung,
+                            actor_context=run_actor,
+                            caller_rung=run_rung,
                             provider_runtime_operator=provider_runtime_operator,
                             workspace_file_reader=workspace_file_reader,
                             daemon_clock=SimpleNamespace(now=lambda: now),
@@ -710,8 +764,13 @@ def service_dispatch_line(
                                     status = "superseded"
                             else:
                                 detail = "No durable admission was produced."
+                    except LineArmSegmentEnded:
+                        raise
                     except PlaybillExecutionError as exc:
                         detail = str(exc)
+                    finally:
+                        if gate is not None:
+                            LINE_ARM_ADMISSION_GATE.reset(gate)
             with store.locked() as conn:
                 if run_id is not None:
                     store.append(
