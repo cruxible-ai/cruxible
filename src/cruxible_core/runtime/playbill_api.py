@@ -111,6 +111,7 @@ from cruxible_core.exhaust.consumption import (
     ConsumptionOperation,
     consumption_artifacts_for_dependency_closure,
     consumption_artifacts_for_paths,
+    consumption_receipts_enabled,
     record_consumption,
 )
 from cruxible_core.floor.workspace_advertisement import workspace_git_object_format
@@ -375,6 +376,8 @@ def _record_consumed_paths(
     coordinate: AcceptedCoordinate,
     paths: tuple[str, ...],
 ) -> None:
+    if not consumption_receipts_enabled():
+        return  # nothing is recorded, so the served paths are not read again
     instance = get_playbill_manager().get(instance_id)
     record_consumption(
         instance,
@@ -1834,21 +1837,22 @@ def playbill_procedure_run(
         provider_runtime_operator=manager.provider_runtime_operator(),
         workspace_file_reader=workspace_file_reader,
     )
-    instance = manager.get(instance_id)
-    record_consumption(
-        instance,
-        context=ConsumptionContextV1(
-            actor_context=actor,
-            access_profile_id=coverage_access_profile().profile_id,
-        ),
-        operation="playbill.procedure.run.resolve",
-        coordinate=result.coordinate,
-        artifacts=consumption_artifacts_for_dependency_closure(
+    if consumption_receipts_enabled():
+        instance = manager.get(instance_id)
+        record_consumption(
             instance,
-            result.coordinate,
-            procedure_path(name),
-        ),
-    )
+            context=ConsumptionContextV1(
+                actor_context=actor,
+                access_profile_id=coverage_access_profile().profile_id,
+            ),
+            operation="playbill.procedure.run.resolve",
+            coordinate=result.coordinate,
+            artifacts=consumption_artifacts_for_dependency_closure(
+                instance,
+                result.coordinate,
+                procedure_path(name),
+            ),
+        )
     return contracts.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))
 
 

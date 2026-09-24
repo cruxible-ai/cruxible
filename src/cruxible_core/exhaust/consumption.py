@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Literal, TypeAlias
@@ -19,6 +20,20 @@ from cruxible_core.curation.review_operational import (
 )
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.runtime.instance import PlaybillInstance
+
+# Read-touch receipts feed curation only. A local daemon records none, so a
+# read never writes; a managed deployment sets ``on``.
+CONSUMPTION_RECEIPTS_ENV = "CRUXIBLE_CONSUMPTION_RECEIPTS"
+
+
+def consumption_receipts_enabled() -> bool:
+    value = os.environ.get(CONSUMPTION_RECEIPTS_ENV, "off").strip().lower()
+    if value not in {"off", "on"}:
+        raise PlaybillFormatError(
+            f"{CONSUMPTION_RECEIPTS_ENV} must be 'off' or 'on', not {value!r}"
+        )
+    return value == "on"
+
 
 CONSUMPTION_RECEIPT_ID_DOMAIN = "playbill-consumption-receipt-v1"
 # Keep the epoch's original locator; only new receipts get singleton partitions.
@@ -180,7 +195,7 @@ def record_consumption(
 ) -> tuple[ConsumptionReceiptV1, ...]:
     """Append one idempotent touch per distinct served artifact after success."""
 
-    if context is None:
+    if context is None or not consumption_receipts_enabled():
         return ()
     ordered = tuple(
         sorted(
@@ -355,6 +370,7 @@ __all__ = [
     "consumption_artifacts_for_dependency_closure",
     "consumption_artifacts_for_paths",
     "consumption_receipt_id",
+    "consumption_receipts_enabled",
     "ensure_consumption_epoch",
     "record_consumption",
 ]

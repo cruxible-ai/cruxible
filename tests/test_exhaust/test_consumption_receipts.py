@@ -24,6 +24,13 @@ from cruxible_core.exhaust.consumption import (
 from cruxible_core.governance.actor_context import GovernedActorContext
 from tests.core_support._support import initialize_local
 
+
+@pytest.fixture(autouse=True)
+def _consumption_receipts_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests exercise recorded receipts, which a local daemon leaves off.
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "on")
+
+
 NOW = datetime(2026, 8, 26, 14, 0, tzinfo=timezone.utc)
 
 
@@ -228,3 +235,41 @@ def test_consumption_checks_the_complete_coordinate_before_writing(tmp_path: Pat
             artifacts=(_artifact(),),
         )
     assert instance.review_operational_store().head().initialized is False
+
+
+def test_a_local_daemon_records_no_receipts_and_dead_vocabulary_stands_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.curation.curation_detectors import _dead_vocabulary
+
+    monkeypatch.delenv("CRUXIBLE_CONSUMPTION_RECEIPTS")
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    assert (
+        record_consumption(
+            instance,
+            context=_context(),
+            operation="playbill.claim_type.get",
+            coordinate=coordinate,
+            artifacts=(_artifact(),),
+        )
+        == ()
+    )
+    assert instance.review_operational_store().head().initialized is False
+    detections, coverage = _dead_vocabulary(
+        instance=instance,
+        tree=instance.tree_at(coordinate.git_oid),
+        generation=0,
+        operational_head_digest="sha256:" + "0" * 64,
+    )
+    assert detections == ()
+    assert [item.reason for item in coverage.omissions] == ["consumption_receipts_off"]
+
+
+def test_an_unknown_receipt_setting_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    from cruxible_client.contracts.errors import PlaybillFormatError
+    from cruxible_core.exhaust.consumption import consumption_receipts_enabled
+
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "sometimes")
+    with pytest.raises(PlaybillFormatError, match="'off' or 'on'"):
+        consumption_receipts_enabled()

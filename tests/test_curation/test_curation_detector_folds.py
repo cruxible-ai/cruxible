@@ -64,6 +64,13 @@ from cruxible_core.exhaust.consumption import ConsumptionAggregateV1
 from tests.core_support._modeling_parity_support import claim_fact, claim_type, subject
 from tests.core_support._pc_c_support import capture_contract, digest, provider
 
+
+@pytest.fixture(autouse=True)
+def _consumption_receipts_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests exercise recorded receipts, which a local daemon leaves off.
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "on")
+
+
 NOW = datetime(2026, 8, 16, 12, tzinfo=UTC)
 PREDICATE = "project.work_item.status"
 
@@ -89,6 +96,7 @@ def test_curation_detector_vocabularies_are_closed_and_enumerated() -> None:
         "block_observation_invalid",
         "capture_contract_identity_unresolved",
         "consumption_epoch_uninitialized",
+        "consumption_receipts_off",
         "drift_series_unavailable",
     }
 

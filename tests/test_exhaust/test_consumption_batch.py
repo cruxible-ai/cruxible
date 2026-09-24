@@ -29,6 +29,13 @@ from cruxible_core.exhaust.consumption import (
 from cruxible_core.governance.actor_context import GovernedActorContext
 from tests.core_support._support import initialize_local
 
+
+@pytest.fixture(autouse=True)
+def _consumption_receipts_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests exercise recorded receipts, which a local daemon leaves off.
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "on")
+
+
 NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
 COORDINATE = AcceptedCoordinate(
     git_oid="a" * 40,
