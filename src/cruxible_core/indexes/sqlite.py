@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 import stat
+import sys
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -15,7 +16,6 @@ from typing import Any
 from cruxible_client.contracts.canonical import (
     LogicalDigest,
     Sha256Value,
-    typed_digest,
 )
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -35,6 +35,7 @@ from cruxible_core.indexes.claims.projection_subjects import (
     subject_projection_view,
 )
 from cruxible_core.indexes.projection import (
+    PROJECTION_STORAGE_SCHEMA_VERSION,
     AcceptedProjectionCoordinate,
     AssemblerRequest,
     ProjectionManifest,
@@ -129,6 +130,55 @@ _MANIFEST_RE = re.compile(r"^projection-[0-9a-f]{64}\.json$")
 _ASSEMBLER_IMPLEMENTATION_RE = re.compile(r"^[a-z][a-z0-9.-]{0,63}$")
 
 
+def projection_tree_inventory(handle: ProjectionHandle) -> tuple[int, int]:
+    """The verified projection's carried (file count, byte total) of its tree."""
+
+    row = handle._connection.execute(
+        "SELECT file_count,byte_total FROM tree_inventory WHERE singleton=1"
+    ).fetchone()
+    if row is None:
+        raise ProjectionIntegrityError("projection has no tree inventory")
+    return int(row[0]), int(row[1])
+
+
+def clone_verified_piece(parent: ProjectionHandle, destination: Path) -> bool:
+    """Clone the verified parent's open inode copy-on-write, if the filesystem can.
+
+    The clone is taken from the descriptor the bind verified, never by name, so
+    a swapped path cannot substitute other bytes. False selects a page copy.
+    """
+    source = parent._source_descriptor
+    if source is None or destination.exists():
+        return False
+    try:
+        if sys.platform == "darwin":
+            import ctypes
+
+            libc = ctypes.CDLL(None, use_errno=True)
+            at_fdcwd = -2
+            if libc.fclonefileat(source, at_fdcwd, os.fsencode(destination), 0) != 0:
+                return False
+        elif sys.platform.startswith("linux"):
+            import fcntl
+
+            ficlone = 0x40049409
+            target = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                fcntl.ioctl(target, ficlone, source)
+            except OSError:
+                os.close(target)
+                destination.unlink(missing_ok=True)
+                return False
+            os.close(target)
+        else:
+            return False
+        os.chmod(destination, 0o600)
+    except (OSError, AttributeError):
+        destination.unlink(missing_ok=True)
+        return False
+    return True
+
+
 def update_projection_database(
     path: Path,
     *,
@@ -137,6 +187,7 @@ def update_projection_database(
     parsed: ParsedProjectionTree,
     changed_paths: frozenset[str],
     sources: Mapping[str, bytes],
+    inventory: tuple[int, int],
     bodies: Any = None,
     resolve_digest: Callable[[str], tuple[str, ...]] | None = None,
 ) -> dict[str, int]:
@@ -149,11 +200,12 @@ def update_projection_database(
     )
     return update(
         path,
-        parent=parent._connection,
+        parent=None if clone_verified_piece(parent, path) else parent._connection,
         request=request,
         parsed=parsed,
         sources=sources,
         changed_paths=changed_paths,
+        inventory=inventory,
         codec=artifact_codec_for_compiler(compiler),
         bodies=bodies,
         resolve_digest=resolve_digest,
@@ -193,7 +245,9 @@ def initialize_projection_database(
 
 
 def _verify_projection_schema(connection: sqlite3.Connection) -> None:
-    if connection.execute("PRAGMA user_version").fetchone()[0] != 7:
+    if connection.execute("PRAGMA user_version").fetchone()[0] != (
+        PROJECTION_STORAGE_SCHEMA_VERSION
+    ):
         raise ProjectionIntegrityError("projection SQLite schema version is unsupported")
     from cruxible_core.indexes.typed_sqlite import verify_schema
 
@@ -223,13 +277,35 @@ def canonical_logical_export(source: Path | sqlite3.Connection) -> dict[str, obj
         ) from exc
 
 
-def projection_logical_digest(source: Path | sqlite3.Connection) -> LogicalDigest:
-    exported = canonical_logical_export(source)
-    return typed_digest(
-        LogicalDigest,
-        "playbill-projection-logical-v3",
-        exported,
+def projection_logical_digest(
+    source: Path | sqlite3.Connection, *, recompute: bool = True
+) -> LogicalDigest:
+    """The combinable logical digest, recomputed from every row by default.
+
+    ``recompute=False`` reads the sums the build maintained; only the builder
+    that just wrote them uses it. Binding always recomputes and cross-checks.
+    """
+    from cruxible_core.indexes.logical_digest import (
+        compute_table_sums,
+        logical_digest_from_sums,
+        stored_table_sums,
     )
+
+    def digest(connection: sqlite3.Connection) -> LogicalDigest:
+        _verify_projection_schema(connection)
+        sums = compute_table_sums(connection) if recompute else stored_table_sums(connection)
+        return logical_digest_from_sums(connection, sums)
+
+    try:
+        if isinstance(source, sqlite3.Connection):
+            return digest(source)
+        connection = sqlite3.connect(f"{source.as_uri()}?mode=ro&immutable=1", uri=True)
+        try:
+            return digest(connection)
+        finally:
+            connection.close()
+    except (OSError, sqlite3.DatabaseError) as exc:
+        raise ProjectionIntegrityError("projection cannot produce a logical digest") from exc
 
 
 def physical_file_digest(path: Path) -> Sha256Value:
@@ -341,7 +417,13 @@ class ProjectionHandle:
         )
 
     def attach_sources(
-        self, repository: Any, *, bodies: Any, history: Any, records: Any = None
+        self,
+        repository: Any,
+        *,
+        bodies: Any,
+        history: Any,
+        records: Any = None,
+        fact_memo: Any = None,
     ) -> ProjectionHandle:
         from cruxible_core.indexes.typed_state import TypedStateReader
 
@@ -352,6 +434,7 @@ class ProjectionHandle:
             bodies=bodies,
             history=history,
             records=records,
+            fact_memo=fact_memo,
         )
         try:
             self.require_source_authentication(repository=repository)
@@ -692,7 +775,9 @@ def bind_projection(
         # run rather than synthesizing a passing result for it: a forged "ok"
         # would read, here and to anything that later surfaced it, as a check
         # that ran.
-        if connection.execute("PRAGMA user_version").fetchone()[0] != 7:
+        if connection.execute("PRAGMA user_version").fetchone()[0] != (
+            PROJECTION_STORAGE_SCHEMA_VERSION
+        ):
             raise ProjectionIntegrityError("manifest and SQLite storage versions differ")
         integrity_ok = already_verified
         if not already_verified:
@@ -746,11 +831,10 @@ def bind_projection(
         sorted_counts = dict(sorted(counts.items(), key=lambda item: item[0].encode("utf-8")))
         if sorted_counts != manifest.row_counts:
             raise ProjectionIntegrityError("projection row counts differ from the manifest")
-        if (
-            not already_verified
-            and projection_logical_digest(connection).tagged != manifest.logical_digest
-        ):
-            raise ProjectionIntegrityError("projection canonical logical digest mismatch")
+        if not already_verified:
+            from cruxible_core.indexes.logical_digest import verify_logical_digest
+
+            verify_logical_digest(connection, manifest.logical_digest)
         final_identity = _verified_piece_identity(
             index_path,
             os.fstat(descriptor),

@@ -65,6 +65,7 @@ from cruxible_client.contracts.principals import (
 from cruxible_client.contracts.types import GenerationDescriptor
 from cruxible_core.compiler.upgrades import compiler_after_record
 from cruxible_core.derived.derived_runtime import BoundedCache
+from cruxible_core.derived.derived_state import CandidateTree, SnapshotTree
 from cruxible_core.indexes.projection import (
     AcceptedProjectionCoordinate,
     CandidateGenerationProjectionCoordinate,
@@ -689,7 +690,7 @@ class VerifiedGenerationBundle:
     settlement: SettlementBinding
     record: ChangeSetRecordAnyVersion
     record_path: str
-    tree: dict[str, bytes]
+    tree: Mapping[str, bytes]
     members: Mapping[str, str]
     oid: str
     semantic_root: SemanticRoot
@@ -721,7 +722,7 @@ def prepare_generation(
     ledger: GitLedger,
     *,
     base: AcceptedProjectionCoordinate,
-    candidate_tree: dict[str, bytes],
+    candidate_tree: Mapping[str, bytes],
     candidate: CandidateRecordAnyVersion,
     approval_submissions: tuple[ApprovalSubmission, ...],
     candidate_tree_oid: str | None = None,
@@ -848,7 +849,14 @@ def prepare_generation(
     record_path = change_set_path(record)
     if record_path in candidate_tree:
         raise SettlementIntegrityError("candidate tree collides with daemon change-set path")
-    generation_tree = {**candidate_tree, record_path: render_change_set(record)}
+    generation_tree: Mapping[str, bytes]
+    if isinstance(candidate_tree, (SnapshotTree, CandidateTree)):
+        # Stay a snapshot: add the record without reading every member's bytes.
+        builder = candidate_tree.fork()
+        builder[record_path] = render_change_set(record)
+        generation_tree = builder.snapshot()
+    else:
+        generation_tree = {**candidate_tree, record_path: render_change_set(record)}
 
     _checkpoint("before", crash_hook)
     oid = ledger.create_signed_generation(
@@ -864,6 +872,7 @@ def prepare_generation(
         # generation adds only its change-set record. The readback below still
         # compares every member of what was stored.
         extends_tree=candidate_tree_oid,
+        extends_rows=candidate_tree if candidate_tree_oid is not None else None,
     )
     if ledger.parent_of(oid) != binding.base_oid or not ledger.verify_commit(oid):
         raise SettlementIntegrityError("generation parent or daemon signature failed")

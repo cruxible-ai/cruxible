@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from cruxible_client.contracts.canonical import canonical_bytes, is_candidate_card_path
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import CaptureObjectStoreProtocol
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.documents import BodyVerifierProtocol
@@ -24,7 +24,12 @@ from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRequest,
     ProposalReceiveLimits,
 )
-from cruxible_core.derived.derived_state import DerivedState, IndexDefinition, SnapshotTree
+from cruxible_core.derived.derived_state import (
+    DerivedState,
+    IndexDefinition,
+    SnapshotTree,
+    without_cards,
+)
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 
 if TYPE_CHECKING:
@@ -175,11 +180,7 @@ class PreparedEvaluationScope:
         tree = (
             outcome.tree if isinstance(outcome.tree, SnapshotTree) else SnapshotTree(outcome.tree)
         )
-        submission = tree.fork()
-        for path in tree:
-            if is_candidate_card_path(path):
-                del submission[path]
-        self.submission_tree = submission.snapshot()
+        self.submission_tree = without_cards(tree)
         self._outcome = CandidateEvaluation(
             tree,
             copy.deepcopy(outcome.candidate),

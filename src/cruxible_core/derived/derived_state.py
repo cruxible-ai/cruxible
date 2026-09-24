@@ -9,16 +9,198 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Mapping, MutableMapping
+from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any
 
-from cruxible_client.contracts.canonical import normalize_ledger_path
+from cruxible_client.contracts.canonical import CARD_NAMESPACE, normalize_ledger_path
 from cruxible_client.contracts.claims import ClaimArtifactAny, ClaimStatement, parse_claim
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_core.derived.derived_runtime import BoundedCache, Lease, Registry
+
+BlobLoader = Callable[[Sequence[str]], Mapping[str, bytes]]
+
+
+@dataclass(frozen=True, slots=True)
+class BlobRef:
+    """A committed blob named by object ID; its bytes stay in Git's object store."""
+
+    oid: str
+    size: int
+    load: BlobLoader
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> BlobRef:
+        return self  # immutable; never copy the loader's repository handle
+
+
+# Recently read blob bytes, shared by every tree: object IDs are content
+# addresses, so one entry serves every root that carries that blob.
+_BLOB_CACHE_MAX_BYTES = 16 * 1024 * 1024
+_BLOB_CACHE: OrderedDict[str, bytes] = OrderedDict()
+_BLOB_CACHE_BYTES = 0
+_BLOB_CACHE_LOCK = threading.Lock()
+# Resident weight of one reference row: the path plus a small fixed overhead.
+_REF_OVERHEAD = 160
+
+
+def _size(value: bytes | BlobRef) -> int:
+    return len(value) if isinstance(value, bytes) else value.size
+
+
+def _resident(path: str, value: bytes | BlobRef) -> int:
+    return len(path.encode("utf-8")) + (len(value) if isinstance(value, bytes) else _REF_OVERHEAD)
+
+
+def _remember_blob(oid: str, content: bytes) -> None:
+    global _BLOB_CACHE_BYTES
+    if len(content) > _BLOB_CACHE_MAX_BYTES // 4:
+        return
+    with _BLOB_CACHE_LOCK:
+        if oid in _BLOB_CACHE:
+            _BLOB_CACHE.move_to_end(oid)
+            return
+        _BLOB_CACHE[oid] = content
+        _BLOB_CACHE_BYTES += len(content)
+        while _BLOB_CACHE_BYTES > _BLOB_CACHE_MAX_BYTES:
+            _old, evicted = _BLOB_CACHE.popitem(last=False)
+            _BLOB_CACHE_BYTES -= len(evicted)
+
+
+def resolve_blobs(values: Sequence[bytes | BlobRef]) -> list[bytes]:
+    """Each value's bytes, reading every uncached reference in one batch per loader."""
+
+    found: dict[str, bytes] = {}
+    missing: dict[int, dict[str, BlobRef]] = {}
+    loaders: dict[int, BlobLoader] = {}
+    with _BLOB_CACHE_LOCK:
+        for value in values:
+            if isinstance(value, bytes) or value.oid in found:
+                continue
+            cached = _BLOB_CACHE.get(value.oid)
+            if cached is not None:
+                _BLOB_CACHE.move_to_end(value.oid)
+                found[value.oid] = cached
+            else:
+                missing.setdefault(id(value.load), {})[value.oid] = value
+                loaders[id(value.load)] = value.load
+    for key, refs in missing.items():
+        loaded = loaders[key](tuple(refs))
+        for oid, ref in refs.items():
+            content = loaded[oid]
+            if len(content) != ref.size:
+                raise PlaybillError(f"ledger blob size changed while reading: {oid}")
+            found[oid] = content
+            _remember_blob(oid, content)
+    return [value if isinstance(value, bytes) else found[value.oid] for value in values]
+
+
+def row_values(tree: Mapping[str, bytes] | None) -> Mapping[str, bytes | BlobRef] | None:
+    """A snapshot's raw rows (bytes or references), or None for any other mapping."""
+    if isinstance(tree, (SnapshotTree, CandidateTree)):
+        return tree._rows
+    return None
+
+
+def row_size(value: bytes | BlobRef) -> int:
+    return _size(value)
+
+
+def same_row(left: bytes | BlobRef, right: bytes | BlobRef) -> bool:
+    """Whether two rows hold the same bytes, reading content only when forms differ."""
+    if left is right:
+        return True
+    if isinstance(left, BlobRef) and isinstance(right, BlobRef):
+        return left.oid == right.oid
+    if isinstance(left, bytes) and isinstance(right, bytes):
+        return left == right
+    if _size(left) != _size(right):
+        return False
+    return _resolve(left) == _resolve(right)
+
+
+def changed_paths(base: Mapping[str, bytes], candidate: Mapping[str, bytes]) -> tuple[str, ...]:
+    """Paths whose bytes differ between two trees, reading content only where needed.
+
+    Snapshot rows are compared by reference (the same object, or the same blob
+    ID); a plain mapping on either side falls back to comparing bytes.
+    """
+    left, right = row_values(base), row_values(candidate)
+    if left is None or right is None:
+        return tuple(
+            path for path in base.keys() | candidate.keys() if base.get(path) != candidate.get(path)
+        )
+    shared = _edited_paths(base, candidate)
+    if shared is not None:
+        return tuple(path for path in shared if not _same_entry(left, right, path))
+    return tuple(
+        path
+        for path in left.keys() | right.keys()
+        if path not in left or path not in right or not same_row(left[path], right[path])
+    )
+
+
+def _snapshot_equal(tree: Mapping[str, bytes], other: object) -> bool:
+    if not isinstance(other, Mapping):
+        return False
+    mine, theirs = row_values(tree), row_values(other)
+    if mine is None or theirs is None:
+        return dict(tree.items()) == dict(other.items())
+    if len(mine) != len(theirs):
+        return False
+    shared = _edited_paths(tree, other)
+    if shared is not None:
+        return all(_same_entry(mine, theirs, path) for path in shared)
+    return all(path in theirs and same_row(value, theirs[path]) for path, value in mine.items())
+
+
+def _root_and_edits(
+    tree: Mapping[str, bytes],
+) -> tuple[SnapshotTree, Mapping[str, bytes | BlobRef | None]] | None:
+    """The immutable root a snapshot was forked from, and its edits over that root."""
+    if isinstance(tree, CandidateTree):
+        return tree._parent, tree._edits
+    if isinstance(tree, SnapshotTree):
+        return (tree, {}) if tree._parent is None else (tree._parent, tree._edits)
+    return None
+
+
+def edited_paths(left: Mapping[str, bytes], right: Mapping[str, bytes]) -> set[str] | None:
+    """Every path where two forks of one root can differ, or None if they share none."""
+    return _edited_paths(left, right)
+
+
+def root_and_edits(
+    tree: Mapping[str, bytes],
+) -> tuple[SnapshotTree, Mapping[str, bytes | BlobRef | None]] | None:
+    """The immutable root a snapshot was forked from, and its edits over that root."""
+    return _root_and_edits(tree)
+
+
+def _edited_paths(left: Mapping[str, bytes], right: Mapping[str, bytes]) -> set[str] | None:
+    """Every path where two forks of one root can differ, or None if they share none.
+
+    Outside their edits both trees hold exactly the root's rows, so only edited
+    paths need comparing.
+    """
+    mine, theirs = _root_and_edits(left), _root_and_edits(right)
+    if mine is None or theirs is None or mine[0] is not theirs[0]:
+        return None
+    return {*mine[1], *theirs[1]}
+
+
+def _same_entry(
+    left: Mapping[str, bytes | BlobRef], right: Mapping[str, bytes | BlobRef], path: str
+) -> bool:
+    mine, theirs = left.get(path), right.get(path)
+    if mine is None or theirs is None:
+        return mine is None and theirs is None
+    return same_row(mine, theirs)
+
+
+def _resolve(value: bytes | BlobRef) -> bytes:
+    return value if isinstance(value, bytes) else resolve_blobs((value,))[0]
 
 
 class SnapshotTree(Mapping[str, bytes]):
@@ -26,27 +208,39 @@ class SnapshotTree(Mapping[str, bytes]):
 
     def __init__(
         self,
-        rows: Mapping[str, bytes],
+        rows: Mapping[str, bytes | BlobRef],
         *,
         parent: SnapshotTree | None = None,
         edits: PersistentMap[bytes | None] | None = None,
         input_bytes: int | None = None,
         semantic_bytes: int | None = None,
         semantic_members: int | None = None,
+        resident_bytes: int | None = None,
     ) -> None:
-        self._rows = PersistentMap(rows)
+        # Rows hold bytes or a BlobRef whose bytes are read from Git on demand.
+        # Sizes below are logical file bytes; ``_resident_bytes`` is what the
+        # rows themselves hold in memory, which is what a cache budget weighs.
+        raw_rows: Mapping[str, bytes | BlobRef] = (
+            rows._rows if isinstance(rows, SnapshotTree) else rows
+        )
+        self._rows: PersistentMap[bytes | BlobRef] = PersistentMap(raw_rows)
         self._input_bytes = (
-            sum(len(p.encode("utf-8")) + len(b) for p, b in rows.items())
+            sum(len(p.encode("utf-8")) + _size(b) for p, b in raw_rows.items())
             if input_bytes is None
             else input_bytes
         )
+        self._resident_bytes = (
+            sum(_resident(p, b) for p, b in raw_rows.items())
+            if resident_bytes is None
+            else resident_bytes
+        )
         self._semantic_bytes = (
-            sum(len(p.encode("utf-8")) + len(b) for p, b in rows.items() if semantic_path(p))
+            sum(len(p.encode("utf-8")) + _size(b) for p, b in raw_rows.items() if semantic_path(p))
             if semantic_bytes is None
             else semantic_bytes
         )
         self._semantic_members = (
-            sum(1 for p in rows if semantic_path(p))
+            sum(1 for p in raw_rows if semantic_path(p))
             if semantic_members is None
             else semantic_members
         )
@@ -59,15 +253,36 @@ class SnapshotTree(Mapping[str, bytes]):
         )
         self._proofs: Any = None
         self._proof_seed: Any = None
+        # This root without its derivative cards, once asked for; see card_free_view.
+        self._card_free: SnapshotTree | None = None
+        # Facts about every path, once asked for; see path_facts.
+        self._path_facts: PathFacts | None = None
+        # The accepted commit whose tree these rows are, when an instance says so.
+        self._commit_oid: str | None = None
 
     def __getitem__(self, key: str) -> bytes:
-        return self._rows[key]
+        return _resolve(self._rows[key])
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._rows
+
+    def __eq__(self, other: object) -> bool:
+        return _snapshot_equal(self, other)
+
+    __hash__ = None  # type: ignore[assignment]
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._rows)
 
     def __len__(self) -> int:
         return len(self._rows)
+
+    def items(self) -> Any:
+        paths = tuple(self._rows)
+        return list(zip(paths, resolve_blobs([self._rows[p] for p in paths]), strict=True))
+
+    def values(self) -> Any:
+        return resolve_blobs(list(self._rows.values()))
 
     def __deepcopy__(self, memo: dict[int, Any]) -> SnapshotTree:
         return self  # Only immutable bytes and private derived roots are retained.
@@ -124,13 +339,22 @@ class CandidateTree(MutableMapping[str, bytes]):
         self._parent = parent._parent if parent._parent is not None else parent
         self._rows = parent._rows
         self._input_bytes = parent._input_bytes
+        self._resident_bytes = parent._resident_bytes
         self._semantic_bytes = parent._semantic_bytes
         self._semantic_members = parent._semantic_members
         self._edits = parent._edits if parent._parent is not None else PersistentMap()
         self._cached: SnapshotTree | None = parent
 
     def __getitem__(self, key: str) -> bytes:
-        return self._rows[key]
+        return _resolve(self._rows[key])
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._rows
+
+    def __eq__(self, other: object) -> bool:
+        return _snapshot_equal(self, other)
+
+    __hash__ = None  # type: ignore[assignment]
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._rows)
@@ -143,11 +367,14 @@ class CandidateTree(MutableMapping[str, bytes]):
             raise ValueError("candidate edits require canonical paths and immutable bytes")
         previous = self._rows.get(key)
         weight_delta = (
-            len(value) - len(previous)
+            len(value) - _size(previous)
             if previous is not None
             else len(key.encode("utf-8")) + len(value)
         )
         self._input_bytes += weight_delta
+        self._resident_bytes += _resident(key, value) - (
+            _resident(key, previous) if previous is not None else 0
+        )
         if semantic_path(key):
             self._semantic_bytes += weight_delta
             self._semantic_members += int(previous is None)
@@ -162,8 +389,9 @@ class CandidateTree(MutableMapping[str, bytes]):
     def __delitem__(self, key: str) -> None:
         if key not in self._rows:
             raise KeyError(key)
-        weight = len(key.encode("utf-8")) + len(self._rows[key])
+        weight = len(key.encode("utf-8")) + _size(self._rows[key])
         self._input_bytes -= weight
+        self._resident_bytes -= _resident(key, self._rows[key])
         if semantic_path(key):
             self._semantic_bytes -= weight
             self._semantic_members -= 1
@@ -180,6 +408,7 @@ class CandidateTree(MutableMapping[str, bytes]):
                 input_bytes=self._input_bytes,
                 semantic_bytes=self._semantic_bytes,
                 semantic_members=self._semantic_members,
+                resident_bytes=self._resident_bytes,
             )
         return self._cached
 
@@ -215,7 +444,10 @@ class DerivedState:
     Leased roots remain readable after registry eviction; no source is deleted.
     """
 
-    def __init__(self, *, max_roots: int = 4, max_input_bytes: int = 32 * 1024 * 1024) -> None:
+    # Stopgap: an accepted tree over budget is never cached, so every write
+    # would re-read the whole tree; 256 MiB keeps realistic instances cached
+    # until the tree cache holds structure instead of bytes.
+    def __init__(self, *, max_roots: int = 4, max_input_bytes: int = 256 * 1024 * 1024) -> None:
         if max_roots < 0 or max_input_bytes < 0:
             raise ValueError("derived-state budgets must be nonnegative")
         self._max_roots = max_roots
@@ -266,7 +498,7 @@ class DerivedState:
                 if advance is not None and previous is not None
                 else SnapshotTree(load())
             )
-            weight = tree._input_bytes
+            weight = tree._resident_bytes
             tree._accepted = True
             with self._lock:
                 self._builds += 1
@@ -309,34 +541,119 @@ class DerivedState:
         self._runtime.clear()
 
 
-def advance_accepted_tree(parent: SnapshotTree, edits: Mapping[str, bytes | None]) -> SnapshotTree:
+def advance_accepted_tree(
+    parent: SnapshotTree, edits: Mapping[str, bytes | BlobRef | None]
+) -> SnapshotTree:
     """Carry immutable data through a verified physical delta; no ancestry chain."""
     rows = parent._rows
     weight = parent._input_bytes
+    resident = parent._resident_bytes
     semantic_bytes = parent._semantic_bytes
     semantic_members = parent._semantic_members
     for path, content in edits.items():
         previous = rows.get(path)
         if previous is not None:
-            previous_weight = len(path.encode("utf-8")) + len(previous)
+            previous_weight = len(path.encode("utf-8")) + _size(previous)
             weight -= previous_weight
+            resident -= _resident(path, previous)
             if semantic_path(path):
                 semantic_bytes -= previous_weight
                 semantic_members -= 1
         if content is not None:
-            content_weight = len(path.encode("utf-8")) + len(content)
+            content_weight = len(path.encode("utf-8")) + _size(content)
             weight += content_weight
+            resident += _resident(path, content)
             if semantic_path(path):
                 semantic_bytes += content_weight
                 semantic_members += 1
         rows = rows.delete(path) if content is None else rows.set(path, content)
     result = SnapshotTree(
-        rows, input_bytes=weight, semantic_bytes=semantic_bytes, semantic_members=semantic_members
+        rows,
+        input_bytes=weight,
+        semantic_bytes=semantic_bytes,
+        semantic_members=semantic_members,
+        resident_bytes=resident,
     )
     with parent._lock:
         if parent._proofs is not None and parent._accepted_reader is not None:
             result._proof_seed = (parent._proofs, parent._accepted_reader, dict(edits))
+        view = parent._card_free
+        facts = parent._path_facts
+    if facts is not None:
+        result._path_facts = facts.advanced(parent._rows, edits)
+    if view is not None:
+        # The card-free view advances by the same delta, less its cards.
+        result._card_free = advance_accepted_tree(
+            view, {path: row for path, row in edits.items() if not path.startswith(CARD_NAMESPACE)}
+        )
     return result
+
+
+def card_free_view(root: SnapshotTree) -> SnapshotTree:
+    """``root`` without its derivative cards, as an immutable root of its own.
+
+    Cards share one key range, so the rows are cut from the root in O(log n);
+    only the first view of a root sums the cards' sizes, and each accepted
+    successor carries its view forward by its own delta.
+    """
+    if root._parent is not None:
+        raise ValueError("only an immutable root has a card-free view")
+    with root._lock:
+        view = root._card_free
+        if view is None:
+            rows, cards = root._rows.split_prefix(CARD_NAMESPACE)
+            removed = resident = 0
+            for path, row in cards.items():
+                removed += len(path.encode("utf-8")) + _size(row)
+                resident += _resident(path, row)
+            view = SnapshotTree(
+                rows,
+                input_bytes=root._input_bytes - removed,
+                semantic_bytes=root._semantic_bytes,
+                semantic_members=root._semantic_members,
+                resident_bytes=root._resident_bytes - resident,
+            )
+            root._card_free = view
+        # Cards are not Claims: the root's accepted projection answers the view.
+        view._accepted_reader = root._accepted_reader
+    return view
+
+
+def without_cards(tree: SnapshotTree) -> SnapshotTree:
+    """``tree`` less every derivative card.
+
+    A root or a fork of one is its root's card-free view plus the fork's
+    non-card edits, so the cost follows the edits, not the cards.
+    """
+    found = _root_and_edits(tree)
+    if found is not None and found[0]._parent is None:
+        root, edits = found
+        builder = card_free_view(root).fork()
+        for path, row in edits.items():
+            if path.startswith(CARD_NAMESPACE):
+                continue
+            if row is None:
+                if path in builder:
+                    del builder[path]
+            else:
+                builder[path] = _resolve(row)
+        return builder.snapshot()
+    builder = tree.fork()
+    for path in tuple(tree):
+        if path.startswith(CARD_NAMESPACE):
+            del builder[path]
+    return builder.snapshot()
+
+
+def card_free_edits(
+    tree: Mapping[str, bytes], base: Mapping[str, bytes]
+) -> Mapping[str, bytes | BlobRef | None] | None:
+    """The edits that make ``tree`` from ``base``'s card-free view, if it is one's fork."""
+    found = _root_and_edits(tree)
+    if not isinstance(base, SnapshotTree) or found is None:
+        return None
+    view = base._card_free
+    return found[1] if view is not None and found[0] is view else None
 
 
 def snapshot_against(tree: Mapping[str, bytes], parent: SnapshotTree) -> SnapshotTree:
@@ -364,3 +681,131 @@ def snapshot_against(tree: Mapping[str, bytes], parent: SnapshotTree) -> Snapsho
 
 def semantic_path(path: str) -> bool:
     return not path.startswith(("changesets/", "cards/"))
+
+
+def fork_of(
+    tree: Mapping[str, bytes], base: Mapping[str, bytes]
+) -> tuple[SnapshotTree, Mapping[str, bytes | BlobRef | None]] | None:
+    """``tree`` as a root plus edits, where the root is ``base`` or its card-free view."""
+    found = _root_and_edits(tree)
+    if found is None or not isinstance(base, SnapshotTree) or base._parent is not None:
+        return None
+    root = found[0]
+    return found if root is base or (root is base._card_free and root is not None) else None
+
+
+_Spellings = tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
+class PathFacts:
+    """What whole-tree path checks conclude about one tree, advanced by deltas.
+
+    Proposal receive and tree writes refuse a tree whose paths are not
+    canonical, collide after case folding, run too deep, or whose files are too
+    large. Each answer here equals what a pass over every path concludes; a
+    successor's facts follow from its parent's and the changed paths alone.
+    ``folded`` maps every case-folded path prefix to the spellings that fold
+    to it, so a collision is any prefix with more than one spelling.
+    """
+
+    content_bytes: int
+    noncanonical: int
+    colliding: int
+    depths: Mapping[int, int]
+    folded: PersistentMap[_Spellings]
+    # Files larger than each limit asked about, carried forward like the rest.
+    oversize: dict[int, int]
+
+    @property
+    def max_depth(self) -> int:
+        return max((depth for depth, count in self.depths.items() if count), default=0)
+
+    def oversize_count(self, limit: int, rows: Mapping[str, bytes | BlobRef]) -> int:
+        count = self.oversize.get(limit)
+        if count is None:
+            count = sum(1 for row in rows.values() if _size(row) > limit)
+            self.oversize[limit] = count
+        return count
+
+    def advanced(
+        self,
+        rows: Mapping[str, bytes | BlobRef],
+        edits: Mapping[str, bytes | BlobRef | None],
+    ) -> PathFacts:
+        """These facts for ``rows`` with ``edits`` applied."""
+        content = self.content_bytes
+        noncanonical = self.noncanonical
+        colliding = self.colliding
+        depths = dict(self.depths)
+        oversize = dict(self.oversize)
+        folded = self.folded
+        for path, new in edits.items():
+            old = rows.get(path)
+            if old is None and new is None:
+                continue
+            for row, sign in ((old, -1), (new, 1)):
+                if row is None:
+                    continue
+                content += sign * _size(row)
+                for limit in oversize:
+                    oversize[limit] += sign * (_size(row) > limit)
+            if (old is None) == (new is None):
+                continue  # the path stays; only its bytes changed
+            sign = 1 if old is None else -1
+            noncanonical += sign * (not _canonical(path))
+            depth = path.count("/") + 1
+            depths[depth] = depths.get(depth, 0) + sign
+            for key, spelling in _prefixes(path):
+                before = folded.get(key, ())
+                after = _respelled(before, spelling, sign)
+                colliding += (len(after) > 1) - (len(before) > 1)
+                folded = folded.set(key, after) if after else folded.delete(key)
+        return PathFacts(content, noncanonical, colliding, depths, folded, oversize)
+
+
+def path_facts(root: SnapshotTree) -> PathFacts:
+    """``root``'s path facts: one pass over its paths the first time, then carried."""
+    if root._parent is not None:
+        raise ValueError("only an immutable root carries path facts")
+    with root._lock:
+        facts = root._path_facts
+        if facts is None:
+            content = noncanonical = colliding = 0
+            depths: dict[int, int] = {}
+            folded: dict[str, _Spellings] = {}
+            for path, row in root._rows.items():
+                content += _size(row)
+                noncanonical += not _canonical(path)
+                depth = path.count("/") + 1
+                depths[depth] = depths.get(depth, 0) + 1
+                for key, spelling in _prefixes(path):
+                    folded[key] = _respelled(folded.get(key, ()), spelling, 1)
+            colliding = sum(1 for spellings in folded.values() if len(spellings) > 1)
+            facts = PathFacts(content, noncanonical, colliding, depths, PersistentMap(folded), {})
+            root._path_facts = facts
+    return facts
+
+
+def _canonical(path: str) -> bool:
+    try:
+        return normalize_ledger_path(path) == path
+    except (PlaybillError, ValueError):
+        return False
+
+
+def _prefixes(path: str) -> Iterator[tuple[str, str]]:
+    # Folding is per character and never yields "/", so folding a whole prefix
+    # equals folding each part: one key per (folded parent, folded part) pair.
+    end = path.find("/")
+    while end != -1:
+        prefix = path[:end]
+        yield prefix.casefold(), prefix
+        end = path.find("/", end + 1)
+    yield path.casefold(), path
+
+
+def _respelled(spellings: _Spellings, spelling: str, sign: int) -> _Spellings:
+    counts = dict(spellings)
+    counts[spelling] = counts.get(spelling, 0) + sign
+    return tuple(sorted((name, count) for name, count in counts.items() if count > 0))

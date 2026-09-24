@@ -22,6 +22,13 @@ from tests.test_authoring.test_authoring_insertions_v2 import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _durable_intents(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Publication registrations live in retained intent streams; this legacy
+    # road registers them on accepted intents, so it needs durable retention.
+    monkeypatch.setenv("CRUXIBLE_AUTHORING_INTENTS", "durable")
+
+
 def test_publication_fold_and_release_use_current_intents_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

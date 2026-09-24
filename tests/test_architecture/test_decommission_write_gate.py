@@ -28,7 +28,7 @@ The inventory equality below is a law over the GATED functions, and it can only
 see the doors it already knows: it catches a gate removed and a gate added
 undeclared, but a door ADDED with no gate leaves the observed set exactly as it
 was. So the coordinator's persisting doors are derived independently, by
-call-graph closure to `self.store.{create,transition,record_program_stamp}`,
+call-graph closure to `self.store.{create,transition,record_program_stamp,complete}`,
 and every one of them has to be gated or declared above as roll-forward. That
 is the half of "adding a governed-write door without gating it has to move this
 inventory" the equality could not carry on its own.
@@ -45,16 +45,17 @@ GATE_NAMES = frozenset({"require_writable", "_require_writable"})
 
 COORDINATOR = "cruxible_core/authoring/coordinator.py"
 COORDINATOR_CLASS = "AuthoringIntentCoordinator"
-# The three store calls that put a row in the authoring intent log. Reaching one
+# The store calls that put a row in the authoring intent log. Reaching one
 # of these, however many private helpers deep, is what makes a door PERSIST.
-STORE_WRITES = frozenset({"create", "transition", "record_program_stamp"})
+STORE_WRITES = frozenset({"create", "transition", "record_program_stamp", "complete"})
 
 # Public coordinator methods that persist WITHOUT a gate, each declared here
-# with the reason. All four are the protocol roll-forward described at the top
+# with the reason. All five are the protocol roll-forward described at the top
 # of this module: reading a pending intent may expire an expectation that has
-# already lapsed, which is the instance describing what happened to it, not a
-# new intent. A decommissioned instance keeps serving what it accepted, so
-# these stay open on purpose. A name is added here only for that reason -- a
+# already lapsed, and finalizing records an acceptance that already happened,
+# which is the instance describing what happened to it, not a new intent. A
+# decommissioned instance keeps serving what it accepted, so these stay open on
+# purpose. A name is added here only for that reason -- a
 # door that persists a new intent belongs in DECLARED_WRITE_GATES instead.
 DECLARED_ROLL_FORWARD_DOORS = frozenset(
     {
@@ -62,6 +63,7 @@ DECLARED_ROLL_FORWARD_DOORS = frozenset(
         f"{COORDINATOR_CLASS}.resume",
         f"{COORDINATOR_CLASS}.list_pending",
         f"{COORDINATOR_CLASS}.status",
+        f"{COORDINATOR_CLASS}.finalize_completed",
     }
 )
 

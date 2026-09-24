@@ -33,7 +33,10 @@ from cruxible_core.curation.review_operational import (
     ReviewOperationalConcurrentChangeError,
     ReviewOperationalStoreError,
 )
-from cruxible_core.exhaust.consumption import ensure_consumption_epoch
+from cruxible_core.exhaust.consumption import (
+    consumption_receipts_enabled,
+    ensure_consumption_epoch,
+)
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -628,12 +631,13 @@ def service_list_playbill_curation(
     observation_coverage = _record_block_observations(
         instance, request=request, actor_context=actor_context
     )
-    ensure_consumption_epoch(
-        instance,
-        coordinate=coordinate,
-        generation=generation,
-        actor_context=actor_context,
-    )
+    if consumption_receipts_enabled():
+        ensure_consumption_epoch(
+            instance,
+            coordinate=coordinate,
+            generation=generation,
+            actor_context=actor_context,
+        )
     detector_input_head = store.head().head_digest
     block_association_omissions = next(
         (

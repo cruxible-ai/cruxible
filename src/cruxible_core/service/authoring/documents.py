@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from typing import Literal, cast
 
+import structlog
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.attestations import (
@@ -516,6 +517,8 @@ def service_activate_playbill_proposal(
     # Remembered slot answers survive: each is re-validated against its own
     # reads at the new coordinate before it is served.
     reset_claim_resolution_memo(slots=False)
+    if status == "accepted":
+        _finalize_completed_intents(instance)
     advertisement = instance.advertise_workspace()
     # Publish accepted main and remove the closed review branch.
     instance.request_ledger_mirror()
@@ -530,6 +533,23 @@ def service_activate_playbill_proposal(
         ),
         workspace_advertisement=advertisement,
     )
+
+
+def _finalize_completed_intents(instance: PlaybillInstance) -> None:
+    """Let the authoring intent this acceptance completed finish now.
+
+    The activation is already committed, so a failure here only delays the
+    intent's compaction: the next create runs the same pass.
+    """
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.authoring.store import AuthoringIntentStoreError
+
+    try:
+        AuthoringIntentCoordinator.for_instance(instance).finalize_completed()
+    except (AuthoringIntentStoreError, OSError) as exc:
+        structlog.get_logger(__name__).warning(
+            "authoring_intent_finalize_deferred", error=type(exc).__name__
+        )
 
 
 def service_get_playbill_document(

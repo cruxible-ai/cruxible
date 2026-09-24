@@ -67,6 +67,14 @@ from tests.test_authoring.test_authoring_insertions_v2 import (
 )
 from tests.test_authoring.test_authoring_preflight import _self_source_payload
 
+
+@pytest.fixture(autouse=True)
+def _durable_intents(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Publication registrations live in retained intent streams; this legacy
+    # road registers them on accepted intents, so it needs durable retention.
+    monkeypatch.setenv("CRUXIBLE_AUTHORING_INTENTS", "durable")
+
+
 ACCESS_PROFILE = CoverageAccessProfileV1(
     profile_id="block-sync-service-test",
     permitted_access_classes=("instance", "public"),

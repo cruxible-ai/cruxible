@@ -415,8 +415,60 @@ class EvaluationRows:
         candidate.connection.execute(
             "CREATE TEMP VIEW selected_claim_type_names AS SELECT * FROM main.claim_type_names WHERE source_identity NOT IN (SELECT identity FROM changed_sources) UNION ALL SELECT * FROM temp.claim_type_names"
         )
+        candidate.connection.execute(
+            "CREATE TEMP VIEW selected_vocabulary_terms AS SELECT * FROM main.vocabulary_terms WHERE source_identity NOT IN (SELECT identity FROM changed_sources) UNION ALL SELECT * FROM temp.vocabulary_terms"
+        )
         candidate.prefix = "selected_"
         return candidate
+
+    def has_artifact_digest(self, digest: str) -> bool:
+        """Whether any selected artifact has exactly this digest (a by-digest lookup)."""
+        return (
+            self.connection.execute(
+                f"SELECT 1 FROM {self.table('artifact_lookup')} WHERE artifact_digest=? LIMIT 1",
+                (digest,),
+            ).fetchone()
+            is not None
+        )
+
+    def vocabulary_matches(
+        self, *, terms: Iterable[str], identity: str, signature_term: str
+    ) -> tuple[str, ...]:
+        """Target paths whose indexed vocabulary could match: a superset, by term."""
+        table = self.table("vocabulary_terms")
+        keys = sorted(set(terms))
+        found = {
+            row[0]
+            for row in self.connection.execute(
+                f"SELECT target_path FROM {table} WHERE basis='identity' AND term=? "
+                f"UNION SELECT target_path FROM {table} "
+                "WHERE basis='structural_signature' AND term=?",
+                (identity, signature_term),
+            )
+        }
+        for start in range(0, len(keys), 500):
+            chunk = keys[start : start + 500]
+            found.update(
+                row[0]
+                for row in self.connection.execute(
+                    f"SELECT target_path FROM {table} WHERE term IN "
+                    f"({','.join('?' for _ in chunk)}) "
+                    "AND basis IN ('canonical_token','alias','tag','relation')",
+                    chunk,
+                )
+            )
+        return tuple(sorted(found, key=lambda item: item.encode("utf-8")))
+
+    def vocabulary_descriptors(self, target_path: str) -> dict[str, set[str]]:
+        """The raw alias, tag and relation values live descriptors state about a path."""
+        descriptors: dict[str, set[str]] = {"alias": set(), "tag": set(), "relation": set()}
+        for basis, value in self.connection.execute(
+            f"SELECT basis,value FROM {self.table('vocabulary_terms')} "
+            "WHERE target_path=? AND basis IN ('alias','tag','relation')",
+            (target_path,),
+        ):
+            descriptors[basis].add(value)
+        return descriptors
 
     def resolve_claim_digest(self, digest: str) -> tuple[str, ...]:
         identities = {
@@ -635,6 +687,9 @@ class SelectionSpec:
             ),
         )
 
+    def has_artifact_digest(self, digest: str) -> bool:
+        return self.call(lambda rows: rows.has_artifact_digest(digest))
+
     def overlay(self, edits: Mapping[str, bytes | None]) -> SelectionSpec:
         merged = dict(self.edits or {})
         merged.update(edits)
@@ -662,7 +717,16 @@ def derive_indexed_state(tree: Any) -> Any:
                 dependencies = selection.call(lambda rows: rows.dependencies())
                 merkle = selection.call(lambda rows: build_merkle_manifest(rows.members))
             else:
-                previous_proofs, previous_reader, edits = seed
+                previous_proofs, previous_reader, seeded_edits = seed
+                # An accepted advance carries blob references; read just the
+                # changed blobs the Merkle update hashes.
+                from cruxible_core.derived.derived_state import resolve_blobs
+
+                changed = [path for path, body in seeded_edits.items() if body is not None]
+                contents = dict(
+                    zip(changed, resolve_blobs([seeded_edits[p] for p in changed]), strict=True)
+                )
+                edits = {path: contents.get(path) for path in seeded_edits}
                 previous = SelectionSpec(previous_reader)
                 dependencies = selection.call(
                     lambda rows: rows.advanced_dependencies(

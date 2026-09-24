@@ -26,6 +26,7 @@ from cruxible_core.service.authoring.documents import (
     service_propose_compiler_upgrade,
     service_submit_playbill_approval,
 )
+from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 from tests.test_ledger.test_activation import TIMESTAMP, _instance, _sign
 
 

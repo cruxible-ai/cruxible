@@ -43,11 +43,13 @@ from cruxible_client.contracts.captures import (
     CaptureObjectStoreProtocol,
     LedgerMaterialResolverProtocol,
     ProducerReceiptResolverProtocol,
+    capture_contract_digest,
     capture_contract_is_self_asserted,
     capture_is_coordinator_self_source,
     capture_is_direct_selection_bound,
     capture_is_direct_self_source,
     classify_capture_reuse,
+    parse_capture_envelope,
     verify_capture,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
@@ -1061,11 +1063,14 @@ def _resolved_referent(
             artifact_digest=subject.artifact_digest,
             semantic_kind=("semantic.subject" if descriptor else subject.shell.subject_kind),
         )
+    if not descriptor:
+        # Only descriptor Claims may address a ClaimType; skip reading them all.
+        return None
     claim_type = next(
         (item for item in claim_types.values() if item.path == address.artifact_path),
         None,
     )
-    if descriptor and claim_type is not None:
+    if claim_type is not None:
         return _ResolvedReferent(
             identity=claim_type.claim_type.identity,
             artifact_digest=claim_type.artifact_digest,
@@ -1644,6 +1649,21 @@ def claim_preserves_derivation(claim: ClaimArtifactAny, *, predecessor: ClaimArt
     )
 
 
+def _named_capture_contract(store: CaptureObjectStoreProtocol, digest: str) -> str | None:
+    """The contract digest a Capture envelope names, or None when unreadable."""
+
+    try:
+        CasDigest.from_tagged(digest)
+        content = store.read(
+            digest,
+            access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True),
+        )
+        return parse_capture_envelope(content).capture_contract_digest
+    except (PlaybillFormatError, ValueError):
+        # The same failures verification treats as "this contract does not verify".
+        return None
+
+
 def evaluate_claim_law(
     claim: ClaimArtifactAny,
     *,
@@ -2100,21 +2120,35 @@ def evaluate_claim_law(
         pin.artifact_digest for pin in claim.pins if pin.role == "capture-contract"
     }
     inherited_captures = inherited_capture_digests(claim, path=path, predecessor=predecessor)
+    # Computed once per law: the producer digests every verification consults,
+    # and the contracts grouped by the contract digest a Capture names.
+    known_producer_digests: dict[str, str] | None = None
+    contracts_by_digest: dict[str, list[AcceptedCaptureContract]] | None = None
     for capture_digest_value in claim.backing.capture_digests:
         envelope = None
         resolved_contract = None
-        for contract_candidate in capture_contracts.values():
+        if known_producer_digests is None:
+            known_producer_digests = {
+                identity: provider_digest(provider).tagged
+                for identity, provider in resolved_providers.items()
+            } | dict(producer_artifact_digests or {})
+        if contracts_by_digest is None:
+            contracts_by_digest = {}
+            for candidate in capture_contracts.values():
+                contracts_by_digest.setdefault(
+                    capture_contract_digest(candidate.contract).tagged, []
+                ).append(candidate)
+        # The envelope names its exact contract digest, which verification
+        # requires to match; only contracts with that digest can verify it.
+        named = _named_capture_contract(capture_store, capture_digest_value)
+        for contract_candidate in contracts_by_digest.get(named, []) if named else ():
             try:
                 candidate_envelope = verify_capture(
                     capture_digest_value,
                     store=capture_store,
                     contract=contract_candidate.contract,
                     ledger_resolver=ledger_resolver,
-                    producer_artifact_digests={
-                        identity: provider_digest(provider).tagged
-                        for identity, provider in resolved_providers.items()
-                    }
-                    | dict(producer_artifact_digests or {}),
+                    producer_artifact_digests=known_producer_digests,
                     producer_receipt_resolver=producer_receipt_resolver,
                 )
             except (PlaybillFormatError, ValueError):

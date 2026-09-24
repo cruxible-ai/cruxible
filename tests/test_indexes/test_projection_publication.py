@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import cruxible_core.indexes.logical_digest as logical_digest_module
 import cruxible_core.indexes.sqlite as projection_module
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_core.compiler.assembler import PROJECTION_CRASH_POINTS, ProjectionAssembler
@@ -136,15 +137,15 @@ def test_binding_verifies_once_and_reads_do_not_rehash(monkeypatch, tmp_path: Pa
     )
     assembler, result = _publish(tmp_path, repository)
     calls = 0
-    real = projection_module.projection_logical_digest
+    real = logical_digest_module.verify_logical_digest
 
-    def counted(path: Path):
+    def counted(connection, expected):  # type: ignore[no-untyped-def]
         nonlocal calls
         calls += 1
-        return real(path)
+        return real(connection, expected)
 
     projection_module.reset_projection_verification_memo()
-    monkeypatch.setattr(projection_module, "projection_logical_digest", counted)
+    monkeypatch.setattr(logical_digest_module, "verify_logical_digest", counted)
     handle = bind_projection(Path(result.manifest_path), expected=assembler.accepted)
     assert calls == 1
     assert handle.typed.envelope("Subject:project.work_item/one") == handle.typed.envelope(

@@ -7,13 +7,15 @@ import hashlib
 import json
 import os
 import secrets
+import shutil
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias, TypeVar
+from typing import Literal, TypeAlias, TypeVar, cast
 
 from pydantic import (
     BaseModel,
@@ -30,6 +32,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentV2,
     AuthoringPayloadV1,
     AuthoringProgramStampV1,
+    CandidateStatusV1,
     InsertionExpectationV2,
     _AuthoringIntentDecodeContext,
     authoring_program_stamp_operation_key,
@@ -48,6 +51,26 @@ AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "playbill-authoring-intent-event-v1"
 AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN = "playbill-authoring-intent-event-v2"
 AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN = "playbill-authoring-intent-event-v3"
 _TERMINAL_STATES = frozenset({"accepted", "superseded", "terminal"})
+
+# Local instances keep an authoring intent only while it is in progress; a
+# managed deployment sets ``durable`` to retain every intent's full event stream.
+AUTHORING_INTENTS_ENV = "CRUXIBLE_AUTHORING_INTENTS"
+_STALE_DRAFT_SECONDS = 24 * 60 * 60
+# A finished intent leaves only its final event, so a retried submit or status
+# read still answers; the newest few are kept, on disk only.
+_FINISHED_RECEIPTS_RETAINED = 16
+_FINISHED_RECEIPTS = ".finished"
+
+
+def authoring_intent_retention() -> Literal["off", "durable"]:
+    value = os.environ.get(AUTHORING_INTENTS_ENV, "off").strip().lower()
+    if value not in {"off", "durable"}:
+        raise AuthoringIntentStoreError(
+            f"{AUTHORING_INTENTS_ENV} must be 'off' or 'durable', not {value!r}"
+        )
+    return cast(Literal["off", "durable"], value)
+
+
 _LIVE_INSERTION_STATES = frozenset(
     {"awaiting_claim_acceptance", "pending", "prepared", "confirming"}
 )
@@ -470,6 +493,7 @@ class AuthoringIntentStore:
         self._crash_hook = crash_hook
         self._token_factory = token_factory or (lambda: secrets.token_hex(16))
         self._read_only = read_only
+        self._retention = authoring_intent_retention()
 
     def _crash(self, boundary: str) -> None:
         if self._crash_hook is not None:
@@ -517,6 +541,7 @@ class AuthoringIntentStore:
             os.replace(temporary, directory)
             _fsync_directory(self.root)
             self._crash("after_create_publish")
+            self._prune_unretained()
             return intent
 
     def _recover_creating_directories(self) -> None:
@@ -553,7 +578,8 @@ class AuthoringIntentStore:
 
         return resolve_id_prefix(
             intent_id,
-            tuple(path.name for path in self._intent_directories()),
+            tuple(path.name for path in self._intent_directories())
+            + tuple(path.stem for path in self._finished_receipts()),
             marker="AIT-",
             label="AuthoringIntent",
         )
@@ -561,11 +587,46 @@ class AuthoringIntentStore:
     def get(self, intent_id: str, *, actor_id: str) -> AuthoringIntentV1:
         intent_id = self.resolve_intent_id(intent_id)
         with self._locked():
-            events = self._validated_events(self.root / intent_id)
-            intent = events[-1].intent
+            directory = self.root / intent_id
+            receipt = self._finished_receipt(intent_id) if not directory.exists() else None
+            intent = (
+                receipt if receipt is not None else self._validated_events(directory)[-1].intent
+            )
             if intent.actor_id != actor_id:
                 raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
             return intent.model_copy(deep=True)
+
+    @property
+    def finishes_completed(self) -> bool:
+        """Whether a completed intent is compacted to a receipt when it finishes."""
+        return self._retention == "off"
+
+    def submitted_candidates(self) -> tuple[tuple[str, str, str], ...]:
+        """(intent id, actor id, candidate digest) of every submitted, unfinished intent.
+
+        Read from each stream's last event only: this selects what to check,
+        and every intent acted on is loaded and validated through ``get`` and
+        ``complete``.
+        """
+        found: list[tuple[str, str, str]] = []
+        with self._locked():
+            for directory in self._intent_directories():
+                events = sorted((directory / "events").glob("*.json"), key=lambda item: item.name)
+                if not events:
+                    continue
+                try:
+                    intent = json.loads(events[-1].read_bytes()).get("intent", {})
+                except (OSError, ValueError, AttributeError):
+                    continue
+                status = intent.get("candidate_status") or {}
+                digest = status.get("candidate_digest")
+                if (
+                    status.get("proposal_id") is not None
+                    and isinstance(digest, str)
+                    and status.get("state") not in _TERMINAL_STATES
+                ):
+                    found.append((directory.name, str(intent.get("actor_id")), digest))
+        return tuple(found)
 
     def list_pending(self, *, actor_id: str) -> tuple[AuthoringIntentV1, ...]:
         with self._locked():
@@ -686,28 +747,82 @@ class AuthoringIntentStore:
         """Append one idempotent state transition under the store-wide CAS lock."""
 
         with self._locked():
-            self._recover_creating_directories()
-            directory = self.root / intent_id
-            events = self._validated_events(directory)
-            for event in events:
-                if event.operation_key == operation_key:
-                    return event.intent.model_copy(deep=True)
-            current = events[-1].intent
-            if current.actor_id != actor_id:
-                raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
-            updated = transform(current.model_copy(deep=True))
-            self._validate_transition(current, updated, allow_rebase=allow_rebase)
-            event = build_authoring_intent_event(
-                sequence=len(events),
-                previous_event_digest=events[-1].event_digest,
+            return self._transition_locked(
+                intent_id,
+                actor_id=actor_id,
                 operation_key=operation_key,
-                intent=updated,
+                transform=transform,
+                allow_rebase=allow_rebase,
                 program_stamp=program_stamp,
             )
-            path = directory / "events" / f"{event.sequence:020d}.json"
-            _exclusive_write(path, self._render_event(event))
-            self._crash("after_transition_event_sync")
-            return updated
+
+    def complete(
+        self,
+        intent_id: str,
+        *,
+        actor_id: str,
+        operation_key: str,
+        status: CandidateStatusV1,
+    ) -> AuthoringIntentV1:
+        """Record a finished candidate status, once, however many callers race.
+
+        An intent another caller already finished with this same candidate is
+        the answer, not an error: its receipt is returned. Anything else --
+        another actor, another candidate, a still-pending receipt -- takes the
+        ordinary transition and its refusals.
+        """
+
+        with self._locked():
+            if self._retention == "off" and not (self.root / intent_id).exists():
+                receipt = self._finished_receipt(intent_id)
+                if (
+                    receipt is not None
+                    and receipt.actor_id == actor_id
+                    and receipt.candidate_status.state == status.state
+                    and receipt.candidate_status.candidate_digest == status.candidate_digest
+                ):
+                    return receipt.model_copy(deep=True)
+            return self._transition_locked(
+                intent_id,
+                actor_id=actor_id,
+                operation_key=operation_key,
+                transform=lambda current: current.model_copy(update={"candidate_status": status}),
+            )
+
+    def _transition_locked(
+        self,
+        intent_id: str,
+        *,
+        actor_id: str,
+        operation_key: str,
+        transform: Callable[[AuthoringIntentV1], AuthoringIntentV1],
+        allow_rebase: bool = False,
+        program_stamp: AuthoringProgramStampV1 | None = None,
+    ) -> AuthoringIntentV1:
+        self._recover_creating_directories()
+        directory = self.root / intent_id
+        events = self._validated_events(directory)
+        for event in events:
+            if event.operation_key == operation_key:
+                return event.intent.model_copy(deep=True)
+        current = events[-1].intent
+        if current.actor_id != actor_id:
+            raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
+        updated = transform(current.model_copy(deep=True))
+        self._validate_transition(current, updated, allow_rebase=allow_rebase)
+        event = build_authoring_intent_event(
+            sequence=len(events),
+            previous_event_digest=events[-1].event_digest,
+            operation_key=operation_key,
+            intent=updated,
+            program_stamp=program_stamp,
+        )
+        path = directory / "events" / f"{event.sequence:020d}.json"
+        _exclusive_write(path, self._render_event(event))
+        self._crash("after_transition_event_sync")
+        if not _intent_is_pending(updated) and self._retention == "off":
+            self._finish(directory, event)
+        return updated
 
     def record_program_stamp(
         self,
@@ -754,6 +869,111 @@ class AuthoringIntentStore:
             raise AuthoringIntentStoreError("active AuthoringIntent fingerprint is not unique")
         return None if not matches else matches[0].model_copy(deep=True)
 
+    def _prune_unretained(self) -> None:
+        """Delete finished and abandoned intents; the caller holds the store lock.
+
+        With retention off an intent lives only while it is in progress: a
+        finished one is reduced to a receipt of its final event when it
+        finishes. This sweep completes that for any finished stream a crash
+        left behind (the newest few become receipts, older ones are dropped),
+        and drops unsubmitted drafts untouched for a day. A submitted intent is
+        kept until it finishes. The decision reads only each stream's last
+        event; only a stream that becomes a receipt is validated.
+        """
+
+        if self._retention != "off":
+            return
+        now = time.time()
+        finished: list[tuple[float, Path]] = []
+        for directory in self._intent_directories():
+            events = sorted((directory / "events").glob("*.json"), key=lambda item: item.name)
+            if not events:
+                continue
+            last = events[-1]
+            try:
+                modified = last.stat().st_mtime
+                intent = json.loads(last.read_bytes()).get("intent", {})
+            except (OSError, ValueError, AttributeError):
+                continue
+            expectation = intent.get("insertion_expectation") or {}
+            status = intent.get("candidate_status") or {}
+            live_insertion = expectation.get("state") in _LIVE_INSERTION_STATES
+            if not live_insertion and status.get("state") in _TERMINAL_STATES:
+                finished.append((modified, directory))
+            elif (
+                not live_insertion
+                and status.get("proposal_id") is None
+                and now - modified > _STALE_DRAFT_SECONDS
+            ):
+                self._delete_intent_directory(directory)
+        finished.sort(reverse=True)
+        for position, (_modified, directory) in enumerate(finished):
+            if position >= _FINISHED_RECEIPTS_RETAINED:
+                self._delete_intent_directory(directory)
+                continue
+            try:
+                final = self._validated_events(directory)[-1]
+            except AuthoringIntentStoreError:
+                self._delete_intent_directory(directory)
+                continue
+            self._finish(directory, final)
+
+    def _finish(self, directory: Path, event: AuthoringIntentEventAny) -> None:
+        """Replace a finished intent's stream with its final event; the lock is held."""
+
+        receipts = self.root / _FINISHED_RECEIPTS
+        receipts.mkdir(mode=0o700, exist_ok=True)
+        temporary = receipts / f".{event.intent.intent_id}-{secrets.token_hex(8)}"
+        _exclusive_write(temporary, self._render_event(event))
+        os.replace(temporary, receipts / f"{event.intent.intent_id}.json")
+        _fsync_directory(receipts)
+        self._delete_intent_directory(directory)
+        for stale in self._finished_receipts()[:-_FINISHED_RECEIPTS_RETAINED]:
+            stale.unlink(missing_ok=True)
+
+    def _finished_receipts(self) -> tuple[Path, ...]:
+        """Finished-intent receipts, oldest first."""
+
+        receipts = self.root / _FINISHED_RECEIPTS
+        if self._retention != "off" or not receipts.is_dir() or receipts.is_symlink():
+            return ()
+        found: list[tuple[float, Path]] = []
+        for path in receipts.glob("AIT-*.json"):
+            try:
+                found.append((path.stat().st_mtime, path))
+            except OSError:
+                continue
+        return tuple(path for _modified, path in sorted(found))
+
+    def _finished_receipt(self, intent_id: str) -> AuthoringIntentV1 | None:
+        if self._retention != "off":
+            return None
+        path = self.root / _FINISHED_RECEIPTS / f"{intent_id}.json"
+        if path.is_symlink() or not path.is_file():
+            return None
+        try:
+            raw = path.read_bytes()
+            event = _parse_authoring_intent_event(raw)
+        except (OSError, ValidationError, ValueError) as exc:
+            raise AuthoringIntentStoreError(
+                "finished AuthoringIntent receipt is malformed"
+            ) from exc
+        if (
+            raw != self._render_event(event)
+            or event.intent.intent_id != intent_id
+            or _intent_is_pending(event.intent)
+        ):
+            raise AuthoringIntentStoreError("finished AuthoringIntent receipt does not reproduce")
+        return event.intent
+
+    def _delete_intent_directory(self, directory: Path) -> None:
+        global _HISTORY_MEMO_BYTES
+        shutil.rmtree(directory, ignore_errors=True)
+        with _HISTORY_MEMO_LOCK:
+            _HISTORY_MEMO_BYTES -= sum(item.raw_size for item in _HISTORY_MEMO.pop(directory, ()))
+        with _FINGERPRINT_MEMO_LOCK:
+            _FINGERPRINT_MEMO.pop(directory, None)
+
     def _intent_directories(self) -> tuple[Path, ...]:
         return tuple(
             path
@@ -768,6 +988,12 @@ class AuthoringIntentStore:
 
     def _event_paths(self, directory: Path) -> tuple[Path, ...]:
         if directory.is_symlink() or not directory.is_dir():
+            if self._retention == "off":
+                raise AuthoringIntentStoreError(
+                    "AuthoringIntent does not exist; this instance keeps an intent only "
+                    "while it is in progress, so read a finished write's result from "
+                    "accepted state"
+                )
             raise AuthoringIntentStoreError("AuthoringIntent does not exist")
         events_directory = directory / "events"
         if events_directory.is_symlink() or not events_directory.is_dir():

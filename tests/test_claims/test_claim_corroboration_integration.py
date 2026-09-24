@@ -261,8 +261,11 @@ def test_proposal_pass_persists_only_the_authored_type_account_and_replays(
     original = query_service.build_accepted_query_facts
     calls: list[str] = []
 
+    predicate_sets: list[tuple[str, ...] | None] = []
+
     def observed_builder(source, *, coordinate, **kwargs):  # type: ignore[no-untyped-def]
         calls.append(coordinate.git_oid)
+        predicate_sets.append(kwargs.get("predicates"))
         return original(source, coordinate=coordinate, **kwargs)
 
     monkeypatch.setattr(query_service, "build_accepted_query_facts", observed_builder)
@@ -274,6 +277,10 @@ def test_proposal_pass_persists_only_the_authored_type_account_and_replays(
     ]
     persisted = instance.proposal_evidence().read_evaluation(result.admission.proposal_id)
     assert persisted.claim_admission_accounts == result.evaluation.claim_admission_accounts
+    # Corroboration reads only the facts its QueryDefinition references.
+    assert predicate_sets and all(
+        predicates == query.referenced_predicates for predicates in predicate_sets
+    )
     calls.clear()
     _activate(instance, result, tree)
     assert calls == [instance.accepted_coordinate().git_oid]

@@ -82,7 +82,7 @@ def _run(*, min_count: int = 1):  # type: ignore[no-untyped-def]
         accepted_type=accepted_type,
         subject=subject("project.work_item", "wi-1"),
         definition_for_digest={definition.artifact_digest: definition}.get,
-        facts=facts((status_claim(1, "wi-1", "ready"),)),
+        facts_for=lambda _definition: facts((status_claim(1, "wi-1", "ready"),)),
         current=coordinate(),
         timestamp=NOW.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
     )
@@ -119,7 +119,7 @@ def test_corroboration_unresolved_digest_is_a_typed_issue() -> None:
         accepted_type=_accepted_type(),
         subject=subject("project.work_item", "wi-1"),
         definition_for_digest={}.get,
-        facts=facts((status_claim(1, "wi-1", "ready"),)),
+        facts_for=lambda _definition: facts((status_claim(1, "wi-1", "ready"),)),
         current=coordinate(),
         timestamp=NOW.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
     )
@@ -148,7 +148,7 @@ def test_nonreserved_required_parameter_uses_the_query_refusal() -> None:
         accepted_type=accepted_type,
         subject=subject("project.work_item", "wi-1"),
         definition_for_digest={definition.artifact_digest: definition}.get,
-        facts=facts((status_claim(1, "wi-1", "ready"),)),
+        facts_for=lambda _definition: facts((status_claim(1, "wi-1", "ready"),)),
         current=coordinate(),
         timestamp=NOW.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
     )
