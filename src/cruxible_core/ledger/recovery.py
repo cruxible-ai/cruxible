@@ -49,6 +49,7 @@ from cruxible_client.contracts.types import (
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import PC_HR_ARTIFACT_CODEC_COMPILERS
 from cruxible_core.compiler.upgrades import compiler_after_record
+from cruxible_core.derived.derived_state import row_values
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
@@ -475,14 +476,17 @@ def prepared_generation_for_handoff(
     if _candidate_from_record(record) != candidate:
         raise SettlementIntegrityError("stored change-set candidate differs from preparation")
     # A knowledge.brief Claim pins its ClaimType, so the type's presence decides
-    # this for every unchanged Claim; only changed Claims' bytes are read.
-    changed_claims = [
-        change.path
-        for change in ledger.changed_entries(parent.oid, bundle.oid)
-        if change.oid is not None and change.path.startswith("claims/")
+    # this for every Claim carried unchanged from the accepted base (a blob
+    # reference); only Claims held as bytes -- the ones this change wrote, or
+    # every Claim of a plain mapping -- are read.
+    rows = row_values(bundle.tree)
+    claim_paths = [
+        path
+        for path in bundle.tree
+        if path.startswith("claims/") and (rows is None or isinstance(rows[path], bytes))
     ]
     if "claim-types/knowledge/brief.json" in bundle.tree or any(
-        b'"predicate":"knowledge.brief"' in bundle.tree[path] for path in changed_claims
+        b'"predicate":"knowledge.brief"' in bundle.tree[path] for path in claim_paths
     ):
         return None
     return RecoveredGeneration(
