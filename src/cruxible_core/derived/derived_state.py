@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Mapping, MutableMapping
+from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any
@@ -20,33 +20,124 @@ from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_core.derived.derived_runtime import BoundedCache, Lease, Registry
 
+BlobLoader = Callable[[Sequence[str]], Mapping[str, bytes]]
+
+
+@dataclass(frozen=True, slots=True)
+class BlobRef:
+    """A committed blob named by object ID; its bytes stay in Git's object store."""
+
+    oid: str
+    size: int
+    load: BlobLoader
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> BlobRef:
+        return self  # immutable; never copy the loader's repository handle
+
+
+# Recently read blob bytes, shared by every tree: object IDs are content
+# addresses, so one entry serves every root that carries that blob.
+_BLOB_CACHE_MAX_BYTES = 16 * 1024 * 1024
+_BLOB_CACHE: OrderedDict[str, bytes] = OrderedDict()
+_BLOB_CACHE_BYTES = 0
+_BLOB_CACHE_LOCK = threading.Lock()
+# Resident weight of one reference row: the path plus a small fixed overhead.
+_REF_OVERHEAD = 160
+
+
+def _size(value: bytes | BlobRef) -> int:
+    return len(value) if isinstance(value, bytes) else value.size
+
+
+def _resident(path: str, value: bytes | BlobRef) -> int:
+    return len(path.encode("utf-8")) + (len(value) if isinstance(value, bytes) else _REF_OVERHEAD)
+
+
+def _remember_blob(oid: str, content: bytes) -> None:
+    global _BLOB_CACHE_BYTES
+    if len(content) > _BLOB_CACHE_MAX_BYTES // 4:
+        return
+    with _BLOB_CACHE_LOCK:
+        if oid in _BLOB_CACHE:
+            _BLOB_CACHE.move_to_end(oid)
+            return
+        _BLOB_CACHE[oid] = content
+        _BLOB_CACHE_BYTES += len(content)
+        while _BLOB_CACHE_BYTES > _BLOB_CACHE_MAX_BYTES:
+            _old, evicted = _BLOB_CACHE.popitem(last=False)
+            _BLOB_CACHE_BYTES -= len(evicted)
+
+
+def resolve_blobs(values: Sequence[bytes | BlobRef]) -> list[bytes]:
+    """Each value's bytes, reading every uncached reference in one batch per loader."""
+
+    found: dict[str, bytes] = {}
+    missing: dict[int, dict[str, BlobRef]] = {}
+    loaders: dict[int, BlobLoader] = {}
+    with _BLOB_CACHE_LOCK:
+        for value in values:
+            if isinstance(value, bytes) or value.oid in found:
+                continue
+            cached = _BLOB_CACHE.get(value.oid)
+            if cached is not None:
+                _BLOB_CACHE.move_to_end(value.oid)
+                found[value.oid] = cached
+            else:
+                missing.setdefault(id(value.load), {})[value.oid] = value
+                loaders[id(value.load)] = value.load
+    for key, refs in missing.items():
+        loaded = loaders[key](tuple(refs))
+        for oid, ref in refs.items():
+            content = loaded[oid]
+            if len(content) != ref.size:
+                raise PlaybillError(f"ledger blob size changed while reading: {oid}")
+            found[oid] = content
+            _remember_blob(oid, content)
+    return [value if isinstance(value, bytes) else found[value.oid] for value in values]
+
+
+def _resolve(value: bytes | BlobRef) -> bytes:
+    return value if isinstance(value, bytes) else resolve_blobs((value,))[0]
+
 
 class SnapshotTree(Mapping[str, bytes]):
     """Immutable physical tree. Lazy derived values cannot alias caller models."""
 
     def __init__(
         self,
-        rows: Mapping[str, bytes],
+        rows: Mapping[str, bytes | BlobRef],
         *,
         parent: SnapshotTree | None = None,
         edits: PersistentMap[bytes | None] | None = None,
         input_bytes: int | None = None,
         semantic_bytes: int | None = None,
         semantic_members: int | None = None,
+        resident_bytes: int | None = None,
     ) -> None:
-        self._rows = PersistentMap(rows)
+        # Rows hold bytes or a BlobRef whose bytes are read from Git on demand.
+        # Sizes below are logical file bytes; ``_resident_bytes`` is what the
+        # rows themselves hold in memory, which is what a cache budget weighs.
+        raw_rows: Mapping[str, bytes | BlobRef] = (
+            rows._rows if isinstance(rows, SnapshotTree) else rows
+        )
+        self._rows: PersistentMap[bytes | BlobRef] = PersistentMap(raw_rows)
         self._input_bytes = (
-            sum(len(p.encode("utf-8")) + len(b) for p, b in rows.items())
+            sum(len(p.encode("utf-8")) + _size(b) for p, b in raw_rows.items())
             if input_bytes is None
             else input_bytes
         )
+        self._resident_bytes = (
+            sum(_resident(p, b) for p, b in raw_rows.items())
+            if resident_bytes is None
+            else resident_bytes
+        )
         self._semantic_bytes = (
-            sum(len(p.encode("utf-8")) + len(b) for p, b in rows.items() if semantic_path(p))
+            sum(len(p.encode("utf-8")) + _size(b) for p, b in raw_rows.items() if semantic_path(p))
             if semantic_bytes is None
             else semantic_bytes
         )
         self._semantic_members = (
-            sum(1 for p in rows if semantic_path(p))
+            sum(1 for p in raw_rows if semantic_path(p))
             if semantic_members is None
             else semantic_members
         )
@@ -61,13 +152,23 @@ class SnapshotTree(Mapping[str, bytes]):
         self._proof_seed: Any = None
 
     def __getitem__(self, key: str) -> bytes:
-        return self._rows[key]
+        return _resolve(self._rows[key])
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._rows
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._rows)
 
     def __len__(self) -> int:
         return len(self._rows)
+
+    def items(self) -> Any:
+        paths = tuple(self._rows)
+        return list(zip(paths, resolve_blobs([self._rows[p] for p in paths]), strict=True))
+
+    def values(self) -> Any:
+        return resolve_blobs(list(self._rows.values()))
 
     def __deepcopy__(self, memo: dict[int, Any]) -> SnapshotTree:
         return self  # Only immutable bytes and private derived roots are retained.
@@ -124,13 +225,17 @@ class CandidateTree(MutableMapping[str, bytes]):
         self._parent = parent._parent if parent._parent is not None else parent
         self._rows = parent._rows
         self._input_bytes = parent._input_bytes
+        self._resident_bytes = parent._resident_bytes
         self._semantic_bytes = parent._semantic_bytes
         self._semantic_members = parent._semantic_members
         self._edits = parent._edits if parent._parent is not None else PersistentMap()
         self._cached: SnapshotTree | None = parent
 
     def __getitem__(self, key: str) -> bytes:
-        return self._rows[key]
+        return _resolve(self._rows[key])
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._rows
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._rows)
@@ -143,11 +248,14 @@ class CandidateTree(MutableMapping[str, bytes]):
             raise ValueError("candidate edits require canonical paths and immutable bytes")
         previous = self._rows.get(key)
         weight_delta = (
-            len(value) - len(previous)
+            len(value) - _size(previous)
             if previous is not None
             else len(key.encode("utf-8")) + len(value)
         )
         self._input_bytes += weight_delta
+        self._resident_bytes += _resident(key, value) - (
+            _resident(key, previous) if previous is not None else 0
+        )
         if semantic_path(key):
             self._semantic_bytes += weight_delta
             self._semantic_members += int(previous is None)
@@ -162,8 +270,9 @@ class CandidateTree(MutableMapping[str, bytes]):
     def __delitem__(self, key: str) -> None:
         if key not in self._rows:
             raise KeyError(key)
-        weight = len(key.encode("utf-8")) + len(self._rows[key])
+        weight = len(key.encode("utf-8")) + _size(self._rows[key])
         self._input_bytes -= weight
+        self._resident_bytes -= _resident(key, self._rows[key])
         if semantic_path(key):
             self._semantic_bytes -= weight
             self._semantic_members -= 1
@@ -180,6 +289,7 @@ class CandidateTree(MutableMapping[str, bytes]):
                 input_bytes=self._input_bytes,
                 semantic_bytes=self._semantic_bytes,
                 semantic_members=self._semantic_members,
+                resident_bytes=self._resident_bytes,
             )
         return self._cached
 
@@ -269,7 +379,7 @@ class DerivedState:
                 if advance is not None and previous is not None
                 else SnapshotTree(load())
             )
-            weight = tree._input_bytes
+            weight = tree._resident_bytes
             tree._accepted = True
             with self._lock:
                 self._builds += 1
@@ -312,29 +422,38 @@ class DerivedState:
         self._runtime.clear()
 
 
-def advance_accepted_tree(parent: SnapshotTree, edits: Mapping[str, bytes | None]) -> SnapshotTree:
+def advance_accepted_tree(
+    parent: SnapshotTree, edits: Mapping[str, bytes | BlobRef | None]
+) -> SnapshotTree:
     """Carry immutable data through a verified physical delta; no ancestry chain."""
     rows = parent._rows
     weight = parent._input_bytes
+    resident = parent._resident_bytes
     semantic_bytes = parent._semantic_bytes
     semantic_members = parent._semantic_members
     for path, content in edits.items():
         previous = rows.get(path)
         if previous is not None:
-            previous_weight = len(path.encode("utf-8")) + len(previous)
+            previous_weight = len(path.encode("utf-8")) + _size(previous)
             weight -= previous_weight
+            resident -= _resident(path, previous)
             if semantic_path(path):
                 semantic_bytes -= previous_weight
                 semantic_members -= 1
         if content is not None:
-            content_weight = len(path.encode("utf-8")) + len(content)
+            content_weight = len(path.encode("utf-8")) + _size(content)
             weight += content_weight
+            resident += _resident(path, content)
             if semantic_path(path):
                 semantic_bytes += content_weight
                 semantic_members += 1
         rows = rows.delete(path) if content is None else rows.set(path, content)
     result = SnapshotTree(
-        rows, input_bytes=weight, semantic_bytes=semantic_bytes, semantic_members=semantic_members
+        rows,
+        input_bytes=weight,
+        semantic_bytes=semantic_bytes,
+        semantic_members=semantic_members,
+        resident_bytes=resident,
     )
     with parent._lock:
         if parent._proofs is not None and parent._accepted_reader is not None:

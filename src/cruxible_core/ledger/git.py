@@ -28,6 +28,7 @@ from cruxible_client.contracts.canonical import CandidateDigest, normalize_manif
 from cruxible_client.contracts.errors import PlaybillGitError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.types import GitObjectFormat
+from cruxible_core.derived.derived_state import BlobRef
 from cruxible_core.governance.keys import raw_public_key_hex_from_openssh
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -125,6 +126,12 @@ def _validate_commit_message(message: str) -> None:
         raise PlaybillGitError("commit message must be a nonblank prose summary")
     if "\x00" in message:
         raise PlaybillGitError("commit message must not contain a NUL byte")
+
+
+def _entry_size(entry: GitTreeEntry) -> int:
+    if entry.size is None:
+        raise PlaybillGitError(f"ledger blob has no size: {entry.path}")
+    return entry.size
 
 
 def _proven_blob_entries(entries: tuple[GitTreeEntry, ...]) -> tuple[GitTreeEntry, ...]:
@@ -1691,6 +1698,43 @@ class GitLedger:
             else:
                 result[change.path] = blobs[change.oid]
         return {path: result[path] for path in sorted(result, key=lambda p: p.encode("utf-8"))}
+
+    def blob_refs_at(self, oid: str) -> dict[str, BlobRef]:
+        """The whole tree as blob references: the same proof ``read_tree`` applies,
+        with no blob payload read. Bytes are read through ``read_blobs`` on demand."""
+
+        entries = _proven_blob_entries(self.list_tree_with_sizes(oid))
+        load = self.read_blobs  # one loader object, so a batch read groups every ref
+        return {entry.path: BlobRef(entry.oid, _entry_size(entry), load) for entry in entries}
+
+    def blob_ref_changes(self, parent_oid: str, oid: str) -> dict[str, BlobRef | None]:
+        """A successor as a delta of blob references from Git's structural diff.
+
+        Unreported paths are byte-identical to the parent; each changed path is
+        a regular-file blob (proven by mode here and by type and size from the
+        object headers), or None when removed. No payload is read.
+        """
+
+        changes = self.changed_entries(parent_oid, oid)
+        for change in changes:
+            if change.oid is not None and change.mode != "100644":
+                raise PlaybillGitError(
+                    f"ledger tree contains unsupported {change.mode} member: {change.path}"
+                )
+        infos = self.object_sizes([c.oid for c in changes if c.oid is not None])
+        load = self.read_blobs
+        result: dict[str, BlobRef | None] = {}
+        for change in changes:
+            if change.oid is None:
+                result[change.path] = None
+                continue
+            info = infos.get(change.oid)
+            if info is None or info[0] != "blob":
+                raise PlaybillGitError(
+                    f"ledger tree names a missing or non-blob object: {change.path}"
+                )
+            result[change.path] = BlobRef(change.oid, info[1], load)
+        return result
 
     def paths_at(self, oid: str) -> tuple[str, ...]:
         """List one commit's paths under the same proof ``read_tree`` applies.

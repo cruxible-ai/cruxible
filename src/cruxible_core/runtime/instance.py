@@ -1768,11 +1768,13 @@ class PlaybillInstance:
 
             previous_oid = json.loads(previous_binding)["coordinate"]["git_oid"]
             self.coordinate_for_oid(previous_oid)
-            paths = self._ledger.changed_tree_paths(previous_oid, oid)
-            blobs = self._ledger.blobs_at(oid, paths)
-            return advance_accepted_tree(previous, {path: blobs.get(path) for path in paths})
+            return advance_accepted_tree(previous, self._ledger.blob_ref_changes(previous_oid, oid))
 
-        tree = self.derived.accepted_tree(binding, lambda: self.tree_at(oid), advance)
+        def load() -> SnapshotTree:
+            self.coordinate_for_oid(oid)
+            return SnapshotTree(self._ledger.blob_refs_at(oid))
+
+        tree = self.derived.accepted_tree(binding, load, advance)
         tree._accepted_reader = (
             None
             if coordinate.git_oid == self._verified_genesis.oid

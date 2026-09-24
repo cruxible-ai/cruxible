@@ -717,7 +717,16 @@ def derive_indexed_state(tree: Any) -> Any:
                 dependencies = selection.call(lambda rows: rows.dependencies())
                 merkle = selection.call(lambda rows: build_merkle_manifest(rows.members))
             else:
-                previous_proofs, previous_reader, edits = seed
+                previous_proofs, previous_reader, seeded_edits = seed
+                # An accepted advance carries blob references; read just the
+                # changed blobs the Merkle update hashes.
+                from cruxible_core.derived.derived_state import resolve_blobs
+
+                changed = [path for path, body in seeded_edits.items() if body is not None]
+                contents = dict(
+                    zip(changed, resolve_blobs([seeded_edits[p] for p in changed]), strict=True)
+                )
+                edits = {path: contents.get(path) for path in seeded_edits}
                 previous = SelectionSpec(previous_reader)
                 dependencies = selection.call(
                     lambda rows: rows.advanced_dependencies(
