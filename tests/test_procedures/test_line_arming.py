@@ -371,3 +371,26 @@ def test_an_automatic_run_acts_as_the_arming_credential(monkeypatch):
     actor, caller_rung = arm_authority("instance", CREDENTIAL, now=datetime.now(UTC))
     assert (actor.actor_type, actor.actor_id) == ("service_account", "line-operator")
     assert caller_rung == PermissionMode.GOVERNED_WRITE.value - 1
+
+
+def _stalled(instance, at):  # type: ignore[no-untyped-def]
+    from cruxible_core.service.discovery.next import LINE_STALL_AFTER
+    from cruxible_core.service.procedures.line_dispatch import stalled_line_arms
+
+    return stalled_line_arms(instance, now=at, stall_after=LINE_STALL_AFTER)
+
+
+def test_a_deliberate_disarm_is_not_a_stall_but_undrained_armed_work_is(tmp_path):
+    from cruxible_core.service.discovery.next import LINE_STALL_AFTER
+
+    instance, line, procedure, start = _armed_world(tmp_path)
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    assert _stalled(instance, start + timedelta(seconds=3)) == ()
+    (stalled,) = _stalled(instance, start + LINE_STALL_AFTER + timedelta(seconds=2))
+    assert (stalled.state, stalled.pending_automatic) == ("armed", 1)
+
+    service_disarm_line(
+        instance, line.identity.name, actor=_actor(instance), now=start + timedelta(minutes=30)
+    )
+    assert _stalled(instance, start + timedelta(minutes=31)) == ()

@@ -940,6 +940,10 @@ Line is armed, how many pending occurrences it will admit on its own
 one-minute intervals; event progress and partial scans are retained
 immediately. Each armed Line is drained by at most one worker at a time, so a
 slow Procedure never delays matching or another Line.
+`playbill next` reports `line_stalled` for an arm that stopped by itself (its
+repair rearms it) or an armed Line whose own due work has waited more than 15
+minutes (its repair dispatches it, which shows the refusal). A deliberate
+disarm is not reported.
 `evaluate` explicitly checks a historical `[since, until)` range and records
 its matches as pending. Follow its cursor to finish a bounded page.
 `dispatch` admits pending occurrences using the caller's current permissions

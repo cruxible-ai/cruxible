@@ -268,6 +268,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "procedure_projection_missing",
     "instance_decommissioned",
     "ledger_mirror_behind",
+    "line_stalled",
 ]
 PlaybillHandEditNextReason: TypeAlias = Literal[
     "procedure_projection_missing",

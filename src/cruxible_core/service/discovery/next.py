@@ -155,6 +155,8 @@ NextRepairOperation = Literal[
     "playbill.block.repin",
     "playbill.block.sync",
     "playbill.document.propose",
+    "playbill.line.arm",
+    "playbill.line.dispatch",
     "hand_edit",
 ]
 
@@ -642,6 +644,8 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.block.repin": "playbill block repin",
     "playbill.block.sync": "playbill block sync",
     "playbill.document.propose": "playbill document propose",
+    "playbill.line.arm": "playbill line arm",
+    "playbill.line.dispatch": "playbill line dispatch",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -726,6 +730,11 @@ def _repair_command(
             parts.append("--all")
         else:
             return None
+    elif operation in {"playbill.line.arm", "playbill.line.dispatch"}:
+        line = values.get("line")
+        if not isinstance(line, str) or not line:
+            return None
+        parts.append(shlex.quote(line))
     elif operation == "playbill.claim.retire":
         claim_id = values.get("claim_id")
         if isinstance(claim_id, str):
@@ -2612,6 +2621,61 @@ def _workspace_items(
     return tuple(domains), tuple(items)
 
 
+#: How long an armed Line's own due work may wait before automation reads as stalled.
+LINE_STALL_AFTER = timedelta(minutes=15)
+
+
+def _line_stalled_items(
+    instance: PlaybillInstance,
+    *,
+    evaluation_time: datetime,
+    access_profile: CoverageAccessProfileV1,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """An armed Line that stopped by itself, or stopped draining what it matched.
+
+    Arms are operational state, measured now, like mirror health: a stopped arm
+    is invisible anywhere else, and a Line that quietly stopped running is the
+    failure automation otherwise hides. A deliberate disarm is not a finding.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.service.procedures.line_dispatch import stalled_line_arms
+
+    items: list[PlaybillNextItemV1] = []
+    for arm in stalled_line_arms(instance, now=evaluation_time, stall_after=LINE_STALL_AFTER):
+        stopped = arm.state == "stopped"
+        items.append(
+            _item(
+                severity="repair",
+                reason="line_stalled",
+                subject_identity=arm.line,
+                detail={
+                    "arm_id": arm.arm_id,
+                    "state": arm.state,
+                    "stop_reason": arm.stop_reason,
+                    "stopped_at": None if arm.stopped_at is None else arm.stopped_at.isoformat(),
+                    "pending_automatic": arm.pending_automatic,
+                    "pending_explicit": arm.pending_explicit,
+                    "detail": arm.detail,
+                },
+                # A stopped arm is resumed by rearming under authority that holds;
+                # a Line that stopped draining shows its refusal when dispatched.
+                repair=PlaybillNextRepairV1(
+                    operation="playbill.line.arm" if stopped else "playbill.line.dispatch",
+                    target=arm.line,
+                    required_change=(
+                        "rearm_the_line_under_a_current_credential_and_version"
+                        if stopped
+                        else "dispatch_the_line_to_read_why_its_work_is_blocked"
+                    ),
+                    arguments={"line": arm.line.removeprefix("Line:")},
+                ),
+            )
+        )
+    return tuple(items)
+
+
 def _ledger_mirror_items(
     instance: PlaybillInstance,
     *,
@@ -3306,6 +3370,11 @@ def service_playbill_next(
                     else ()
                 ),
                 *_ledger_mirror_items(instance, coordinate=coordinate),
+                *_line_stalled_items(
+                    instance,
+                    evaluation_time=request.evaluation_time,
+                    access_profile=request.access_profile,
+                ),
                 *(
                     (
                         _item(

@@ -100,7 +100,8 @@
         "provider_lane_unavailable",
         "procedure_projection_missing",
         "instance_decommissioned",
-        "ledger_mirror_behind"
+        "ledger_mirror_behind",
+        "line_stalled"
       ]
     },
     "PlaybillPolicyKind": {
