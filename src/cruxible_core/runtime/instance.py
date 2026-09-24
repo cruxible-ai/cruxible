@@ -295,6 +295,10 @@ class PlaybillInstance:
         self._recovered = recovered
         self._state_lock = threading.RLock()
         self.derived = DerivedState()
+        # Compiled semantic facts per owner version; see TypedStateReader.facts_for.
+        self._owner_facts = self.derived.memo(
+            "owner-facts", max_entries=65536, max_bytes=64 * 1024 * 1024
+        )
         self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)
         for name, namespace, adapter, source in (
             ("accepted-artifacts", "accepted", self.derived, "verified-ledger-tree-v1"),
@@ -1927,6 +1931,7 @@ class PlaybillInstance:
             records=RetainedRecordReader(
                 self._ledger.blob_at, verified=self.verified_change_set_records
             ),
+            fact_memo=self._owner_facts,
         )
 
     def bind_accepted_projection(

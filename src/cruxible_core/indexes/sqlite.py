@@ -417,7 +417,13 @@ class ProjectionHandle:
         )
 
     def attach_sources(
-        self, repository: Any, *, bodies: Any, history: Any, records: Any = None
+        self,
+        repository: Any,
+        *,
+        bodies: Any,
+        history: Any,
+        records: Any = None,
+        fact_memo: Any = None,
     ) -> ProjectionHandle:
         from cruxible_core.indexes.typed_state import TypedStateReader
 
@@ -428,6 +434,7 @@ class ProjectionHandle:
             bodies=bodies,
             history=history,
             records=records,
+            fact_memo=fact_memo,
         )
         try:
             self.require_source_authentication(repository=repository)
