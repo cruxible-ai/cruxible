@@ -629,6 +629,13 @@ cruxible playbill authoring status INTENT_ID
 cruxible playbill authoring abandon-insertion INTENT_ID [--expectation-id ID]
 ~~~
 
+**Intent retention.** A local daemon keeps an authoring intent only while it can
+still matter: every intent in progress (drafts untouched for a day are
+dropped) plus the 16 most recently finished, so a retried write resolves to its
+original result and `status`/`resume` keep answering. Set
+`CRUXIBLE_AUTHORING_INTENTS=durable` on a managed daemon to retain every
+intent's full event stream.
+
 One authoring intent is one changeset. The tagless `change_set` input carries
 any mix of members -- `claim`, `claim_type`, `claim_retirement`, `subject`,
 `query_definition`, `procedure`, `procedure_mandate` -- and the whole intent

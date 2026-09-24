@@ -7,13 +7,15 @@ import hashlib
 import json
 import os
 import secrets
+import shutil
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias, TypeVar
+from typing import Literal, TypeAlias, TypeVar, cast
 
 from pydantic import (
     BaseModel,
@@ -48,6 +50,23 @@ AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "playbill-authoring-intent-event-v1"
 AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN = "playbill-authoring-intent-event-v2"
 AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN = "playbill-authoring-intent-event-v3"
 _TERMINAL_STATES = frozenset({"accepted", "superseded", "terminal"})
+
+# Local instances keep authoring intents only while they are in use; a managed
+# deployment sets ``durable`` to retain every intent's full event stream.
+AUTHORING_INTENTS_ENV = "CRUXIBLE_AUTHORING_INTENTS"
+_EPHEMERAL_FINISHED_RETAINED = 16
+_EPHEMERAL_STALE_SECONDS = 24 * 60 * 60
+
+
+def authoring_intent_retention() -> Literal["ephemeral", "durable"]:
+    value = os.environ.get(AUTHORING_INTENTS_ENV, "ephemeral").strip().lower()
+    if value not in {"ephemeral", "durable"}:
+        raise AuthoringIntentStoreError(
+            f"{AUTHORING_INTENTS_ENV} must be 'ephemeral' or 'durable', not {value!r}"
+        )
+    return cast(Literal["ephemeral", "durable"], value)
+
+
 _LIVE_INSERTION_STATES = frozenset(
     {"awaiting_claim_acceptance", "pending", "prepared", "confirming"}
 )
@@ -470,6 +489,7 @@ class AuthoringIntentStore:
         self._crash_hook = crash_hook
         self._token_factory = token_factory or (lambda: secrets.token_hex(16))
         self._read_only = read_only
+        self._retention = authoring_intent_retention()
 
     def _crash(self, boundary: str) -> None:
         if self._crash_hook is not None:
@@ -517,6 +537,7 @@ class AuthoringIntentStore:
             os.replace(temporary, directory)
             _fsync_directory(self.root)
             self._crash("after_create_publish")
+            self._prune_ephemeral()
             return intent
 
     def _recover_creating_directories(self) -> None:
@@ -707,6 +728,8 @@ class AuthoringIntentStore:
             path = directory / "events" / f"{event.sequence:020d}.json"
             _exclusive_write(path, self._render_event(event))
             self._crash("after_transition_event_sync")
+            if not _intent_is_pending(updated):
+                self._prune_ephemeral()
             return updated
 
     def record_program_stamp(
@@ -753,6 +776,51 @@ class AuthoringIntentStore:
         if len(matches) > 1:
             raise AuthoringIntentStoreError("active AuthoringIntent fingerprint is not unique")
         return None if not matches else matches[0].model_copy(deep=True)
+
+    def _prune_ephemeral(self) -> None:
+        """Delete finished and abandoned intents; the caller holds the store lock.
+
+        Ephemeral retention keeps an intent only while it can still matter: the
+        newest finished ones, so a retried write resolves to its original result
+        and a status read still answers, and drafts touched within a day. The
+        decision reads only each stream's last event; nothing it deletes is
+        ever validated or loaded.
+        """
+
+        if self._retention != "ephemeral":
+            return
+        now = time.time()
+        finished: list[tuple[float, Path]] = []
+        for directory in self._intent_directories():
+            events = sorted((directory / "events").glob("*.json"), key=lambda item: item.name)
+            if not events:
+                continue
+            last = events[-1]
+            try:
+                modified = last.stat().st_mtime
+                intent = json.loads(last.read_bytes()).get("intent", {})
+            except (OSError, ValueError, AttributeError):
+                continue
+            expectation = intent.get("insertion_expectation") or {}
+            pending = (
+                expectation.get("state") in _LIVE_INSERTION_STATES
+                or (intent.get("candidate_status") or {}).get("state") not in _TERMINAL_STATES
+            )
+            if not pending:
+                finished.append((modified, directory))
+            elif now - modified > _EPHEMERAL_STALE_SECONDS:
+                self._delete_intent_directory(directory)
+        finished.sort(reverse=True)
+        for _modified, directory in finished[_EPHEMERAL_FINISHED_RETAINED:]:
+            self._delete_intent_directory(directory)
+
+    def _delete_intent_directory(self, directory: Path) -> None:
+        global _HISTORY_MEMO_BYTES
+        shutil.rmtree(directory, ignore_errors=True)
+        with _HISTORY_MEMO_LOCK:
+            _HISTORY_MEMO_BYTES -= sum(item.raw_size for item in _HISTORY_MEMO.pop(directory, ()))
+        with _FINGERPRINT_MEMO_LOCK:
+            _FINGERPRINT_MEMO.pop(directory, None)
 
     def _intent_directories(self) -> tuple[Path, ...]:
         return tuple(
