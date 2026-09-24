@@ -915,6 +915,14 @@ _EVIDENCE_REASON_ORDER: tuple[NextReason, ...] = (
 )
 
 
+#: Rows a supporting capture can resolve, in the order one is chosen to carry it.
+_SUPPORT_RESOLVES: tuple[NextReason, ...] = (
+    "evidence_expiring",
+    "claim_uncovered",
+    "claim_attestation_threshold_met",
+)
+
+
 def _detail_value(item: PlaybillNextItemV1, key: str) -> str | None:
     value = item.detail.get(key) if isinstance(item.detail, Mapping) else None
     return value if isinstance(value, str) else None
@@ -958,6 +966,7 @@ def _group_items(items: tuple[PlaybillNextItemV1, ...]) -> tuple[PlaybillNextIte
     reason and repair at the group's highest severity; the rest ride along.
     """
 
+    items, supporting = _fold_supporting(items)
     edited_sources = frozenset(
         source
         for item in items
@@ -967,6 +976,10 @@ def _group_items(items: tuple[PlaybillNextItemV1, ...]) -> tuple[PlaybillNextIte
     grouped: dict[tuple[str, ...], list[PlaybillNextItemV1]] = defaultdict(list)
     singles: list[PlaybillNextItemV1] = []
     for item in items:
+        if item.reason in _SUPPORT_RESOLVES and item.subject_identity in supporting:
+            # The first row the capture would resolve carries it; later ones don't.
+            singles.append(_with_findings(item, supporting.pop(item.subject_identity)))
+            continue
         key = _group_key(item, edited_sources=edited_sources)
         if key is None:
             singles.append(item)
@@ -980,6 +993,39 @@ def _group_items(items: tuple[PlaybillNextItemV1, ...]) -> tuple[PlaybillNextIte
         rest = sorted((item for item in members if item is not head), key=_item_sort_key)
         singles.append(_with_findings(head, rest))
     return tuple(singles)
+
+
+def _fold_supporting(
+    items: tuple[PlaybillNextItemV1, ...],
+) -> tuple[tuple[PlaybillNextItemV1, ...], dict[str, list[PlaybillNextItemV1]]]:
+    """Take supporting captures out of the queue unless they bear on work in it.
+
+    Supporting evidence is not work. It stays beside a contradicting or
+    unreviewed stance on the same capture, rides inside the expiring,
+    uncovered or threshold row it would resolve for the same Claim, and is
+    otherwise silent.
+    """
+
+    contested = {
+        (item.subject_identity, _detail_value(item, "capture_digest"))
+        for item in items
+        if item.reason in _EVIDENCE_REASON_ORDER and item.reason != "claim_new_evidence_supporting"
+    }
+    resolvable = {item.subject_identity for item in items if item.reason in _SUPPORT_RESOLVES}
+    kept: list[PlaybillNextItemV1] = []
+    folded: dict[str, list[PlaybillNextItemV1]] = defaultdict(list)
+    # Resolvable rows first, in carrier order, so the first one reached carries.
+    carrier_order = {reason: rank for rank, reason in enumerate(_SUPPORT_RESOLVES)}
+    for item in sorted(items, key=lambda item: carrier_order.get(item.reason, len(carrier_order))):
+        if item.reason != "claim_new_evidence_supporting":
+            kept.append(item)
+        elif (item.subject_identity, _detail_value(item, "capture_digest")) in contested:
+            kept.append(item)
+        elif item.subject_identity in resolvable:
+            folded[item.subject_identity].append(item)
+    for members in folded.values():
+        members.sort(key=_item_sort_key)
+    return tuple(kept), dict(folded)
 
 
 def _with_findings(

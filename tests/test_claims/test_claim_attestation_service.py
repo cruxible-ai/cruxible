@@ -58,6 +58,7 @@ from cruxible_core.service.evidence.claim_attestations import (
     ClaimAttestationRefusal,
     service_append_claim_attestation,
 )
+from tests.core_support._next_support import unfolded_next
 from tests.test_authoring.test_authoring_existing_capture import _activate, shared_capture_world
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
@@ -668,14 +669,14 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
         permitted_access_classes=("instance", "public"),
     )
 
-    legacy = service_playbill_next(
+    legacy = unfolded_next(
         instance,
         request=PlaybillNextRequestV1(
             evaluation_time=RECORDED_AT,
             access_profile=access,
         ),
     )
-    result = service_playbill_next(
+    result = unfolded_next(
         instance,
         request=PlaybillNextRequestV2(
             evaluation_time=RECORDED_AT,
@@ -686,7 +687,7 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
 
     assert result.tag == "playbill-next-result-v2"
     assert result.attestation_head_digest == appended.current_head
-    assert result == service_playbill_next(
+    assert result == unfolded_next(
         instance,
         request=PlaybillNextRequestV2(
             evaluation_time=RECORDED_AT,
@@ -771,7 +772,7 @@ def _assert_successor_resolves_attestation_membership(
     def rows() -> tuple:  # type: ignore[no-untyped-def]
         return tuple(
             item
-            for item in service_playbill_next(
+            for item in unfolded_next(
                 instance,
                 request=PlaybillNextRequestV2(
                     evaluation_time=RECORDED_AT,

@@ -76,3 +76,29 @@ def test_one_captured_piece_of_evidence_is_one_row_headed_by_its_strongest_stanc
 
     assert row.reason == "claim_contradicting_evidence_available"
     assert [finding.reason for finding in row.findings] == ["claim_new_evidence_supporting"]
+
+
+def test_supporting_evidence_alone_is_not_work() -> None:
+    support = _row("claim_new_evidence_supporting", "Claim:a", capture_digest="sha256:" + "1" * 64)
+    other = _row("claim_stale_evidence", "Claim:b")
+
+    assert _group_items((support, other)) == (other,)
+
+
+def test_supporting_evidence_rides_inside_the_first_row_it_would_resolve() -> None:
+    support = _row("claim_new_evidence_supporting", "Claim:a", capture_digest="sha256:" + "1" * 64)
+    uncovered = _row("claim_uncovered", "Claim:a")
+    expiring = _row("evidence_expiring", "Claim:a")
+    elsewhere = _row("claim_uncovered", "Claim:b")
+
+    rows = {
+        (row.reason, row.subject_identity): row
+        for row in _group_items((uncovered, support, expiring, elsewhere))
+    }
+
+    carrier = rows[("evidence_expiring", "Claim:a")]
+    assert [finding.reason for finding in carrier.findings] == ["claim_new_evidence_supporting"]
+    assert carrier.severity == expiring.severity
+    # Carried once: the other row it would resolve stays as it was.
+    assert rows[("claim_uncovered", "Claim:a")] == uncovered
+    assert rows[("claim_uncovered", "Claim:b")] == elsewhere
