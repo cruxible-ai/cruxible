@@ -432,8 +432,8 @@ budget report a publication failure rather than splitting the atomic update.
 
 A push that fails never refuses the write that preceded it. The ledger on disk
 is the record and the remote is a copy, so a network that is down, a credential
-that expired or a remote that was deleted becomes the `ledger_mirror_behind`
-warning row in `playbill next`, carrying the URL and Git's own reason.
+that expired or a remote that was deleted puts the `ledger_mirror` facet of
+`playbill next`'s status at `behind`, carrying the URL and Git's own reason.
 
 Remote discovery and push each have a 30-second deadline; one attempt may
 therefore take up to roughly 60 seconds. These commands run in a background
@@ -1207,11 +1207,18 @@ Without actual source or drift observations, `workspace_sources` remains explici
 unobserved. Procedure-catalog coverage is accounted for separately as
 `workspace_projections` and cannot imply that workspace sources were scanned.
 An entry with `kind: procedure`, a `Procedure` identity, and a workspace-relative
-`locator` declares projection intent for that accepted Procedure. A complete,
-coordinate-bound catalog observation produces one nonblocking warning listing all
-live Procedures without such entries; the repair carries their exact hand-edit
-entry shapes until a projection-authoring command exists.
-Empty output means only that no work exists in the explicitly observed domains.
+`locator` declares projection intent for that accepted Procedure. Where the
+workspace turns on the Procedure projection advisory (off by default), a
+complete, coordinate-bound catalog observation reports every live Procedure
+without such an entry in the `procedure_catalog` status facet; the repair
+carries their exact hand-edit entry shapes.
+
+The result's `status` reports the environment the queue was read in, beside the
+work rather than as rows: `instance` (active or decommissioned; decommissioned
+sets `blocking`), `floor`, `ledger_mirror`, `provider_lane`, and
+`procedure_catalog`. Each facet carries a `state`, and a `repair` while it needs
+attention. The CLI prints facets that need attention before the rows.
+Empty `items` means only that no work exists in the explicitly observed domains.
 Conflicting values in the same claim slot require revisions into distinct
 qualifiers; when a shared value field such as `topic` separates the contenders,
 the repair identifies that field.
@@ -1331,7 +1338,7 @@ in `coverage-manifest.json`, enumerated in the root manifest like every other
 floor file. `floor_output.path` is obsolete and refused; a v2 coverage config
 enables refresh with only the fixed profile. `floor export` records that profile
 when the config lacks it, so the following `next` observation no longer reports
-`floor_missing` after a successful export:
+the floor as `missing` after a successful export:
 
 ~~~json
 {

@@ -13,7 +13,6 @@ from typing import Literal, TypeAlias, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts import (
-    PLAYBILL_HAND_EDIT_NEXT_REASONS,
     PlaybillNextReason,
     ProviderLaneStatusV1,
 )
@@ -145,7 +144,6 @@ CitationLineageNote = Literal[
     "predecessor_unresolved",
 ]
 NextReason: TypeAlias = PlaybillNextReason
-HAND_EDIT_NEXT_REASONS = PLAYBILL_HAND_EDIT_NEXT_REASONS
 NextRepairOperation = Literal[
     "playbill.authoring.create",
     "playbill.authoring.bind",
@@ -584,12 +582,85 @@ class PlaybillNextItemV1(_StrictNextModel):
         return self
 
 
+#: The states each environment facet of the queue's status header can report.
+_HEALTH_STATES: dict[str, frozenset[str]] = {
+    "instance": frozenset({"active", "decommissioned"}),
+    "floor": frozenset(
+        {"not_observed", "not_configured", "current", "missing", "stale", "invalid"}
+    ),
+    "ledger_mirror": frozenset(
+        {"not_configured", "current", "publishing", "behind", "never_published"}
+    ),
+    "provider_lane": frozenset({"not_reported", "available", "unavailable"}),
+    "procedure_catalog": frozenset({"not_observed", "not_required", "complete", "missing"}),
+}
+#: Facet states that call for attention; every other state is healthy or unobserved.
+_HEALTH_ATTENTION: dict[str, frozenset[str]] = {
+    "instance": frozenset({"decommissioned"}),
+    "floor": frozenset({"missing", "stale"}),
+    "ledger_mirror": frozenset({"behind", "never_published"}),
+    "provider_lane": frozenset({"unavailable"}),
+    "procedure_catalog": frozenset({"missing"}),
+}
+
+
+class PlaybillNextHealthV1(_StrictNextModel):
+    """One environment facet: its state, what it saw, and the repair if it needs one."""
+
+    tag: Literal["playbill-next-health-v1"] = "playbill-next-health-v1"
+    state: str
+    detail: object = Field(default_factory=dict)
+    repair: PlaybillNextRepairV1 | None = None
+
+    @field_validator("detail", mode="before")
+    @classmethod
+    def _detail(cls, value: object) -> CanonicalValue:
+        return normalize_canonical(value)
+
+
+class PlaybillNextStatusV1(_StrictNextModel):
+    """The environment the queue was read in, beside the work rather than in it.
+
+    These are conditions of the instance and its workspace -- a decommissioned
+    instance, an unexported floor, a lagging ledger mirror, an unavailable
+    provider lane, an incomplete Procedure catalog -- not work items about
+    accepted state. `blocking` is set only when no write can succeed.
+    """
+
+    tag: Literal["playbill-next-status-v1"] = "playbill-next-status-v1"
+    blocking: bool
+    instance: PlaybillNextHealthV1
+    floor: PlaybillNextHealthV1
+    ledger_mirror: PlaybillNextHealthV1
+    provider_lane: PlaybillNextHealthV1
+    procedure_catalog: PlaybillNextHealthV1
+
+    @model_validator(mode="after")
+    def _states(self) -> "PlaybillNextStatusV1":
+        for facet, states in _HEALTH_STATES.items():
+            if getattr(self, facet).state not in states:
+                raise ValueError(f"next {facet} status has an unknown state")
+        if self.blocking != (self.instance.state == "decommissioned"):
+            raise ValueError("next status blocks exactly a decommissioned instance")
+        return self
+
+    def attention(self) -> tuple[tuple[str, PlaybillNextHealthV1], ...]:
+        """The facets calling for attention, in a fixed order."""
+
+        return tuple(
+            (facet, getattr(self, facet))
+            for facet in _HEALTH_STATES
+            if getattr(self, facet).state in _HEALTH_ATTENTION[facet]
+        )
+
+
 class PlaybillNextResultV1(_StrictNextModel):
     tag: Literal["playbill-next-result-v1"] = "playbill-next-result-v1"
     coordinate: PlaybillAcceptedCoordinate
     evaluation_time: datetime
     observed_domains: tuple[NextDomain, ...]
     unobserved_domains: tuple[NextDomain, ...]
+    status: PlaybillNextStatusV1
     items: tuple[PlaybillNextItemV1, ...]
     result_digest: str
     # Set only on a delta. The carried items are the deterministic symmetric
@@ -2697,25 +2768,12 @@ def _workspace_items(
     if observation.floor_status is not None or observation.installed_coordinate is not None:
         domains.append("workspace_floor")
         status = observation.floor_status
-        reason: NextReason | None
-        if status in {"not_configured", "missing"}:
-            reason = "floor_missing"
-        elif status == "invalid":
-            reason = "floor_invalid"
-        elif observation.installed_coordinate is not None and (
-            observation.installed_coordinate
-            != AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json"))
-        ):
-            reason = "floor_stale"
-        elif status == "stale" and observation.installed_coordinate is None:
-            reason = "floor_stale"
-        else:
-            reason = None
-        if reason is not None:
+        # A broken floor is work; a missing or stale one is environment status.
+        if status == "invalid":
             items.append(
                 _item(
-                    severity="warning" if reason != "floor_invalid" else "blocking",
-                    reason=reason,
+                    severity="blocking",
+                    reason="floor_invalid",
                     subject_identity=coordinate.git_oid,
                     detail={
                         "installed_coordinate": (
@@ -2818,74 +2876,70 @@ def _workspace_items(
     return tuple(domains), tuple(items)
 
 
-def _ledger_mirror_items(instance: PlaybillInstance) -> tuple[PlaybillNextItemV1, ...]:
-    """Advise when this instance publishes its ledger somewhere that is not current.
+def _ledger_mirror_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
+    """Where this instance's published copy of its ledger stands against the head.
 
-    A warning and never a blocking row, because nothing about accepted state is
-    wrong: the ledger on disk is the record, every write landed, and what is
-    stale is a copy. What the row buys is that the staleness is VISIBLE. Without
-    it a failed push is silent, and a reviewer cloning the mirror reads an
-    accepted coordinate the daemon left behind hours ago with no way to tell.
-
-    Three shapes of behind, one row. The push failed and said why; the recorded
-    publication names a different remote than the one now configured; or nothing
-    was ever published to this remote at all. The last is the case a fresh
-    `ledger set-mirror` would leave if its own publication failed.
+    Measured at the accepted head, never at a coordinate the caller asked to
+    read at. A push still in flight is informational (`publishing`); a failed
+    push (`behind`) or a mirror nothing was ever published to
+    (`never_published`) calls for attention, because what repairs it is off
+    this host.
     """
 
     url = instance.ledger_mirror_url()
     if url is None:
-        return ()
+        return PlaybillNextHealthV1(state="not_configured")
     state = instance.ledger_mirror_state()
-    # Mirror health is operational: it is measured against the accepted head,
-    # never against a historical coordinate the caller asked to read at.
     head = instance.accepted_coordinate()
-    if state is not None and state.url == url and state.status == "current":
-        if state.published_main_oid == head.git_oid:
-            return ()
-        lag: object = {
+    restore = PlaybillNextRepairV1(
+        operation="hand_edit",
+        target=url,
+        required_change="restore_the_ledger_mirror_remote_or_its_credential",
+    )
+    if state is None or state.url != url:
+        return PlaybillNextHealthV1(
+            state="never_published",
+            detail={"mirror_url": url, "message": "nothing has been published to this remote"},
+            repair=restore,
+        )
+    if state.status == "current" and state.published_main_oid == head.git_oid:
+        return PlaybillNextHealthV1(state="current", detail={"mirror_url": url})
+    if state.status == "behind":
+        return PlaybillNextHealthV1(
+            state="behind",
+            detail={
+                "mirror_url": url,
+                "attempted_at": state.attempted_at,
+                "requested_sequence": state.requested_sequence,
+                "published_sequence": state.published_sequence,
+                "message": state.detail or "ledger publication failed",
+                "publication_command": "cruxible playbill ledger publish --json",
+            },
+            repair=restore,
+        )
+    return PlaybillNextHealthV1(
+        state="publishing",
+        detail={
+            "mirror_url": url,
             "published_main_oid": state.published_main_oid,
             "accepted_git_oid": head.git_oid,
-            "message": "the mirror carries an earlier accepted coordinate",
-        }
-    elif state is None or state.url != url:
-        lag = {"message": "nothing has been published to this remote yet"}
-    else:
-        lag = {
-            "attempted_at": state.attempted_at,
             "status": state.status,
-            "requested_sequence": state.requested_sequence,
-            "published_sequence": state.published_sequence,
-            "message": state.detail or f"ledger publication is {state.status}",
-            "publication_command": "cruxible playbill ledger publish --json",
-        }
-    return (
-        _item(
-            severity="warning",
-            reason="ledger_mirror_behind",
-            subject_identity="ledger-mirror",
-            detail={"mirror_url": url, **cast(Mapping[str, object], lag)},
-            repair=PlaybillNextRepairV1(
-                operation="hand_edit",
-                target=url,
-                required_change=(
-                    "wait_for_or_request_ledger_publication"
-                    if state is not None and state.status in {"pending", "publishing"}
-                    else "restore_the_ledger_mirror_remote_or_its_credential"
-                ),
-            ),
-        ),
+        },
     )
 
 
-def _procedure_projection_items(
+def _procedure_catalog_health(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
     access_profile: CoverageAccessProfileV1,
     observation: PlaybillNextWorkspaceObservationV1 | None,
-) -> tuple[PlaybillNextItemV1, ...]:
-    """Advise on live Procedures absent from one complete local catalog observation."""
+) -> PlaybillNextHealthV1:
+    """Whether a workspace that asked for a complete Procedure catalog has one.
+
+    The advisory is off unless a kit or workspace turns it on; a live Procedure
+    missing from a catalog nobody asked to be complete is not a finding.
+    """
 
     if (
         observation is None
@@ -2893,17 +2947,17 @@ def _procedure_projection_items(
         or observation.presentation_policy_notes
         or not access_profile.permits("instance")
     ):
-        return ()
+        return PlaybillNextHealthV1(state="not_observed")
     coverage = observation.projection_coverage
     if coverage.coordinate.model_dump(mode="json") != PlaybillAcceptedCoordinate.from_internal(
         coordinate
     ).model_dump(mode="json"):
-        return ()
+        return PlaybillNextHealthV1(state="not_observed")
     policy = upgrade_playbill_presentation_policy(
         observation.presentation_policy or PlaybillPresentationPolicyV1()
     )
     if not policy.projection_advisories.procedure or "Procedure" not in coverage.complete_kinds:
-        return ()
+        return PlaybillNextHealthV1(state="not_required")
     covered = {
         item.artifact.qualified for item in coverage.bindings if item.artifact.kind == "Procedure"
     }
@@ -2921,29 +2975,72 @@ def _procedure_projection_items(
         }
         missing.append((identity.qualified, catalog_entry))
     if not missing:
-        return ()
+        return PlaybillNextHealthV1(state="complete")
     missing.sort(key=lambda item: item[0].encode("utf-8"))
-    identities = tuple(item[0] for item in missing)
+    identities = [item[0] for item in missing]
     entries = [item[1] for item in missing]
-    return (
-        _item(
-            severity="warning",
-            reason="procedure_projection_missing",
-            subject_identity=".playbill/sources.yaml",
-            related_identities=identities,
-            detail={
-                "unprojected_procedure_ids": list(identities),
-                "catalog_entries": entries,
-                "message": "accepted Procedures have no configured workspace projection",
-            },
-            repair=PlaybillNextRepairV1(
-                operation="hand_edit",
-                target=".playbill/sources.yaml",
-                required_change="add_procedure_projection_catalog_entries",
-                arguments={"catalog_entries": entries},
-            ),
+    return PlaybillNextHealthV1(
+        state="missing",
+        detail={
+            "unprojected_procedure_ids": identities,
+            "catalog_entries": entries,
+            "message": "accepted Procedures have no configured workspace projection",
+        },
+        repair=PlaybillNextRepairV1(
+            operation="hand_edit",
+            target=".playbill/sources.yaml",
+            required_change="add_procedure_projection_catalog_entries",
+            arguments={"catalog_entries": entries},
         ),
     )
+
+
+def _floor_health(
+    instance: PlaybillInstance,
+    *,
+    coordinate: PlaybillAcceptedCoordinate,
+    observation: PlaybillNextWorkspaceObservationV1 | None,
+) -> PlaybillNextHealthV1:
+    """Whether the workspace's installed floor matches the accepted coordinate.
+
+    A workspace that never configured a floor says nothing; a missing or
+    stale one names the export that repairs it. An invalid floor is a
+    blocking work row, not status.
+    """
+
+    if observation is None or (
+        observation.floor_status is None and observation.installed_coordinate is None
+    ):
+        return PlaybillNextHealthV1(state="not_observed")
+    status = observation.floor_status
+    if status == "not_configured":
+        return PlaybillNextHealthV1(state="not_configured")
+    installed = observation.installed_coordinate
+    detail = {
+        "installed_coordinate": None if installed is None else installed.model_dump(mode="json"),
+        "reported_status": status,
+    }
+    export = PlaybillNextRepairV1(
+        operation="playbill.floor.export",
+        target=instance.descriptor.instance_id,
+        required_change="replace_installed_floor",
+        arguments={},
+    )
+    export = export.model_copy(
+        update={"command": _repair_command(export.operation, arguments=export.arguments)}
+    )
+    if status == "missing":
+        return PlaybillNextHealthV1(state="missing", detail=detail, repair=export)
+    if status == "invalid":
+        # The blocking floor_invalid row carries the repair.
+        return PlaybillNextHealthV1(state="invalid", detail=detail)
+    stale = (
+        installed is not None
+        and installed != AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json"))
+    ) or (status == "stale" and installed is None)
+    if stale:
+        return PlaybillNextHealthV1(state="stale", detail=detail, repair=export)
+    return PlaybillNextHealthV1(state="current", detail=detail)
 
 
 def _document_items(
@@ -3473,12 +3570,6 @@ def service_playbill_next(
                         facts_reader=facts_reader,
                         resolution_statuses=resolution_statuses,
                     ),
-                    *_procedure_projection_items(
-                        instance,
-                        coordinate=coordinate,
-                        access_profile=request.access_profile,
-                        observation=request.workspace_observation,
-                    ),
                     *relation_items,
                     *_claim_dependency_items(
                         instance,
@@ -3493,64 +3584,69 @@ def service_playbill_next(
                         access_profile=request.access_profile,
                         observation=request.workspace_observation,
                     ),
-                    *(
-                        (
-                            _item(
-                                severity="blocking",
-                                reason="instance_decommissioned",
-                                subject_identity=instance.descriptor.instance_id,
-                                detail={
-                                    "reason": terminal.reason,
-                                    "decommissioned_at": terminal.decommissioned_at,
-                                    "decommissioned_by": terminal.decommissioned_by,
-                                },
-                                repair=PlaybillNextRepairV1(
-                                    operation="hand_edit",
-                                    target="instance.json",
-                                    required_change=(
-                                        "allocate_a_new_instance_with_playbill_host_create_or_"
-                                        "archive_this_directory_yourself"
-                                    ),
-                                ),
-                            ),
-                        )
-                        if (terminal := instance.descriptor.decommissioned) is not None
-                        else ()
-                    ),
-                    *_ledger_mirror_items(instance),
-                    *(
-                        (
-                            _item(
-                                severity="warning",
-                                reason="provider_lane_unavailable",
-                                subject_identity="provider-runtime",
-                                detail={
-                                    "code": provider_lane.code,
-                                    "detail": provider_lane.detail,
-                                },
-                                repair=PlaybillNextRepairV1(
-                                    operation="hand_edit",
-                                    target="daemon/provider-runtime.json",
-                                    required_change=(
-                                        "repair_provider_runtime_configuration_or_use_a_shorter_"
-                                        "state_root_then_retry"
-                                    ),
-                                ),
-                            ),
-                        )
-                        if provider_lane is not None and provider_lane.state == "unavailable"
-                        else ()
-                    ),
                 )
             ),
             key=_item_sort_key,
         )
+    )
+    terminal = instance.descriptor.decommissioned
+    status = PlaybillNextStatusV1(
+        blocking=terminal is not None,
+        instance=(
+            PlaybillNextHealthV1(state="active")
+            if terminal is None
+            else PlaybillNextHealthV1(
+                state="decommissioned",
+                detail={
+                    "reason": terminal.reason,
+                    "decommissioned_at": terminal.decommissioned_at,
+                    "decommissioned_by": terminal.decommissioned_by,
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="hand_edit",
+                    target="instance.json",
+                    required_change=(
+                        "allocate_a_new_instance_with_playbill_host_create_or_"
+                        "archive_this_directory_yourself"
+                    ),
+                ),
+            )
+        ),
+        floor=_floor_health(
+            instance, coordinate=public_coordinate, observation=request.workspace_observation
+        ),
+        ledger_mirror=_ledger_mirror_health(instance),
+        provider_lane=(
+            PlaybillNextHealthV1(state="not_reported")
+            if provider_lane is None
+            else PlaybillNextHealthV1(state="available")
+            if provider_lane.state != "unavailable"
+            else PlaybillNextHealthV1(
+                state="unavailable",
+                detail={"code": provider_lane.code, "detail": provider_lane.detail},
+                repair=PlaybillNextRepairV1(
+                    operation="hand_edit",
+                    target="daemon/provider-runtime.json",
+                    required_change=(
+                        "repair_provider_runtime_configuration_or_use_a_shorter_"
+                        "state_root_then_retry"
+                    ),
+                ),
+            )
+        ),
+        procedure_catalog=_procedure_catalog_health(
+            instance,
+            coordinate=coordinate,
+            access_profile=request.access_profile,
+            observation=request.workspace_observation,
+        ),
     )
     values = {
         "coordinate": public_coordinate,
         "evaluation_time": request.evaluation_time,
         "observed_domains": observed,
         "unobserved_domains": unobserved,
+        "status": status,
         "items": items,
     }
     result_model: type[PlaybillNextResultV1] | type[PlaybillNextResultV2]

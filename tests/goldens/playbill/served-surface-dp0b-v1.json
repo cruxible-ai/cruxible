@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-23:merge-versioned-reads-into-rung3",
-    "surface_digest": "sha256:f146a982c223931a0cb64bd673063800e77bdc9b0633eefb93355f34043dc125"
+    "register_entry": "2026-09-24:next-status-header",
+    "surface_digest": "sha256:afb0d3d598b0dd738748585d61bcc096b0158c93b3f43dc1ecae9fec3d0aed6c"
   },
   "surface": {
     "cli_leaves": [
@@ -1596,7 +1596,7 @@
         "request_model": "types.UnionType[cruxible_core.server.playbill_request_models.PlaybillNextRequest,cruxible_core.server.playbill_request_models.PlaybillNextRequestV2]",
         "request_schema_digest": "sha256:bd121911f60929cce375a4d30de07bc199093b924cfcffd20bc021040801f6b3",
         "response_model": "cruxible_client.contracts.PlaybillNextResult",
-        "response_schema_digest": "sha256:077b298c4fd07f0740fff380a18dea290800d504629882cfb23d8c99a0e17a42"
+        "response_schema_digest": "sha256:f3612e06494a819c7feb593534242ca5f1e83568bb39256d3379f017d967435b"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.list_policies_in_force",
@@ -1870,7 +1870,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/review",
         "request_model": "cruxible_core.server.playbill_request_models.PlaybillReviewRequest",
-        "request_schema_digest": "sha256:2b9c64f581c294d5b39694025ae80755cd74e86c81e66d03f05bd7f3eba48a44",
+        "request_schema_digest": "sha256:70a6765d6ba4ad789528c53b35ee81c8acdc9f32e0d7caff6dd1a475a25108b3",
         "response_model": "cruxible_client.contracts.PlaybillProposalReview",
         "response_schema_digest": "sha256:98309ebc3ef82b06d39cf63bacf184a9ce115a3a6a996cd6d7b409bd9b9ebcb0"
       },

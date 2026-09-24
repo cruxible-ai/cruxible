@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_core.ledger.ledger_mirror import LedgerMirrorStateV1
-from cruxible_core.service.discovery.next import _ledger_mirror_items
+from cruxible_core.service.discovery.next import _ledger_mirror_health
 
 
 @pytest.mark.parametrize("status", ("pending", "publishing", "behind"))
@@ -22,14 +22,21 @@ def test_next_names_publication_status_and_the_appropriate_follow_up(status, tmp
         ledger_mirror_state=lambda: state,
         accepted_coordinate=lambda: SimpleNamespace(git_oid="a"),
     )
-    (row,) = _ledger_mirror_items(instance)
-    assert row.reason == "ledger_mirror_behind"
-    assert row.detail["status"] == status
-    assert row.detail["requested_sequence"] == 3
-    assert row.detail["published_sequence"] == 2
-    assert row.detail["publication_command"] == "cruxible playbill ledger publish --json"
-    assert row.repair.required_change == (
-        "restore_the_ledger_mirror_remote_or_its_credential"
-        if status == "behind"
-        else "wait_for_or_request_ledger_publication"
-    )
+
+    health = _ledger_mirror_health(instance)
+
+    if status == "behind":
+        # A failed push needs the remote or its credential restored, off this host.
+        assert health.state == "behind"
+        assert health.detail["requested_sequence"] == 3
+        assert health.detail["published_sequence"] == 2
+        assert health.detail["publication_command"] == "cruxible playbill ledger publish --json"
+        assert health.repair is not None
+        assert health.repair.required_change == (
+            "restore_the_ledger_mirror_remote_or_its_credential"
+        )
+    else:
+        # A push still in flight is informational: nothing to repair.
+        assert health.state == "publishing"
+        assert health.detail["status"] == status
+        assert health.repair is None

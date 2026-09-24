@@ -54,7 +54,7 @@ from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,
     PlaybillNextSourceObservationV3,
     PlaybillNextWorkspaceObservationV1,
-    _procedure_projection_items,
+    _procedure_catalog_health,
     service_playbill_next,
 )
 from cruxible_core.service.discovery.query import (
@@ -211,10 +211,13 @@ def _request(
 
 
 def _projection_rows(instance: PlaybillInstance, request: PlaybillNextRequestV1):  # type: ignore[no-untyped-def]
+    """Every projection finding, whether it heads its block's row or rides inside it."""
+
     return tuple(
-        item
+        finding
         for item in service_playbill_next(instance, request=request).items
-        if item.reason.startswith("projection_")
+        for finding in (item, *item.findings)
+        if finding.reason.startswith("projection_")
     )
 
 
@@ -246,7 +249,9 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
         AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
     )
     base_observation = PlaybillNextWorkspaceObservationV1(
-        presentation_policy=PlaybillPresentationPolicyV2(),
+        presentation_policy=PlaybillPresentationPolicyV2(
+            projection_advisories=PlaybillProjectionAdvisoryPolicyV1(procedure=True)
+        ),
         projection_coverage=PlaybillProjectionCoverageObservationV1(
             coordinate=public,
             complete_kinds=("Procedure",),
@@ -258,21 +263,23 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
         permitted_access_classes=("instance",),
     )
 
-    (row,) = _procedure_projection_items(
-        ProcedureTree(),  # type: ignore[arg-type]
-        coordinate=coordinate,
-        access_profile=profile,
-        observation=base_observation,
-    )
-    assert row.severity == "warning"
-    assert row.reason == "procedure_projection_missing"
-    assert row.subject_identity == ".playbill/sources.yaml"
-    assert row.related_identities == (procedure.procedure.identity.qualified,)
-    assert row.repair.operation == "hand_edit"
-    assert row.repair.command is None
-    assert row.repair.target == ".playbill/sources.yaml"
-    assert row.repair.required_change == "add_procedure_projection_catalog_entries"
-    assert row.repair.arguments == {
+    def catalog(observation):  # type: ignore[no-untyped-def]
+        return _procedure_catalog_health(
+            ProcedureTree(),  # type: ignore[arg-type]
+            coordinate=coordinate,
+            access_profile=profile,
+            observation=observation,
+        )
+
+    health = catalog(base_observation)
+    assert health.state == "missing"
+    assert health.detail["unprojected_procedure_ids"] == [procedure.procedure.identity.qualified]
+    assert health.repair is not None
+    assert health.repair.operation == "hand_edit"
+    assert health.repair.command is None
+    assert health.repair.target == ".playbill/sources.yaml"
+    assert health.repair.required_change == "add_procedure_projection_catalog_entries"
+    assert health.repair.arguments == {
         "catalog_entries": [
             {
                 "kind": "procedure",
@@ -297,15 +304,7 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
             )
         }
     )
-    assert (
-        _procedure_projection_items(
-            ProcedureTree(),  # type: ignore[arg-type]
-            coordinate=coordinate,
-            access_profile=profile,
-            observation=projected,
-        )
-        == ()
-    )
+    assert catalog(projected).state == "complete"
 
     disabled = base_observation.model_copy(
         update={
@@ -314,15 +313,12 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
             )
         }
     )
-    assert (
-        _procedure_projection_items(
-            ProcedureTree(),  # type: ignore[arg-type]
-            coordinate=coordinate,
-            access_profile=profile,
-            observation=disabled,
-        )
-        == ()
+    assert catalog(disabled).state == "not_required"
+    # Off unless a kit or workspace turns it on.
+    default = base_observation.model_copy(
+        update={"presentation_policy": PlaybillPresentationPolicyV2()}
     )
+    assert catalog(default).state == "not_required"
 
     foreign = base_observation.model_copy(
         update={
@@ -331,15 +327,7 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
             )
         }
     )
-    assert (
-        _procedure_projection_items(
-            ProcedureTree(),  # type: ignore[arg-type]
-            coordinate=coordinate,
-            access_profile=profile,
-            observation=foreign,
-        )
-        == ()
-    )
+    assert catalog(foreign).state == "not_observed"
 
 
 def test_a_malformed_presentation_policy_fails_the_projection_advisory_closed(
@@ -349,7 +337,7 @@ def test_a_malformed_presentation_policy_fails_the_projection_advisory_closed(
 
     `test_reverse_drift_next.py` pinned this law on the reverse-drift fold,
     which this batch removed with the `self_published` origin. The law itself
-    did not go: `_procedure_projection_items` still refuses to advise when the
+    did not go: `_procedure_catalog_health` still refuses to advise when the
     observation carries a presentation-policy note, and nothing else in the
     tree named `presentation_policy_notes` against `next` any more. Re-pinned
     here on the consumer that survives.
@@ -370,7 +358,9 @@ def test_a_malformed_presentation_policy_fails_the_projection_advisory_closed(
         AcceptedCoordinate.from_internal(before).model_dump(mode="json")
     )
     observation = PlaybillNextWorkspaceObservationV1(
-        presentation_policy=PlaybillPresentationPolicyV2(),
+        presentation_policy=PlaybillPresentationPolicyV2(
+            projection_advisories=PlaybillProjectionAdvisoryPolicyV1(procedure=True)
+        ),
         projection_coverage=PlaybillProjectionCoverageObservationV1(
             coordinate=public,
             complete_kinds=("Procedure",),
@@ -397,10 +387,8 @@ def test_a_malformed_presentation_policy_fails_the_projection_advisory_closed(
         advised = service_playbill_next(instance, request=request)
         failed_closed = service_playbill_next(instance, request=noted)
 
-    assert [item.reason for item in advised.items if item.reason == "procedure_projection_missing"]
-    assert not [
-        item for item in failed_closed.items if item.reason == "procedure_projection_missing"
-    ]
+    assert advised.status.procedure_catalog.state == "missing"
+    assert failed_closed.status.procedure_catalog.state == "not_observed"
 
 
 def test_service_next_coalesces_projection_advice_in_its_own_observed_domain(
@@ -428,7 +416,9 @@ def test_service_next_coalesces_projection_advice_in_its_own_observed_domain(
             permitted_access_classes=("instance",),
         ),
         workspace_observation=PlaybillNextWorkspaceObservationV1(
-            presentation_policy=PlaybillPresentationPolicyV2(),
+            presentation_policy=PlaybillPresentationPolicyV2(
+                projection_advisories=PlaybillProjectionAdvisoryPolicyV1(procedure=True)
+            ),
             projection_coverage=PlaybillProjectionCoverageObservationV1(
                 coordinate=public,
                 complete_kinds=("Procedure",),
@@ -465,15 +455,14 @@ def test_service_next_coalesces_projection_advice_in_its_own_observed_domain(
 
     assert "workspace_projections" in result.observed_domains
     assert "workspace_sources" not in result.observed_domains
-    (row,) = tuple(item for item in result.items if item.reason == "procedure_projection_missing")
-    entries = row.repair.arguments["catalog_entries"]  # type: ignore[index]
+    catalog = result.status.procedure_catalog
+    assert catalog.state == "missing" and catalog.repair is not None
+    entries = catalog.repair.arguments["catalog_entries"]  # type: ignore[index]
     assert len(entries) == 1
     assert ProcedureProjectionCatalogEntry.model_validate(entries[0])
-    assert not [item for item in unobserved.items if item.reason == "procedure_projection_missing"]
+    assert unobserved.status.procedure_catalog.state == "not_observed"
     assert "workspace_projections" in unobserved.unobserved_domains
-    assert not [
-        item for item in foreign_result.items if item.reason == "procedure_projection_missing"
-    ]
+    assert foreign_result.status.procedure_catalog.state == "not_observed"
     assert "workspace_projections" in foreign_result.unobserved_domains
     assert instance.accepted_coordinate() == before
     assert instance.tree_at(before.git_oid) == before_tree
@@ -507,7 +496,9 @@ def test_many_unprojected_procedures_coalesce_without_a_cardinality_cap(
             permitted_access_classes=("instance",),
         ),
         workspace_observation=PlaybillNextWorkspaceObservationV1(
-            presentation_policy=PlaybillPresentationPolicyV2(),
+            presentation_policy=PlaybillPresentationPolicyV2(
+                projection_advisories=PlaybillProjectionAdvisoryPolicyV1(procedure=True)
+            ),
             projection_coverage=PlaybillProjectionCoverageObservationV1(
                 coordinate=public,
                 complete_kinds=("Procedure",),
@@ -519,12 +510,12 @@ def test_many_unprojected_procedures_coalesce_without_a_cardinality_cap(
     with mock.patch.object(TypedStateReader, "procedure_inventory", with_many):
         result = service_playbill_next(instance, request=request)
 
-    rows = tuple(item for item in result.items if item.reason == "procedure_projection_missing")
-    assert len(rows) == 1
-    row = rows[0]
-    assert len(row.related_identities) == 25
-    assert list(row.related_identities) == sorted(row.related_identities)
-    assert len(row.repair.arguments["catalog_entries"]) == 25  # type: ignore[index]
+    catalog = result.status.procedure_catalog
+    assert catalog.state == "missing" and catalog.repair is not None
+    identities = catalog.detail["unprojected_procedure_ids"]
+    assert len(identities) == 25
+    assert identities == sorted(identities)
+    assert len(catalog.repair.arguments["catalog_entries"]) == 25  # type: ignore[index]
 
 
 def test_clean_claim_and_query_backings_do_not_stale_on_coordinate_or_time_alone(
@@ -577,6 +568,14 @@ def test_dirty_and_stale_rows_have_exact_frozen_repairs_and_deterministic_ids(
     repeat = _projection_rows(accepted_world, request)
 
     assert first == repeat
+    # One block, one row: the stale backing heads it and carries the dirty body.
+    (block_row,) = (
+        item
+        for item in service_playbill_next(accepted_world, request=request).items
+        if item.reason.startswith("projection_")
+    )
+    assert block_row.reason == "projection_backing_stale"
+    assert "projection_dirty" in {finding.reason for finding in block_row.findings}
     assert {item.reason for item in first} == {"projection_dirty", "projection_backing_stale"}
     by_reason = {item.reason: item for item in first}
     assert by_reason["projection_dirty"].repair.required_change == (

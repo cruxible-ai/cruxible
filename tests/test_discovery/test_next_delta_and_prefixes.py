@@ -80,9 +80,11 @@ def test_only_a_well_formed_short_prefix_resolves(value: str) -> None:
 def _result(item_ids: tuple[str, ...], *, digest_hex: str = "9"):  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.projection import AcceptedCoordinate
     from cruxible_core.service.discovery.next import (
+        PlaybillNextHealthV1,
         PlaybillNextItemV1,
         PlaybillNextRepairV1,
         PlaybillNextResultV1,
+        PlaybillNextStatusV1,
         playbill_next_item_id,
     )
 
@@ -119,6 +121,14 @@ def _result(item_ids: tuple[str, ...], *, digest_hex: str = "9"):  # type: ignor
             "workspace_projections",
         ),
         unobserved_domains=(),
+        status=PlaybillNextStatusV1(
+            blocking=False,
+            instance=PlaybillNextHealthV1(state="active"),
+            floor=PlaybillNextHealthV1(state="current"),
+            ledger_mirror=PlaybillNextHealthV1(state="not_configured"),
+            provider_lane=PlaybillNextHealthV1(state="not_reported"),
+            procedure_catalog=PlaybillNextHealthV1(state="not_observed"),
+        ),
         items=tuple(items),
         result_digest="sha256:" + digest_hex * 64,
     )

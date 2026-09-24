@@ -34,7 +34,8 @@ def _bare_remote(tmp_path: Path, *, object_format: str, name: str = "mirror.git"
     Git refuses a push between repositories with different hash algorithms, so
     an operator preparing a mirror creates it with `git init --bare
     --object-format=<the ledger's>`. The refusal is Git's and it is loud; the
-    daemon reports it as `ledger_mirror_behind` with that exact text.
+    daemon reports it in `next`'s `ledger_mirror` status as `behind`, with that
+    exact text.
     """
 
     path = tmp_path / name

@@ -105,7 +105,7 @@ def test_next_reason_uses_the_exact_public_closed_vocabulary() -> None:
     assert set(get_args(NextReason)) == set(get_args(contracts.PlaybillNextReason))
 
 
-def test_provider_lane_degradation_is_a_typed_advisory_with_hand_edit_repair(
+def test_provider_lane_degradation_is_typed_status_with_hand_edit_repair(
     tmp_path: Path,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
@@ -122,15 +122,17 @@ def test_provider_lane_degradation_is_a_typed_advisory_with_hand_edit_repair(
         ),
     )
 
-    row = next(item for item in result.items if item.reason == "provider_lane_unavailable")
-    assert row.severity == "warning"
-    assert row.detail == {
+    lane = result.status.provider_lane
+    assert lane.state == "unavailable"
+    assert lane.detail == {
         "code": "provider_process_lease_invalid",
         "detail": "control socket path is too long",
     }
-    assert row.repair.operation == "hand_edit"
-    assert row.repair.target == "daemon/provider-runtime.json"
-    assert row.repair.command is None
+    assert lane.repair is not None
+    assert lane.repair.operation == "hand_edit"
+    assert lane.repair.target == "daemon/provider-runtime.json"
+    assert lane.repair.command is None
+    assert result.status.attention() == (("provider_lane", lane),)
 
 
 def test_workspace_drift_is_verified_against_the_accepted_citation(
@@ -175,7 +177,9 @@ def test_workspace_drift_is_verified_against_the_accepted_citation(
         "workspace_sources",
     )
     assert result.unobserved_domains == ("workspace_projections",)
-    assert {item.reason for item in result.items}.issuperset({"citation_drifted", "floor_missing"})
+    assert "citation_drifted" in {item.reason for item in result.items}
+    # An unconfigured floor is environment status, never a work row.
+    assert result.status.floor.state in {"missing", "not_configured"}
     drift = next(item for item in result.items if item.reason == "citation_drifted")
     assert drift.related_identities == (citation.citation_id,)
     assert drift.repair.operation == "playbill.authoring.bind"

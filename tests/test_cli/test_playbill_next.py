@@ -10,6 +10,15 @@ from click.testing import CliRunner
 from cruxible_client import contracts
 from cruxible_core.cli.main import cli
 
+HEALTHY_STATUS = {
+    "blocking": False,
+    "instance": {"state": "active"},
+    "floor": {"state": "current"},
+    "ledger_mirror": {"state": "not_configured"},
+    "provider_lane": {"state": "available"},
+    "procedure_catalog": {"state": "not_observed"},
+}
+
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
@@ -59,6 +68,7 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
                 evaluation_time="2026-08-24T18:00:00.000000Z",
                 observed_domains=["accepted_state", "workspace_floor"],
                 unobserved_domains=["workspace_sources", "workspace_projections"],
+                status=HEALTHY_STATUS,
                 items=[],
                 result_digest="sha256:" + "5" * 64,
             )
@@ -155,6 +165,7 @@ def test_cli_next_delta_labels_additions_and_removals(
                     "workspace_projections",
                 ],
                 unobserved_domains=[],
+                status=HEALTHY_STATUS,
                 items=[removed, added],
                 result_digest="sha256:" + str(self.calls) * 64,
                 delta_since="sha256:" + "0" * 64,
@@ -219,6 +230,7 @@ def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(
                     "workspace_projections",
                 ],
                 unobserved_domains=[],
+                status=HEALTHY_STATUS,
                 items=[item],
                 result_digest="sha256:" + "1" * 64,
                 delta_since=None,
@@ -254,3 +266,66 @@ def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(
     assert "warning  claim_conflicted  Claim:current" in result.output
     assert "added  warning" not in result.output
     assert "removed  warning" not in result.output
+
+
+def test_cli_next_attention_states_match_the_served_status_model() -> None:
+    from cruxible_core.cli.commands.playbill import _NEXT_STATUS_ATTENTION
+    from cruxible_core.service.discovery.next import _HEALTH_ATTENTION
+
+    assert _NEXT_STATUS_ATTENTION == {
+        facet: set(states) for facet, states in _HEALTH_ATTENTION.items()
+    }
+
+
+def test_cli_next_prints_status_that_needs_attention_above_the_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status = {
+        **HEALTHY_STATUS,
+        "floor": {
+            "state": "stale",
+            "repair": {
+                "operation": "playbill.floor.export",
+                "command": "cruxible playbill floor export --force --json",
+                "required_change": None,
+            },
+        },
+    }
+
+    class StubClient:
+        def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
+            return contracts.PlaybillNextResult(
+                coordinate=COORDINATE,
+                evaluation_time="2026-08-24T18:00:00.000000Z",
+                observed_domains=["accepted_state", "workspace_floor"],
+                unobserved_domains=["workspace_sources", "workspace_projections"],
+                status=status,
+                items=[],
+                result_digest="sha256:" + "5" * 64,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace",
+        lambda _root: {},
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://next.example.test",
+            "--instance-id",
+            "inst_next",
+            "playbill",
+            "next",
+            "--evaluation-time",
+            "2026-08-24T18:00:00Z",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Status: floor stale  next=cruxible playbill floor export --force --json" in (
+        result.output
+    )
+    # A healthy facet stays silent.
+    assert "ledger mirror" not in result.output

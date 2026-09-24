@@ -28,14 +28,6 @@
         "claim-type-succession"
       ]
     },
-    "PlaybillHandEditNextReason": {
-      "values": [
-        "procedure_projection_missing",
-        "provider_lane_unavailable",
-        "instance_decommissioned",
-        "ledger_mirror_behind"
-      ]
-    },
     "PlaybillHostCompatibilityReasonCodeV1": {
       "values": [
         "legacy_layout_requires_reseed",
@@ -71,8 +63,6 @@
         "citation_drifted",
         "citation_source_unobserved",
         "evidence_expiring",
-        "floor_missing",
-        "floor_stale",
         "floor_invalid",
         "projection_dirty",
         "projection_backing_stale",
@@ -85,11 +75,7 @@
         "claim_cites_retired",
         "retired_claim_source_stale",
         "unregistered_projection_block",
-        "projection_marker_invalid",
-        "provider_lane_unavailable",
-        "procedure_projection_missing",
-        "instance_decommissioned",
-        "ledger_mirror_behind"
+        "projection_marker_invalid"
       ]
     },
     "PlaybillPolicyKind": {
@@ -24415,6 +24401,17 @@
             "type": "string"
           }
         },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Status",
+            "type": "object"
+          }
+        },
         "tag": {
           "default": "playbill-next-result-v1",
           "default_json_serializable": true,
@@ -24559,6 +24556,11 @@
             "title": "Result Digest",
             "type": "string"
           },
+          "status": {
+            "additionalProperties": true,
+            "title": "Status",
+            "type": "object"
+          },
           "tag": {
             "default": "playbill-next-result-v1",
             "enum": [
@@ -24587,6 +24589,7 @@
           "evaluation_time",
           "observed_domains",
           "unobserved_domains",
+          "status",
           "items",
           "result_digest"
         ],
@@ -24599,6 +24602,7 @@
         "items",
         "observed_domains",
         "result_digest",
+        "status",
         "unobserved_domains"
       ]
     },
