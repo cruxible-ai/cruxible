@@ -53,6 +53,8 @@ def test_bulk_claims_share_sources_and_records_preserving_selected_order(instanc
 
     monkeypatch.setattr(instance._ledger, "read_blobs", read)
     instance.verified_change_set_records.clear()
+    # Compiled facts are kept per version; clear them to measure a cold read.
+    instance._owner_facts.clear()
     with instance.bind_accepted_projection(coordinate) as projection:
         claim_oids = {
             row[0]
@@ -69,7 +71,8 @@ def test_bulk_claims_share_sources_and_records_preserving_selected_order(instanc
     batches.clear()
     with instance.bind_accepted_projection(coordinate) as projection:
         assert projection.claims(tuple(reversed(identities))) == expected
-    assert len(batches) == 1
+    # Facts for these versions are already compiled, so no source is read again.
+    assert not any(set(batch) & claim_oids for batch in batches)
 
 
 def test_query_facts_match_source_replay_and_read_each_record_once(instance, monkeypatch):
