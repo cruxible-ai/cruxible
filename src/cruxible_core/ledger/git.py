@@ -1047,6 +1047,42 @@ class GitLedger:
         """Read the mutable Git configuration that affects review commit bytes."""
         return self._config_read(["config", "--default", "UTF-8", "--get", "i18n.commitencoding"])
 
+    def _review_commit_identities(self, actor_id: str, timestamp: str) -> dict[str, str]:
+        """Git's author/committer identity lines and commit encoding for a review commit.
+
+        For a plain actor id and the canonical UTC timestamp, Git's ident
+        normalization changes nothing and its date parser yields the whole
+        seconds at ``+0000``, so the lines are formed here without a Git
+        process per proposal. Anything else is left to ``git var -l``.
+        """
+
+        if _PLAIN_ACTOR_RE.fullmatch(actor_id):
+            try:
+                instant = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                instant = None
+            if instant is not None and instant.year >= 1970:
+                date = f"{int(instant.timestamp())} +0000"
+                encoding = self.review_commit_context().decode("utf-8").strip() or "UTF-8"
+                return {
+                    "GIT_AUTHOR_IDENT": (
+                        f"{actor_id} <{actor_id}@proposal.playbill.invalid> {date}"
+                    ),
+                    "GIT_COMMITTER_IDENT": f"playbill-daemon <daemon@playbill.invalid> {date}",
+                    "i18n.commitencoding": encoding,
+                }
+        return dict(
+            line.partition("=")[::2]
+            for line in self._config_read(
+                ["var", "-l"], environment=self._review_commit_environment(actor_id, timestamp)
+            )
+            .decode("utf-8")
+            .splitlines()
+            if "=" in line
+        )
+
     def proposal_review_commit_oid(
         self, *, tree_oid: str, base_oid: str, actor_id: str, timestamp: str, message: str
     ) -> str:
@@ -1059,15 +1095,7 @@ class GitLedger:
         self._validate_oid(tree_oid)
         self._validate_oid(base_oid)
         _validate_commit_message(message)
-        values = dict(
-            line.partition("=")[::2]
-            for line in self._config_read(
-                ["var", "-l"], environment=self._review_commit_environment(actor_id, timestamp)
-            )
-            .decode("utf-8")
-            .splitlines()
-            if "=" in line
-        )
+        values = self._review_commit_identities(actor_id, timestamp)
         author = values.get("GIT_AUTHOR_IDENT")
         committer = values.get("GIT_COMMITTER_IDENT")
         if author is None or committer is None:
@@ -2362,6 +2390,8 @@ def _file_identity(path: Path) -> tuple[int, ...] | None:
 
 
 _ASK_GIT: Final = object()
+# An actor id Git's ident normalization leaves exactly as written.
+_PLAIN_ACTOR_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?$")
 _SAFE_REF_RE = re.compile(r"^refs/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$")
 _PACKED_REFS_CAPACITY = 16
 # Repository identity -> (packed-refs file identity, ref -> object ID).

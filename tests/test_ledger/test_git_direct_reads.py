@@ -150,3 +150,27 @@ def test_config_with_any_include_spelling_is_never_remembered(tmp_path: Path, se
     # Only the included file changes; the repository config file does not.
     included.write_text("[i18n]\n\tcommitencoding = ISO-8859-1\n")
     assert ledger._config_read(query) == b"ISO-8859-1\n"
+
+
+@pytest.mark.parametrize("actor", ["manager", "owner-2", "a"])
+@pytest.mark.parametrize(
+    "timestamp",
+    ["2026-09-23T21:25:53.339839Z", "2026-01-01T00:00:00.000000Z", "1999-12-31T23:59:59.999999Z"],
+)
+def test_review_identities_formed_in_process_match_git(tmp_path: Path, actor, timestamp) -> None:
+    repository, _commit = _repository(tmp_path)
+    ledger = git_module.GitLedger.__new__(git_module.GitLedger)
+    ledger.path = repository
+    fast = ledger._review_commit_identities(actor, timestamp)
+    from_git = dict(
+        line.partition("=")[::2]
+        for line in ledger._git(
+            ["var", "-l"], environment=ledger._review_commit_environment(actor, timestamp)
+        )
+        .decode()
+        .splitlines()
+        if "=" in line
+    )
+    for key in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
+        assert fast[key] == from_git[key]
+    assert fast["i18n.commitencoding"] == from_git.get("i18n.commitencoding", "UTF-8")
