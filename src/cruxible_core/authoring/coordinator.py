@@ -1473,7 +1473,21 @@ class AuthoringIntentCoordinator:
         """
         if not self.store.finishes_completed:
             return
-        for intent in self.store.submitted_pending():
+        candidates = self.store.submitted_candidates()
+        if not candidates:
+            return
+        # Only a candidate the history index names as accepted is loaded; the
+        # rest cost one index lookup, not a read of their candidate record.
+        with self.instance.accepted_history_reader() as history:
+            accepted = [
+                (intent_id, actor_id)
+                for intent_id, actor_id, digest in candidates
+                if history.generation_for_candidate(digest) is not None
+            ]
+        for intent_id, actor_id in accepted:
+            intent = self.store.get(intent_id, actor_id=actor_id)
+            if intent.candidate_status.state == "accepted":
+                continue  # another caller already finished it
             reduced = self._reduce_status(intent)
             if reduced.state != "accepted":
                 continue

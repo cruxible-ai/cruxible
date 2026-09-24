@@ -132,12 +132,20 @@ def test_racing_completions_finish_once_and_a_new_draft_still_creates(
     first = AuthoringIntentCoordinator.for_instance(instance)
     second = AuthoringIntentCoordinator.for_instance(instance)
     # Both callers select the accepted intent before either compacts it.
-    selected = second.store.submitted_pending()
-    assert [item.intent_id for item in selected] == [intent_id]
+    selected = second.store.submitted_candidates()
+    assert [item[0] for item in selected] == [intent_id]
     first.finalize_completed()
     assert not (_exhaust(instance) / intent_id).exists()
-    monkeypatch.setattr(second.store, "submitted_pending", lambda: selected)
+    monkeypatch.setattr(second.store, "submitted_candidates", lambda: selected)
     second.finalize_completed()  # the receipt is the answer, not an error
+    # The store's completion is itself idempotent against the receipt.
+    finished = second.status(intent_id, actor=ACTOR)
+    assert (
+        second.store.complete(
+            intent_id, actor_id=ACTOR.actor_id, operation_key="sha256:" + "1" * 64, status=finished
+        ).candidate_status.state
+        == "accepted"
+    )
     created = second.create(
         actor=ACTOR, payload=_working_payload(occurrence_count=2), canonical_timestamp=TIMESTAMP
     )

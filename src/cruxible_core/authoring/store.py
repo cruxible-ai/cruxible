@@ -601,15 +601,32 @@ class AuthoringIntentStore:
         """Whether a completed intent is compacted to a receipt when it finishes."""
         return self._retention == "off"
 
-    def submitted_pending(self) -> tuple[AuthoringIntentV1, ...]:
-        """Every actor's submitted intents that have not finished."""
+    def submitted_candidates(self) -> tuple[tuple[str, str, str], ...]:
+        """(intent id, actor id, candidate digest) of every submitted, unfinished intent.
+
+        Read from each stream's last event only: this selects what to check,
+        and every intent acted on is loaded and validated through ``get`` and
+        ``complete``.
+        """
+        found: list[tuple[str, str, str]] = []
         with self._locked():
-            found: list[AuthoringIntentV1] = []
             for directory in self._intent_directories():
-                intent = self._validated_events(directory)[-1].intent
-                if intent.candidate_status.proposal_id is not None and _intent_is_pending(intent):
-                    found.append(intent.model_copy(deep=True))
-            return tuple(found)
+                events = sorted((directory / "events").glob("*.json"), key=lambda item: item.name)
+                if not events:
+                    continue
+                try:
+                    intent = json.loads(events[-1].read_bytes()).get("intent", {})
+                except (OSError, ValueError, AttributeError):
+                    continue
+                status = intent.get("candidate_status") or {}
+                digest = status.get("candidate_digest")
+                if (
+                    status.get("proposal_id") is not None
+                    and isinstance(digest, str)
+                    and status.get("state") not in _TERMINAL_STATES
+                ):
+                    found.append((directory.name, str(intent.get("actor_id")), digest))
+        return tuple(found)
 
     def list_pending(self, *, actor_id: str) -> tuple[AuthoringIntentV1, ...]:
         with self._locked():
