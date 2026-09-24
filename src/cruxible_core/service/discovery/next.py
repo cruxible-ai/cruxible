@@ -1148,7 +1148,9 @@ def _claim_items(
                             ),
                         )
                     )
-            if verdict.verdict != "uncovered":
+            # A Claim not yet in effect is not uncovered: its evidence is judged
+            # when its interval begins, not before.
+            if verdict.verdict != "uncovered" or verdict.currency == "not_applicable":
                 continue
             items.append(
                 _item(

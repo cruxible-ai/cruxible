@@ -589,6 +589,40 @@ def test_two_values_of_a_many_valued_predicate_are_not_a_conflict(tmp_path: Path
     assert not [item for item in result.items if item.reason == "claim_conflicted"]
 
 
+def test_a_claim_not_yet_in_effect_is_not_reported_uncovered(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    instance, owner = seed_claims(tmp_path)
+    future = work_item_authoring("wi-44", "ready", with_claim_type=False)
+    future = future.model_copy(
+        update={
+            "statement": future.statement.model_copy(
+                update={"effective_from": EVALUATION_TIME + timedelta(days=1)}
+            )
+        }
+    )
+    proposal = service_propose_playbill_claim(
+        instance,
+        authoring=future,
+        actor_id="owner",
+        proposal_name="future-work-item",
+        timestamp="2026-08-24T17:00:03.000000Z",
+    )
+    activate_work_item_claim(instance, owner, proposal)
+
+    result = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=_access()),
+    )
+
+    assert not [
+        item
+        for item in result.items
+        if item.reason == "claim_uncovered"
+        and any(path.endswith("/wi-44.json") for path in item.related_identities)
+    ]
+
+
 def test_conflict_repair_names_the_first_byte_ordered_disjoint_value_discriminator() -> None:
     claims = [
         status_claim(1, "wi-1", {"topic": "paging", "rule": "page"}).accepted.claim,
