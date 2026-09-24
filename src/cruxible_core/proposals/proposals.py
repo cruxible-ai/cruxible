@@ -434,8 +434,22 @@ def validate_proposal_tree(
     limits: ProposalReceiveLimits,
     base_tree: Mapping[str, bytes] | None = None,
 ) -> Mapping[str, bytes]:
+    from cruxible_core.derived.derived_state import row_size, row_values, same_row
+
     if len(tree) > limits.max_files:
         raise ProposalAdmissionError("proposal exceeds its file-count limit")
+    # A tree held as blob references is compared and sized by reference; only a
+    # path whose bytes actually differ from the base is read.
+    rows = row_values(tree)
+    base_rows = row_values(base_tree) if base_tree is not None else None
+
+    def unchanged(path: str) -> bool:
+        if base_tree is None or path not in base_tree:
+            return False
+        if rows is not None and base_rows is not None:
+            return same_row(rows[path], base_rows[path])
+        return base_tree.get(path) == tree[path]
+
     if base_tree is not None:
         # Counted before any member is parsed, and counted in both directions so
         # that dropping ten thousand members is bounded exactly as adding them is.
@@ -443,9 +457,7 @@ def validate_proposal_tree(
         # one per authored member, and counting them halved the members an author
         # was actually allowed to change.
         changed = sum(
-            1
-            for path, content in tree.items()
-            if base_tree.get(path) != content and not is_candidate_card_path(path)
+            1 for path in tree if not is_candidate_card_path(path) and not unchanged(path)
         )
         changed += sum(
             1 for path in base_tree if path not in tree and not is_candidate_card_path(path)
@@ -460,28 +472,37 @@ def validate_proposal_tree(
         raise ProposalAdmissionError("proposal paths must already be canonical")
     total = 0
     result: dict[str, bytes] = {}
-    base = base_tree or {}
     for path in normalized:
-        content = tree[path]
-        if not isinstance(content, bytes):
-            raise ProposalAdmissionError("proposal tree values must be exact bytes")
-        if not _authorable(path) and not is_candidate_card_path(path) and base.get(path) != content:
-            raise ProposalAdmissionError(
-                f"proposal changed a daemon-controlled or unregistered path: {path}"
-            )
-        if len(content) > limits.max_file_bytes:
+        same = unchanged(path)
+        if rows is not None and same:
+            # Byte-identical to the accepted base, which passed every check below.
+            size = row_size(rows[path])
+        else:
+            content = tree[path]
+            if not isinstance(content, bytes):
+                raise ProposalAdmissionError("proposal tree values must be exact bytes")
+            if not _authorable(path) and not is_candidate_card_path(path) and not same:
+                raise ProposalAdmissionError(
+                    f"proposal changed a daemon-controlled or unregistered path: {path}"
+                )
+            if content.startswith(_LFS_PREFIX):
+                raise ProposalAdmissionError(f"proposal refuses Git LFS pointer: {path}")
+            size = len(content)
+            if rows is None:
+                result[path] = content
+        if size > limits.max_file_bytes:
             raise ProposalAdmissionError(f"proposal blob exceeds its byte limit: {path}")
-        if content.startswith(_LFS_PREFIX):
-            raise ProposalAdmissionError(f"proposal refuses Git LFS pointer: {path}")
-        total += len(content)
+        total += size
         if total > limits.max_total_bytes:
             raise ProposalAdmissionError("proposal exceeds its total-byte limit")
-        result[path] = content
+    base = base_tree or {}
     for path in normalize_manifest_paths(list(base)):
-        if not _authorable(path) and not is_candidate_card_path(path) and path not in result:
+        if not _authorable(path) and not is_candidate_card_path(path) and path not in tree:
             raise ProposalAdmissionError(
                 f"proposal removed a daemon-controlled or unregistered path: {path}"
             )
+    if rows is not None:
+        return tree
     return tree if isinstance(tree, SnapshotTree) else result
 
 

@@ -540,14 +540,9 @@ def _encoded_changes(
     base_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
 ) -> list[dict[str, object]]:
-    paths = sorted(
-        {
-            path
-            for path in base_tree.keys() | candidate_tree.keys()
-            if base_tree.get(path) != candidate_tree.get(path)
-        },
-        key=lambda item: item.encode("utf-8"),
-    )
+    from cruxible_core.derived.derived_state import changed_paths
+
+    paths = sorted(changed_paths(base_tree, candidate_tree), key=lambda item: item.encode("utf-8"))
     return [
         {
             "content_base64": (

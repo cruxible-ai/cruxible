@@ -96,6 +96,59 @@ def resolve_blobs(values: Sequence[bytes | BlobRef]) -> list[bytes]:
     return [value if isinstance(value, bytes) else found[value.oid] for value in values]
 
 
+def row_values(tree: Mapping[str, bytes] | None) -> Mapping[str, bytes | BlobRef] | None:
+    """A snapshot's raw rows (bytes or references), or None for any other mapping."""
+    if isinstance(tree, (SnapshotTree, CandidateTree)):
+        return tree._rows
+    return None
+
+
+def row_size(value: bytes | BlobRef) -> int:
+    return _size(value)
+
+
+def same_row(left: bytes | BlobRef, right: bytes | BlobRef) -> bool:
+    """Whether two rows hold the same bytes, reading content only when forms differ."""
+    if left is right:
+        return True
+    if isinstance(left, BlobRef) and isinstance(right, BlobRef):
+        return left.oid == right.oid
+    if isinstance(left, bytes) and isinstance(right, bytes):
+        return left == right
+    if _size(left) != _size(right):
+        return False
+    return _resolve(left) == _resolve(right)
+
+
+def changed_paths(base: Mapping[str, bytes], candidate: Mapping[str, bytes]) -> tuple[str, ...]:
+    """Paths whose bytes differ between two trees, reading content only where needed.
+
+    Snapshot rows are compared by reference (the same object, or the same blob
+    ID); a plain mapping on either side falls back to comparing bytes.
+    """
+    left, right = row_values(base), row_values(candidate)
+    if left is None or right is None:
+        return tuple(
+            path for path in base.keys() | candidate.keys() if base.get(path) != candidate.get(path)
+        )
+    return tuple(
+        path
+        for path in left.keys() | right.keys()
+        if path not in left or path not in right or not same_row(left[path], right[path])
+    )
+
+
+def _snapshot_equal(tree: Mapping[str, bytes], other: object) -> bool:
+    if not isinstance(other, Mapping):
+        return False
+    mine, theirs = row_values(tree), row_values(other)
+    if mine is None or theirs is None:
+        return dict(tree.items()) == dict(other.items())
+    if len(mine) != len(theirs):
+        return False
+    return all(path in theirs and same_row(value, theirs[path]) for path, value in mine.items())
+
+
 def _resolve(value: bytes | BlobRef) -> bytes:
     return value if isinstance(value, bytes) else resolve_blobs((value,))[0]
 
@@ -156,6 +209,11 @@ class SnapshotTree(Mapping[str, bytes]):
 
     def __contains__(self, key: object) -> bool:
         return key in self._rows
+
+    def __eq__(self, other: object) -> bool:
+        return _snapshot_equal(self, other)
+
+    __hash__ = None  # type: ignore[assignment]
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._rows)
@@ -236,6 +294,11 @@ class CandidateTree(MutableMapping[str, bytes]):
 
     def __contains__(self, key: object) -> bool:
         return key in self._rows
+
+    def __eq__(self, other: object) -> bool:
+        return _snapshot_equal(self, other)
+
+    __hash__ = None  # type: ignore[assignment]
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._rows)

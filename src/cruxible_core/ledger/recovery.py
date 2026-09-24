@@ -474,10 +474,15 @@ def prepared_generation_for_handoff(
         raise SettlementIntegrityError("change-set path differs from its sequence")
     if _candidate_from_record(record) != candidate:
         raise SettlementIntegrityError("stored change-set candidate differs from preparation")
-    if any(
-        b'"predicate":"knowledge.brief"' in content
-        for path, content in bundle.tree.items()
-        if path == "claim-types/knowledge/brief.json" or path.startswith("claims/")
+    # A knowledge.brief Claim pins its ClaimType, so the type's presence decides
+    # this for every unchanged Claim; only changed Claims' bytes are read.
+    changed_claims = [
+        change.path
+        for change in ledger.changed_entries(parent.oid, bundle.oid)
+        if change.oid is not None and change.path.startswith("claims/")
+    ]
+    if "claim-types/knowledge/brief.json" in bundle.tree or any(
+        b'"predicate":"knowledge.brief"' in bundle.tree[path] for path in changed_claims
     ):
         return None
     return RecoveredGeneration(
@@ -999,7 +1004,7 @@ def recover_instance(
             for generation in seed.prefix
         ]
         # Only the head's parsed record stays resident; the ledger holds the rest.
-        history[:-1] = [item.released(ledger.blob_at) for item in history[:-1]]
+        history[:-1] = [item.released(ledger.record_at) for item in history[:-1]]
         window = _GenerationWindow(
             generation=history[-1],
             tree=seed.tree,
@@ -1032,7 +1037,7 @@ def recover_instance(
             ),
         )
         if history:
-            history[-1] = history[-1].released(ledger.blob_at)
+            history[-1] = history[-1].released(ledger.record_at)
         history.append(window.generation)
     head = history[-1]
     compiler = head.compiler

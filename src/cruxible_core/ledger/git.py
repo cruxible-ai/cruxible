@@ -28,7 +28,7 @@ from cruxible_client.contracts.canonical import CandidateDigest, normalize_manif
 from cruxible_client.contracts.errors import PlaybillGitError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.types import GitObjectFormat
-from cruxible_core.derived.derived_state import BlobRef
+from cruxible_core.derived.derived_state import BlobRef, SnapshotTree, row_values
 from cruxible_core.governance.keys import raw_public_key_hex_from_openssh
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -490,8 +490,18 @@ class GitLedger:
             normalized_to_raw[normalized] = raw_path
 
         ordered = normalize_manifest_paths(list(tree))
-        contents = {path: tree[normalized_to_raw[path]] for path in ordered}
-        oids = {path: self._blob_oid(content) for path, content in contents.items()}
+        # A snapshot row that is a blob reference already names its object and
+        # size; only rows held as bytes are hashed, and only staged bytes read.
+        rows = row_values(tree)
+        oids: dict[str, str] = {}
+        sizes: dict[str, int] = {}
+        for path in ordered:
+            row = rows[normalized_to_raw[path]] if rows is not None else None
+            if isinstance(row, BlobRef):
+                oids[path], sizes[path] = row.oid, row.size
+            else:
+                content = tree[normalized_to_raw[path]] if row is None else row
+                oids[path], sizes[path] = self._blob_oid(content), len(content)
         held: frozenset[str] = frozenset()
         parent_entries: dict[str, GitTreeEntry] = {}
         if accepted_parent is not None:
@@ -516,15 +526,16 @@ class GitLedger:
                 or entry.mode != "100644"
             ]
         )
-        removed = [] if start is None else [path for path in parent_entries if path not in contents]
+        removed = [] if start is None else [path for path in parent_entries if path not in oids]
         blobs: dict[str, bytes] = {}
         for path in staged:
             blob_oid = oids[path]
             if blob_oid in held:
                 continue
-            if blob_oid in blobs and blobs[blob_oid] != contents[path]:
+            content = tree[normalized_to_raw[path]]
+            if blob_oid in blobs and blobs[blob_oid] != content:
                 raise PlaybillGitError("different blob bytes share a computed content address")
-            blobs[blob_oid] = contents[path]
+            blobs[blob_oid] = content
         oid = self._commit_changes_to_tree(
             start,
             {**{path: oids[path] for path in staged}, **{path: None for path in removed}},
@@ -539,7 +550,7 @@ class GitLedger:
                 mode="100644",
                 object_type="blob",
                 oid=oids[path],
-                size=len(contents[path]),
+                size=sizes[path],
             )
             for path in ordered
         )
@@ -1702,7 +1713,7 @@ class GitLedger:
 
     def read_tree_delta(
         self, parent_oid: str, oid: str, *, parent_tree: Mapping[str, bytes]
-    ) -> dict[str, bytes]:
+    ) -> Mapping[str, bytes]:
         """Read a physical successor from an already-proven exact parent tree.
 
         The caller owns the proof that parent_tree is the complete regular-file
@@ -1719,6 +1730,17 @@ class GitLedger:
             if (change.status == "A") != (change.path not in parent_tree):
                 raise PlaybillGitError(f"tree delta differs from its proven parent: {change.path}")
         blobs = self.read_blobs([c.oid for c in changes if c.oid is not None])
+        if isinstance(parent_tree, SnapshotTree):
+            # A snapshot parent yields a fork of it: only changed bytes are read
+            # and applied, unchanged rows are shared, and the result still names
+            # its parent, so evaluation can take its incremental path.
+            builder = parent_tree.fork()
+            for change in changes:
+                if change.oid is None:
+                    del builder[change.path]
+                else:
+                    builder[change.path] = blobs[change.oid]
+            return builder.snapshot()
         result = dict(parent_tree)
         for change in changes:
             if change.oid is None:
@@ -1775,6 +1797,19 @@ class GitLedger:
         """
 
         return tuple(entry.path for entry in _proven_blob_entries(self.list_tree(oid)))
+
+    def record_at(self, oid: str, path: str) -> bytes | None:
+        """One accepted change-set record's bytes through the resident reader.
+
+        Callers verify the bytes against a digest recovery already checked, so
+        this skips the tree-mode proof ``blob_at`` applies and costs one pipe
+        round trip instead of a Git process.
+        """
+
+        self._validate_oid(oid)
+        if not path.startswith("changesets/") or "\n" in path:
+            raise PlaybillGitError("record reads name a change-set path")
+        return _batch_reader(self.path).path_blob(oid, path)
 
     def blob_at(self, oid: str, path: str) -> bytes | None:
         """Read one exact committed blob without materializing its whole tree."""
@@ -2571,6 +2606,36 @@ class _BatchBlobReader:
                         stream.close()
                     except OSError:
                         pass
+
+    def path_blob(self, oid: str, path: str) -> bytes | None:
+        """One committed path's blob through ``<commit>:<path>``; None when absent."""
+
+        expression = f"{oid}:{path}".encode()
+        with self._lock:
+            process = self._running()
+            assert process.stdin is not None and process.stdout is not None
+            try:
+                process.stdin.write(expression + b"\n")
+                process.stdin.flush()
+                header = process.stdout.readline()
+                if not header.endswith(b"\n"):
+                    raise PlaybillGitError("Git batch output ended before its header")
+                if header == expression + b" missing\n":
+                    return None
+                try:
+                    _object_oid, object_type, raw_size = header[:-1].decode("ascii").split()
+                    size = int(raw_size)
+                except (UnicodeDecodeError, ValueError) as exc:
+                    raise PlaybillGitError("Git batch output has malformed metadata") from exc
+                payload = process.stdout.read(size + 1)
+                if len(payload) != size + 1 or payload[-1:] != b"\n":
+                    raise PlaybillGitError("Git batch output has a truncated payload")
+                if object_type != "blob":
+                    raise PlaybillGitError(f"ledger path is not a regular blob: {path}")
+                return payload[:-1]
+            except BaseException:
+                self.close()
+                raise
 
     def object_info(self, oids: Sequence[str]) -> dict[str, tuple[str, int] | None]:
         """Each object's type and size, never its bytes; ``None`` when Git lacks it."""

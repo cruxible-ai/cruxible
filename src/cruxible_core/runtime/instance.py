@@ -1714,7 +1714,7 @@ class PlaybillInstance:
             raise ProjectionIntegrityError("indexed generation differs from captured replay")
         return generation
 
-    def _member_record_history(
+    def member_record_history(
         self, paths: Sequence[str]
     ) -> tuple[tuple[str, ChangeSetRecordAnyVersion], ...]:
         """The verified records that touched these paths, found through the index."""
@@ -1874,7 +1874,7 @@ class PlaybillInstance:
 
     def proposal_tree(
         self, oid: str, *, base_oid: str | None = None, proposal_id: str | None = None
-    ) -> dict[str, bytes]:
+    ) -> Mapping[str, bytes]:
         """Read an exact proposal tree, optionally carrying a proven accepted base."""
 
         self._require_proposal_object(oid, proposal_id)
@@ -2012,7 +2012,7 @@ class PlaybillInstance:
             checkpoint_directory=self._checkpoint_directory(self.root),
             checkpoint_interval=DEFAULT_CHECKPOINT_INTERVAL,
             genesis=self.descriptor.genesis,
-            member_history=self._member_record_history,
+            member_history=self.member_record_history,
             resolve_claim_digest=self._claim_identities_for_digest,
         )
 
@@ -2020,7 +2020,7 @@ class PlaybillInstance:
         self,
         *,
         base: AcceptedProjectionCoordinate,
-        candidate_tree: dict[str, bytes],
+        candidate_tree: Mapping[str, bytes],
         candidate: CandidateRecordAnyVersion,
         approvals: tuple[ApprovalSubmission, ...],
         actor_binding: ChangeActorBinding,
@@ -2075,7 +2075,7 @@ class PlaybillInstance:
         self,
         *,
         base: AcceptedProjectionCoordinate,
-        candidate_tree: dict[str, bytes],
+        candidate_tree: Mapping[str, bytes],
         candidate: CandidateRecordAnyVersion,
         approvals: tuple[ApprovalSubmission, ...],
         actor_binding: ChangeActorBinding,
@@ -2157,7 +2157,7 @@ class PlaybillInstance:
                     # The previous head's record now lives only in the ledger.
                     history=(
                         *previous.history[:-1],
-                        previous.history[-1].released(self._ledger.blob_at),
+                        previous.history[-1].released(self._ledger.record_at),
                         successor,
                     ),
                     coordinate=copy.deepcopy(result.accepted),

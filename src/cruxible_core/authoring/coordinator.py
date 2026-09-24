@@ -681,11 +681,8 @@ class AuthoringIntentCoordinator:
 
     def _projected_claim_revision(self, *, claim_id: str, artifact_digest: str) -> int:
         path = claim_path(claim_id)
-        records = tuple(
-            (path, generation.record)
-            for generation in self.instance.accepted_history()
-            if generation.record is not None
-        )
+        # Only the records that touched this Claim count toward its revision.
+        records = self.instance.member_record_history((path,))
         return projected_revision(
             records,
             path=path,
