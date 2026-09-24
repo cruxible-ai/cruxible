@@ -9,17 +9,17 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.line_dispatch import (
+    LineArmPrincipalV1,
     LineDispatchRequestV1,
     LineEvaluateRequestV1,
-    LineListenRequestV1,
     LineTriggerCheckRequestV1,
 )
 from cruxible_client.contracts.procedures.line_specs import CaptureLandingTriggerPolicyV2
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore
 from cruxible_core.service.procedures.line_dispatch import (
+    service_arm_line,
     service_dispatch_line,
     service_evaluate_line,
-    service_listen_line,
     service_match_listening_lines,
 )
 from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
@@ -31,6 +31,16 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
+
+LOCAL_OPERATOR = LineArmPrincipalV1(kind="local_operator", label="local-operator")
+
+
+def _active_segment(instance) -> str:  # type: ignore[no-untyped-def]
+    """The one active arm segment's session id."""
+
+    with LineDispatchStore(instance).locked() as conn:
+        (row,) = conn.execute("SELECT session_id FROM sessions WHERE active=1").fetchall()
+    return row[0]
 
 
 def queued_world(tmp_path):
@@ -79,14 +89,15 @@ def test_listener_restart_keeps_pending_and_leaves_downtime_for_explicit_evaluat
     capture(instance, procedure)  # before subscribing: never auto-consumed
     actor = _actor(instance)
     start = READ_TIME + timedelta(seconds=10)
-    session = service_listen_line(
+    service_arm_line(
         instance,
         line.identity.name,
-        LineListenRequestV1(action="start"),
+        principal=LOCAL_OPERATOR,
         actor=actor,
         now=start,
         daemon_id="first",
     )
+    segment = _active_segment(instance)
     capture(instance, procedure, at=start + timedelta(seconds=1))
     service_match_listening_lines(
         instance, actor=actor, now=start + timedelta(seconds=2), daemon_id="first"
@@ -103,9 +114,9 @@ def test_listener_restart_keeps_pending_and_leaves_downtime_for_explicit_evaluat
     with store.locked() as conn:
         assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == 1
         old = json.loads(
-            conn.execute(
-                "SELECT payload FROM sessions WHERE session_id=?", (session.session_id,)
-            ).fetchone()[0]
+            conn.execute("SELECT payload FROM sessions WHERE session_id=?", (segment,)).fetchone()[
+                0
+            ]
         )
         assert old["stops_at"] == old["evaluated_until"]
     evaluated = service_evaluate_line(
@@ -237,10 +248,10 @@ def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
     )
     instance, line, procedure = line_world(tmp_path, WindowCloseTriggerPolicyV2(window=window))
     actor = _actor(instance)
-    service_listen_line(
+    service_arm_line(
         instance,
         line.identity.name,
-        LineListenRequestV1(action="start"),
+        principal=LOCAL_OPERATOR,
         actor=actor,
         now=READ_TIME - timedelta(seconds=1),
         daemon_id="daemon",
@@ -289,10 +300,10 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
         CadenceTriggerPolicyV1(interval_seconds=60, cadence_policy_digest="sha256:" + "d" * 64),
     )
     actor = _actor(instance)
-    service_listen_line(
+    service_arm_line(
         instance,
         line.identity.name,
-        LineListenRequestV1(action="start"),
+        principal=LOCAL_OPERATOR,
         actor=actor,
         now=READ_TIME - timedelta(seconds=1),
         daemon_id="daemon",
@@ -326,10 +337,10 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
 def test_event_index_rebuild_never_replays_history_or_loses_pending(tmp_path):
     instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
     actor = _actor(instance)
-    service_listen_line(
+    service_arm_line(
         instance,
         line.identity.name,
-        LineListenRequestV1(action="start"),
+        principal=LOCAL_OPERATOR,
         actor=actor,
         now=READ_TIME - timedelta(seconds=1),
         daemon_id="daemon",
@@ -382,10 +393,10 @@ def test_daemon_listener_matches_without_execution(tmp_path, monkeypatch):
     monkeypatch.setattr(LineDispatchStore, "append", append)
     listener.start()
     try:
-        service_listen_line(
+        service_arm_line(
             instance,
             line.identity.name,
-            LineListenRequestV1(action="start"),
+            principal=LOCAL_OPERATOR,
             actor=_actor(instance),
             now=datetime.now(UTC),
             daemon_id=listener.daemon_id,
@@ -399,9 +410,9 @@ def test_daemon_listener_matches_without_execution(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("change", ["rebind", "epoch", "concurrent_epoch"])
-def test_rebinding_keeps_subscription_but_new_epoch_requires_explicit_start(
-    tmp_path, change, monkeypatch
-):
+def test_any_line_change_stops_the_arm_until_it_is_rearmed(tmp_path, change, monkeypatch):
+    """An arm is pinned to the Line version it was armed under, epoch or not."""
+
     new_epoch = change != "rebind"
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.procedures.line_specs import (
@@ -415,14 +426,15 @@ def test_rebinding_keeps_subscription_but_new_epoch_requires_explicit_start(
         tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR), with_owner=True
     )
     actor = _actor(instance)
-    session = service_listen_line(
+    service_arm_line(
         instance,
         line.identity.name,
-        LineListenRequestV1(action="start"),
+        principal=LOCAL_OPERATOR,
         actor=actor,
         now=READ_TIME - timedelta(seconds=1),
         daemon_id="daemon",
     )
+    segment = _active_segment(instance)
     from cruxible_client.contracts.procedures.line_specs import WindowCloseTriggerPolicyV2
     from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
 
@@ -468,10 +480,13 @@ def test_rebinding_keeps_subscription_but_new_epoch_requires_explicit_start(
     )
     with LineDispatchStore(instance).locked() as conn:
         row = conn.execute(
-            "SELECT active,payload FROM sessions WHERE session_id=?", (session.session_id,)
+            "SELECT active,payload FROM sessions WHERE session_id=?", (segment,)
         ).fetchone()
-        assert bool(row[0]) == (not new_epoch)
-        assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == (0 if new_epoch else 1)
+        assert not row[0]
+        expected = "epoch_changed" if new_epoch else "line_changed"
+        assert json.loads(row[1])["stop_reason"] == expected
+        # Nothing was matched under a version the arm was not bound to.
+        assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM sessions").fetchone()[0] == 1
 
 
@@ -491,10 +506,10 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
     )
     actor = _actor(instance)
     for line in (first, second):
-        service_listen_line(
+        service_arm_line(
             instance,
             line.identity.name,
-            LineListenRequestV1(action="start"),
+            principal=LOCAL_OPERATOR,
             actor=actor,
             now=READ_TIME - timedelta(seconds=1),
             daemon_id="daemon",
@@ -522,14 +537,15 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
 def test_idle_coverage_is_checkpointed_and_restart_claims_only_durable_range(tmp_path):
     instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
     actor = _actor(instance)
-    session = service_listen_line(
+    service_arm_line(
         instance,
         line.identity.name,
-        LineListenRequestV1(action="start"),
+        principal=LOCAL_OPERATOR,
         actor=actor,
         now=READ_TIME,
         daemon_id="first",
     )
+    segment = _active_segment(instance)
     store = LineDispatchStore(instance)
     initial = store.journal.read_head(store.stream, "dispatch")
     for seconds in range(1, 60):
@@ -559,9 +575,9 @@ def test_idle_coverage_is_checkpointed_and_restart_claims_only_durable_range(tmp
     )
     with store.locked() as conn:
         old = json.loads(
-            conn.execute(
-                "SELECT payload FROM sessions WHERE session_id=?", (session.session_id,)
-            ).fetchone()[0]
+            conn.execute("SELECT payload FROM sessions WHERE session_id=?", (segment,)).fetchone()[
+                0
+            ]
         )
         assert old["stops_at"] == durable["evaluated_until"]
         assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == 1

@@ -1907,24 +1907,48 @@ def playbill_procedure_readings(
     )
 
 
-def playbill_line_listen(
-    instance_id: str, line: str, *, request: contracts.LineListenRequestV1
-) -> contracts.LineListeningSessionV1:
-    check_permission("cruxible_playbill_line_listen", instance_id=instance_id)
+def playbill_line_arm(instance_id: str, line: str) -> contracts.LineArmV1:
+    """Arm a Line forward-only under the calling credential."""
+
+    check_permission("cruxible_playbill_line_arm", instance_id=instance_id)
     actor = _actor_context()
     if actor is None:
-        raise AuthenticationError("Listening requires an authenticated actor identity")
-    from cruxible_core.service.procedures.line_dispatch import service_listen_line
+        raise AuthenticationError("Arming requires an authenticated actor identity")
+    from cruxible_core.runtime.line_arms import current_arm_principal
+    from cruxible_core.service.procedures.line_dispatch import service_arm_line
 
     manager = get_playbill_manager()
-    return service_listen_line(
+    return service_arm_line(
         manager.get(instance_id),
         line,
-        request,
+        principal=current_arm_principal(),
         actor=actor,
         now=_evaluation_time(None),
         daemon_id=manager.line_listener.daemon_id,
     )
+
+
+def playbill_line_disarm(instance_id: str, line: str) -> contracts.LineArmV1:
+    """Stop a Line admitting work on its own; admitted runs are not cancelled."""
+
+    check_permission("cruxible_playbill_line_disarm", instance_id=instance_id)
+    actor = _actor_context()
+    if actor is None:
+        raise AuthenticationError("Disarming requires an authenticated actor identity")
+    from cruxible_core.service.procedures.line_dispatch import service_disarm_line
+
+    return service_disarm_line(
+        get_playbill_manager().get(instance_id), line, actor=actor, now=_evaluation_time(None)
+    )
+
+
+def playbill_line_arm_status(instance_id: str, line: str) -> contracts.LineArmV1:
+    """The Line's current arm, or its last one and why it stopped."""
+
+    check_permission("cruxible_playbill_line_arm_status", instance_id=instance_id)
+    from cruxible_core.service.procedures.line_dispatch import service_line_arm_status
+
+    return service_line_arm_status(get_playbill_manager().get(instance_id), line)
 
 
 def playbill_line_evaluate(

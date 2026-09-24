@@ -69,11 +69,6 @@ class LineTriggerCheckResultV1(BaseModel):
     detail: str | None = None
 
 
-class LineListenRequestV1(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    action: Literal["start", "stop"]
-
-
 class LineEvaluateRequestV1(LineTriggerCheckRequestV1):
     @model_validator(mode="after")
     def _explicit_range(self) -> LineEvaluateRequestV1:
@@ -101,15 +96,69 @@ class LineDispatchRequestV1(BaseModel):
         return self
 
 
-class LineListeningSessionV1(BaseModel):
+#: Why an arm stopped admitting work on its own. Every reason but `disarmed`
+#: is the daemon noticing that the authority or Line the arm was bound to no
+#: longer holds; rearming is the explicit way back.
+LineArmStopReasonV1 = Literal[
+    "disarmed",
+    "line_changed",
+    "epoch_changed",
+    "credential_revoked",
+    "credential_scope_changed",
+    "permission_insufficient",
+    "authentication_changed",
+]
+
+
+class LineArmPrincipalV1(BaseModel):
+    """Who armed a Line: the credential rechecked before every automatic admission.
+
+    Only the credential's identifier is retained, never a token.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
-    session_id: str
+    kind: Literal["runtime_credential", "local_operator"]
+    credential_id: str | None = None
+    label: str
+
+    @model_validator(mode="after")
+    def _credential(self) -> LineArmPrincipalV1:
+        if (self.kind == "runtime_credential") != (self.credential_id is not None):
+            raise ValueError("exactly a runtime-credential arm names its credential")
+        return self
+
+
+class LineArmV1(BaseModel):
+    """One Line's automatic dispatch: armed forward-only, or why it stopped.
+
+    An armed Line admits the occurrences its daemon matched since it was armed
+    or last restarted, under the pinned Line version and the arming credential.
+    Occurrences matched before a restart, or by explicit evaluation, stay
+    pending for explicit dispatch.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    arm_id: str
     line: str
+    line_artifact_digest: str
     occurrence_epoch: int
-    starts_at: datetime = Field(description="Reads VALIDITY WINDOW.")
-    stops_at: datetime | None = Field(default=None, description="Reads VALIDITY WINDOW.")
+    state: Literal["armed", "stopped"]
+    armed_at: datetime = Field(description="Reads VALIDITY WINDOW.")
+    armed_by: LineArmPrincipalV1
     evaluated_until: datetime = Field(description="Reads VALIDITY WINDOW.")
+    stopped_at: datetime | None = Field(default=None, description="Reads VALIDITY WINDOW.")
+    stop_reason: LineArmStopReasonV1 | None = None
     detail: str | None = None
+    pending_automatic: int = Field(default=0, ge=0)
+    pending_explicit: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _state(self) -> LineArmV1:
+        if (self.state == "stopped") != (self.stop_reason is not None):
+            raise ValueError("exactly a stopped arm names why it stopped")
+        if (self.state == "stopped") != (self.stopped_at is not None):
+            raise ValueError("exactly a stopped arm names when it stopped")
+        return self
 
 
 class LineDispatchItemV1(BaseModel):

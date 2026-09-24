@@ -272,7 +272,8 @@ def _get_client() -> CruxibleClient | None:
 MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_line_dispatch": TypeAdapter(contracts.LineDispatchRequestV1),
     "cruxible_playbill_line_evaluate": TypeAdapter(contracts.LineEvaluateRequestV1),
-    "cruxible_playbill_line_listen": TypeAdapter(contracts.LineListenRequestV1),
+    "cruxible_playbill_line_arm": None,  # path only
+    "cruxible_playbill_line_disarm": None,  # path only
     "cruxible_playbill_provider_install": TypeAdapter(PlaybillProviderInstallRequestV1),
     "cruxible_playbill_activate": None,  # path only
     "cruxible_playbill_authoring_abandon_insertion": TypeAdapter(PlaybillInsertionAbandonRequest),
@@ -1514,14 +1515,27 @@ def handle_playbill_line_check(
     )
 
 
-def handle_playbill_line_listen(
-    instance_id: str, line: str, request: contracts.LineListenRequestV1
-) -> contracts.LineListeningSessionV1:
+def handle_playbill_line_arm(instance_id: str, line: str) -> contracts.LineArmV1:
     return _dispatch_remote_or_local(
-        lambda client: client.listen_playbill_line(instance_id, line, request=request),
-        lambda: playbill_api.playbill_line_listen(instance_id, line, request=request),
-        operation_name="cruxible_playbill_line_listen",
-        local_payload=request.model_dump(mode="json"),
+        lambda client: client.arm_playbill_line(instance_id, line),
+        lambda: playbill_api.playbill_line_arm(instance_id, line),
+        operation_name="cruxible_playbill_line_arm",
+    )
+
+
+def handle_playbill_line_disarm(instance_id: str, line: str) -> contracts.LineArmV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.disarm_playbill_line(instance_id, line),
+        lambda: playbill_api.playbill_line_disarm(instance_id, line),
+        operation_name="cruxible_playbill_line_disarm",
+    )
+
+
+def handle_playbill_line_arm_status(instance_id: str, line: str) -> contracts.LineArmV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.playbill_line_arm_status(instance_id, line),
+        lambda: playbill_api.playbill_line_arm_status(instance_id, line),
+        operation_name="cruxible_playbill_line_arm_status",
     )
 
 
