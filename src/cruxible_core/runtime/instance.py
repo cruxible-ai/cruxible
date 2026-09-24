@@ -294,9 +294,6 @@ class PlaybillInstance:
         self._verified_genesis = verified_genesis
         self._recovered = recovered
         self._state_lock = threading.RLock()
-        # Run after each activation returns, outside the state lock; the daemon
-        # uses it to keep accepted state out of later full collections.
-        self.after_activation: Callable[[], None] | None = None
         self.derived = DerivedState()
         self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)
         for name, namespace, adapter, source in (
@@ -2172,16 +2169,13 @@ class PlaybillInstance:
 
             try:
                 projection = publisher.prebuild(bundle, base=base)
-                activated = publisher.activate(bundle, projection, base=base, on_completed=install)
+                return publisher.activate(bundle, projection, base=base, on_completed=install)
             except Exception:
                 # Main may have moved before a post-CAS publication failure.
                 # Repair from authority, never install a partially published
                 # outcome. Preserve the caller's failure even if repair succeeds.
                 self.refresh()
                 raise
-        if self.after_activation is not None:
-            self.after_activation()
-        return activated
 
     def assemble_projection(
         self,

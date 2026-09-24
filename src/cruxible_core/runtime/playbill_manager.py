@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import gc
 import os
 import threading
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
 import structlog
@@ -57,10 +54,6 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-# Every this many activations, frozen state is collected once in full.
-_RECLAIM_EVERY_ACTIVATIONS = 64
-
-
 class PlaybillInstanceManager:
     """Open Playbill only from a registry-owned root and pinned trust-root file."""
 
@@ -68,9 +61,6 @@ class PlaybillInstanceManager:
         self._instances: dict[str, PlaybillInstance] = {}
         self._provider_runtime_operators: dict[Path, ProviderRuntimeOperator] = {}
         self._lock = threading.RLock()
-        # Set by the daemon process only: see ``_long_lived``.
-        self.freeze_opened_state = False
-        self._activations = 0
         from cruxible_core.runtime.line_listener import LineListener
 
         self.line_listener = LineListener(self)
@@ -237,55 +227,13 @@ class PlaybillInstanceManager:
                 raise PlaybillFormatError("persisted Playbill trust root is malformed") from exc
             if canonical_bytes(trust.model_dump(mode="json")) + b"\n" != raw:
                 raise PlaybillFormatError("persisted Playbill trust root is not canonical")
-            with self._long_lived():
-                instance = PlaybillInstance.open(managed_root, trust_root=trust)
-            if self.freeze_opened_state:
-                instance.after_activation = self._after_activation
+            instance = PlaybillInstance.open(managed_root, trust_root=trust)
             instance.bind_receive_limits(
                 load_proposal_receive_config(get_server_state_root()).limits()
             )
             self._bind_workspace(instance, _workspaces)
             self._instances[instance_id] = instance
             return instance
-
-    @contextmanager
-    def _long_lived(self) -> Iterator[None]:
-        """Open state that lives as long as the daemon, outside the cyclic collector.
-
-        Recovery allocates the instance's resident state in one burst, and every
-        full collection during and after it re-walks all of that state. The
-        collector pauses while it is built; one collection then clears the
-        burst's garbage and the survivors are frozen, so later collections walk
-        only what requests allocate.
-        """
-        if not self.freeze_opened_state:
-            yield
-            return
-        was_enabled = gc.isenabled()
-        gc.disable()
-        try:
-            yield
-        finally:
-            if was_enabled:
-                gc.enable()
-            gc.collect()
-            gc.freeze()
-
-    def _after_activation(self) -> None:
-        """Freeze what an activation left resident, after collecting its garbage.
-
-        Only objects allocated since the last freeze are walked, so this costs
-        one write's worth of objects. A frozen cycle that later becomes garbage
-        is never collected while frozen, so every so often everything is
-        unfrozen and collected once to reclaim those.
-        """
-        with self._lock:
-            self._activations += 1
-            reclaim = self._activations % _RECLAIM_EVERY_ACTIVATIONS == 0
-        if reclaim:
-            gc.unfreeze()
-        gc.collect()
-        gc.freeze()
 
     def register(self, instance_id: str, instance: PlaybillInstance) -> None:
         """Testing/embedded seam; production instances load through pinned storage."""

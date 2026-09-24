@@ -369,15 +369,7 @@ def _serve(resolved_socket: str | None) -> None:
     import uvicorn
 
     configure_request_logging()
-    # The daemon's modules and startup state live as long as it does: keep them
-    # and every opened instance's resident state out of later full collections.
-    # Set before the app opens instances for startup recovery.
-    get_playbill_manager().freeze_opened_state = True
     app = create_app()
-    import gc
-
-    gc.collect()
-    gc.freeze()
 
     if resolved_socket:
         socket_file = Path(resolved_socket)
