@@ -1482,17 +1482,11 @@ class AuthoringIntentCoordinator:
                 "playbill-authoring-accepted-v1",
                 {"intent_id": intent.intent_id, "candidate_digest": reduced.candidate_digest},
             ).tagged
-
-            def accept(
-                current: AuthoringIntentV1, status: CandidateStatusV1 = reduced
-            ) -> AuthoringIntentV1:
-                return current.model_copy(update={"candidate_status": status})
-
-            self.store.transition(
+            self.store.complete(
                 intent.intent_id,
                 actor_id=intent.actor_id,
                 operation_key=key,
-                transform=accept,
+                status=reduced,
             )
 
     def _reduce_status(self, intent: AuthoringIntentV1) -> CandidateStatusV1:

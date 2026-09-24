@@ -121,3 +121,25 @@ def test_a_submitted_intent_outlives_the_draft_expiry(tmp_path: Path) -> None:
     )
     assert (_exhaust(instance) / intent_id).exists()
     assert coordinator.status(intent_id, actor=ACTOR).state == "ready_to_activate"
+
+
+def test_racing_completions_finish_once_and_a_new_draft_still_creates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, owner, _coordinator_, intent_id, status = _submitted(tmp_path)
+    monkeypatch.setattr(documents, "_finalize_completed_intents", lambda instance: None)
+    _activate(instance, owner, status)
+    first = AuthoringIntentCoordinator.for_instance(instance)
+    second = AuthoringIntentCoordinator.for_instance(instance)
+    # Both callers select the accepted intent before either compacts it.
+    selected = second.store.submitted_pending()
+    assert [item.intent_id for item in selected] == [intent_id]
+    first.finalize_completed()
+    assert not (_exhaust(instance) / intent_id).exists()
+    monkeypatch.setattr(second.store, "submitted_pending", lambda: selected)
+    second.finalize_completed()  # the receipt is the answer, not an error
+    created = second.create(
+        actor=ACTOR, payload=_working_payload(occurrence_count=2), canonical_timestamp=TIMESTAMP
+    )
+    assert created.intent.intent_id != intent_id
+    assert second.status(intent_id, actor=ACTOR).state == "accepted"

@@ -32,6 +32,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentV2,
     AuthoringPayloadV1,
     AuthoringProgramStampV1,
+    CandidateStatusV1,
     InsertionExpectationV2,
     _AuthoringIntentDecodeContext,
     authoring_program_stamp_operation_key,
@@ -729,30 +730,82 @@ class AuthoringIntentStore:
         """Append one idempotent state transition under the store-wide CAS lock."""
 
         with self._locked():
-            self._recover_creating_directories()
-            directory = self.root / intent_id
-            events = self._validated_events(directory)
-            for event in events:
-                if event.operation_key == operation_key:
-                    return event.intent.model_copy(deep=True)
-            current = events[-1].intent
-            if current.actor_id != actor_id:
-                raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
-            updated = transform(current.model_copy(deep=True))
-            self._validate_transition(current, updated, allow_rebase=allow_rebase)
-            event = build_authoring_intent_event(
-                sequence=len(events),
-                previous_event_digest=events[-1].event_digest,
+            return self._transition_locked(
+                intent_id,
+                actor_id=actor_id,
                 operation_key=operation_key,
-                intent=updated,
+                transform=transform,
+                allow_rebase=allow_rebase,
                 program_stamp=program_stamp,
             )
-            path = directory / "events" / f"{event.sequence:020d}.json"
-            _exclusive_write(path, self._render_event(event))
-            self._crash("after_transition_event_sync")
-            if not _intent_is_pending(updated) and self._retention == "off":
-                self._finish(directory, event)
-            return updated
+
+    def complete(
+        self,
+        intent_id: str,
+        *,
+        actor_id: str,
+        operation_key: str,
+        status: CandidateStatusV1,
+    ) -> AuthoringIntentV1:
+        """Record a finished candidate status, once, however many callers race.
+
+        An intent another caller already finished with this same candidate is
+        the answer, not an error: its receipt is returned. Anything else --
+        another actor, another candidate, a still-pending receipt -- takes the
+        ordinary transition and its refusals.
+        """
+
+        with self._locked():
+            if self._retention == "off" and not (self.root / intent_id).exists():
+                receipt = self._finished_receipt(intent_id)
+                if (
+                    receipt is not None
+                    and receipt.actor_id == actor_id
+                    and receipt.candidate_status.state == status.state
+                    and receipt.candidate_status.candidate_digest == status.candidate_digest
+                ):
+                    return receipt.model_copy(deep=True)
+            return self._transition_locked(
+                intent_id,
+                actor_id=actor_id,
+                operation_key=operation_key,
+                transform=lambda current: current.model_copy(update={"candidate_status": status}),
+            )
+
+    def _transition_locked(
+        self,
+        intent_id: str,
+        *,
+        actor_id: str,
+        operation_key: str,
+        transform: Callable[[AuthoringIntentV1], AuthoringIntentV1],
+        allow_rebase: bool = False,
+        program_stamp: AuthoringProgramStampV1 | None = None,
+    ) -> AuthoringIntentV1:
+        self._recover_creating_directories()
+        directory = self.root / intent_id
+        events = self._validated_events(directory)
+        for event in events:
+            if event.operation_key == operation_key:
+                return event.intent.model_copy(deep=True)
+        current = events[-1].intent
+        if current.actor_id != actor_id:
+            raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
+        updated = transform(current.model_copy(deep=True))
+        self._validate_transition(current, updated, allow_rebase=allow_rebase)
+        event = build_authoring_intent_event(
+            sequence=len(events),
+            previous_event_digest=events[-1].event_digest,
+            operation_key=operation_key,
+            intent=updated,
+            program_stamp=program_stamp,
+        )
+        path = directory / "events" / f"{event.sequence:020d}.json"
+        _exclusive_write(path, self._render_event(event))
+        self._crash("after_transition_event_sync")
+        if not _intent_is_pending(updated) and self._retention == "off":
+            self._finish(directory, event)
+        return updated
 
     def record_program_stamp(
         self,
