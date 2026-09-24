@@ -215,7 +215,10 @@ class DerivedState:
     Leased roots remain readable after registry eviction; no source is deleted.
     """
 
-    def __init__(self, *, max_roots: int = 4, max_input_bytes: int = 32 * 1024 * 1024) -> None:
+    # Stopgap: an accepted tree over budget is never cached, so every write
+    # would re-read the whole tree; 256 MiB keeps realistic instances cached
+    # until the tree cache holds structure instead of bytes.
+    def __init__(self, *, max_roots: int = 4, max_input_bytes: int = 256 * 1024 * 1024) -> None:
         if max_roots < 0 or max_input_bytes < 0:
             raise ValueError("derived-state budgets must be nonnegative")
         self._max_roots = max_roots
