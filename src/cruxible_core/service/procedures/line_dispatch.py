@@ -200,6 +200,48 @@ def _open_segment(
     return data
 
 
+def _lapse_cadence_backlog(
+    store: LineDispatchStore,
+    conn: Any,
+    accepted: Any,
+    *,
+    actor: GovernedActorContext,
+    now: datetime,
+) -> None:
+    """Lapse a cadence Line's pending ticks as a new arm segment opens.
+
+    A cadence tick is not an event but "the Line is due", and the evaluator
+    re-offers the first undispatched one, so a tick left pending by a restart,
+    a disarm or explicit evaluation would hold every later tick back. The new
+    segment's own ticks supersede it: it closes as `lapsed`, retained and still
+    runnable with an explicit retry, and is never run implicitly.
+    """
+
+    if not isinstance(accepted.line.trigger_policy, CadenceTriggerPolicyV1):
+        return
+    line_id = line_identity_digest(accepted.line.identity)
+    for (occurrence_id,) in conn.execute(
+        "SELECT occurrence_id FROM pending WHERE line_id=? AND epoch=? AND disposition='pending'",
+        (line_id, accepted.line.occurrence_epoch),
+    ).fetchall():
+        store.append(
+            conn,
+            "closed",
+            dict(
+                line_id=line_id,
+                epoch=accepted.line.occurrence_epoch,
+                occurrence_id=occurrence_id,
+                detail=(
+                    "A cadence tick due before this arm lapsed; retry it explicitly to run it."
+                ),
+                status="lapsed",
+                refusal=None,
+            ),
+            actor=actor,
+            now=now,
+        )
+
+
 def _stop(
     store: LineDispatchStore,
     conn: Any,
@@ -275,6 +317,7 @@ def service_arm_line(
                 actor=actor,
                 now=now,
             )
+        _lapse_cadence_backlog(store, conn, accepted, actor=actor, now=now)
         arm = dict(
             arm_id=uuid4().hex,
             line=accepted.line.identity.qualified,
@@ -468,7 +511,8 @@ def service_match_listening_lines(
             or session["positions"]["generation"] != _positions(instance)["generation"]
         ):
             # The arm survives a restart forward-only: a new segment starts now,
-            # and what this segment matched stays pending for explicit dispatch.
+            # and what this segment matched stays pending for explicit dispatch
+            # (a cadence tick lapses instead; see `_lapse_cadence_backlog`).
             with store.locked() as conn:
                 current = _active_session(conn, session["line_id"])
                 if current is None or current["session_id"] != session["session_id"]:
@@ -482,6 +526,7 @@ def service_match_listening_lines(
                     actor=actor,
                     now=now,
                 )
+                _lapse_cadence_backlog(store, conn, accepted, actor=actor, now=now)
                 _open_segment(
                     store,
                     conn,
@@ -520,12 +565,14 @@ def service_match_listening_lines(
                 "cursor": None,
             }
             is_cadence = isinstance(accepted.line.trigger_policy, CadenceTriggerPolicyV1)
+            # One outstanding cadence tick per arm segment: work explicit
+            # evaluation recorded, or an earlier segment left, never holds the
+            # arm's own ticks back.
             if (
                 is_cadence
                 and conn.execute(
-                    "SELECT 1 FROM pending WHERE line_id=? AND epoch=? AND "
-                    "disposition='pending' LIMIT 1",
-                    (session["line_id"], session["occurrence_epoch"]),
+                    "SELECT 1 FROM pending WHERE session_id=? AND disposition='pending' LIMIT 1",
+                    (session["session_id"],),
                 ).fetchone()
             ):
                 continue

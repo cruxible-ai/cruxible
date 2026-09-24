@@ -51,7 +51,9 @@ class LineTriggerOccurrenceV1(BaseModel):
     eligible_at: datetime = Field(description="Reads VALIDITY WINDOW.")
     admitted_run_id: str | None = None
     pending: bool = False
-    dispatch_status: Literal["pending", "admitted", "rejected", "superseded"] | None = None
+    dispatch_status: (
+        Literal["pending", "admitted", "rejected", "superseded", "lapsed"] | None
+    ) = None
 
 
 class LineTriggerCheckResultV1(BaseModel):

@@ -142,7 +142,7 @@ class LineDispatchStore:
                 (data["run_id"], data["line_id"], data["epoch"], data["occurrence_id"]),
             )
         elif kind == "closed":
-            if data["status"] not in {"rejected", "superseded"}:
+            if data["status"] not in {"rejected", "superseded", "lapsed"}:
                 raise ValueError("invalid closed occurrence disposition")
             conn.execute(
                 "UPDATE pending SET disposition=? WHERE line_id=? AND epoch=? "

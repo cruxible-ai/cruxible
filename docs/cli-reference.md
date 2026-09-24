@@ -932,7 +932,11 @@ Procedure settles does so on its own under its mandate.
 
 An arm never catches up. It admits only what it matched itself since it was
 armed or since the daemon last restarted; anything pending before that, or
-recorded by `evaluate`, waits for explicit `dispatch`. `disarm` stops further
+recorded by `evaluate`, waits for explicit `dispatch`. A cadence tick is the
+exception: it is not an event but "the Line is due", so when a cadence Line is
+armed or its arm resumes, a tick still pending from before closes as `lapsed`
+-- retained, never run implicitly, and still runnable with
+`dispatch --occurrence-id DIGEST --retry` -- and the arm's own ticks continue. `disarm` stops further
 admissions; a run already admitted keeps going. `status` shows whether the
 Line is armed, how many pending occurrences it will admit on its own
 (`pending_automatic`) and how many await explicit dispatch
