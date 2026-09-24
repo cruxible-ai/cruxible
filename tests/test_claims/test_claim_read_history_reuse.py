@@ -60,7 +60,9 @@ def test_repeated_claim_reads_select_only_their_evidence_and_rebuild_admission_a
         assert view.admission_evaluation_time == evaluated_at
         assert view.admission_accounts
 
-    assert parsed == 20  # Each read verifies only its selected retained account.
+    # Each read selects only its own retained account, parsed once per accepted
+    # version and reused by the reads after it.
+    assert parsed == len(set(identities[index % len(identities)] for index in range(20)))
     assert accounts_built == 20
 
 

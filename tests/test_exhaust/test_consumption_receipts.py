@@ -24,6 +24,13 @@ from cruxible_core.exhaust.consumption import (
 from cruxible_core.governance.actor_context import GovernedActorContext
 from tests.core_support._support import initialize_local
 
+
+@pytest.fixture(autouse=True)
+def _consumption_receipts_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests exercise recorded receipts, which a local daemon leaves off.
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "on")
+
+
 NOW = datetime(2026, 8, 26, 14, 0, tzinfo=timezone.utc)
 
 
@@ -228,3 +235,139 @@ def test_consumption_checks_the_complete_coordinate_before_writing(tmp_path: Pat
             artifacts=(_artifact(),),
         )
     assert instance.review_operational_store().head().initialized is False
+
+
+def test_a_local_daemon_records_no_receipts_and_dead_vocabulary_stands_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.curation.curation_detectors import _dead_vocabulary
+
+    monkeypatch.delenv("CRUXIBLE_CONSUMPTION_RECEIPTS")
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    assert (
+        record_consumption(
+            instance,
+            context=_context(),
+            operation="playbill.claim_type.get",
+            coordinate=coordinate,
+            artifacts=(_artifact(),),
+        )
+        == ()
+    )
+    assert instance.review_operational_store().head().initialized is False
+    detections, coverage = _dead_vocabulary(
+        instance=instance,
+        tree=instance.tree_at(coordinate.git_oid),
+        generation=0,
+        operational_head_digest="sha256:" + "0" * 64,
+    )
+    assert detections == ()
+    assert [item.reason for item in coverage.omissions] == ["consumption_receipts_off"]
+
+
+def test_an_unknown_receipt_setting_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    from cruxible_client.contracts.errors import PlaybillFormatError
+    from cruxible_core.exhaust.consumption import consumption_receipts_enabled
+
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "sometimes")
+    with pytest.raises(PlaybillFormatError, match="'off' or 'on'"):
+        consumption_receipts_enabled()
+
+
+def test_switching_receipts_off_then_on_leaves_a_closed_gap_not_zero_use(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.exhaust import consumption
+
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+
+    def read() -> None:
+        record_consumption(
+            instance,
+            context=_context(),
+            operation="playbill.claim_type.get",
+            coordinate=coordinate,
+            artifacts=(_artifact(),),
+        )
+
+    def restart() -> None:
+        consumption._OBSERVATION_CHECKED.clear()  # a new daemon process
+
+    read()  # observing: the epoch exists
+    assert consumption_aggregate(instance).observation_gap_open is False
+    restart()
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "off")
+    read()
+    read()
+    aggregate = consumption_aggregate(instance)
+    assert aggregate.observation_gap_open is True
+    gaps = [
+        payload
+        for _event, payload in instance.review_operational_store().events(family="consumption")
+        if payload.get("tag") == "playbill-consumption-gap-v1"
+    ]
+    assert len(gaps) == 1  # once per process, not per read
+    restart()
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "on")
+    read()
+    aggregate = consumption_aggregate(instance)
+    assert aggregate.observation_gap_open is False
+    assert aggregate.observed_since_generation == 0
+
+
+def test_a_historical_first_read_cannot_backdate_resumed_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.claims.closure import dependency_artifacts
+    from cruxible_core.curation import curation_detectors as detectors
+    from cruxible_core.exhaust import consumption
+    from tests.core_support._knowledge_loop_support import seed_claims
+
+    instance, _owner = seed_claims(tmp_path)
+    history = instance.accepted_history()
+    first = AcceptedCoordinate.from_internal(instance.coordinate_for_oid(history[0].oid))
+    current = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    generation = len(history) - 1
+    assert generation > 1
+    consumption.ensure_consumption_epoch(
+        instance, coordinate=first, generation=0, actor_context=_context().actor_context
+    )
+    tree = instance.tree_at(current.git_oid)
+    vocabulary = next(a for a in dependency_artifacts(tree) if a.artifact_kind == "claim-type")
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "off")
+    record_consumption(
+        instance,
+        context=_context(),
+        operation="playbill.claim_type.get",
+        coordinate=current,
+        artifacts=((vocabulary.identity, vocabulary.artifact_digest),),
+    )
+    assert consumption_aggregate(instance).observation_gap_open
+    consumption._OBSERVATION_CHECKED.clear()  # a daemon restart into recording
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "on")
+    historical = AcceptedCoordinate.from_internal(instance.coordinate_for_oid(history[-2].oid))
+    claim = next(
+        a
+        for a in dependency_artifacts(instance.tree_at(historical.git_oid))
+        if a.artifact_kind == "claim"
+    )
+    (receipt,) = record_consumption(
+        instance,
+        context=_context(),
+        operation="playbill.claim.get",
+        coordinate=historical,
+        artifacts=((claim.identity, claim.artifact_digest),),
+    )
+    # The receipt describes what it read; observation resumed at the head.
+    assert receipt.accepted_coordinate == historical
+    assert consumption_aggregate(instance).observed_since_generation == generation
+    monkeypatch.setattr(detectors, "DEAD_VOCABULARY_MINIMUM_ZERO_TOUCH_GENERATIONS", 1)
+    detections, _coverage = detectors._dead_vocabulary(
+        instance=instance,
+        tree=tree,
+        generation=generation,
+        operational_head_digest="sha256:" + "0" * 64,
+    )
+    assert vocabulary.identity not in {item.subject for item in detections}

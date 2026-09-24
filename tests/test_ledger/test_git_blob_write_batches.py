@@ -293,3 +293,25 @@ def test_directory_walk_answers_as_the_whole_listing(ledger):
         )
     for path in ("a", "a/b", "a/b/c.json", "a/c", "q.json", "q.json/x", "deep/er/est", "nope"):
         assert ledger.tree_has_path(commit, path) == _listing_has_path(listing, path)
+
+
+def test_blobs_at_answers_exact_files_as_the_whole_tree_read(ledger):
+    tree = {
+        "a/b/c.json": b"c",
+        "a/b.json": b"b",
+        "a/z.json": b"z",
+        "q.json": b"q",
+        "deep/er/f.json": b"f",
+    }
+    commit = _commit(ledger, ledger._write_tree(tree))
+    asked = ("a/b/c.json", "q.json", "a", "a/b", "missing.json", "deep/er/f.json", "a/b/c.json")
+    expected = {path: tree[path] for path in asked if path in tree}
+    assert ledger.blobs_at(commit, asked) == expected
+    assert ledger.blobs_at(commit, ()) == {}
+    # A symlink named exactly is refused, as the whole-tree proof refuses it.
+    blob = ledger._git(["hash-object", "-w", "--stdin"], input_bytes=b"q.json").decode().strip()
+    listing = f"120000 blob {blob}\tlink\n100644 blob {ledger._blob_oid(b'q')}\tq.json\n"
+    linked = _commit(ledger, ledger._git(["mktree"], input_bytes=listing.encode()).decode().strip())
+    with pytest.raises(PlaybillGitError, match="unsupported 120000"):
+        ledger.blobs_at(linked, ("link",))
+    assert ledger.blobs_at(linked, ("q.json",)) == {"q.json": b"q"}

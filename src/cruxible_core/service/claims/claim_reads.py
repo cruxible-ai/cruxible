@@ -162,6 +162,7 @@ def service_read_claim_batch(
         evaluation_time = request.evaluation_time or (
             _accepted_generation_time(instance, coordinate) if public_views else None
         )
+        bodies = instance.body_store() if public_views else None
         for public in public_views:
             assert evaluation_time is not None
             view = materialize_playbill_claim_view(
@@ -171,6 +172,7 @@ def service_read_claim_batch(
                 evaluation_time=evaluation_time,
                 admission_tree=admission_tree,
                 law=claim_history.law_evidence.get(str(public.envelope["path"])),
+                bodies=bodies,
             )
             views.append(PlaybillClaimViewV2.model_validate(view.model_dump(mode="json")))
     cursor = None

@@ -218,8 +218,13 @@ class _AcceptedQueryFactsRead:
         external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
         source_tree: Mapping[str, bytes] | None = None,
         predicates: tuple[str, ...] | None = None,
+        subject_kinds: tuple[str, ...] | None = None,
     ) -> None:
         self._instance = instance
+        # A served query names every predicate and entry Subject kind it can
+        # read; with both, only the Subjects it can reach are read and parsed.
+        self._scoped_subject_kinds = subject_kinds if predicates is not None else None
+        self._context: ClaimVerdictReadContext | None = None
         self._coordinate = coordinate
         self._readers = dict(external_readers or {})
         self._tree: Mapping[str, bytes] | None = None
@@ -233,6 +238,31 @@ class _AcceptedQueryFactsRead:
         self._claim_types: dict[str, ClaimType] = {}
         self._rows: dict[str, ClaimFactRowV1] = {}
         self._results: dict[bool, ClaimQueryFactsV1] = {}
+
+    def _reachable_subject_paths(self, rows: list[ClaimFactRowV1]) -> tuple[str, ...]:
+        """The Subjects this evaluation can read: all of them, or a served query's reach.
+
+        A served query reads Subjects only by entry kind, as the subject or
+        object of a Claim it selected, or through a binding to one of those.
+        Every such Subject that exists is included, so presence and absence
+        answer exactly as over the whole set.
+        """
+        kinds = self._scoped_subject_kinds
+        if kinds is None:
+            return self._subject_paths
+        admitted = set(kinds)
+        named = {row.subject_path for row in rows} | {
+            row.object_subject_path for row in rows if row.object_subject_path is not None
+        }
+        reachable = tuple(
+            path
+            for path in self._subject_paths
+            if path in named
+            or (path.startswith(SUBJECT_PATH_PREFIX) and _subject_kind_of_path(path) in admitted)
+        )
+        if self._source_tree is None and self._context is not None:
+            self._context.prefetch(reachable)
+        return reachable
 
     def live_claims(self) -> tuple[ClaimArtifactAny, ...]:
         """Return the source Claims already read by this request's live fact fold."""
@@ -250,6 +280,7 @@ class _AcceptedQueryFactsRead:
         if self._tree is None:
             if isinstance(self._instance, PlaybillInstance):
                 context = ClaimVerdictReadContext(self._instance, self._coordinate)
+                self._context = context
                 self._tree = self._source_tree if self._source_tree is not None else context.tree
                 with self._instance.bind_accepted_projection(self._coordinate) as projection:
                     if self._predicates is None:
@@ -279,15 +310,27 @@ class _AcceptedQueryFactsRead:
                             ),
                             [],
                         ).append(value)
-                    type_paths = tuple(
-                        row[0]
-                        for row in projection.typed.connection.execute(
-                            "SELECT DISTINCT t.path FROM claims c "
-                            "JOIN claim_types t ON t.identity=c.claim_type_identity"
+                    type_sql = (
+                        "SELECT DISTINCT t.path FROM claims c "
+                        "JOIN claim_types t ON t.identity=c.claim_type_identity"
+                    )
+                    type_values: tuple[str, ...] = ()
+                    if self._predicates is not None:
+                        type_sql += (
+                            " WHERE c.predicate IN ("
+                            + ",".join("?" for _ in self._predicates)
+                            + ")"
                         )
+                        type_values = self._predicates
+                    type_paths = tuple(
+                        row[0] for row in projection.typed.connection.execute(type_sql, type_values)
                     )
                 if self._source_tree is None:
-                    context.prefetch(self._claim_paths + self._subject_paths + type_paths)
+                    context.prefetch(
+                        self._claim_paths
+                        + (() if self._scoped_subject_kinds is not None else self._subject_paths)
+                        + type_paths
+                    )
             else:
                 # Cold candidate compilation has source bytes, without a served index.
                 self._tree = self._instance.tree_at(self._coordinate.git_oid)
@@ -375,7 +418,7 @@ class _AcceptedQueryFactsRead:
         assembled = next(iter(self._results.values()), None)
         if assembled is None:
             providers = accepted_claim_providers(self._instance, coordinate=self._coordinate)
-            subjects = _accepted_subjects(tree, paths=self._subject_paths)
+            subjects = _accepted_subjects(tree, paths=self._reachable_subject_paths(rows))
             ordered_providers = tuple(
                 providers[key] for key in sorted(providers, key=lambda item: item.encode("utf-8"))
             )
@@ -392,6 +435,12 @@ class _AcceptedQueryFactsRead:
         return result
 
 
+def _subject_kind_of_path(path: str) -> str:
+    # subjects/<kind>/<id>: a kind never contains "/", and every accepted
+    # Subject's path was validated against its shell.
+    return path.split("/", 2)[1]
+
+
 def build_accepted_query_facts(
     instance: ClaimReadSourceProtocol,
     *,
@@ -399,6 +448,7 @@ def build_accepted_query_facts(
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
     include_retired: bool = False,
     predicates: tuple[str, ...] | None = None,
+    subject_kinds: tuple[str, ...] | None = None,
 ) -> ClaimQueryFactsV1:
     """Project accepted ledger state into the facts one evaluation may read.
 
@@ -411,7 +461,11 @@ def build_accepted_query_facts(
     """
 
     return _AcceptedQueryFactsRead(
-        instance, coordinate=coordinate, external_readers=external_readers, predicates=predicates
+        instance,
+        coordinate=coordinate,
+        external_readers=external_readers,
+        predicates=predicates,
+        subject_kinds=subject_kinds,
     ).build(include_retired=include_retired)
 
 
@@ -515,6 +569,7 @@ def evaluate_accepted_query(
             coordinate=coordinate,
             external_readers=external_readers,
             predicates=definition.query.referenced_predicates,
+            subject_kinds=definition.query.entry.subject_kinds,
         ),
         coordinate=coordinate,
         evaluation_time=evaluation_time,

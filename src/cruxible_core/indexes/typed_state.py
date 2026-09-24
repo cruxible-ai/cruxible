@@ -9,6 +9,7 @@ artifact digest rules remain authoritative.
 
 from __future__ import annotations
 
+import pickle
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -806,8 +807,11 @@ class TypedStateReader:
         bodies: Any = None,
         history: Any = None,
         records: Any = None,
+        fact_memo: Any = None,
     ) -> None:
         self.connection = connection
+        # Compiled facts per owner version, shared across readers of one instance.
+        self.fact_memo = fact_memo
         self.accepted = accepted
         self.repository = repository
         self.bodies = bodies
@@ -1181,7 +1185,50 @@ class TypedStateReader:
         )
 
     def facts_for(self, rows: tuple[ArtifactEnvelopeRow, ...]) -> dict[str, tuple[Any, ...]]:
-        """Compile a selected owner set together, without repeating shared history."""
+        """Compile a selected owner set together, without repeating shared history.
+
+        An owner version's facts are a function of its bytes, its compiler and
+        the exact accepted history of its path, so with an instance memo they
+        are compiled once per version and reused by every later read, at any
+        coordinate that carries the same version and history.
+        """
+        if not rows or self.fact_memo is None or self.history is None:
+            return self._compile_facts(rows)
+        with self.history() as history:
+            keys = {
+                row.identity: (
+                    row.identity,
+                    row.path,
+                    row.kind,
+                    row.format_tag,
+                    row.artifact_digest,
+                    row.revision,
+                    self.accepted.compiler.rule_digest,
+                    tuple(location.sequence for location in history.member_history(row.path)),
+                )
+                for row in rows
+            }
+        # Facts carry arbitrary nested values; the memo keeps them as immutable
+        # bytes and every read gets its own objects, so no caller can change
+        # what a later read at the same version sees.
+        found: dict[str, tuple[Any, ...]] = {}
+        missing: list[ArtifactEnvelopeRow] = []
+        for row in rows:
+            if row.identity in found:
+                continue
+            cached = self.fact_memo.get(keys[row.identity])
+            if cached is None:
+                missing.append(row)
+            else:
+                found[row.identity] = pickle.loads(cached)
+        if missing:
+            for identity, facts in self._compile_facts(tuple(missing)).items():
+                frozen = pickle.dumps(facts, protocol=pickle.HIGHEST_PROTOCOL)
+                self.fact_memo.put(keys[identity], frozen, weight=len(frozen))
+                found[identity] = facts
+        return {row.identity: found[row.identity] for row in rows}
+
+    def _compile_facts(self, rows: tuple[ArtifactEnvelopeRow, ...]) -> dict[str, tuple[Any, ...]]:
         grouped: dict[str, list[Any]] = {row.identity: [] for row in rows}
         if rows:
             for fact in self._compile_paths(tuple(row.path for row in rows)).semantic_facts:

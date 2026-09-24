@@ -74,7 +74,10 @@ from cruxible_core.curation.curation_calibration import (
     RECURRING_CONFLICT_MINIMUM_UNRESOLVED_SLOTS,
 )
 from cruxible_core.curation.review_operational import PlaybillReviewOperationalEventV1
-from cruxible_core.exhaust.consumption import consumption_aggregate
+from cruxible_core.exhaust.consumption import (
+    consumption_aggregate,
+    consumption_receipts_enabled,
+)
 from cruxible_core.indexes.history.history_index import ArtifactVersionLocation
 from cruxible_core.query.backends import ClaimFactRowV1, claim_row_visibility
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -649,9 +652,17 @@ def _dead_vocabulary(
 ) -> tuple[tuple[CurationDetectionV1, ...], CurationDetectorCoverageV1]:
     kind: CurationPatternKind = "playbill.curation.dead_vocabulary.v1"
     coverage = _Coverage(kind)
+    if not consumption_receipts_enabled():
+        # With no receipts recorded, zero touches would read as dead vocabulary.
+        coverage.omit("consumption_receipts_off")
+        return (), coverage.freeze()
     aggregate = consumption_aggregate(instance)
     if not aggregate.initialized or aggregate.consumption_epoch_generation is None:
         coverage.omit("consumption_epoch_uninitialized")
+        return (), coverage.freeze()
+    if aggregate.observation_gap_open:
+        # Reads were served unrecorded and nothing has resumed observation.
+        coverage.omit("consumption_observation_gap")
         return (), coverage.freeze()
     by_identity = {item.artifact_identity.qualified: item for item in aggregate.artifacts}
     first = (history or _curation_history_index(instance)).first_accepted_generations
@@ -673,6 +684,7 @@ def _dead_vocabulary(
         since = max(
             first.get(state.identity.qualified, generation),
             aggregate.consumption_epoch_generation,
+            aggregate.observed_since_generation or 0,
         )
         if qualifying != 0 or generation - since < DEAD_VOCABULARY_MINIMUM_ZERO_TOUCH_GENERATIONS:
             continue

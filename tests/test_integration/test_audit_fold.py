@@ -64,6 +64,13 @@ from tests.core_support._knowledge_loop_support import seed_claims
 from tests.core_support._modeling_parity_support import claim_fact, facts, subject
 from tests.core_support._support import initialize_local
 
+
+@pytest.fixture(autouse=True)
+def _consumption_receipts_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests exercise recorded receipts, which a local daemon leaves off.
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "on")
+
+
 NOW = datetime(2026, 8, 26, 18, 0, tzinfo=UTC)
 PREDICATE = "project.work_item.status"
 
