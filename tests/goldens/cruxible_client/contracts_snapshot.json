@@ -7909,6 +7909,17 @@
                 "default": null,
                 "title": "Subject Scope",
                 "type": "null"
+              },
+              "unsure_hold_for": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimFreshnessDurationV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -51290,6 +51301,17 @@
                 "default": null,
                 "title": "Subject Scope",
                 "type": "null"
+              },
+              "unsure_hold_for": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ClaimFreshnessDurationV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               }
             },
             "required": [

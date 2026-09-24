@@ -996,12 +996,14 @@ def handle_playbill_claim_attest(
     claim_id: str,
     stance: ClaimStance,
     note: str | None,
+    valid_until: datetime | None = None,
 ) -> ClaimAttestationAppendResultV1:
     prepared = PreparedClaimAttestationRequestV1(
         claim_id=claim_id.removeprefix("Claim:"),
         attestation_basis="examined_existing",
         stance=stance,
         attested_at=datetime.now(UTC),
+        valid_until=valid_until,
         note=note,
     )
     return _dispatch_remote_or_local(

@@ -707,6 +707,7 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
         "attestation_basis",
         "stance",
         "attesting_principal",
+        "attested_at",
         "current_at_append",
         "lineage_status",
     }

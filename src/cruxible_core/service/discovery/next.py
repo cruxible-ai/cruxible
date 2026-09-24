@@ -35,7 +35,10 @@ from cruxible_client.contracts.claim_attestation_store import (
     ClaimAttestationEventPayloadV1,
     ClaimAttestationEventV1,
 )
-from cruxible_client.contracts.claim_attestations import ClaimAttestationV2
+from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestationStatementV2,
+    ClaimAttestationV2,
+)
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
@@ -71,7 +74,7 @@ from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
-from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.coverage.contracts import (
     CoverageAccessProfileV1,
@@ -628,6 +631,8 @@ class PlaybillNextStatusV1(_StrictNextModel):
     ledger_mirror: PlaybillNextHealthV1
     provider_lane: PlaybillNextHealthV1
     procedure_catalog: PlaybillNextHealthV1
+    #: Rows parked by a current ``unsure`` attestation whose basis is unchanged.
+    held: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _states(self) -> "PlaybillNextStatusV1":
@@ -1055,6 +1060,239 @@ def _with_findings(
     )
 
 
+#: How long an ``unsure`` examined attestation parks a standing row when
+#: neither the attestation's ``valid_until`` nor its ClaimType says.
+DEFAULT_UNSURE_HOLD = timedelta(days=30)
+#: Rows nothing new arrives to break: a hold on them lapses instead.
+_STANDING_HOLD_REASONS: frozenset[str] = frozenset({"claim_stale_evidence", "claim_uncovered"})
+
+
+@dataclass(frozen=True)
+class _UnsureHold:
+    referent: AcceptedCoordinate
+    attested_at: datetime
+    valid_until: datetime | None
+
+
+def _instant(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return None
+
+
+class _Holds:
+    """Current ``unsure`` examined attestations, and whether each covers a row.
+
+    An agent that examined a contested Claim and will not force a judgment
+    attests ``unsure``. That parks the row only while the basis the agent
+    looked at is unchanged: a new contender, a revised upstream Claim, newer
+    evidence, or a further expiry brings it back. Standing rows -- stale or
+    uncovered evidence -- have no such arrival, so a hold on them lapses at its
+    ``valid_until``, else after the ClaimType's ``unsure_hold_for``, else after
+    ``DEFAULT_UNSURE_HOLD``.
+    """
+
+    def __init__(
+        self,
+        instance: PlaybillInstance,
+        *,
+        coordinate: AcceptedProjectionCoordinate,
+        claims: tuple[ClaimArtifactAny, ...],
+        door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...],
+        evaluation_time: datetime,
+    ) -> None:
+        self._instance = instance
+        self._coordinate = coordinate
+        self._evaluation_time = evaluation_time
+        live = {
+            claim.identity.qualified: claim for claim in claims if claim.lifecycle.state == "live"
+        }
+        self._current = {
+            identity: claim_artifact_digest(claim).tagged for identity, claim in live.items()
+        }
+        self._claims = live
+        self._hold_for: dict[str, timedelta] = {}
+        self._seen: dict[tuple[str, tuple[tuple[str, str], ...]], bool] = {}
+        # The latest examined stance per Claim and principal; a later support or
+        # contradict by the same principal ends that principal's hold.
+        latest: dict[
+            tuple[str, str], tuple[tuple[datetime, int, int], ClaimAttestationStatementV2]
+        ] = {}
+
+        def consider(
+            statement: ClaimAttestationStatementV2, order: tuple[datetime, int, int]
+        ) -> None:
+            identity = statement.claim_identity.qualified
+            if (
+                statement.attestation_basis != "examined_existing"
+                or self._current.get(identity) != statement.claim_artifact_digest
+            ):
+                return
+            key = (identity, statement.attesting_principal_id)
+            if key not in latest or latest[key][0] < order:
+                latest[key] = (order, statement)
+
+        if self._current:
+            with instance.bind_accepted_projection(coordinate) as projection:
+                accepted = projection.typed.claim_attestations(
+                    basis="examined_existing", current_claims_only=True
+                )
+            for envelope in accepted:
+                consider(envelope.statement, (envelope.statement.attested_at, 0, 0))
+        for event, payload in door_events:
+            if payload.current_at_append is False:
+                continue
+            statement = payload.attestation.statement
+            consider(statement, (statement.attested_at, 1, event.sequence))
+        holds: dict[str, list[_UnsureHold]] = defaultdict(list)
+        for (identity, _principal), (_order, statement) in latest.items():
+            if (
+                statement.stance == "unsure"
+                and statement.attested_at <= evaluation_time
+                and (statement.valid_until is None or evaluation_time < statement.valid_until)
+            ):
+                holds[identity].append(
+                    _UnsureHold(
+                        referent=AcceptedCoordinate.model_validate(
+                            statement.referent_coordinate.model_dump(mode="json")
+                        ),
+                        attested_at=statement.attested_at,
+                        valid_until=statement.valid_until,
+                    )
+                )
+        self._holds = dict(holds)
+
+    def __bool__(self) -> bool:
+        return bool(self._holds)
+
+    def covers(self, row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> bool:
+        detail = row.detail if isinstance(row.detail, Mapping) else {}
+        if row.reason == "claim_conflicted":
+            arguments = row.repair.arguments if isinstance(row.repair.arguments, Mapping) else {}
+            contenders = arguments.get("claim_ids")
+            if not isinstance(contenders, list) or not contenders:
+                return False
+            versions = self._versions(contenders)
+            # Every contender examined, each by someone who saw all of them.
+            return versions is not None and all(
+                any(self._saw(hold, versions) for hold in self._holds.get(identity, ()))
+                for identity, _digest in versions
+            )
+        holds = self._holds.get(row.subject_identity, ())
+        if row.reason in _STANDING_HOLD_REASONS:
+            last_expired = _instant(detail.get("last_expired_at"))
+            return any(
+                self._evaluation_time < self._lapses(row.subject_identity, hold)
+                and (last_expired is None or last_expired <= hold.attested_at)
+                for hold in holds
+            )
+        if row.reason in {
+            "claim_contradicting_evidence_available",
+            "claim_new_evidence_unreviewed",
+        }:
+            attested = _instant(detail.get("attested_at"))
+            return attested is not None and any(attested <= hold.attested_at for hold in holds)
+        if row.reason == "claim_dependency_stale":
+            inputs = detail.get("stale_inputs")
+            if not isinstance(inputs, list):
+                return False
+            upstream = [
+                (item.get("source_claim_identity"), item.get("current_artifact_digest"))
+                for item in inputs
+                if isinstance(item, Mapping)
+            ]
+            if len(upstream) != len(inputs) or not all(
+                isinstance(identity, str) and isinstance(digest, str)
+                for identity, digest in upstream
+            ):
+                return False
+            own = self._versions([row.subject_identity])
+            if own is None:
+                return False
+            versions = tuple(sorted({*own, *upstream}))  # type: ignore[arg-type]
+            return any(self._saw(hold, versions) for hold in holds)
+        return False
+
+    def _versions(self, identities: list[object]) -> tuple[tuple[str, str], ...] | None:
+        versions = []
+        for identity in identities:
+            digest = self._current.get(identity) if isinstance(identity, str) else None
+            if digest is None:
+                return None
+            versions.append((identity, digest))
+        return tuple(sorted(versions))  # type: ignore[arg-type]
+
+    def _saw(self, hold: _UnsureHold, versions: tuple[tuple[str, str], ...]) -> bool:
+        """Whether every exact version was already accepted where the hold looked."""
+
+        key = (hold.referent.git_oid, versions)
+        if key not in self._seen:
+            try:
+                with self._instance.accepted_history_reader(at=hold.referent) as history:
+                    self._seen[key] = all(
+                        history.artifact(digest, identity=identity) is not None
+                        for identity, digest in versions
+                    )
+            except PlaybillError:
+                self._seen[key] = False
+        return self._seen[key]
+
+    def _lapses(self, identity: str, hold: _UnsureHold) -> datetime:
+        if hold.valid_until is not None:
+            return hold.valid_until
+        claim = self._claims[identity]
+        predicate = claim.statement.predicate
+        if predicate not in self._hold_for:
+            raw = self._instance.blob_at(self._coordinate.git_oid, claim_type_path(predicate))
+            declared = (
+                None
+                if raw is None
+                else parse_claim_type(raw, path=claim_type_path(predicate)).unsure_hold_for
+            )
+            self._hold_for[predicate] = (
+                DEFAULT_UNSURE_HOLD
+                if declared is None
+                else timedelta(microseconds=declared.microseconds)
+            )
+        return hold.attested_at + self._hold_for[predicate]
+
+
+def _apply_holds(
+    items: tuple[PlaybillNextItemV1, ...], holds: _Holds
+) -> tuple[tuple[PlaybillNextItemV1, ...], int]:
+    """Park the rows an ``unsure`` hold covers; a finding it doesn't cover stays."""
+
+    if not holds:
+        return items, 0
+    kept: list[PlaybillNextItemV1] = []
+    held = 0
+    for item in items:
+        remaining = tuple(finding for finding in item.findings if not holds.covers(finding))
+        held += len(item.findings) - len(remaining)
+        if holds.covers(item):
+            held += 1
+            kept.extend(_row_of(finding) for finding in remaining)
+        elif len(remaining) != len(item.findings):
+            head = item.model_copy(update={"findings": ()})
+            kept.append(_with_findings(head, map(_row_of, remaining)) if remaining else head)
+        else:
+            kept.append(item)
+    return tuple(kept), held
+
+
+def _row_of(finding: PlaybillNextFindingV1) -> PlaybillNextItemV1:
+    return _item(
+        severity=finding.severity,
+        reason=finding.reason,
+        subject_identity=finding.subject_identity,
+        related_identities=finding.related_identities,
+        detail=finding.detail,
+        repair=finding.repair,
+    )
+
+
 def _item_sort_key(item: PlaybillNextItemV1) -> tuple[int, bytes, bytes, bytes]:
     return (
         _SEVERITY_RANK[item.severity],
@@ -1355,6 +1593,7 @@ def _claim_items(
                     if isinstance(verdict, ClaimVerdictResultV2)
                     else ()
                 )
+                expired = tuple(item for item in expirations if evaluation_time >= item.expires_at)
                 member_rows.append(
                     _item(
                         severity="repair",
@@ -1362,11 +1601,11 @@ def _claim_items(
                         subject_identity=claim.identity.qualified,
                         related_identities=(subject,),
                         detail={
-                            "expired_capture_digests": [
-                                item.capture_digest
-                                for item in expirations
-                                if evaluation_time >= item.expires_at
-                            ],
+                            "expired_capture_digests": [item.capture_digest for item in expired],
+                            # A hold made after this instant saw every expiry here.
+                            "last_expired_at": format_datetime(
+                                max((item.expires_at for item in expired), default=None)
+                            ),
                             "predicate": claim.statement.predicate,
                             "verdict": verdict.verdict,
                         },
@@ -1931,6 +2170,7 @@ def _claim_attestation_door_items(
                         "attestation_basis": statement.attestation_basis,
                         "stance": statement.stance,
                         "attesting_principal": statement.attesting_principal_id,
+                        "attested_at": format_datetime(statement.attested_at),
                         "current_at_append": current_at_append,
                         "lineage_status": lineage_status,
                     },
@@ -3093,60 +3333,67 @@ def service_playbill_next(
         if domain == "accepted_state" or domain in workspace_domains
     )
     unobserved = tuple(domain for domain in _ALL_DOMAINS if domain not in observed)
-    items = tuple(
-        sorted(
-            _group_items(
-                (
-                    *_claim_items(
-                        instance,
-                        coordinate=public_coordinate,
-                        evaluation_time=request.evaluation_time,
-                        expiring_within=request.expiring_within,
-                        door_events=door_events,
-                        verdicts_by_identity=verdicts_by_identity,
-                        claims=parsed_claims,
-                        resolution_statuses=resolution_statuses,
-                        access_profile=request.access_profile,
-                    ),
-                    *_claim_attestation_door_items(
-                        instance,
-                        coordinate=coordinate,
-                        door_events=door_events,
-                        evaluation_time=request.evaluation_time,
-                        access_profile=request.access_profile,
-                    ),
-                    *workspace_items,
-                    *_projection_items(
-                        instance,
-                        coordinate=coordinate,
-                        evaluation_time=request.evaluation_time,
-                        access_profile=request.access_profile,
-                        observation=request.workspace_observation,
-                        verdicts_by_identity=verdicts_by_identity,
-                        facts_reader=facts_reader,
-                        resolution_statuses=resolution_statuses,
-                    ),
-                    *_claim_dependency_items(
-                        instance,
-                        coordinate=coordinate,
-                        evaluation_time=request.evaluation_time,
-                        access_profile=request.access_profile,
-                        facts_reader=facts_reader,
-                    ),
-                    *_document_items(
-                        instance,
-                        coordinate=coordinate,
-                        access_profile=request.access_profile,
-                        observation=request.workspace_observation,
-                    ),
-                )
-            ),
-            key=_item_sort_key,
-        )
+    found = (
+        *_claim_items(
+            instance,
+            coordinate=public_coordinate,
+            evaluation_time=request.evaluation_time,
+            expiring_within=request.expiring_within,
+            door_events=door_events,
+            verdicts_by_identity=verdicts_by_identity,
+            claims=parsed_claims,
+            resolution_statuses=resolution_statuses,
+            access_profile=request.access_profile,
+        ),
+        *_claim_attestation_door_items(
+            instance,
+            coordinate=coordinate,
+            door_events=door_events,
+            evaluation_time=request.evaluation_time,
+            access_profile=request.access_profile,
+        ),
+        *workspace_items,
+        *_projection_items(
+            instance,
+            coordinate=coordinate,
+            evaluation_time=request.evaluation_time,
+            access_profile=request.access_profile,
+            observation=request.workspace_observation,
+            verdicts_by_identity=verdicts_by_identity,
+            facts_reader=facts_reader,
+            resolution_statuses=resolution_statuses,
+        ),
+        *_claim_dependency_items(
+            instance,
+            coordinate=coordinate,
+            evaluation_time=request.evaluation_time,
+            access_profile=request.access_profile,
+            facts_reader=facts_reader,
+        ),
+        *_document_items(
+            instance,
+            coordinate=coordinate,
+            access_profile=request.access_profile,
+            observation=request.workspace_observation,
+        ),
     )
+    held = 0
+    if parsed_claims is not None and request.access_profile.permits("instance"):
+        found, held = _apply_holds(
+            found,
+            _Holds(
+                instance,
+                coordinate=coordinate,
+                claims=parsed_claims,
+                door_events=door_events,
+                evaluation_time=request.evaluation_time,
+            ),
+        )
+    items = tuple(sorted(_group_items(found), key=_item_sort_key))
     terminal = instance.descriptor.decommissioned
     status = PlaybillNextStatusV1(
         blocking=terminal is not None,
+        held=held,
         instance=(
             PlaybillNextHealthV1(state="active")
             if terminal is None

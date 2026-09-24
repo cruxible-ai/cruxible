@@ -19,6 +19,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimEvidenceFreshnessV1,
+    ClaimFreshnessDurationV1,
     ClaimType,
     claim_type_digest,
     claim_type_path,
@@ -70,6 +71,10 @@ class ClaimTypeInputV1(_StrictClaimTypeInputModel):
         exclude_if=lambda value: value is None,
     )
     attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    unsure_hold_for: ClaimFreshnessDurationV1 | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )

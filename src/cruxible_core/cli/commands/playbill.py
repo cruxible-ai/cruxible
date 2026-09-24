@@ -2553,6 +2553,14 @@ def recover_claim_attestations() -> None:
 @click.option("--contradict", is_flag=True)
 @click.option("--unsure", is_flag=True)
 @click.option("--note")
+@click.option(
+    "--valid-until",
+    default=None,
+    help=(
+        "ISO-8601 end of this attestation. An --unsure hold on stale or uncovered "
+        "evidence otherwise lapses after the ClaimType's unsure_hold_for (default 30 days)."
+    ),
+)
 @json_option
 @handle_errors
 def attest_claim(
@@ -2561,9 +2569,14 @@ def attest_claim(
     contradict: bool,
     unsure: bool,
     note: str | None,
+    valid_until: str | None,
     output_json: bool,
 ) -> None:
-    """Sign that this caller examined the current exact Claim."""
+    """Sign that this caller examined the current exact Claim.
+
+    --unsure holds the Claim's contested `next` rows until what you examined
+    changes, instead of forcing a judgment you are not confident in.
+    """
 
     selected = tuple(
         value
@@ -2592,6 +2605,11 @@ def attest_claim(
                 attestation_basis="examined_existing",
                 stance=cast(ClaimStance, stance),
                 attested_at=datetime.now(UTC),
+                valid_until=(
+                    None
+                    if valid_until is None
+                    else datetime.fromisoformat(valid_until.replace("Z", "+00:00"))
+                ),
                 note=note,
             ),
             signer=signer,
