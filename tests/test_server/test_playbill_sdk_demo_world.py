@@ -1077,12 +1077,12 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         query.identity.name,
         evaluation_time=datetime.now(UTC).isoformat(),
     )
-    assert queried.result["verdict"] == "completed"
+    assert queried.result.verdict == "completed"
     assert "response-guidance" in {
-        field["value"]
-        for row in queried.result["rows"]
-        for field in row["fields"]
-        if field["name"] == "policy_id"
+        field.value
+        for row in queried.result.rows
+        for field in row.fields
+        if field.name == "policy_id"
     }
 
     procedure = pb.procedure(

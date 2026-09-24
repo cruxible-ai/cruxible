@@ -138,7 +138,7 @@ def test_the_seed_bundle_uses_only_surviving_governed_writers(
     assert projected == {"wi-101": "done", "wi-102": "blocked", "wi-103": "ready"}
 
 
-def test_the_arm_file_surface_is_floor_v2_artifacts_and_the_boundary(
+def test_the_arm_file_surface_is_floor_artifacts_and_the_boundary(
     arm_run: dict[str, object],
 ) -> None:
     """One greppable pointer-model tree with no native projection residue."""
@@ -152,13 +152,15 @@ def test_the_arm_file_surface_is_floor_v2_artifacts_and_the_boundary(
 
     assert {"manifest.json", "coverage-manifest.json"} <= written
     assert any(item.endswith(".profile.json") for item in written)
-    assert not any(item.endswith(".md") for item in written)
+    # The v3 floor's only prose is its own orientation README; no native
+    # projection rendering reaches the arm's file surface.
+    assert {item for item in written if item.endswith(".md")} <= {"README.md"}
     assert "render-manifest.json" not in written
     floor = json.loads((surface / "manifest.json").read_text(encoding="utf-8"))
-    assert floor["tag"] == "playbill-floor-manifest-v2"
-    assert floor["format"] == "playbill-floor-export-v2"
+    assert floor["tag"] == "playbill-floor-manifest-v3"
+    assert floor["format"] == "playbill-floor-export-v3"
     floor_paths = {item["path"] for item in floor["files"]}
-    assert not any(path.endswith(".md") for path in floor_paths)
+    assert {path for path in floor_paths if path.endswith(".md")} <= {"README.md"}
     assert "render-manifest.json" not in floor_paths
     assert not any(path.startswith("briefs/") for path in floor_paths)
     assert any(path.startswith("procedures/") for path in floor_paths)
@@ -317,7 +319,7 @@ def test_the_run_manifest_pins_every_field_the_evaluation_requires(
 
     for field in ("generation_root", "semantic_root", "compiler_digest", "floor_digest"):
         assert str(manifest["accepted"][field]).startswith("sha256:"), field
-    assert manifest["accepted"]["format"] == "playbill-floor-export-v2"
+    assert manifest["accepted"]["format"] == "playbill-floor-export-v3"
     assert "native_render" not in manifest
     assert manifest["seed"]["plan_digest"].startswith("sha256:")
     assert manifest["arms"] == {
