@@ -50,10 +50,10 @@ COORDINATOR_CLASS = "AuthoringIntentCoordinator"
 STORE_WRITES = frozenset({"create", "transition", "record_program_stamp"})
 
 # Public coordinator methods that persist WITHOUT a gate, each declared here
-# with the reason. All four are the protocol roll-forward described at the top
+# with the reason. All five are the protocol roll-forward described at the top
 # of this module: reading a pending intent may expire an expectation that has
-# already lapsed, which is the instance describing what happened to it, not a
-# new intent. A decommissioned instance keeps serving what it accepted, so
+# already lapsed, and finalizing records an acceptance that already happened,
+# which is the instance describing what happened to it, not a new intent. A decommissioned instance keeps serving what it accepted, so
 # these stay open on purpose. A name is added here only for that reason -- a
 # door that persists a new intent belongs in DECLARED_WRITE_GATES instead.
 DECLARED_ROLL_FORWARD_DOORS = frozenset(
@@ -62,6 +62,7 @@ DECLARED_ROLL_FORWARD_DOORS = frozenset(
         f"{COORDINATOR_CLASS}.resume",
         f"{COORDINATOR_CLASS}.list_pending",
         f"{COORDINATOR_CLASS}.status",
+        f"{COORDINATOR_CLASS}.finalize_completed",
     }
 )
 
