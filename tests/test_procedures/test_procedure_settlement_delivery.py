@@ -113,6 +113,8 @@ def _condition(*, only_subject: str | None) -> QueryDefinitionV1:
 
 #: The key that governs each settle world, for tests that approve ordinarily.
 OWNERS: dict[Path, Any] = {}
+#: The settling Procedure of each capture-triggered world, for landing trigger Captures.
+PROCEDURES: dict[Path, Any] = {}
 
 
 def settle_world(  # type: ignore[no-untyped-def]
@@ -121,6 +123,7 @@ def settle_world(  # type: ignore[no-untyped-def]
     only_subject: str | None = None,
     fallback: str = "propose",
     mandates: int = 1,
+    capture_triggered: bool = False,
 ):
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     source, shape = procedure.definition.nodes
@@ -143,9 +146,49 @@ def settle_world(  # type: ignore[no-untyped-def]
     line = fixtures._served_line(with_terminal, policy).model_copy(
         update={"requested_terminal_rung": 3}
     )
+    trigger_members: dict[str, bytes] = {}
+    if capture_triggered:
+        # Landing a Capture of the trigger contract makes an armed Line due.
+        from cruxible_client.contracts.captures import (
+            DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+            capture_contract_path,
+            render_capture_contract,
+        )
+        from cruxible_client.contracts.procedures.line_specs import (
+            CaptureLandingTriggerPolicyV2,
+            LineSpecV3,
+        )
+        from tests.test_procedures.test_line_triggers import SELECTOR
+
+        line = LineSpecV3.model_validate(
+            {
+                **line.model_dump(mode="python"),
+                "artifact_format": "playbill-line-v3",
+                "provider_implementation_closures": (),
+                "trigger_policy": CaptureLandingTriggerPolicyV2(event=SELECTOR),
+                "pins": tuple(
+                    sorted(
+                        (
+                            *line.pins,
+                            ArtifactPin(
+                                role="trigger-capture-contract",
+                                target=SELECTOR.capture_contract_identity,
+                                artifact_digest=SELECTOR.capture_contract_digest,
+                            ),
+                        ),
+                        key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
+                    )
+                ),
+            }
+        )
+        trigger_members[
+            capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)
+        ] = render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+        PROCEDURES[root] = with_terminal
     claim_type = _claim_type(capture_contract_digest(capture_contract()).tagged)
     query = _condition(only_subject=only_subject)
     members: dict[str, bytes] = {
+        **trigger_members,
         procedure_path(fixtures.PROCEDURE_NAME): render_procedure(with_terminal),
         line_spec_path(line.identity.name): render_line_spec(line),
         claim_type_path(claim_type.predicate): render_claim_type(claim_type),
@@ -493,3 +536,89 @@ def test_a_settled_delivery_finds_its_generation_without_walking_history(
     state = run_settle(instance, root, line)
     assert state.status == "succeeded", state.terminal
     assert _egress(state).settle_outcome == "settled"
+
+
+@pytest.mark.parametrize(
+    ("only_subject", "outcome"), [(None, "settled"), ("someone-else", "proposed")]
+)
+def test_an_armed_capture_triggered_line_settles_or_falls_back_on_its_own(
+    tmp_path: Path, monkeypatch, only_subject: str | None, outcome: str
+) -> None:
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.line_dispatch import LineArmPrincipalV1
+    from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
+    from cruxible_core.runtime import line_arms
+    from cruxible_core.runtime.line_arms import dispatch_armed_line
+    from cruxible_core.service.procedures.line_dispatch import (
+        armed_work,
+        service_arm_line,
+        service_match_listening_lines,
+    )
+    from cruxible_core.service.procedures.procedure_runs import (
+        service_get_playbill_procedure_run,
+    )
+    from tests.test_procedures import test_line_arming as arming
+    from tests.test_procedures.test_line_triggers import capture
+
+    instance, root, line = settle_world(tmp_path, only_subject=only_subject, capture_triggered=True)
+    procedure = PROCEDURES[root]
+    base = instance.accepted_coordinate()
+    actor = fixtures._actor(instance).model_copy(update={"timestamp": fixtures.NOW})
+    armed_at = fixtures.NOW - timedelta(seconds=10)
+    # Armed under a credential whose label is the instance's accepted Principal,
+    # which the settle terminal's proposal is submitted as.
+    monkeypatch.setattr(
+        line_arms,
+        "get_runtime_credential_store",
+        lambda: SimpleNamespace(
+            get=lambda _id: arming._credential(
+                instance_id=instance.descriptor.instance_id, label="owner"
+            )
+        ),
+    )
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LineArmPrincipalV1(
+            kind="runtime_credential", credential_id="cred-arm", label="owner"
+        ),
+        actor=actor,
+        now=armed_at,
+        daemon_id="daemon",
+    )
+    capture(
+        instance,
+        SimpleNamespace(
+            artifact_digest=procedure_artifact_digest(procedure).tagged,
+            procedure=SimpleNamespace(definition_digest=procedure.definition_digest),
+        ),
+        at=armed_at + timedelta(seconds=1),
+    )
+    service_match_listening_lines(
+        instance, actor=actor, now=armed_at + timedelta(seconds=2), daemon_id="daemon"
+    )
+    (arm,) = armed_work(instance, now=fixtures.NOW)
+    manager = SimpleNamespace(
+        get=lambda _id: instance,
+        workspace_file_reader=lambda _id: fixtures._reader(instance, root),
+        provider_runtime_operator=lambda: fixtures._Operator(fixtures._WorkspaceInvoker()),
+    )
+
+    result = dispatch_armed_line(manager, instance.descriptor.instance_id, arm, now=fixtures.NOW)
+
+    assert result is not None and [item.status for item in result.items] == ["admitted"]
+    (egress,) = service_get_playbill_procedure_run(
+        instance, run_id=result.items[0].run_id
+    ).terminal_egress
+    assert egress.settle_outcome == outcome, (
+        egress.verdict,
+        egress.refusal_code,
+        egress.effective_authority,
+        egress.limiting_term,
+    )
+    if outcome == "settled":
+        assert instance.accepted_coordinate().git_oid == egress.accepted_git_oid
+    else:
+        assert instance.accepted_coordinate() == base and egress.proposal_id is not None
