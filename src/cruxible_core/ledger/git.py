@@ -611,8 +611,22 @@ class GitLedger:
         self._validate_oid(oid)
         repository = _repository_key(self.path)
         parent_listing = _remembered_listing(repository, accepted_parent, with_sizes=True)
-        if parent_listing is not None:
-            _remember_listing(repository, oid, _listing_with(parent_listing, changes, sizes))
+        if parent_listing is None:
+            # The root's rows are the accepted tree's blob references, with the
+            # object ID and size a sized listing carries, in the same order.
+            parent_listing = tuple(
+                GitTreeEntry(
+                    path=path,
+                    mode="100644",
+                    object_type="blob",
+                    oid=row.oid if isinstance(row, BlobRef) else self._blob_oid(row),
+                    size=row.size if isinstance(row, BlobRef) else len(row),
+                )
+                for path, row in root._rows.items()
+            )
+            if parent_listing:
+                _remember_listing(repository, accepted_parent, parent_listing)
+        _remember_listing(repository, oid, _listing_with(parent_listing, changes, sizes))
         return oid
 
     def _extend_tree(

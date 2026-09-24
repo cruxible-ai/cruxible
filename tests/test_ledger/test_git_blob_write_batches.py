@@ -223,6 +223,7 @@ def test_delta_writes_equal_whole_tree_writes(ledger, seed, monkeypatch):
     import random
 
     from cruxible_core.derived.derived_state import SnapshotTree
+    from cruxible_core.ledger import git as git_module
 
     generator = random.Random(seed)
     names = [f"claims/{i % 4}/c{i}.json" for i in range(30)] + ["cards/x.json", "top.json"]
@@ -230,7 +231,10 @@ def test_delta_writes_equal_whole_tree_writes(ledger, seed, monkeypatch):
     base_commit = _commit(ledger, ledger._write_tree(base_tree))
     root = SnapshotTree(ledger.blob_refs_at(base_commit))
     root._commit_oid = base_commit
-    ledger.list_tree_with_sizes(base_commit)  # a warm parent listing is carried forward
+    if seed % 2:
+        ledger.list_tree_with_sizes(base_commit)  # a warm parent listing is carried forward
+    else:
+        git_module._TREE_LISTINGS.clear()  # a cold one is seeded from the root's rows
     fork = root.fork()
     for _ in range(6):
         if fork and generator.random() < 0.3:
