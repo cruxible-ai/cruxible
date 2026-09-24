@@ -131,11 +131,13 @@ def parse_static_owners(
     *,
     accepted: Any,
     verified_change_sets: tuple[tuple[str, Any], ...] | None = None,
+    selected_member_history: tuple[tuple[str, Any], ...] | None = None,
 ) -> ParsedProjectionTree:
     """Parse exact owner contracts without making CAS availability an index authority.
 
     ``verified_change_sets`` supplies the complete, already replay-verified record
-    prefix; ``sources`` then need not carry the change-set blobs.
+    prefix; ``selected_member_history`` instead supplies only the verified records
+    that touched ``sources``. Either way ``sources`` need not carry change-set blobs.
     """
     from dataclasses import replace
 
@@ -163,6 +165,7 @@ def parse_static_owners(
         artifact_kinds=kinds,
         artifact_codec=codec,
         verified_change_sets=verified_change_sets,
+        selected_member_history=selected_member_history,
     )
     envelopes = list(parsed.envelopes)
     pins = {(pin.source_identity, pin.target_identity): pin for pin in parsed.pins}

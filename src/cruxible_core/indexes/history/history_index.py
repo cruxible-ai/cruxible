@@ -9,6 +9,7 @@ one SQLite snapshot with an explicit accepted-history cutoff.
 
 from __future__ import annotations
 
+import functools
 import sqlite3
 import stat
 import threading
@@ -95,6 +96,25 @@ CREATE INDEX IF NOT EXISTS generations_by_semantic_root
  ON accepted_generations(semantic_root,sequence);
 """
 _SCHEMA = _HISTORY_SCHEMA + _MEMBER_SCHEMA + _GENERATION_ROOT_INDEX
+
+
+def _prior_member_sequences(
+    connection: sqlite3.Connection, paths: Sequence[str], *, before: int
+) -> dict[str, tuple[int, ...]]:
+    """Earlier sequences per path, from member rows this sync has already written."""
+
+    found: dict[str, list[int]] = {path: [] for path in paths}
+    ordered = tuple(dict.fromkeys(paths))
+    for start in range(0, len(ordered), 500):
+        chunk = ordered[start : start + 500]
+        for path, sequence in connection.execute(
+            "SELECT member_path,sequence FROM accepted_member_locations "
+            f"WHERE member_path IN ({','.join('?' for _ in chunk)}) AND sequence<? "
+            "ORDER BY sequence",
+            (*chunk, before),
+        ):
+            found[path].append(int(sequence))
+    return {path: tuple(dict.fromkeys(sequences)) for path, sequences in found.items()}
 
 
 def _schema_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
@@ -506,7 +526,9 @@ class HistoryReader:
         )
 
 
-EnvelopeLoader = Callable[[int], Sequence[ArtifactEnvelopeRow]]
+# For each path, the earlier accepted sequences whose change set touched it.
+PriorMemberSequences = Callable[[Sequence[str]], dict[str, tuple[int, ...]]]
+EnvelopeLoader = Callable[[int, PriorMemberSequences], Sequence[ArtifactEnvelopeRow]]
 
 
 def commit_working_write(
@@ -926,7 +948,9 @@ class AcceptedHistoryIndex:
                 f"changesets/cs-{position:020d}.json" if record else None,
                 record.changeset_digest if record else None,
             )
-            envelopes = load_envelopes(position)
+            envelopes = load_envelopes(
+                position, functools.partial(_prior_member_sequences, connection, before=position)
+            )
             versions = sorted(
                 (
                     row.identity,

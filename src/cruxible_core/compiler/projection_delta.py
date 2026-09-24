@@ -9,6 +9,7 @@ shapes deliberately use the existing full assembler.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, TypeVar
@@ -63,11 +64,15 @@ _LOCAL_KINDS = frozenset(
 T = TypeVar("T")
 
 
+# The verified change-set records that touched each of these paths, at the base.
+MemberHistory = Callable[[Sequence[str]], tuple[tuple[str, ChangeSetRecordAnyVersion], ...]]
+
+
 @dataclass(frozen=True)
 class GenerationDelta:
     base: AcceptedProjectionCoordinate
     bundle: VerifiedGenerationBundle
-    verified_prefix: tuple[tuple[str, ChangeSetRecordAnyVersion], ...]
+    member_history: MemberHistory
 
 
 def _timed(timings: dict[str, int], phase: str, fn: Callable[[], T]) -> T:
@@ -96,10 +101,6 @@ def populate_successor(
         return None
     if not isinstance(bundle.record, (ChangeSetRecordV2, ChangeSetRecordV3)):
         return None
-    if tuple(r.sequence for _, r in delta.verified_prefix) != tuple(
-        range(1, bundle.record.sequence)
-    ):
-        raise ProjectionIntegrityError("derived-index delta has a noncontiguous verified prefix")
     if any(member.artifact_kind not in _LOCAL_KINDS for member in bundle.record.members):
         return None
 
@@ -153,7 +154,12 @@ def populate_successor(
             return result, inventory
 
         inputs, inventory = _timed(timings, "git_traversal", changed_inputs)
-        records = (*delta.verified_prefix, (bundle.record_path, bundle.record))
+        # Only records that touched these members bear on their revisions and
+        # explanation proofs, so the build never walks the whole history.
+        prior = delta.member_history(tuple(sorted(members)))
+        if any(record.sequence >= bundle.record.sequence for _path, record in prior):
+            raise ProjectionIntegrityError("derived-index member history is not before the delta")
+        records = (*prior, (bundle.record_path, bundle.record))
         parsed = _timed(
             timings,
             "parse_normalize",
@@ -165,7 +171,7 @@ def populate_successor(
                 bodies=assembler.bodies,
                 coordinate=request,
                 accepted_coordinates_by_sequence=assembler.accepted_coordinates_by_sequence,
-                verified_change_sets=records,
+                selected_member_history=records,
             ),
         )
         # Verify the compiled member identities/digests against the changeset, not

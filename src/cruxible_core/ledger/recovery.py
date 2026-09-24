@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import secrets
 import shutil
-from dataclasses import dataclass
+import threading
+from collections import OrderedDict
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -116,8 +119,69 @@ class RecoveredGeneration:
     descriptor: GenerationDescriptor
     generation_root: GenerationRoot
     principals: PrincipalRegistrySnapshot
-    record: ChangeSetRecordAnyVersion | None
     compiler: CompilerCoordinate
+    # The change-set record the generation was verified against, identified by
+    # its digest. Only the head keeps the parsed record resident; every other
+    # generation reads it back from the ledger on demand and re-checks the
+    # digest, because the ledger already holds these bytes.
+    record_digest: str | None = None
+    retained_record: ChangeSetRecordAnyVersion | None = field(
+        default=None, compare=False, repr=False
+    )
+    record_loader: Callable[[str, str], bytes | None] | None = field(
+        default=None, compare=False, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        if self.retained_record is not None and self.record_digest is None:
+            object.__setattr__(self, "record_digest", self.retained_record.changeset_digest)
+
+    @property
+    def record(self) -> ChangeSetRecordAnyVersion | None:
+        if self.retained_record is not None:
+            return self.retained_record
+        if self.record_digest is None:
+            return None
+        return _load_released_record(self)
+
+    def released(self, loader: Callable[[str, str], bytes | None]) -> RecoveredGeneration:
+        """The same verified generation with its parsed record left in the ledger."""
+        if self.retained_record is None:
+            return self
+        return replace(self, retained_record=None, record_loader=loader)
+
+
+_RELEASED_RECORD_CAPACITY = 32
+_RELEASED_RECORDS: OrderedDict[tuple[str, str], ChangeSetRecordAnyVersion] = OrderedDict()
+_RELEASED_RECORDS_LOCK = threading.Lock()
+
+
+def _load_released_record(generation: RecoveredGeneration) -> ChangeSetRecordAnyVersion:
+    assert generation.record_digest is not None
+    key = (generation.oid, generation.record_digest)
+    with _RELEASED_RECORDS_LOCK:
+        remembered = _RELEASED_RECORDS.get(key)
+        if remembered is not None:
+            _RELEASED_RECORDS.move_to_end(key)
+            return remembered
+    if generation.record_loader is None:
+        raise SettlementIntegrityError("released change-set record has no ledger reader")
+    path = f"changesets/cs-{generation.sequence:020d}.json"
+    raw = generation.record_loader(generation.oid, path)
+    if raw is None:
+        raise SettlementIntegrityError(f"accepted change-set record is unavailable: {path}")
+    record = parse_change_set_record(raw, path=path)
+    if (
+        record.sequence != generation.sequence
+        or record.changeset_digest != generation.record_digest
+    ):
+        raise SettlementIntegrityError("ledger change-set record differs from its verified digest")
+    with _RELEASED_RECORDS_LOCK:
+        _RELEASED_RECORDS[key] = record
+        _RELEASED_RECORDS.move_to_end(key)
+        while len(_RELEASED_RECORDS) > _RELEASED_RECORD_CAPACITY:
+            _RELEASED_RECORDS.popitem(last=False)
+    return record
 
 
 @dataclass(frozen=True)
@@ -425,7 +489,7 @@ def prepared_generation_for_handoff(
         principals=principal_registry_from_tree(
             bundle.tree, semantic_root=bundle.semantic_root.tagged
         ),
-        record=record,
+        retained_record=record,
         compiler=compiler_after_record(record),
     )
 
@@ -593,7 +657,7 @@ def _verify_successor(
             descriptor=descriptor,
             generation_root=computed_generation_root,
             principals=principals,
-            record=record,
+            retained_record=record,
             compiler=compiler_after_record(record),
         ),
         tree=tree,
@@ -897,7 +961,6 @@ def recover_instance(
         descriptor=genesis.descriptor,
         generation_root=genesis.generation_root,
         principals=genesis_principals,
-        record=None,
         compiler=compiler,
     )
     repository_path = str(ledger.path.resolve(strict=True))
@@ -930,11 +993,13 @@ def recover_instance(
                 descriptor=generation.descriptor,
                 generation_root=generation.generation_root,
                 principals=generation.principals,
-                record=generation.record,
+                retained_record=generation.record,
                 compiler=generation.compiler,
             )
             for generation in seed.prefix
         ]
+        # Only the head's parsed record stays resident; the ledger holds the rest.
+        history[:-1] = [item.released(ledger.blob_at) for item in history[:-1]]
         window = _GenerationWindow(
             generation=history[-1],
             tree=seed.tree,
@@ -966,6 +1031,8 @@ def recover_instance(
                 )
             ),
         )
+        if history:
+            history[-1] = history[-1].released(ledger.blob_at)
         history.append(window.generation)
     head = history[-1]
     compiler = head.compiler

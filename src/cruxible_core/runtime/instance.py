@@ -99,6 +99,7 @@ from cruxible_core.indexes.history.history_index import (
     AcceptedGenerationLocation,
     AcceptedHistoryIndex,
     HistoryReader,
+    PriorMemberSequences,
     RetainedRecordReader,
 )
 from cruxible_core.indexes.projection import (
@@ -1603,7 +1604,9 @@ class PlaybillInstance:
         if self._accepted_history_index.path.parent != paths["projections"]:
             raise ProjectionIntegrityError("history index storage binding changed")
 
-        def envelopes(sequence: int) -> tuple[ArtifactEnvelopeRow, ...]:
+        def envelopes(
+            sequence: int, prior_members: PriorMemberSequences
+        ) -> tuple[ArtifactEnvelopeRow, ...]:
             if (
                 sequence == 0
                 and recovered.coordinate.compiler not in PC_HR_ARTIFACT_CODEC_COMPILERS
@@ -1664,15 +1667,21 @@ class PlaybillInstance:
                 or registered_path_kind(path, artifact_kinds=assembler.artifact_kinds)
                 != "changeset"
             )
-            verified = tuple(
+            # Only the records that touched these members bear on their
+            # revisions and proofs: earlier ones from the rows this sync already
+            # wrote, plus this generation's own. Each is read back on demand.
+            sequences = {
+                prior for touched in prior_members(member_paths).values() for prior in touched
+            } | {sequence}
+            history = tuple(
                 (f"changesets/cs-{item.sequence:020d}.json", item.record)
-                for item in recovered.history[1 : sequence + 1]
+                for item in (recovered.history[prior] for prior in sorted(sequences))
                 if item.record is not None
             )
             parsed = parse_static_owners(
                 self._ledger.blobs_at(generation.oid, member_paths),
                 accepted=coordinate,
-                verified_change_sets=verified,
+                selected_member_history=history,
             )
             selected = frozenset(changed)
             return tuple(row for row in parsed.envelopes if row.path in selected)
@@ -1704,6 +1713,23 @@ class PlaybillInstance:
         ):
             raise ProjectionIntegrityError("indexed generation differs from captured replay")
         return generation
+
+    def _member_record_history(
+        self, paths: Sequence[str]
+    ) -> tuple[tuple[str, ChangeSetRecordAnyVersion], ...]:
+        """The verified records that touched these paths, found through the index."""
+
+        recovered = self._recovered
+        with self._history_reader_for_epoch(recovered) as history:
+            sequences = sorted(
+                {location.sequence for path in paths for location in history.member_history(path)}
+            )
+        records = []
+        for sequence in sequences:
+            record = recovered.history[sequence].record
+            if record is not None:
+                records.append((f"changesets/cs-{sequence:020d}.json", record))
+        return tuple(records)
 
     def accepted_evaluation_time(self, oid: str) -> datetime:
         """Resolve the immutable acceptance instant for one replayed generation."""
@@ -1986,11 +2012,7 @@ class PlaybillInstance:
             checkpoint_directory=self._checkpoint_directory(self.root),
             checkpoint_interval=DEFAULT_CHECKPOINT_INTERVAL,
             genesis=self.descriptor.genesis,
-            verified_change_sets=tuple(
-                (f"changesets/cs-{generation.record.sequence:020d}.json", generation.record)
-                for generation in self._recovered.history
-                if generation.record is not None
-            ),
+            member_history=self._member_record_history,
             resolve_claim_digest=self._claim_identities_for_digest,
         )
 
@@ -2132,7 +2154,12 @@ class PlaybillInstance:
                 advanced = RecoveredInstanceState(
                     genesis=previous.genesis,
                     head=successor,
-                    history=(*previous.history, successor),
+                    # The previous head's record now lives only in the ledger.
+                    history=(
+                        *previous.history[:-1],
+                        previous.history[-1].released(self._ledger.blob_at),
+                        successor,
+                    ),
                     coordinate=copy.deepcopy(result.accepted),
                     projection=copy.deepcopy(result.projection),
                 )
