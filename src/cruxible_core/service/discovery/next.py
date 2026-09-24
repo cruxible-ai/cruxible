@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import shlex
-from collections import Counter, OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import RLock
-from typing import Literal, TypeAlias, cast
+from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -28,7 +28,6 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import (
     FOREIGN_SOURCE_COORDINATE_TYPE,
-    FOREIGN_SOURCE_SELECTOR_TYPE,
     CanonicalDurationV1,
     parse_capture_envelope,
 )
@@ -83,10 +82,6 @@ from cruxible_core.coverage.contracts import (
 from cruxible_core.coverage.indexes import (
     WorkingOccurrenceV1,
 )
-from cruxible_core.evidence.citation_relations import (
-    retired_activation_live_candidates,
-)
-from cruxible_core.indexes.evidence.citation_sql import CitationSourceUse
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.query.backends import claim_row_visibility
 from cruxible_core.query.impact import (
@@ -148,7 +143,6 @@ NextRepairOperation = Literal[
     "playbill.authoring.create",
     "playbill.authoring.bind",
     "playbill.claim.retire",
-    "playbill.claim.attest",
     "playbill.floor.export",
     "playbill.block.depublish",
     "playbill.block.repin",
@@ -737,7 +731,6 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.block.repin": "playbill block repin",
     "playbill.block.sync": "playbill block sync",
     "playbill.document.propose": "playbill document propose",
-    "playbill.claim.attest": "playbill claim attest",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -822,14 +815,6 @@ def _repair_command(
             parts.append("--all")
         else:
             return None
-    elif operation == "playbill.claim.attest":
-        # A review decision is the caller's to make: with no stance chosen there
-        # is no runnable line, rather than one that picks a stance for them.
-        claim_id = values.get("claim_id")
-        stance = values.get("stance")
-        if not isinstance(claim_id, str) or stance not in {"support", "contradict", "unsure"}:
-            return None
-        parts.extend([shlex.quote(claim_id), f"--{stance}"])
     elif operation == "playbill.claim.retire":
         claim_id = values.get("claim_id")
         if isinstance(claim_id, str):
@@ -1504,109 +1489,6 @@ class _CitationCommitment:
     lineage_note: CitationLineageNote | None = None
 
 
-def _digest_value(value: object) -> str | None:
-    if isinstance(value, str):
-        try:
-            Sha256Value.from_tagged(value)
-        except ValueError:
-            return None
-        return value
-    if isinstance(value, Mapping) and isinstance(value.get("$digest"), str):
-        raw = cast(str, value["$digest"])
-        try:
-            Sha256Value.from_tagged(raw)
-        except ValueError:
-            return None
-        return raw
-    return None
-
-
-def post_retirement_examined_support_suppresses_claim_cites_retired(
-    claim_artifact_digest: str,
-    *,
-    claim_identity: str | None = None,
-    retired_activation_sequence: int | None = None,
-    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
-    accepted_sequence_by_semantic_root: Mapping[str, int] | None = None,
-) -> bool:
-    """Suppress only after a current Claim was examined after the cited retirement.
-
-    Examining it and still supporting it, or holding it as unsure without
-    forcing a judgment, both record the review; contradicting it does not.
-    """
-
-    if (
-        claim_identity is None
-        or retired_activation_sequence is None
-        or accepted_sequence_by_semantic_root is None
-    ):
-        return False
-    latest_by_principal: dict[
-        str, tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1]
-    ] = {}
-    for event, payload in door_events:
-        statement = payload.attestation.statement
-        if (
-            statement.claim_identity.qualified != claim_identity
-            or statement.claim_artifact_digest != claim_artifact_digest
-        ):
-            continue
-        previous = latest_by_principal.get(payload.attesting_principal_id)
-        if previous is None or event.sequence > previous[0].sequence:
-            latest_by_principal[payload.attesting_principal_id] = (event, payload)
-    return any(
-        payload.current_at_append
-        and payload.attestation.statement.attestation_basis == "examined_existing"
-        and payload.attestation.statement.stance in {"support", "unsure"}
-        and (
-            accepted_sequence_by_semantic_root.get(
-                payload.attestation.statement.referent_coordinate.semantic_root,
-                -1,
-            )
-            >= retired_activation_sequence
-        )
-        for _event, payload in latest_by_principal.values()
-    )
-
-
-def _claim_retirement_sequences(instance: PlaybillInstance) -> dict[str, int]:
-    """Return the replay-proven activation sequence of every retired Claim."""
-
-    retired: dict[str, int] = {}
-    for generation in instance.accepted_history():
-        record = getattr(generation, "record", None)
-        if record is None:
-            continue
-        tree = instance.blobs_at(
-            generation.oid,
-            tuple(member.path for member in record.members if member.artifact_kind == "claim"),
-        )
-        for member in record.members:
-            if member.artifact_kind != "claim" or member.path not in tree:
-                continue
-            claim = parse_claim(tree[member.path], path=member.path)
-            if claim.lifecycle.state == "retired":
-                retired[claim.identity.qualified] = generation.sequence
-    return retired
-
-
-def _complete_retirement_activation_sequence(
-    witnesses: tuple[str, ...],
-    *,
-    retired_claim_count: int,
-    retirement_sequences: Mapping[str, int],
-) -> int | None:
-    """Return the latest retirement only when display witnesses are complete."""
-
-    if (
-        not witnesses
-        or retired_claim_count != len(witnesses)
-        or any(witness not in retirement_sequences for witness in witnesses)
-    ):
-        return None
-    return max(retirement_sequences[witness] for witness in witnesses)
-
-
 def _whole_source_selection(envelope: object) -> bool:
     source = getattr(envelope, "source", None)
     if not isinstance(source, ExternalSourceReferenceV1):
@@ -1760,371 +1642,6 @@ def _citation_commitments(
             f"{PlaybillNextAcceptedStateInvalid.code}: citation inventory is invalid"
         ) from exc
     return result
-
-
-def _claim_cites_retired_item(
-    *,
-    coordinate: PlaybillAcceptedCoordinate,
-    live_claim_identity: str,
-    live_claim_artifact_digest: str,
-    relation_kind: str,
-    live_citation_id: str,
-    retired_claim_count: int,
-    retired_citation_count: int,
-    retired_claim_witnesses: tuple[str, ...],
-    retired_activation_sequence: int | None = None,
-    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
-    accepted_sequence_by_semantic_root: Mapping[str, int] | None = None,
-) -> PlaybillNextItemV1 | None:
-    if post_retirement_examined_support_suppresses_claim_cites_retired(
-        live_claim_artifact_digest,
-        claim_identity=live_claim_identity,
-        retired_activation_sequence=retired_activation_sequence,
-        door_events=door_events,
-        accepted_sequence_by_semantic_root=accepted_sequence_by_semantic_root,
-    ):
-        return None
-    return _item(
-        severity="warning",
-        reason="claim_cites_retired",
-        subject_identity=live_claim_identity,
-        related_identities=retired_claim_witnesses,
-        detail={
-            "accepted_coordinate": coordinate.model_dump(mode="json"),
-            "live_citation_id": live_citation_id,
-            "relation_kind": relation_kind,
-            "retired_citation_count": retired_citation_count,
-            "retired_claim_count": retired_claim_count,
-            "retired_claim_witnesses": list(retired_claim_witnesses),
-        },
-        # Sharing evidence with a retired Claim is a reason to look, not to
-        # retire: the retirement did not retire the evidence. The decision is
-        # an examined attestation -- support, unsure (hold), or contradict.
-        repair=PlaybillNextRepairV1(
-            operation="playbill.claim.attest",
-            target=live_claim_identity,
-            required_change="review_claim_sharing_evidence_with_a_retired_claim",
-            arguments={
-                "claim_id": live_claim_identity.removeprefix("Claim:"),
-                "stances": ["support", "unsure", "contradict"],
-            },
-        ),
-    )
-
-
-def _unique_relation_occurrence(
-    use: CitationSourceUse,
-    observed: PlaybillNextSourceObservationV4,
-) -> WorkingOccurrenceV1 | None:
-    expected_source = LogicalSourceIdentityV1(plane="external", identity=use.source_identity)
-    if observed.scan_notes or observed.marker_notes:
-        return None
-    if not any(
-        proof.source == expected_source
-        and proof.commitment_digest == use.commitment_digest
-        and proof.byte_length == use.byte_length
-        for proof in observed.commitment_scan_proofs
-    ):
-        return None
-    occurrences = tuple(
-        occurrence
-        for occurrence in observed.occurrences
-        if occurrence.source == expected_source
-        and occurrence.observed_commitment_digest == use.commitment_digest
-        and occurrence.byte_length == use.byte_length
-    )
-    return occurrences[0] if len(occurrences) == 1 else None
-
-
-def _citation_relation_items(
-    instance: PlaybillInstance,
-    *,
-    coordinate: AcceptedProjectionCoordinate,
-    access_profile: CoverageAccessProfileV1,
-    observation: PlaybillNextWorkspaceObservationV1 | None,
-    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
-) -> tuple[PlaybillNextItemV1, ...]:
-    """Serve retirement relations from the immutable accepted-coordinate slice."""
-
-    if not access_profile.permits("instance"):
-        return ()
-    public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
-    retirement_sequences = _claim_retirement_sequences(instance) if door_events else {}
-    accepted_sequence_by_semantic_root = (
-        {
-            generation.semantic_root.tagged: generation.sequence
-            for generation in instance.accepted_history()
-            if getattr(generation, "semantic_root", None) is not None
-            and getattr(generation, "sequence", None) is not None
-        }
-        if door_events
-        else {}
-    )
-    exact_by_claim: dict[str, list[Mapping[str, object]]] = defaultdict(list)
-    uses_by_source: dict[str, list[CitationSourceUse]] = defaultdict(list)
-    observed_sources = {
-        item.source_id: item
-        for item in (() if observation is None else observation.source_observations or ())
-        if isinstance(item, PlaybillNextSourceObservationV4)
-    }
-    try:
-        with instance.bind_accepted_projection(coordinate) as projection:
-            for fact in projection.citations.conflicts():
-                if not isinstance(fact.value, Mapping):
-                    raise ValueError("retired conflict has an invalid value")
-                identity = fact.value.get("live_claim_identity")
-                if not isinstance(identity, str):
-                    raise ValueError("retired conflict has no live Claim")
-                exact_by_claim[identity].append(fact.value)
-            for source_id in sorted(observed_sources, key=lambda item: item.encode("utf-8")):
-                uses_by_source[source_id].extend(projection.citations.uses_for_source(source_id))
-    except (PlaybillError, ValueError, ValidationError) as exc:
-        raise PlaybillNextAcceptedStateInvalid(
-            f"{PlaybillNextAcceptedStateInvalid.code}: citation relation projection is invalid"
-        ) from exc
-
-    items: list[PlaybillNextItemV1] = []
-    exact_subjects: set[str] = set()
-    for live_identity in sorted(exact_by_claim, key=lambda item: item.encode("utf-8")):
-        facts = exact_by_claim[live_identity]
-        preferred = next(
-            (
-                matching
-                for relation_kind in ("capture", "exact_external", "same_version_span")
-                if (
-                    matching := [
-                        item for item in facts if item.get("relation_kind") == relation_kind
-                    ]
-                )
-            ),
-            facts,
-        )
-        raw_witnesses = tuple(
-            witness
-            for item in preferred
-            for raw in (item.get("retired_claim_witnesses"),)
-            if isinstance(raw, (list, tuple))
-            for witness in raw
-            if isinstance(witness, str)
-        )
-        witnesses = tuple(
-            sorted(
-                set(raw_witnesses),
-                key=lambda item: item.encode("utf-8"),
-            )[:8]
-        )
-        live_digest = _digest_value(preferred[0].get("live_claim_artifact_digest"))
-        live_citation = preferred[0].get("live_citation_id")
-        if live_digest is None or not isinstance(live_citation, str):
-            raise PlaybillNextAcceptedStateInvalid(
-                f"{PlaybillNextAcceptedStateInvalid.code}: retired conflict is incomplete"
-            )
-        retired_claim_count = sum(
-            value
-            for fact in preferred
-            for value in (fact.get("retired_claim_count"),)
-            if isinstance(value, int) and not isinstance(value, bool)
-        )
-        item = _claim_cites_retired_item(
-            coordinate=public_coordinate,
-            live_claim_identity=live_identity,
-            live_claim_artifact_digest=live_digest,
-            relation_kind=str(preferred[0].get("relation_kind")),
-            live_citation_id=live_citation,
-            retired_claim_count=retired_claim_count,
-            retired_citation_count=sum(
-                value
-                for fact in preferred
-                for value in (fact.get("retired_citation_count"),)
-                if isinstance(value, int) and not isinstance(value, bool)
-            ),
-            retired_claim_witnesses=witnesses,
-            retired_activation_sequence=_complete_retirement_activation_sequence(
-                witnesses,
-                retired_claim_count=retired_claim_count,
-                retirement_sequences=retirement_sequences,
-            ),
-            door_events=door_events,
-            accepted_sequence_by_semantic_root=accepted_sequence_by_semantic_root,
-        )
-        if item is not None:
-            items.append(item)
-        exact_subjects.add(live_identity)
-
-    for source_id in sorted(uses_by_source, key=lambda item: item.encode("utf-8")):
-        observed = observed_sources[source_id]
-        current: list[tuple[int, int, str, CitationSourceUse, WorkingOccurrenceV1]] = []
-        for use in uses_by_source[source_id]:
-            if (
-                use.coordinate_type != FOREIGN_SOURCE_COORDINATE_TYPE
-                or use.selector_type != FOREIGN_SOURCE_SELECTOR_TYPE
-            ):
-                continue
-            occurrence = _unique_relation_occurrence(use, observed)
-            if (
-                occurrence is None
-                or occurrence.line_overlay.start_byte >= occurrence.line_overlay.end_byte
-            ):
-                continue
-            current.append(
-                (
-                    occurrence.line_overlay.start_byte,
-                    occurrence.line_overlay.end_byte,
-                    use.lifecycle,
-                    use,
-                    occurrence,
-                )
-            )
-
-        # An event sweep marks each live Claim at most once. Work is O(m_s log m_s + w_s),
-        # never the live-by-retired Cartesian product.
-        events: list[tuple[int, int, str, int, CitationSourceUse]] = []
-        for start, end, lifecycle, use, _occurrence in current:
-            events.append((start, 1, lifecycle, end, use))
-            events.append((end, 0, lifecycle, end, use))
-        active_retired: dict[str, CitationSourceUse] = {}
-        active_live: Counter[str] = Counter()
-        emitted_span: set[str] = set()
-
-        def emit_span(live_use: CitationSourceUse) -> None:
-            if live_use.claim_identity in exact_subjects or live_use.claim_identity in emitted_span:
-                return
-            retired = tuple(active_retired.values())
-            if not retired:
-                return
-            retired_claim_identities = {entry.claim_identity for entry in retired}
-            witnesses = tuple(
-                sorted(
-                    retired_claim_identities,
-                    key=lambda item: item.encode("utf-8"),
-                )[:8]
-            )
-            row = _claim_cites_retired_item(
-                coordinate=public_coordinate,
-                live_claim_identity=live_use.claim_identity,
-                live_claim_artifact_digest=live_use.claim_artifact_digest,
-                relation_kind="current_span_overlap",
-                live_citation_id=live_use.citation_id,
-                retired_claim_count=len(retired_claim_identities),
-                retired_citation_count=len(retired),
-                retired_claim_witnesses=witnesses,
-                retired_activation_sequence=_complete_retirement_activation_sequence(
-                    witnesses,
-                    retired_claim_count=len(retired_claim_identities),
-                    retirement_sequences=retirement_sequences,
-                ),
-                door_events=door_events,
-                accepted_sequence_by_semantic_root=accepted_sequence_by_semantic_root,
-            )
-            if row is not None:
-                items.append(row)
-            emitted_span.add(live_use.claim_identity)
-
-        live_use_by_claim: dict[str, CitationSourceUse] = {}
-        for _position, order, lifecycle, _end, use in sorted(
-            events,
-            key=lambda event: (
-                event[0],
-                event[1],
-                event[2].encode("ascii"),
-                event[4].citation_id.encode("ascii"),
-            ),
-        ):
-            if order == 0:
-                if lifecycle == "retired":
-                    active_retired.pop(use.citation_id, None)
-                else:
-                    active_live[use.claim_identity] -= 1
-                    if active_live[use.claim_identity] <= 0:
-                        active_live.pop(use.claim_identity, None)
-                        live_use_by_claim.pop(use.claim_identity, None)
-                continue
-            if lifecycle == "retired":
-                live_candidates = retired_activation_live_candidates(
-                    active_retired,
-                    live_use_by_claim,
-                )
-                active_retired[use.citation_id] = use
-                for live_use in live_candidates:
-                    emit_span(live_use)
-            else:
-                active_live[use.claim_identity] += 1
-                live_use_by_claim[use.claim_identity] = use
-                emit_span(use)
-
-        document_id = observed.document_id
-        if (
-            document_id is None
-            or instance.blob_at(coordinate.git_oid, document_path(document_id)) is None
-        ):
-            continue
-        live_intervals = sorted(
-            (start, end)
-            for start, end, lifecycle, _use, _occurrence in current
-            if lifecycle == "live"
-        )
-        live_union: list[tuple[int, int]] = []
-        for start, end in live_intervals:
-            if live_union and start <= live_union[-1][1]:
-                live_union[-1] = (live_union[-1][0], max(live_union[-1][1], end))
-            else:
-                live_union.append((start, end))
-        uncovered = [
-            entry
-            for entry in current
-            if entry[2] == "retired"
-            and not any(
-                entry[0] < live_end and entry[1] > live_start for live_start, live_end in live_union
-            )
-        ]
-        components: list[list[tuple[int, int, str, CitationSourceUse, WorkingOccurrenceV1]]] = []
-        for entry in sorted(
-            uncovered,
-            key=lambda item: (item[0], item[1], item[3].citation_id.encode("ascii")),
-        ):
-            if components and entry[0] <= max(item[1] for item in components[-1]):
-                components[-1].append(entry)
-            else:
-                components.append([entry])
-        for component in components:
-            start = min(entry[0] for entry in component)
-            end = max(entry[1] for entry in component)
-            claims = {entry[3].claim_identity for entry in component}
-            citations = {entry[3].citation_id for entry in component}
-            occurrence_ids = {entry[4].identity_digest for entry in component}
-            witnesses = tuple(sorted(claims, key=lambda item: item.encode("utf-8"))[:8])
-            items.append(
-                _item(
-                    severity="warning",
-                    reason="retired_claim_source_stale",
-                    subject_identity=f"document:{document_id}",
-                    related_identities=witnesses,
-                    detail={
-                        "document_id": document_id,
-                        "end_byte": end,
-                        "occurrence_identity_witnesses": sorted(
-                            occurrence_ids, key=lambda item: item.encode("ascii")
-                        )[:8],
-                        "retired_citation_count": len(citations),
-                        "retired_claim_count": len(claims),
-                        "retired_claim_witnesses": list(witnesses),
-                        "source_id": source_id,
-                        "start_byte": start,
-                    },
-                    repair=PlaybillNextRepairV1(
-                        operation="playbill.document.propose",
-                        target=f"document:{document_id}",
-                        required_change="revise_retired_claim_source_span",
-                        arguments={
-                            "document_id": document_id,
-                            "end_byte": end,
-                            "source_id": source_id,
-                            "start_byte": start,
-                        },
-                    ),
-                )
-            )
-    return tuple(items)
 
 
 def _historical_claim(
@@ -3576,13 +3093,6 @@ def service_playbill_next(
         if domain == "accepted_state" or domain in workspace_domains
     )
     unobserved = tuple(domain for domain in _ALL_DOMAINS if domain not in observed)
-    relation_items = _citation_relation_items(
-        instance,
-        coordinate=coordinate,
-        access_profile=request.access_profile,
-        observation=request.workspace_observation,
-        door_events=door_events,
-    )
     items = tuple(
         sorted(
             _group_items(
@@ -3616,7 +3126,6 @@ def service_playbill_next(
                         facts_reader=facts_reader,
                         resolution_statuses=resolution_statuses,
                     ),
-                    *relation_items,
                     *_claim_dependency_items(
                         instance,
                         coordinate=coordinate,

@@ -1163,6 +1163,7 @@ async def explain_claim(
         identity,
         at=req.at,
         evaluation_time=req.evaluation_time,
+        workspace_observation=req.workspace_observation,
     )
 
 

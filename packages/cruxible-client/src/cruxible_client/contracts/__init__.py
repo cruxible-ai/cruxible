@@ -255,8 +255,6 @@ PlaybillNextReason: TypeAlias = Literal[
     "claim_new_evidence_supporting",
     "claim_new_evidence_unreviewed",
     "document_modified",
-    "claim_cites_retired",
-    "retired_claim_source_stale",
     "unregistered_projection_block",
     "projection_marker_invalid",
 ]
@@ -1188,6 +1186,11 @@ class PlaybillClaimExplanationV2(BaseModel):
     coverage: dict[str, Any]
     admission_evaluation_time: str
     admission_accounts: list[PlaybillCaptureAdmissionAccount]
+    # What this Claim shares with retired Claims; absent when it shares nothing.
+    retirement_context: dict[str, Any] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class PlaybillClaimExplanationV3(BaseModel):
@@ -1206,6 +1209,10 @@ class PlaybillClaimExplanationV3(BaseModel):
     admission_evaluation_time: str
     admission_accounts: list[PlaybillCaptureAdmissionAccount]
     freshness: list[dict[str, Any]]
+    retirement_context: dict[str, Any] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class PlaybillCandidateStatus(BaseModel):

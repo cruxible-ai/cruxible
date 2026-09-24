@@ -1282,12 +1282,16 @@ class CruxibleClient:
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
         evaluation_time: str | None = None,
+        workspace_observation: Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/claims/{identity}/explanation",
             json={
                 "at": self._playbill_coordinate_body(at),
                 "evaluation_time": evaluation_time,
+                "workspace_observation": (
+                    None if workspace_observation is None else dict(workspace_observation)
+                ),
             },
         )
         payload = self._parse_json(response)

@@ -113,7 +113,6 @@ from tests.core_support._support import client_material, initialize_local
 from tests.test_authoring import test_authoring_insertions_v2 as publication_v2
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type
-from tests.test_evidence import test_citation_retirement_relations as citation_retirement
 from tests.test_evidence.test_evidence_freshness import _activate as _activate_migration
 from tests.test_indexes.test_projection_next import (
     _claim_backing,
@@ -166,8 +165,6 @@ EXPECTED_OPERATIONS = {
     "claim_new_evidence_supporting": "playbill.authoring.create",
     "claim_new_evidence_unreviewed": "playbill.authoring.create",
     "document_modified": "playbill.document.propose",
-    "claim_cites_retired": "playbill.claim.attest",
-    "retired_claim_source_stale": "playbill.document.propose",
     "unregistered_projection_block": "playbill.block.repin",
 }
 
@@ -1233,18 +1230,6 @@ def _claim_attestation_door(
     )
 
 
-def _claim_cites_retired(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    citation_retirement.test_shared_capture_emits_one_claim_cites_retired_row_and_retirement_clears_it(
-        root
-    )
-
-
-def _retired_claim_source_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    citation_retirement.test_retired_source_window_is_served_without_retired_claim_cards_and_repair_clears(
-        root
-    )
-
-
 def _unregistered_projection_block(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     publication_v2.test_prepared_publication_can_be_abandoned_without_observing_the_source(root)
 
@@ -1288,8 +1273,6 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
         reason="claim_new_evidence_unreviewed",
     ),
     ("document_modified", None): _document_modified,
-    ("claim_cites_retired", None): _claim_cites_retired,
-    ("retired_claim_source_stale", None): _retired_claim_source_stale,
     ("unregistered_projection_block", None): _unregistered_projection_block,
 }
 

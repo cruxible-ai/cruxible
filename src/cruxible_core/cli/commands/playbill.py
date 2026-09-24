@@ -3239,13 +3239,39 @@ def claim_history(identity: str, output_json: bool) -> None:
 @claim_group.command("explain")
 @click.argument("identity")
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose sources are observed for spans shared with retired Claims.",
+)
 @json_option
 @handle_errors
-def explain_claim(identity: str, evaluation_time: str | None, output_json: bool) -> None:
+def explain_claim(
+    identity: str,
+    evaluation_time: str | None,
+    workspace_root: str,
+    output_json: bool,
+) -> None:
+    workspace = Path(workspace_root)
+
+    def _explain_at_scanned_coordinate(
+        client: CruxibleClient, instance_id: str
+    ) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
+        observed, coordinate = observe_playbill_next_workspace_with_coverage(
+            client, instance_id, workspace
+        )
+        return client.explain_playbill_claim(
+            instance_id,
+            identity,
+            at=coordinate,
+            evaluation_time=evaluation_time,
+            workspace_observation=observed,
+        )
+
     result = _server_call(
-        lambda client, instance_id: client.explain_playbill_claim(
-            instance_id, identity, evaluation_time=evaluation_time
-        ),
+        _explain_at_scanned_coordinate,
         command_name="playbill claim explain",
     )
     if output_json:
@@ -3256,6 +3282,32 @@ def explain_claim(identity: str, evaluation_time: str | None, output_json: bool)
         f"at {result.evaluation_time}"
     )
     _emit_admission_accounts(result.admission_accounts)
+    if result.retirement_context is not None:
+        _emit_retirement_context(result.retirement_context)
+
+
+def _emit_retirement_context(context: Mapping[str, Any]) -> None:
+    """Print what the Claim shares with retired Claims: review context, not work."""
+
+    click.echo("Retirement context:")
+    for relation in context.get("shared_with_retired", ()):
+        span = relation.get("working_span")
+        where = (
+            f"span {span['source_id']}[{span['start_byte']}:{span['end_byte']}]"
+            if span
+            else relation["relation_kind"].replace("_", " ")
+        )
+        click.echo(
+            f"  shares {where} (citation {relation['live_citation_id']}) with "
+            f"{relation['retired_claim_count']} retired Claim(s): "
+            + ", ".join(relation["retired_claim_witnesses"])
+        )
+    for span in context.get("retired_source_spans", ()):
+        click.echo(
+            f"  retired passage document:{span['document_id']} "
+            f"{span['source_id']}[{span['start_byte']}:{span['end_byte']}] "
+            f"is still in the source and no live Claim covers it"
+        )
 
 
 @playbill_group.group("block")

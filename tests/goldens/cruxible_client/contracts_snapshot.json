@@ -72,8 +72,6 @@
         "claim_new_evidence_supporting",
         "claim_new_evidence_unreviewed",
         "document_modified",
-        "claim_cites_retired",
-        "retired_claim_source_stale",
         "unregistered_projection_block",
         "projection_marker_invalid"
       ]
@@ -15212,6 +15210,27 @@
             "type": "object"
           }
         },
+        "retirement_context": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "retirement_context",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retirement Context"
+          }
+        },
         "source_handles": {
           "has_default": false,
           "has_default_factory": false,
@@ -15533,6 +15552,19 @@
             "title": "Law Evidence",
             "type": "object"
           },
+          "retirement_context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retirement Context"
+          },
           "source_handles": {
             "items": {
               "additionalProperties": true,
@@ -15697,6 +15729,27 @@
             "additionalProperties": true,
             "title": "Law Evidence",
             "type": "object"
+          }
+        },
+        "retirement_context": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "retirement_context",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retirement Context"
           }
         },
         "source_handles": {
@@ -16027,6 +16080,19 @@
             "additionalProperties": true,
             "title": "Law Evidence",
             "type": "object"
+          },
+          "retirement_context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Retirement Context"
           },
           "source_handles": {
             "items": {

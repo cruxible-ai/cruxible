@@ -1655,6 +1655,7 @@ def playbill_explain_claim(
     *,
     at: AcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
+    workspace_observation: Mapping[str, object] | None = None,
 ) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
     check_permission("cruxible_playbill_explain", instance_id=instance_id)
     result = service_explain_playbill_claim(
@@ -1662,6 +1663,7 @@ def playbill_explain_claim(
         identity=identity,
         at=at,
         evaluation_time=_evaluation_time(evaluation_time),
+        workspace_observation=workspace_observation,
     )
     payload = result.model_dump(mode="json")
     if payload.get("tag") == "playbill-claim-explanation-v3":

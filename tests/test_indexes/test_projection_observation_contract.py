@@ -110,15 +110,12 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "claim_new_evidence_supporting",
         "claim_new_evidence_unreviewed",
         "document_modified",
-        "claim_cites_retired",
-        "retired_claim_source_stale",
         "unregistered_projection_block",
     }
     assert set(get_args(NextRepairOperation)) == {
         "playbill.authoring.create",
         "playbill.authoring.bind",
         "playbill.claim.retire",
-        "playbill.claim.attest",
         "playbill.floor.export",
         # A row that names a change a verb performs must name the verb. Two
         # projection rows used to answer `hand_edit` with "depublish this
