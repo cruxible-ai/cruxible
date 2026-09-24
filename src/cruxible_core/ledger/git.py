@@ -116,11 +116,6 @@ class GitTreeChange:
     previous_oid: str | None = None
 
 
-# One `ls-tree` invocation carries a bounded pathspec so a large request
-# cannot overrun the system argument limit.
-_PATHSPEC_BATCH = 256
-
-
 def _validate_commit_message(message: str) -> None:
     """Refuse a commit message that is not the prose summary a reviewer reads.
 
@@ -1919,19 +1914,26 @@ class GitLedger:
             return {}
         if any(not path for path in ordered):
             raise PlaybillGitError("ledger blob read requires an exact path")
-        wanted = set(ordered)
+        # Each path is found by reading only the tree objects above it, which
+        # are remembered by object ID, so the cost follows the paths asked for.
         selected: list[GitTreeEntry] = []
-        for start in range(0, len(ordered), _PATHSPEC_BATCH):
-            batch = ordered[start : start + _PATHSPEC_BATCH]
-            selected.extend(
-                _proven_blob_entries(
-                    tuple(
-                        entry
-                        for entry in self._list_tree(oid, with_sizes=False, paths=batch)
-                        if entry.path in wanted
-                    )
+        for path in ordered:
+            directory, _separator, name = path.rpartition("/")
+            entries = self._directory_entries(oid, directory)
+            found = None if entries is None else entries.get(name)
+            if found is None or found[0] == b"40000":
+                continue  # absent, or a directory: no file by that exact name
+            mode = found[0].decode("ascii")
+            selected.append(
+                GitTreeEntry(
+                    path=path,
+                    mode=mode,
+                    object_type="commit" if mode == "160000" else "blob",
+                    oid=found[1],
+                    size=None,
                 )
             )
+        _proven_blob_entries(tuple(selected))
         blobs = self.read_blobs(tuple(entry.oid for entry in selected))
         return {entry.path: blobs[entry.oid] for entry in selected}
 
