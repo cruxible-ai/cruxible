@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import gc
 import os
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import structlog
@@ -61,6 +64,8 @@ class PlaybillInstanceManager:
         self._instances: dict[str, PlaybillInstance] = {}
         self._provider_runtime_operators: dict[Path, ProviderRuntimeOperator] = {}
         self._lock = threading.RLock()
+        # Set by the daemon process only: see ``_long_lived``.
+        self.freeze_opened_state = False
         from cruxible_core.runtime.line_listener import LineListener
 
         self.line_listener = LineListener(self)
@@ -227,13 +232,37 @@ class PlaybillInstanceManager:
                 raise PlaybillFormatError("persisted Playbill trust root is malformed") from exc
             if canonical_bytes(trust.model_dump(mode="json")) + b"\n" != raw:
                 raise PlaybillFormatError("persisted Playbill trust root is not canonical")
-            instance = PlaybillInstance.open(managed_root, trust_root=trust)
+            with self._long_lived():
+                instance = PlaybillInstance.open(managed_root, trust_root=trust)
             instance.bind_receive_limits(
                 load_proposal_receive_config(get_server_state_root()).limits()
             )
             self._bind_workspace(instance, _workspaces)
             self._instances[instance_id] = instance
             return instance
+
+    @contextmanager
+    def _long_lived(self) -> Iterator[None]:
+        """Open state that lives as long as the daemon, outside the cyclic collector.
+
+        Recovery allocates the instance's resident state in one burst, and every
+        full collection during and after it re-walks all of that state. The
+        collector pauses while it is built; one collection then clears the
+        burst's garbage and the survivors are frozen, so later collections walk
+        only what requests allocate.
+        """
+        if not self.freeze_opened_state:
+            yield
+            return
+        was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            yield
+        finally:
+            if was_enabled:
+                gc.enable()
+            gc.collect()
+            gc.freeze()
 
     def register(self, instance_id: str, instance: PlaybillInstance) -> None:
         """Testing/embedded seam; production instances load through pinned storage."""

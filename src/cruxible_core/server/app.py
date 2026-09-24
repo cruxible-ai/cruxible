@@ -370,6 +370,13 @@ def _serve(resolved_socket: str | None) -> None:
 
     configure_request_logging()
     app = create_app()
+    # The daemon's modules and startup state live as long as it does: keep them
+    # and every opened instance's resident state out of later full collections.
+    get_playbill_manager().freeze_opened_state = True
+    import gc
+
+    gc.collect()
+    gc.freeze()
 
     if resolved_socket:
         socket_file = Path(resolved_socket)
