@@ -595,6 +595,21 @@ class AuthoringIntentStore:
                 raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
             return intent.model_copy(deep=True)
 
+    @property
+    def finishes_completed(self) -> bool:
+        """Whether a completed intent is compacted to a receipt when it finishes."""
+        return self._retention == "off"
+
+    def submitted_pending(self) -> tuple[AuthoringIntentV1, ...]:
+        """Every actor's submitted intents that have not finished."""
+        with self._locked():
+            found: list[AuthoringIntentV1] = []
+            for directory in self._intent_directories():
+                intent = self._validated_events(directory)[-1].intent
+                if intent.candidate_status.proposal_id is not None and _intent_is_pending(intent):
+                    found.append(intent.model_copy(deep=True))
+            return tuple(found)
+
     def list_pending(self, *, actor_id: str) -> tuple[AuthoringIntentV1, ...]:
         with self._locked():
             pending: list[AuthoringIntentV1] = []
@@ -789,14 +804,17 @@ class AuthoringIntentStore:
 
         With retention off an intent lives only while it is in progress: a
         finished one is reduced to a receipt of its final event when it
-        finishes, and this sweep removes any stream a crash left behind plus
-        drafts untouched for a day. The decision reads
-        only each stream's last event; nothing it deletes is validated or loaded.
+        finishes. This sweep completes that for any finished stream a crash
+        left behind (the newest few become receipts, older ones are dropped),
+        and drops unsubmitted drafts untouched for a day. A submitted intent is
+        kept until it finishes. The decision reads only each stream's last
+        event; only a stream that becomes a receipt is validated.
         """
 
         if self._retention != "off":
             return
         now = time.time()
+        finished: list[tuple[float, Path]] = []
         for directory in self._intent_directories():
             events = sorted((directory / "events").glob("*.json"), key=lambda item: item.name)
             if not events:
@@ -808,14 +826,27 @@ class AuthoringIntentStore:
             except (OSError, ValueError, AttributeError):
                 continue
             expectation = intent.get("insertion_expectation") or {}
-            pending = (
-                expectation.get("state") in _LIVE_INSERTION_STATES
-                or (intent.get("candidate_status") or {}).get("state") not in _TERMINAL_STATES
-            )
-            if not pending or now - modified > _STALE_DRAFT_SECONDS:
-                # A finished stream a crash left behind, or a pre-existing one,
-                # is dropped outright; only intents finished here leave receipts.
+            status = intent.get("candidate_status") or {}
+            live_insertion = expectation.get("state") in _LIVE_INSERTION_STATES
+            if not live_insertion and status.get("state") in _TERMINAL_STATES:
+                finished.append((modified, directory))
+            elif (
+                not live_insertion
+                and status.get("proposal_id") is None
+                and now - modified > _STALE_DRAFT_SECONDS
+            ):
                 self._delete_intent_directory(directory)
+        finished.sort(reverse=True)
+        for position, (_modified, directory) in enumerate(finished):
+            if position >= _FINISHED_RECEIPTS_RETAINED:
+                self._delete_intent_directory(directory)
+                continue
+            try:
+                final = self._validated_events(directory)[-1]
+            except AuthoringIntentStoreError:
+                self._delete_intent_directory(directory)
+                continue
+            self._finish(directory, final)
 
     def _finish(self, directory: Path, event: AuthoringIntentEventAny) -> None:
         """Replace a finished intent's stream with its final event; the lock is held."""

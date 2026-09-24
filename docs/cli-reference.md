@@ -630,11 +630,13 @@ cruxible playbill authoring abandon-insertion INTENT_ID [--expectation-id ID]
 ~~~
 
 **Intent retention.** A local daemon keeps an authoring intent only while it is
-in progress: a finished intent (accepted, superseded or terminal) is reduced to
-its final state when it finishes, and only the 16 most recently finished are kept,
-so a retried `submit` or `status` still answers; a draft untouched for a day is
-dropped. Read older results from accepted state. Set `CRUXIBLE_AUTHORING_INTENTS=durable` on a managed
-daemon to retain every intent's full event stream.
+in progress. Only unsubmitted drafts expire, after a day untouched; submitted work
+stays available until it finishes. A finished intent (accepted, superseded or
+terminal), including one accepted through its proposal, is reduced to a receipt of
+its final state, and the 16 most recent receipts are kept, so a retried `submit`
+or `status` still answers. Read older results from accepted state. Set
+`CRUXIBLE_AUTHORING_INTENTS=durable` on a managed daemon to retain every intent's
+full event stream.
 
 One authoring intent is one changeset. The tagless `change_set` input carries
 any mix of members -- `claim`, `claim_type`, `claim_retirement`, `subject`,
