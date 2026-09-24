@@ -18,9 +18,11 @@ def test_next_names_publication_status_and_the_appropriate_follow_up(status, tmp
         published_sequence=2,
     )
     instance = SimpleNamespace(
-        ledger_mirror_url=lambda: state.url, ledger_mirror_state=lambda: state
+        ledger_mirror_url=lambda: state.url,
+        ledger_mirror_state=lambda: state,
+        accepted_coordinate=lambda: SimpleNamespace(git_oid="a"),
     )
-    (row,) = _ledger_mirror_items(instance, coordinate=SimpleNamespace(git_oid="a"))
+    (row,) = _ledger_mirror_items(instance)
     assert row.reason == "ledger_mirror_behind"
     assert row.detail["status"] == status
     assert row.detail["requested_sequence"] == 3

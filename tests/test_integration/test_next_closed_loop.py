@@ -1508,3 +1508,33 @@ def test_every_next_reason_has_an_effective_named_repair(
     case_root = tmp_path / "-".join(part for part in key if part is not None)
     case_root.mkdir()
     CLOSED_LOOP_CASES[key](case_root, monkeypatch)
+
+
+def test_a_current_mirror_is_not_behind_for_an_earlier_requested_coordinate(
+    tmp_path: Path,
+) -> None:
+    from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
+
+    instance, owner = initialize_local(tmp_path)
+    earlier = _request(instance)
+    remote = tmp_path / "mirror.git"
+    subprocess.run(
+        [
+            "git",
+            "init",
+            "--bare",
+            "-q",
+            f"--object-format={instance.descriptor.git_object_format}",
+            str(remote),
+        ],
+        check=True,
+    )
+    assert instance.set_ledger_mirror(str(remote)).status == "current"  # type: ignore[union-attr]
+    _seed_claim_surface(instance, owner)
+    published = instance.publish_ledger_mirror()
+    assert published is not None and published.status == "current"
+    assert published.published_main_oid == instance.accepted_coordinate().git_oid
+    assert earlier.at is not None and earlier.at.git_oid != published.published_main_oid
+
+    # Mirror health is operational and current; a historical read does not make it behind.
+    _assert_gone(instance, "ledger_mirror_behind", earlier)

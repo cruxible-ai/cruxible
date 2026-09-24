@@ -2626,11 +2626,7 @@ def _workspace_items(
     return tuple(domains), tuple(items)
 
 
-def _ledger_mirror_items(
-    instance: PlaybillInstance,
-    *,
-    coordinate: AcceptedProjectionCoordinate,
-) -> tuple[PlaybillNextItemV1, ...]:
+def _ledger_mirror_items(instance: PlaybillInstance) -> tuple[PlaybillNextItemV1, ...]:
     """Advise when this instance publishes its ledger somewhere that is not current.
 
     A warning and never a blocking row, because nothing about accepted state is
@@ -2649,12 +2645,15 @@ def _ledger_mirror_items(
     if url is None:
         return ()
     state = instance.ledger_mirror_state()
+    # Mirror health is operational: it is measured against the accepted head,
+    # never against a historical coordinate the caller asked to read at.
+    head = instance.accepted_coordinate()
     if state is not None and state.url == url and state.status == "current":
-        if state.published_main_oid == coordinate.git_oid:
+        if state.published_main_oid == head.git_oid:
             return ()
         lag: object = {
             "published_main_oid": state.published_main_oid,
-            "accepted_git_oid": coordinate.git_oid,
+            "accepted_git_oid": head.git_oid,
             "message": "the mirror carries an earlier accepted coordinate",
         }
     elif state is None or state.url != url:
@@ -3320,7 +3319,7 @@ def service_playbill_next(
                     if (terminal := instance.descriptor.decommissioned) is not None
                     else ()
                 ),
-                *_ledger_mirror_items(instance, coordinate=coordinate),
+                *_ledger_mirror_items(instance),
                 *(
                     (
                         _item(
