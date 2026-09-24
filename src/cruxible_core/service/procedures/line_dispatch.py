@@ -594,6 +594,7 @@ def service_match_listening_lines(
                 after=session["positions"],
                 through=scan["through"],
                 include_future_windows=request.since is None,
+                pending_scope=session["session_id"],
             )
             if result.occurrence_epoch != session["occurrence_epoch"]:
                 # Acceptance may advance while the evaluator opens its snapshot.
@@ -781,6 +782,7 @@ def service_dispatch_line(
                             daemon_clock=SimpleNamespace(now=lambda: now),
                             occurrence_basis_time=occurrence.eligible_at,
                             expected_line_artifact_digest=data["line_artifact_digest"],
+                            explicit_occurrence=session_id is None,
                         )
                         # The journal, not the execution response, establishes admission.
                         admitted = next(

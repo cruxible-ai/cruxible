@@ -609,3 +609,89 @@ def test_an_earlier_arms_cadence_tick_never_holds_back_a_new_arms_own(tmp_path):
 
     status = service_line_arm_status(instance, line.identity.name)
     assert (status.pending_automatic, status.pending_explicit) == (1, 0)
+
+
+def test_a_restart_after_a_real_cadence_admission_keeps_ticking(tmp_path):
+    instance, line, _procedure = _cadence_world(tmp_path)
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=READ_TIME - timedelta(seconds=1),
+        daemon_id="daemon",
+    )
+    _match(instance, READ_TIME)
+    (arm,) = armed_work(instance, now=READ_TIME)
+    admitted = dispatch_armed_line(
+        _manager(instance), instance.descriptor.instance_id, arm, now=READ_TIME
+    )
+    assert admitted is not None and admitted.items[0].status == "admitted"
+    _match(instance, READ_TIME + timedelta(seconds=60))
+    assert service_line_arm_status(instance, line.identity.name).pending_automatic == 1
+
+    for offset in (120, 180, 240):
+        _match(instance, READ_TIME + timedelta(seconds=offset), daemon_id="restarted")
+
+    # The chain's overdue tick lapsed; the resumed arm ticks from its own start.
+    assert service_line_arm_status(instance, line.identity.name).pending_automatic == 1
+
+
+def test_explicit_evaluation_during_an_arm_never_starves_its_ticks(tmp_path):
+    instance, line, _procedure = _cadence_world(tmp_path)
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=READ_TIME - timedelta(seconds=1),
+        daemon_id="daemon",
+    )
+    evaluated = service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequestV1(
+            since=READ_TIME - timedelta(seconds=1), until=READ_TIME + timedelta(seconds=1)
+        ),
+        actor=_actor(instance),
+        now=READ_TIME,
+    )
+    assert any(item.pending for item in evaluated.occurrences)
+    for offset in (60, 120, 180):
+        _match(instance, READ_TIME + timedelta(seconds=offset))
+
+    status = service_line_arm_status(instance, line.identity.name)
+    assert (status.pending_automatic, status.pending_explicit) == (1, 1)
+
+
+def test_a_lapsed_tick_is_retried_as_itself_after_a_newer_tick_ran(tmp_path):
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+
+    instance, line, _procedure = _cadence_world(tmp_path)
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=READ_TIME - timedelta(seconds=1),
+        daemon_id="daemon",
+    )
+    _match(instance, READ_TIME)
+    with LineDispatchStore(instance).locked() as conn:
+        (lapsing,) = conn.execute("SELECT occurrence_id FROM pending").fetchone()
+    later = READ_TIME + timedelta(seconds=180)
+    _match(instance, READ_TIME + timedelta(seconds=120), daemon_id="restarted")
+    _match(instance, later, daemon_id="restarted")
+    (arm,) = armed_work(instance, now=later)
+    newer = dispatch_armed_line(_manager(instance), instance.descriptor.instance_id, arm, now=later)
+    assert newer is not None and newer.items[0].status == "admitted"
+
+    retried = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequestV1(occurrence_id=lapsing, retry=True),
+        actor=_actor(instance),
+        now=later + timedelta(seconds=61),
+        caller_rung=3,
+    )
+    assert [item.status for item in retried.items] == ["admitted"]

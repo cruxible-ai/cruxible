@@ -935,8 +935,10 @@ armed or since the daemon last restarted; anything pending before that, or
 recorded by `evaluate`, waits for explicit `dispatch`. A cadence tick is the
 exception: it is not an event but "the Line is due", so when a cadence Line is
 armed or its arm resumes, a tick still pending from before closes as `lapsed`
--- retained, never run implicitly, and still runnable with
-`dispatch --occurrence-id DIGEST --retry` -- and the arm's own ticks continue. `disarm` stops further
+-- retained, never run implicitly, and still runnable as exactly that tick
+with `dispatch --occurrence-id DIGEST --retry`, even after newer ticks ran --
+and the arm ticks on from its own start rather than catching up on ticks it
+missed. `disarm` stops further
 admissions; a run already admitted keeps going. `status` shows whether the
 Line is armed, how many pending occurrences it will admit on its own
 (`pending_automatic`) and how many await explicit dispatch
