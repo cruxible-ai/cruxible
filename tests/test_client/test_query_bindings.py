@@ -8,6 +8,7 @@ from cruxible_client.authoring.queries import QueryBinding, QueryParameters
 from cruxible_client.authoring.sdk import Playbill
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_client.contracts.query.grammar import QueryParameterDeclarationV1
+from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 from tests.test_client.test_playbill_sdk import _Client, _workspace
 from tests.test_query.test_query_definitions import active_work_query
 
