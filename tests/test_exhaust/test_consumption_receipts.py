@@ -273,3 +273,45 @@ def test_an_unknown_receipt_setting_is_refused(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "sometimes")
     with pytest.raises(PlaybillFormatError, match="'off' or 'on'"):
         consumption_receipts_enabled()
+
+
+def test_switching_receipts_off_then_on_leaves_a_closed_gap_not_zero_use(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.exhaust import consumption
+
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+
+    def read() -> None:
+        record_consumption(
+            instance,
+            context=_context(),
+            operation="playbill.claim_type.get",
+            coordinate=coordinate,
+            artifacts=(_artifact(),),
+        )
+
+    def restart() -> None:
+        consumption._OBSERVATION_CHECKED.clear()  # a new daemon process
+
+    read()  # observing: the epoch exists
+    assert consumption_aggregate(instance).observation_gap_open is False
+    restart()
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "off")
+    read()
+    read()
+    aggregate = consumption_aggregate(instance)
+    assert aggregate.observation_gap_open is True
+    gaps = [
+        payload
+        for _event, payload in instance.review_operational_store().events(family="consumption")
+        if payload.get("tag") == "playbill-consumption-gap-v1"
+    ]
+    assert len(gaps) == 1  # once per process, not per read
+    restart()
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "on")
+    read()
+    aggregate = consumption_aggregate(instance)
+    assert aggregate.observation_gap_open is False
+    assert aggregate.observed_since_generation == 0

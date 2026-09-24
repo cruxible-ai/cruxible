@@ -96,6 +96,7 @@ def test_curation_detector_vocabularies_are_closed_and_enumerated() -> None:
         "block_observation_invalid",
         "capture_contract_identity_unresolved",
         "consumption_epoch_uninitialized",
+        "consumption_observation_gap",
         "consumption_receipts_off",
         "drift_series_unavailable",
     }
@@ -782,3 +783,40 @@ def test_run_curation_detectors_builds_shared_history_once_for_all_history_consu
     )
 
     assert calls == 1
+
+
+def test_dead_vocabulary_never_reads_an_unobserved_period_as_unused(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    contract = claim_type(PREDICATE, subject_kinds=("project.work_item",))
+    tree = {claim_type_path(PREDICATE): render_claim_type(contract)}
+    history = _CurationHistoryIndex(
+        claims=(),
+        capture_contract_identities={},
+        first_accepted_generations={contract.identity.qualified: 1},
+        last_generation=30,
+    )
+
+    def run(aggregate: ConsumptionAggregateV1, generation: int):  # type: ignore[no-untyped-def]
+        monkeypatch.setattr(
+            "cruxible_core.curation.curation_detectors.consumption_aggregate",
+            lambda _instance: aggregate,
+        )
+        return _dead_vocabulary(
+            instance=SimpleNamespace(),  # type: ignore[arg-type]
+            tree=tree,
+            generation=generation,
+            operational_head_digest="sha256:" + "9" * 64,
+            history=history,
+        )
+
+    gap = ConsumptionAggregateV1(
+        initialized=True, consumption_epoch_generation=3, artifacts=(), observation_gap_open=True
+    )
+    detections, coverage = run(gap, 30)
+    assert detections == ()
+    assert [item.reason for item in coverage.omissions] == ["consumption_observation_gap"]
+    # Observation resumed at 20: the zero-use window counts from there only.
+    resumed = ConsumptionAggregateV1(
+        initialized=True, consumption_epoch_generation=3, artifacts=(), observed_since_generation=20
+    )
+    assert run(resumed, 29)[0] == ()
+    assert len(run(resumed, 30)[0]) == 1

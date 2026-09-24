@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import secrets
+import threading
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Literal, TypeAlias
@@ -16,6 +18,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.claims.closure import parse_dependency_artifact
 from cruxible_core.curation.review_operational import (
     REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT,
+    ReviewOperationalStore,
     ReviewOperationalStoreError,
 )
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -85,6 +88,41 @@ class ConsumptionEpochV1(_StrictConsumptionModel):
     accepted_coordinate: AcceptedCoordinate
 
 
+class ConsumptionObservationGapV1(_StrictConsumptionModel):
+    """Reads were served without receipts from this generation on."""
+
+    tag: Literal["playbill-consumption-gap-v1"] = "playbill-consumption-gap-v1"
+    event_id: str
+    unobserved_from_generation: int = Field(ge=0)
+    accepted_coordinate: AcceptedCoordinate
+
+    @field_validator("event_id")
+    @classmethod
+    def _event_id(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+class ConsumptionObservationResumeV1(_StrictConsumptionModel):
+    """Receipts are recorded again from this generation on, closing the open gap."""
+
+    tag: Literal["playbill-consumption-resume-v1"] = "playbill-consumption-resume-v1"
+    event_id: str
+    observed_from_generation: int = Field(ge=0)
+    accepted_coordinate: AcceptedCoordinate
+
+    @field_validator("event_id")
+    @classmethod
+    def _event_id(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+# Gaps and resumptions alternate in one ordered partition; its last event says
+# whether observation is currently open.
+CONSUMPTION_OBSERVATION_PARTITION_ID = "observation"
+
+
 class ConsumptionReceiptV1(_StrictConsumptionModel):
     tag: Literal["playbill-consumption-receipt-v1"] = "playbill-consumption-receipt-v1"
     event_id: str
@@ -123,6 +161,11 @@ class ConsumptionAggregateV1(_StrictConsumptionModel):
     initialized: bool
     consumption_epoch_generation: int | None = Field(default=None, ge=0)
     artifacts: tuple[ConsumptionArtifactAggregateV1, ...]
+    # A period served without receipts that no later recording has closed:
+    # zero touches say nothing about it.
+    observation_gap_open: bool = False
+    # Where observation last resumed after a gap; zero-use counts from here.
+    observed_since_generation: int | None = Field(default=None, ge=0)
 
 
 def consumption_receipt_id(receipt: ConsumptionReceiptV1) -> str:
@@ -195,7 +238,10 @@ def record_consumption(
 ) -> tuple[ConsumptionReceiptV1, ...]:
     """Append one idempotent touch per distinct served artifact after success."""
 
-    if context is None or not consumption_receipts_enabled():
+    if context is None:
+        return ()
+    if not consumption_receipts_enabled():
+        note_consumption_unobserved(instance, context=context, coordinate=coordinate)
         return ()
     ordered = tuple(
         sorted(
@@ -213,6 +259,7 @@ def record_consumption(
         generation=generation,
         actor_context=context.actor_context,
     )
+    _resume_observation(instance, context=context, coordinate=coordinate, generation=generation)
     receipts = tuple(
         build_consumption_receipt(
             context=context,
@@ -236,6 +283,118 @@ def record_consumption(
             recorded_at=context.actor_context.timestamp,
         )
     return receipts
+
+
+# Each process checks each instance's observation state once per direction.
+_OBSERVATION_CHECKED: set[tuple[str, bool]] = set()
+_OBSERVATION_LOCK = threading.Lock()
+
+
+def _first_check(instance: PlaybillInstance, *, recording: bool) -> bool:
+    key = (str(instance.root), recording)
+    with _OBSERVATION_LOCK:
+        if key in _OBSERVATION_CHECKED:
+            return False
+        _OBSERVATION_CHECKED.add(key)
+        return True
+
+
+def note_consumption_unobserved(
+    instance: PlaybillInstance,
+    *,
+    context: ConsumptionContextV1 | None,
+    coordinate: AcceptedCoordinate,
+) -> None:
+    """Mark that reads go unrecorded, once, on an instance that has been observing.
+
+    An instance that never recorded receipts has no epoch and is left
+    untouched. One that has gets a gap, so a later recording cannot read the
+    unrecorded period as zero use. Only the epoch's first event and the small
+    observation partition are read.
+    """
+    if context is None or not _first_check(instance, recording=False):
+        return
+    store = instance.review_operational_store()
+    if (
+        store.first_payload(family="consumption", partition_id=CONSUMPTION_EPOCH_PARTITION_ID)
+        is None
+    ):
+        return
+    if _observation_open_gap(store):
+        return
+    generation = _generation(instance, coordinate)
+    gap = ConsumptionObservationGapV1(
+        event_id=typed_digest(
+            Sha256Value, "playbill-consumption-gap-v1", {"token": secrets.token_hex(16)}
+        ).tagged,
+        unobserved_from_generation=generation,
+        accepted_coordinate=coordinate,
+    )
+    store.append(
+        family="consumption",
+        partition_id=CONSUMPTION_OBSERVATION_PARTITION_ID,
+        event_id=gap.event_id,
+        payload=gap,
+        coordinate=coordinate,
+        generation=generation,
+        actor_context=context.actor_context,
+        recorded_at=context.actor_context.timestamp,
+    )
+
+
+def _resume_observation(
+    instance: PlaybillInstance,
+    *,
+    context: ConsumptionContextV1,
+    coordinate: AcceptedCoordinate,
+    generation: int,
+) -> None:
+    if not _first_check(instance, recording=True):
+        return
+    store = instance.review_operational_store()
+    if not _observation_open_gap(store):
+        return
+    resume = ConsumptionObservationResumeV1(
+        event_id=typed_digest(
+            Sha256Value, "playbill-consumption-resume-v1", {"token": secrets.token_hex(16)}
+        ).tagged,
+        observed_from_generation=generation,
+        accepted_coordinate=coordinate,
+    )
+    store.append(
+        family="consumption",
+        partition_id=CONSUMPTION_OBSERVATION_PARTITION_ID,
+        event_id=resume.event_id,
+        payload=resume,
+        coordinate=coordinate,
+        generation=generation,
+        actor_context=context.actor_context,
+        recorded_at=context.actor_context.timestamp,
+    )
+
+
+def _observation(store: ReviewOperationalStore) -> tuple[bool, int | None]:
+    """(a gap is open, the generation observation last resumed from)."""
+    open_gap = False
+    resumed: int | None = None
+    for payload in store.partition_payloads(
+        family="consumption", partition_id=CONSUMPTION_OBSERVATION_PARTITION_ID
+    ):
+        if payload.get("tag") == "playbill-consumption-gap-v1":
+            ConsumptionObservationGapV1.model_validate(payload)
+            open_gap = True
+        elif payload.get("tag") == "playbill-consumption-resume-v1":
+            resumed = ConsumptionObservationResumeV1.model_validate(
+                payload
+            ).observed_from_generation
+            open_gap = False
+        else:
+            raise ReviewOperationalStoreError("consumption observation has an unknown payload")
+    return open_gap, resumed
+
+
+def _observation_open_gap(store: ReviewOperationalStore) -> bool:
+    return _observation(store)[0]
 
 
 def ensure_consumption_epoch(
@@ -307,10 +466,14 @@ def consumption_artifacts_for_dependency_closure(
 
 
 def consumption_aggregate(instance: PlaybillInstance) -> ConsumptionAggregateV1:
-    events = instance.review_operational_store().events(family="consumption")
+    store = instance.review_operational_store()
+    events = store.events(family="consumption")
+    gap_open, resumed = _observation(store)
     epoch: ConsumptionEpochV1 | None = None
     receipts: dict[str, ConsumptionReceiptV1] = {}
-    for _event, payload in events:
+    for event, payload in events:
+        if event.partition_id == CONSUMPTION_OBSERVATION_PARTITION_ID:
+            continue  # folded in order by _observation below
         if payload.get("tag") == "playbill-consumption-epoch-v1":
             parsed_epoch = ConsumptionEpochV1.model_validate(payload)
             if epoch is not None and parsed_epoch != epoch:
@@ -353,6 +516,8 @@ def consumption_aggregate(instance: PlaybillInstance) -> ConsumptionAggregateV1:
             None if epoch is None else epoch.consumption_epoch_generation
         ),
         artifacts=tuple(aggregates),
+        observation_gap_open=gap_open,
+        observed_since_generation=resumed,
     )
 
 
@@ -362,6 +527,8 @@ __all__ = [
     "ConsumptionArtifactAggregateV1",
     "ConsumptionContextV1",
     "ConsumptionEpochV1",
+    "ConsumptionObservationGapV1",
+    "ConsumptionObservationResumeV1",
     "ConsumptionOperation",
     "ConsumptionReceiptV1",
     "QUALIFYING_CONSUMPTION_OPERATIONS",
@@ -372,5 +539,7 @@ __all__ = [
     "consumption_receipt_id",
     "consumption_receipts_enabled",
     "ensure_consumption_epoch",
+    "note_consumption_unobserved",
+    "CONSUMPTION_OBSERVATION_PARTITION_ID",
     "record_consumption",
 ]

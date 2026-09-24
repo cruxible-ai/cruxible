@@ -76,6 +76,7 @@ CurationCoverageOmissionReason: TypeAlias = Literal[
     "block_observation_invalid",
     "capture_contract_identity_unresolved",
     "consumption_epoch_uninitialized",
+    "consumption_observation_gap",
     "consumption_receipts_off",
     "drift_series_unavailable",
 ]

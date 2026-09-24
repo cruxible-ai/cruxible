@@ -660,6 +660,10 @@ def _dead_vocabulary(
     if not aggregate.initialized or aggregate.consumption_epoch_generation is None:
         coverage.omit("consumption_epoch_uninitialized")
         return (), coverage.freeze()
+    if aggregate.observation_gap_open:
+        # Reads were served unrecorded and nothing has resumed observation.
+        coverage.omit("consumption_observation_gap")
+        return (), coverage.freeze()
     by_identity = {item.artifact_identity.qualified: item for item in aggregate.artifacts}
     first = (history or _curation_history_index(instance)).first_accepted_generations
     allowed = {
@@ -680,6 +684,7 @@ def _dead_vocabulary(
         since = max(
             first.get(state.identity.qualified, generation),
             aggregate.consumption_epoch_generation,
+            aggregate.observed_since_generation or 0,
         )
         if qualifying != 0 or generation - since < DEAD_VOCABULARY_MINIMUM_ZERO_TOUCH_GENERATIONS:
             continue
