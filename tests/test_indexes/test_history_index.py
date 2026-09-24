@@ -47,7 +47,7 @@ def test_sparse_occurrences_reinstatement_rename_cutoff_and_queries(tmp_path, se
     changes = {0: [envelope()], 1: [], 2: [envelope()], 3: [envelope(path="claims/b.json")]}
     calls = []
 
-    def source(sequence):
+    def source(sequence, _prior=None):
         calls.append(sequence)
         return changes.get(sequence, [])
 
@@ -101,11 +101,11 @@ def test_sparse_occurrences_reinstatement_rename_cutoff_and_queries(tmp_path, se
 def test_incremental_publication_rollback_restart_and_delete_rebuild(tmp_path, seeded):
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
     state = prefix(seeded, 3)
-    with index.read(prefix(seeded, 2), lambda n: [envelope(str(n))]):
+    with index.read(prefix(seeded, 2), lambda n, _prior: [envelope(str(n))]):
         pass
     initial_writes = index.generations_written
 
-    def crash(n):
+    def crash(n, _prior=None):
         raise RuntimeError("crash during synchronization")
 
     with pytest.raises(RuntimeError, match="crash"):
@@ -116,7 +116,7 @@ def test_incremental_publication_rollback_restart_and_delete_rebuild(tmp_path, s
         assert db.execute("SELECT MAX(sequence) FROM accepted_generations").fetchone() == (1,)
     calls = []
 
-    def source(n):
+    def source(n, _prior=None):
         calls.append(n)
         return [envelope(str(n))]
 
@@ -139,17 +139,17 @@ def test_incremental_publication_rollback_restart_and_delete_rebuild(tmp_path, s
 def test_external_changes_reconciled_and_failed_source_does_not_publish(tmp_path, seeded):
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
     state = prefix(seeded, 2)
-    with index.read(state, lambda n: [envelope(str(n))]):
+    with index.read(state, lambda n, _prior: [envelope(str(n))]):
         pass
     with sqlite3.connect(index.path) as db:
         db.execute("UPDATE artifact_versions SET identity='Claim:tampered'")
         db.execute("UPDATE accepted_generations SET candidate_digest='fake' WHERE sequence=1")
-    with index.read(state, lambda n: [envelope(str(n))]) as reader:
+    with index.read(state, lambda n, _prior: [envelope(str(n))]) as reader:
         assert reader.artifact("1").identity == "Claim:a"
         assert not reader.candidate_accepted("fake")
     index.invalidate()
 
-    def fail(n):
+    def fail(n, _prior=None):
         if n == 1:
             raise RuntimeError("unavailable verified source")
         return [envelope("different")]
@@ -167,10 +167,13 @@ def test_mixed_coordinates_duplicate_oid_and_ambiguous_digest(tmp_path, seeded):
     state = prefix(seeded, 2)
     # The same OID can only be resolved with the complete coordinate, not an
     # arbitrary choice of the first occurrence. Synthetic adapter input tests it.
-    second = replace(state.history[1], oid=state.history[0].oid)
+    # Keep the record resident: the synthetic OID names no commit that holds it.
+    second = replace(
+        state.history[1], oid=state.history[0].oid, retained_record=state.history[1].record
+    )
     state = replace(state, history=(state.history[0], second), head=second)
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
-    with index.read(state, lambda n: [envelope(identity=f"Claim:{n}")]) as reader:
+    with index.read(state, lambda n, _prior: [envelope(identity=f"Claim:{n}")]) as reader:
         assert reader.resolve(coordinate(second, seeded)).sequence == 1
         with pytest.raises(PlaybillFormatError):
             reader.resolve(coordinate(second, seeded).model_copy(update={"semantic_root": "wrong"}))
@@ -179,9 +182,9 @@ def test_mixed_coordinates_duplicate_oid_and_ambiguous_digest(tmp_path, seeded):
         assert reader.identities_for_digest("old") == ("Claim:0", "Claim:1")
         assert reader.identities_for_digest("missing") == ()
         assert reader.artifact("old", identity="Claim:0").occurrence_sequence == 0
-    with index.read(state, lambda n: [], at=coordinate(state.history[0], seeded)) as reader:
+    with index.read(state, lambda n, _prior: [], at=coordinate(state.history[0], seeded)) as reader:
         assert reader.identities_for_digest("old") == ("Claim:0",)
-    with index.read(prefix(seeded, 1), lambda n: [envelope(identity="Claim:0")]) as reader:
+    with index.read(prefix(seeded, 1), lambda n, _prior: [envelope(identity="Claim:0")]) as reader:
         assert reader.artifact("old").identity == "Claim:0"
         assert reader.identities_for_digest("old") == ("Claim:0",)
 
@@ -254,7 +257,7 @@ def test_schema_tampering_and_symlinks_refuse(tmp_path, seeded):
 
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
     state = prefix(seeded, 1)
-    with index.read(state, lambda n: [envelope()]):
+    with index.read(state, lambda n, _prior: [envelope()]):
         pass
     with sqlite3.connect(index.path) as db:
         db.execute(
@@ -262,12 +265,12 @@ def test_schema_tampering_and_symlinks_refuse(tmp_path, seeded):
             "BEGIN DELETE FROM artifact_versions; END"
         )
     with pytest.raises(ProjectionIntegrityError, match="schema differs"):
-        with index.read(state, lambda n: [envelope()]):
+        with index.read(state, lambda n, _prior: [envelope()]):
             pytest.fail("unexpected schema must not be executed")
     link = tmp_path / "link.sqlite3"
     link.symlink_to(index.path)
     with pytest.raises(ProjectionIntegrityError, match="symlink"):
-        with AcceptedHistoryIndex(link).read(state, lambda n: []):
+        with AcceptedHistoryIndex(link).read(state, lambda n, _prior: []):
             pass
 
 
@@ -276,7 +279,7 @@ def test_proposal_commit_preserves_only_previously_verified_history(tmp_path, se
     state = prefix(seeded, 2)
     calls = []
 
-    def source(sequence):
+    def source(sequence, _prior=None):
         calls.append(sequence)
         return [envelope(str(sequence))]
 
@@ -315,7 +318,7 @@ def test_proposal_trigger_cannot_mutate_history_through_shared_database(tmp_path
 
     index = AcceptedHistoryIndex(tmp_path / "working.sqlite3")
     state = prefix(seeded, 1)
-    with index.read(state, lambda n: [envelope()]):
+    with index.read(state, lambda n, _prior: [envelope()]):
         pass
     with sqlite3.connect(index.path) as db:
         db.execute("CREATE TABLE proposals (proposal_id TEXT PRIMARY KEY) STRICT")
@@ -324,7 +327,7 @@ def test_proposal_trigger_cannot_mutate_history_through_shared_database(tmp_path
             "BEGIN DELETE FROM artifact_versions; END"
         )
     with pytest.raises(ProjectionIntegrityError, match="schema differs"):
-        with index.read(state, lambda n: [envelope()]):
+        with index.read(state, lambda n, _prior: [envelope()]):
             pytest.fail("proposal triggers must not bypass the shared schema check")
 
 
@@ -399,10 +402,16 @@ def test_unchanged_member_evaluation_gets_its_own_location_and_cutoff(tmp_path, 
     )
     record = original.record.model_copy(update={"sequence": 4})
     record = record.model_copy(update={"changeset_digest": change_set_digest(record).tagged})
-    repeat = replace(original, sequence=4, oid="f" * len(original.oid), record=record)
+    repeat = replace(
+        original,
+        sequence=4,
+        oid="f" * len(original.oid),
+        retained_record=record,
+        record_digest=None,
+    )
     state = replace(source, history=(*source.history, repeat), head=repeat)
     index = AcceptedHistoryIndex(tmp_path / "working.sqlite3")
-    with index.read(state, lambda n: [row] if n == 2 else []) as reader:
+    with index.read(state, lambda n, _prior: [row] if n == 2 else []) as reader:
         assert [v.occurrence_sequence for v in reader.occurrences(version.identity)] == [2]
         assert [m.sequence for m in reader.member_history(version.path)] == [2, 4]
         latest = reader.claim_law_evidence(
@@ -413,7 +422,7 @@ def test_unchanged_member_evaluation_gets_its_own_location_and_cutoff(tmp_path, 
             reader.read_member_record(latest, lambda oid, path: render_change_set(record)) == record
         )
     with index.read(
-        state, lambda n: [row] if n == 2 else [], at=coordinate(original, seeded)
+        state, lambda n, _prior: [row] if n == 2 else [], at=coordinate(original, seeded)
     ) as reader:
         assert (
             reader.claim_law_evidence(
@@ -430,7 +439,7 @@ def test_old_narrow_history_schema_upgrades_and_rebuilds_member_locations(tmp_pa
     with sqlite3.connect(path) as db:
         db.executescript(_HISTORY_SCHEMA)
     index = AcceptedHistoryIndex(path)
-    with index.read(seeded._recovered, lambda n: []) as reader:
+    with index.read(seeded._recovered, lambda n, _prior: []) as reader:
         path = seeded.accepted_history()[2].record.members[0].path
         assert reader.member_history(path)[0].sequence == 2
 
@@ -438,7 +447,7 @@ def test_old_narrow_history_schema_upgrades_and_rebuilds_member_locations(tmp_pa
 def test_binding_includes_compiler_and_read_handle_expires(tmp_path, seeded):
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
     state = prefix(seeded, 1)
-    with index.read(state, lambda n: [envelope()]) as reader:
+    with index.read(state, lambda n, _prior: [envelope()]) as reader:
         assert reader.sequence == 0
         with pytest.raises(AttributeError):
             reader.sequence = 100
@@ -452,7 +461,7 @@ def test_binding_includes_compiler_and_read_handle_expires(tmp_path, seeded):
         history=(generation,),
         coordinate=state.coordinate.model_copy(update={"compiler": compiler}),
     )
-    with index.read(changed, lambda n: [envelope()]) as reader:
+    with index.read(changed, lambda n, _prior: [envelope()]) as reader:
         assert reader.generation(0).schema_version == 999
     assert index.generations_checked == 2
 
@@ -511,17 +520,17 @@ def test_file_replacement_during_reader_revokes_readiness(tmp_path, seeded):
 
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
     state = prefix(seeded, 1)
-    with index.read(state, lambda n: [envelope()]):
+    with index.read(state, lambda n, _prior: [envelope()]):
         pass
     replacement = tmp_path / "replacement.sqlite3"
     with sqlite3.connect(replacement) as destination, sqlite3.connect(index.path) as source:
         source.backup(destination)
     with pytest.raises(ProjectionIntegrityError, match="replaced during read"):
-        with index.read(state, lambda n: [envelope()]) as reader:
+        with index.read(state, lambda n, _prior: [envelope()]) as reader:
             assert reader.artifact("old") is not None
             replacement.replace(index.path)
     assert index._ready is None
-    with index.read(state, lambda n: [envelope()]) as reader:
+    with index.read(state, lambda n, _prior: [envelope()]) as reader:
         assert reader.artifact("old") is not None
 
 
@@ -530,7 +539,7 @@ def test_held_reader_allows_publication_and_keeps_snapshot(tmp_path, seeded):
 
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
 
-    def source(n):
+    def source(n, _prior=None):
         return [envelope(str(n))]
 
     with ThreadPoolExecutor(max_workers=1) as workers:
@@ -557,7 +566,7 @@ def test_held_reader_does_not_block_other_process_writer(tmp_path, seeded):
     import sys
 
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
-    with index.read(prefix(seeded, 2), lambda n: [envelope(str(n))]):
+    with index.read(prefix(seeded, 2), lambda n, _prior: [envelope(str(n))]):
         result = subprocess.run(
             [
                 sys.executable,
@@ -596,7 +605,7 @@ def test_instance_reader_releases_state_lock_and_accepts_second_reader(seeded):
 def test_caller_exception_does_not_undo_completed_sync(tmp_path, seeded):
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
     with pytest.raises(RuntimeError, match="caller"):
-        with index.read(prefix(seeded, 2), lambda n: [envelope(str(n))]):
+        with index.read(prefix(seeded, 2), lambda n, _prior: [envelope(str(n))]):
             raise RuntimeError("caller failed after acquiring a snapshot")
     with sqlite3.connect(index.path) as db:
         assert db.execute("SELECT sequence FROM history_progress").fetchone() == (1,)

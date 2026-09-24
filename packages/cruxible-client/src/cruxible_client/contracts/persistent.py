@@ -128,6 +128,49 @@ def _nodes(root: _Node[V] | None) -> Iterator[_Node[V]]:
         root = root.right
 
 
+def _join(left: _Node[V] | None, key: str, value: V, right: _Node[V] | None) -> _Node[V]:
+    """One balanced tree of ``left``, then ``key``, then ``right`` (all ordered)."""
+    if _height(left) > _height(right) + 1:
+        assert left is not None
+        return _balance(
+            _node(left.key, left.value, left.left, _join(left.right, key, value, right))
+        )
+    if _height(right) > _height(left) + 1:
+        assert right is not None
+        return _balance(
+            _node(right.key, right.value, _join(left, key, value, right.left), right.right)
+        )
+    return _node(key, value, left, right)
+
+
+def _split(root: _Node[V] | None, key: str) -> tuple[_Node[V] | None, _Node[V] | None]:
+    """The keys below ``key``, and the keys at or above it."""
+    if root is None:
+        return None, None
+    if key <= root.key:
+        below, above = _split(root.left, key)
+        return below, _join(above, root.key, root.value, root.right)
+    below, above = _split(root.right, key)
+    return _join(root.left, root.key, root.value, below), above
+
+
+def _concat(left: _Node[V] | None, right: _Node[V] | None) -> _Node[V] | None:
+    if right is None:
+        return left
+    if left is None:
+        return right
+    first = next(_nodes(right))
+    return _join(left, first.key, first.value, _delete(right, first.key))
+
+
+def _prefix_bounds(prefix: str) -> tuple[str, str]:
+    # Every key starting with ``prefix`` sorts in [prefix, successor): the
+    # successor bumps the last character, and no other key falls between.
+    if not prefix or ord(prefix[-1]) == 0x10FFFF:
+        raise ValueError("prefix must end below the last code point")
+    return prefix, prefix[:-1] + chr(ord(prefix[-1]) + 1)
+
+
 def _build(items: list[tuple[str, V]], start: int, end: int) -> _Node[V] | None:
     if start == end:
         return None
@@ -198,6 +241,17 @@ class PersistentMap(Mapping[str, V]):
             return self
         root = _delete(self._root, key)
         return self if root is self._root else self._from_root(root)
+
+    def split_prefix(self, prefix: str) -> tuple[PersistentMap[V], PersistentMap[V]]:
+        """This map without the keys starting with ``prefix``, and just those keys.
+
+        The keys share one contiguous range, so both halves are cut from the
+        tree in O(log n) and share every untouched node with it.
+        """
+        low, high = _prefix_bounds(prefix)
+        below, rest = _split(self._root, low)
+        inside, above = _split(rest, high)
+        return self._from_root(_concat(below, above)), self._from_root(inside)
 
     def evolve(self, updated: Mapping[str, V], removed: Iterable[str] = ()) -> PersistentMap[V]:
         """Remove keys, then apply updates; updates win if a key appears in both."""

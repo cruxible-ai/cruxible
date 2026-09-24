@@ -85,6 +85,14 @@ from tests.test_authoring.test_authoring_preflight import (
 )
 from tests.test_ledger.test_activation import _sign
 
+
+@pytest.fixture(autouse=True)
+def _durable_intents(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Publication registrations live in retained intent streams; this legacy
+    # road registers them on accepted intents, so it needs durable retention.
+    monkeypatch.setenv("CRUXIBLE_AUTHORING_INTENTS", "durable")
+
+
 # The body every fixture below publishes: the authored Claim's own self-source
 # body, which is what the removed road framed into the page.
 PUBLISHED_BODY = b"status: ready\n"

@@ -13,7 +13,7 @@ from cruxible_client.contracts.canonical import (
     normalize_ledger_path,
 )
 from cruxible_client.contracts.errors import ProjectionFormatError, ProposalIntegrityError
-from cruxible_core.derived.derived_state import SnapshotTree, fork_tree
+from cruxible_core.derived.derived_state import SnapshotTree, card_free_edits, fork_tree
 
 CARD_RENDERER_IMPLEMENTATION = "python-reference-v2"
 _HEADER_TEMPLATE = "# {kind}: {identity}\n\n- Artifact: `{path}`\n\n"
@@ -107,7 +107,26 @@ def derive_candidate_cards(
     edits = (
         candidate_tree.edits_from(base_tree) if isinstance(candidate_tree, SnapshotTree) else None
     )
-    if edits is not None:
+    view_edits = card_free_edits(candidate_tree, base_tree) if edits is None else None
+    if view_edits is not None:
+        # A fork of the base's card-free view: every card comes from the base,
+        # exactly as the full path below restores them, and only the view's
+        # non-card edits are applied and re-carded.
+        result = fork_tree(base_tree)
+        semantic_paths = []
+        for path, row in view_edits.items():
+            if is_candidate_card_path(path):
+                continue
+            content = None if row is None else candidate_tree[path]
+            if content == base_tree.get(path):
+                continue
+            if content is None:
+                del result[path]
+            else:
+                result[path] = content
+            if not path.startswith("changesets/"):
+                semantic_paths.append(path)
+    elif edits is not None:
         result = fork_tree(candidate_tree)
         # Cards are daemon-owned. Restore only edited cards; untouched cards
         # already come from the exact parent root.

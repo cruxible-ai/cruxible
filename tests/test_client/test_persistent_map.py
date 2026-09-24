@@ -126,3 +126,24 @@ def test_deepcopy_copies_mutable_values_and_preserves_aliases_and_cycles() -> No
     assert copied["a"][0] is copied
     copied["a"].append("new")
     assert len(shared) == 1
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_split_prefix_cuts_exactly_the_prefixed_keys_and_stays_balanced(seed: int) -> None:
+    generator = random.Random(seed)
+    alphabet = ["a", "b", "c", "c/", "ca", "cards/", "cards0", "carda", "d", "é", "Z"]
+    keys = {
+        "".join(generator.choice(alphabet) for _ in range(generator.randint(1, 4)))
+        for _ in range(generator.randint(0, 300))
+    }
+    source = PersistentMap({key: index for index, key in enumerate(sorted(keys))})
+    for prefix in ("cards/", "c", "ca", "z", "é"):
+        outside, inside = source.split_prefix(prefix)
+        _assert_tree(outside._root)
+        _assert_tree(inside._root)
+        assert dict(inside.items()) == {k: v for k, v in source.items() if k.startswith(prefix)}
+        assert dict(outside.items()) == {
+            k: v for k, v in source.items() if not k.startswith(prefix)
+        }
+    # The source is untouched.
+    assert set(source) == keys

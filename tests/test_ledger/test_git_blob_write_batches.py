@@ -204,3 +204,92 @@ def test_admitted_and_evaluated_commits_extend_proposal_ancestry(ledger, tmp_pat
     assert ledger.read_proposal_ref(ref) == evaluated
     assert admitted_oid == _member_by_member_tree(ledger, admitted_tree, tmp_path)
     assert evaluated_oid == _member_by_member_tree(ledger, evaluated_tree, tmp_path)
+
+
+def _commit(ledger, tree_oid):
+    identity = {
+        "GIT_AUTHOR_NAME": "a",
+        "GIT_AUTHOR_EMAIL": "a@a",
+        "GIT_COMMITTER_NAME": "a",
+        "GIT_COMMITTER_EMAIL": "a@a",
+    }
+    return (
+        ledger._git(["commit-tree", tree_oid, "-m", "base"], environment=identity).decode().strip()
+    )
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_delta_writes_equal_whole_tree_writes(ledger, seed, monkeypatch):
+    import random
+
+    from cruxible_core.derived.derived_state import SnapshotTree
+    from cruxible_core.ledger import git as git_module
+
+    generator = random.Random(seed)
+    names = [f"claims/{i % 4}/c{i}.json" for i in range(30)] + ["cards/x.json", "top.json"]
+    base_tree = {name: generator.randbytes(5) for name in names if generator.random() < 0.7}
+    base_commit = _commit(ledger, ledger._write_tree(base_tree))
+    root = SnapshotTree(ledger.blob_refs_at(base_commit))
+    root._commit_oid = base_commit
+    if seed % 2:
+        ledger.list_tree_with_sizes(base_commit)  # a warm parent listing is carried forward
+    else:
+        git_module._TREE_LISTINGS.clear()  # a cold one is seeded from the root's rows
+    fork = root.fork()
+    for _ in range(6):
+        if fork and generator.random() < 0.3:
+            del fork[generator.choice(list(fork))]
+        else:
+            fork[generator.choice([*names, "claims/9/new.json", "claims"])] = generator.randbytes(3)
+    candidate = fork.snapshot()
+    taken = []
+    real = ledger._write_tree_delta
+
+    def spied(*args, **kwargs):
+        taken.append(result := real(*args, **kwargs))
+        return result
+
+    monkeypatch.setattr(ledger, "_write_tree_delta", spied)
+    written = ledger._write_tree(candidate, accepted_parent=base_commit)
+    assert taken and taken[0] == written
+    assert written == ledger._write_tree(dict(candidate.items()))
+    assert ledger.list_tree_with_sizes(written) == ledger._read_tree_listing(
+        written, with_sizes=True, paths=None
+    )
+
+    generation = candidate.fork()
+    generation["changesets/cs-1.json"] = b"record"
+    extended = ledger._extend_tree(written, generation, base_rows=candidate)
+    assert extended == ledger._extend_tree(written, generation)
+    assert ledger.read_tree(extended) == dict(generation.items())
+    assert ledger.list_tree_with_sizes(extended) == ledger._read_tree_listing(
+        extended, with_sizes=True, paths=None
+    )
+
+
+def test_directory_walk_answers_as_the_whole_listing(ledger):
+    from cruxible_core.ledger import git as git_module
+    from cruxible_core.ledger.git import _listing_child_names, _listing_has_path
+
+    tree = {
+        path: path.encode()
+        for path in (
+            "a/b/c.json",
+            "a/b.json",
+            "a/b-x/d.json",
+            "a/z.json",
+            "q.json",
+            "A.MD",
+            "A.MD-/x.md",
+            "deep/er/est/f.json",
+        )
+    }
+    commit = _commit(ledger, ledger._write_tree(tree))
+    listing = ledger._read_tree_listing(commit, with_sizes=False, paths=None)
+    git_module._TREE_LISTINGS.clear()
+    for directory in ("", "a", "a/b", "A.MD-", "deep", "deep/er", "missing", "q.json", "a/b.json"):
+        assert ledger.tree_child_names(commit, directory) == _listing_child_names(
+            listing, directory
+        )
+    for path in ("a", "a/b", "a/b/c.json", "a/c", "q.json", "q.json/x", "deep/er/est", "nope"):
+        assert ledger.tree_has_path(commit, path) == _listing_has_path(listing, path)

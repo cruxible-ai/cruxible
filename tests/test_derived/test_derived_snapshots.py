@@ -173,8 +173,10 @@ def test_accepted_advancement_reads_only_changed_blobs_and_retains_old_snapshot(
         current = instance.immutable_tree_at(after.git_oid)
         assert instance.immutable_tree_at(before.git_oid) is old
         assert instance.immutable_tree_at(after.git_oid) is current
-    assert len(reads) == 1 and reads[0][0] == after.git_oid
-    assert set(reads[0][1]) == changed
+    # Advancing carries blob references from Git's diff: no payload is read
+    # until a caller reads a path, and then only that path's blob.
+    assert reads == []
+    assert changed
     assert dict(current) == expected
     assert dict(old) == previous
     assert changed_path not in old and current[changed_path] == proposed[changed_path]
