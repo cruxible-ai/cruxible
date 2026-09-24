@@ -552,6 +552,43 @@ def test_conflict_repair_names_qualifier_separation_not_dispositions(tmp_path: P
     assert conflict.repair.arguments == {"claim_ids": list(conflict.related_identities)}
 
 
+def test_two_values_of_a_many_valued_predicate_are_not_a_conflict(tmp_path: Path) -> None:
+    from tests.test_claims.test_claims import _claim_type
+
+    many = _claim_type().model_copy(
+        update={
+            "cardinality": "many",
+            "resolution_policy": _claim_type().resolution_policy.model_copy(
+                update={"cardinality": "many", "selector": "all"}
+            ),
+        }
+    )
+    instance, owner = seed_claims(tmp_path, claim_type_override=many)
+    second = service_propose_playbill_claim(
+        instance,
+        authoring=work_item_authoring("wi-42", "blocked", with_claim_type=False),
+        actor_id="owner",
+        proposal_name="second-work-item-value",
+        timestamp="2026-08-24T17:00:03.000000Z",
+    )
+    activate_work_item_claim(instance, owner, second)
+    values = {
+        claim.statement.object.model_dump(mode="json")["value"]
+        for claim in (
+            _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
+        )
+        if claim.statement.subject.artifact_path.endswith("/wi-42.json")
+    }
+    assert values == {"ready", "blocked"}
+
+    result = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=_access()),
+    )
+
+    assert not [item for item in result.items if item.reason == "claim_conflicted"]
+
+
 def test_conflict_repair_names_the_first_byte_ordered_disjoint_value_discriminator() -> None:
     claims = [
         status_claim(1, "wi-1", {"topic": "paging", "rule": "page"}).accepted.claim,

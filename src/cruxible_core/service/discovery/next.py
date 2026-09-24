@@ -987,6 +987,7 @@ def _claim_items(
     door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     claims: tuple[ClaimArtifactAny, ...] | None = None,
+    resolution_statuses: Mapping[str, str] | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     if claims is None:
         listed = service_list_playbill_claims(instance, at=coordinate)
@@ -1026,7 +1027,15 @@ def _claim_items(
         identities = tuple(
             sorted((claim.identity.qualified for claim in group), key=lambda item: item.encode())
         )
-        if slot.resolution == "unresolved":
+        # Two different values in one slot conflict only when the shared
+        # semantic resolution -- the ClaimType's cardinality and resolution
+        # policy at this evaluation time -- leaves them unresolved; a
+        # many-valued predicate or a resolved slot is not a conflict.
+        conflicted = slot.resolution == "unresolved" and (
+            resolution_statuses is None
+            or any(resolution_statuses.get(claim.identity.name) == "conflicted" for claim in group)
+        )
+        if conflicted:
             discriminator = _qualifier_discriminator(group)
             detail: dict[str, object] = {
                 "contender_count": slot.contender_count,
@@ -3246,6 +3255,7 @@ def service_playbill_next(
                     door_events=door_events,
                     verdicts_by_identity=verdicts_by_identity,
                     claims=parsed_claims,
+                    resolution_statuses=resolution_statuses,
                 ),
                 *_claim_attestation_door_items(
                     instance, coordinate=coordinate, door_events=door_events
