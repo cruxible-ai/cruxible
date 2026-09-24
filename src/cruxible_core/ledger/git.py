@@ -2073,14 +2073,72 @@ class GitLedger:
     def tree_has_path(self, oid: str, path: str) -> bool:
         """Whether this commit's tree names ``path`` as a file or a nonempty directory."""
 
-        return _listing_has_path(self._whole_listing(oid), path)
+        listing = self._remembered_whole_listing(oid)
+        if listing is not None:
+            return _listing_has_path(listing, path)
+        directory, _separator, name = path.rpartition("/")
+        entries = self._directory_entries(oid, directory)
+        return entries is not None and name in entries
 
     def tree_child_names(self, oid: str, directory: str) -> tuple[str, ...]:
         """Immediate child names of one directory ("" is the root), in tree order."""
 
-        return _listing_child_names(self._whole_listing(oid), directory)
+        listing = self._remembered_whole_listing(oid)
+        if listing is not None:
+            return _listing_child_names(listing, directory)
+        entries = self._directory_entries(oid, directory)
+        return () if entries is None else tuple(entries)
 
-    def _whole_listing(self, oid: str) -> tuple[GitTreeEntry, ...]:
+    def _directory_entries(self, oid: str, directory: str) -> dict[str, tuple[bytes, str]] | None:
+        """One directory's own tree entries, read down its path; None if it is absent.
+
+        Only the tree objects on the path are read, so the cost follows the
+        directory's depth and width, never the size of the whole tree. Git
+        stores no empty tree, so a directory present here is nonempty, exactly
+        as a recursive listing of files implies it.
+        """
+
+        self._validate_oid(oid)
+        repository = _repository_key(self.path)
+        with _PARSED_TREES_LOCK:
+            root = _COMMIT_ROOTS.get((repository, oid), _UNREAD)
+        if root is _UNREAD:
+            root = self._commit_tree(oid) or oid
+            with _PARSED_TREES_LOCK:
+                _COMMIT_ROOTS[(repository, oid)] = root
+                while len(_COMMIT_ROOTS) > _COMMIT_ROOTS_CAPACITY:
+                    _COMMIT_ROOTS.popitem(last=False)
+        entries = self._parsed_tree(repository, str(root))
+        for part in directory.split("/") if directory else ():
+            entry = entries.get(part)
+            if entry is None or entry[0] != b"40000":
+                return None
+            entries = self._parsed_tree(repository, entry[1])
+        return entries
+
+    def _parsed_tree(
+        self, repository: tuple[str, int, int], oid: str
+    ) -> dict[str, tuple[bytes, str]]:
+        """One tree object's entries, remembered by object ID; callers must not mutate it."""
+
+        key = (repository, oid)
+        with _PARSED_TREES_LOCK:
+            cached = _PARSED_TREES.get(key)
+            if cached is not None:
+                _PARSED_TREES.move_to_end(key)
+                return cached
+        entries = self._tree_entries_of(oid)
+        global _PARSED_TREE_ENTRIES
+        with _PARSED_TREES_LOCK:
+            if key not in _PARSED_TREES:
+                _PARSED_TREES[key] = entries
+                _PARSED_TREE_ENTRIES += len(entries)
+            while _PARSED_TREES and _PARSED_TREE_ENTRIES > _PARSED_TREE_CAPACITY:
+                _old, evicted = _PARSED_TREES.popitem(last=False)
+                _PARSED_TREE_ENTRIES -= len(evicted)
+        return entries
+
+    def _remembered_whole_listing(self, oid: str) -> tuple[GitTreeEntry, ...] | None:
         """Whichever whole listing of this object is remembered, sized or not."""
 
         self._validate_oid(oid)
@@ -2093,7 +2151,7 @@ class GitLedger:
                     listing = _TREE_LISTINGS.get((repository, candidate, with_sizes))
                     if listing is not None:
                         return listing
-        return self._list_tree(oid, with_sizes=False)
+        return None
 
     def list_tree_with_sizes(self, oid: str) -> tuple[GitTreeEntry, ...]:
         """List an exact commit recursively, with the size Git reports per entry.
@@ -2813,6 +2871,19 @@ _TREE_LISTINGS: OrderedDict[tuple[tuple[str, int, int], str, bool], tuple[GitTre
 _TREE_LISTINGS_LOCK = threading.Lock()
 
 
+# Parsed tree objects and commit roots are immutable per object ID; the budget
+# counts entries across every remembered tree.
+_PARSED_TREE_CAPACITY = 200_000
+_PARSED_TREES: OrderedDict[tuple[tuple[str, int, int], str], dict[str, tuple[bytes, str]]] = (
+    OrderedDict()
+)
+_PARSED_TREE_ENTRIES = 0
+_COMMIT_ROOTS_CAPACITY = 256
+_COMMIT_ROOTS: OrderedDict[tuple[tuple[str, int, int], str], object] = OrderedDict()
+_UNREAD = object()
+_PARSED_TREES_LOCK = threading.Lock()
+
+
 _TREE_CHANGES_CAPACITY = 32
 _TREE_CHANGES: OrderedDict[tuple[tuple[str, int, int], str, str], tuple[GitTreeChange, ...]] = (
     OrderedDict()
@@ -3008,6 +3079,7 @@ def _after_fork_in_parent() -> None:
 def _after_fork_in_child() -> None:
     global _BATCH_READERS_LOCK, _TREE_LISTINGS_LOCK, _VERIFIED_COMMITS_LOCK
     global _LISTING_INDEXES_LOCK, _TREE_CHANGES_LOCK, _PACKED_REFS_LOCK, _CONFIG_READS_LOCK
+    global _PARSED_TREES_LOCK
     inherited = tuple(_BATCH_READERS.values())
     _BATCH_READERS.clear()
     for reader in inherited:
@@ -3021,6 +3093,7 @@ def _after_fork_in_child() -> None:
     _TREE_CHANGES_LOCK = threading.Lock()
     _PACKED_REFS_LOCK = threading.Lock()
     _CONFIG_READS_LOCK = threading.Lock()
+    _PARSED_TREES_LOCK = threading.Lock()
 
 
 if hasattr(os, "register_at_fork"):

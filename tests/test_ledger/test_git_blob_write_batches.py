@@ -261,3 +261,31 @@ def test_delta_writes_equal_whole_tree_writes(ledger, seed, monkeypatch):
     assert ledger.list_tree_with_sizes(extended) == ledger._read_tree_listing(
         extended, with_sizes=True, paths=None
     )
+
+
+def test_directory_walk_answers_as_the_whole_listing(ledger):
+    from cruxible_core.ledger import git as git_module
+    from cruxible_core.ledger.git import _listing_child_names, _listing_has_path
+
+    tree = {
+        path: path.encode()
+        for path in (
+            "a/b/c.json",
+            "a/b.json",
+            "a/b-x/d.json",
+            "a/z.json",
+            "q.json",
+            "A.MD",
+            "A.MD-/x.md",
+            "deep/er/est/f.json",
+        )
+    }
+    commit = _commit(ledger, ledger._write_tree(tree))
+    listing = ledger._read_tree_listing(commit, with_sizes=False, paths=None)
+    git_module._TREE_LISTINGS.clear()
+    for directory in ("", "a", "a/b", "A.MD-", "deep", "deep/er", "missing", "q.json", "a/b.json"):
+        assert ledger.tree_child_names(commit, directory) == _listing_child_names(
+            listing, directory
+        )
+    for path in ("a", "a/b", "a/b/c.json", "a/c", "q.json", "q.json/x", "deep/er/est", "nope"):
+        assert ledger.tree_has_path(commit, path) == _listing_has_path(listing, path)
