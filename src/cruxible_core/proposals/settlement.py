@@ -872,6 +872,7 @@ def prepare_generation(
         # generation adds only its change-set record. The readback below still
         # compares every member of what was stored.
         extends_tree=candidate_tree_oid,
+        extends_rows=candidate_tree if candidate_tree_oid is not None else None,
     )
     if ledger.parent_of(oid) != binding.base_oid or not ledger.verify_commit(oid):
         raise SettlementIntegrityError("generation parent or daemon signature failed")

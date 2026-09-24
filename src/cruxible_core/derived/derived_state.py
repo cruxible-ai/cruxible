@@ -14,7 +14,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any
 
-from cruxible_client.contracts.canonical import normalize_ledger_path
+from cruxible_client.contracts.canonical import CARD_NAMESPACE, normalize_ledger_path
 from cruxible_client.contracts.claims import ClaimArtifactAny, ClaimStatement, parse_claim
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.persistent import PersistentMap
@@ -131,6 +131,9 @@ def changed_paths(base: Mapping[str, bytes], candidate: Mapping[str, bytes]) -> 
         return tuple(
             path for path in base.keys() | candidate.keys() if base.get(path) != candidate.get(path)
         )
+    shared = _edited_paths(base, candidate)
+    if shared is not None:
+        return tuple(path for path in shared if not _same_entry(left, right, path))
     return tuple(
         path
         for path in left.keys() | right.keys()
@@ -146,7 +149,54 @@ def _snapshot_equal(tree: Mapping[str, bytes], other: object) -> bool:
         return dict(tree.items()) == dict(other.items())
     if len(mine) != len(theirs):
         return False
+    shared = _edited_paths(tree, other)
+    if shared is not None:
+        return all(_same_entry(mine, theirs, path) for path in shared)
     return all(path in theirs and same_row(value, theirs[path]) for path, value in mine.items())
+
+
+def _root_and_edits(
+    tree: Mapping[str, bytes],
+) -> tuple[SnapshotTree, Mapping[str, bytes | BlobRef | None]] | None:
+    """The immutable root a snapshot was forked from, and its edits over that root."""
+    if isinstance(tree, CandidateTree):
+        return tree._parent, tree._edits
+    if isinstance(tree, SnapshotTree):
+        return (tree, {}) if tree._parent is None else (tree._parent, tree._edits)
+    return None
+
+
+def edited_paths(left: Mapping[str, bytes], right: Mapping[str, bytes]) -> set[str] | None:
+    """Every path where two forks of one root can differ, or None if they share none."""
+    return _edited_paths(left, right)
+
+
+def root_and_edits(
+    tree: Mapping[str, bytes],
+) -> tuple[SnapshotTree, Mapping[str, bytes | BlobRef | None]] | None:
+    """The immutable root a snapshot was forked from, and its edits over that root."""
+    return _root_and_edits(tree)
+
+
+def _edited_paths(left: Mapping[str, bytes], right: Mapping[str, bytes]) -> set[str] | None:
+    """Every path where two forks of one root can differ, or None if they share none.
+
+    Outside their edits both trees hold exactly the root's rows, so only edited
+    paths need comparing.
+    """
+    mine, theirs = _root_and_edits(left), _root_and_edits(right)
+    if mine is None or theirs is None or mine[0] is not theirs[0]:
+        return None
+    return {*mine[1], *theirs[1]}
+
+
+def _same_entry(
+    left: Mapping[str, bytes | BlobRef], right: Mapping[str, bytes | BlobRef], path: str
+) -> bool:
+    mine, theirs = left.get(path), right.get(path)
+    if mine is None or theirs is None:
+        return mine is None and theirs is None
+    return same_row(mine, theirs)
 
 
 def _resolve(value: bytes | BlobRef) -> bytes:
@@ -203,6 +253,12 @@ class SnapshotTree(Mapping[str, bytes]):
         )
         self._proofs: Any = None
         self._proof_seed: Any = None
+        # This root without its derivative cards, once asked for; see card_free_view.
+        self._card_free: SnapshotTree | None = None
+        # Facts about every path, once asked for; see path_facts.
+        self._path_facts: PathFacts | None = None
+        # The accepted commit whose tree these rows are, when an instance says so.
+        self._commit_oid: str | None = None
 
     def __getitem__(self, key: str) -> bytes:
         return _resolve(self._rows[key])
@@ -521,7 +577,83 @@ def advance_accepted_tree(
     with parent._lock:
         if parent._proofs is not None and parent._accepted_reader is not None:
             result._proof_seed = (parent._proofs, parent._accepted_reader, dict(edits))
+        view = parent._card_free
+        facts = parent._path_facts
+    if facts is not None:
+        result._path_facts = facts.advanced(parent._rows, edits)
+    if view is not None:
+        # The card-free view advances by the same delta, less its cards.
+        result._card_free = advance_accepted_tree(
+            view, {path: row for path, row in edits.items() if not path.startswith(CARD_NAMESPACE)}
+        )
     return result
+
+
+def card_free_view(root: SnapshotTree) -> SnapshotTree:
+    """``root`` without its derivative cards, as an immutable root of its own.
+
+    Cards share one key range, so the rows are cut from the root in O(log n);
+    only the first view of a root sums the cards' sizes, and each accepted
+    successor carries its view forward by its own delta.
+    """
+    if root._parent is not None:
+        raise ValueError("only an immutable root has a card-free view")
+    with root._lock:
+        view = root._card_free
+        if view is None:
+            rows, cards = root._rows.split_prefix(CARD_NAMESPACE)
+            removed = resident = 0
+            for path, row in cards.items():
+                removed += len(path.encode("utf-8")) + _size(row)
+                resident += _resident(path, row)
+            view = SnapshotTree(
+                rows,
+                input_bytes=root._input_bytes - removed,
+                semantic_bytes=root._semantic_bytes,
+                semantic_members=root._semantic_members,
+                resident_bytes=root._resident_bytes - resident,
+            )
+            root._card_free = view
+        # Cards are not Claims: the root's accepted projection answers the view.
+        view._accepted_reader = root._accepted_reader
+    return view
+
+
+def without_cards(tree: SnapshotTree) -> SnapshotTree:
+    """``tree`` less every derivative card.
+
+    A root or a fork of one is its root's card-free view plus the fork's
+    non-card edits, so the cost follows the edits, not the cards.
+    """
+    found = _root_and_edits(tree)
+    if found is not None and found[0]._parent is None:
+        root, edits = found
+        builder = card_free_view(root).fork()
+        for path, row in edits.items():
+            if path.startswith(CARD_NAMESPACE):
+                continue
+            if row is None:
+                if path in builder:
+                    del builder[path]
+            else:
+                builder[path] = _resolve(row)
+        return builder.snapshot()
+    builder = tree.fork()
+    for path in tuple(tree):
+        if path.startswith(CARD_NAMESPACE):
+            del builder[path]
+    return builder.snapshot()
+
+
+def card_free_edits(
+    tree: Mapping[str, bytes], base: Mapping[str, bytes]
+) -> Mapping[str, bytes | BlobRef | None] | None:
+    """The edits that make ``tree`` from ``base``'s card-free view, if it is one's fork."""
+    found = _root_and_edits(tree)
+    if not isinstance(base, SnapshotTree) or found is None:
+        return None
+    view = base._card_free
+    return found[1] if view is not None and found[0] is view else None
 
 
 def snapshot_against(tree: Mapping[str, bytes], parent: SnapshotTree) -> SnapshotTree:
@@ -549,3 +681,131 @@ def snapshot_against(tree: Mapping[str, bytes], parent: SnapshotTree) -> Snapsho
 
 def semantic_path(path: str) -> bool:
     return not path.startswith(("changesets/", "cards/"))
+
+
+def fork_of(
+    tree: Mapping[str, bytes], base: Mapping[str, bytes]
+) -> tuple[SnapshotTree, Mapping[str, bytes | BlobRef | None]] | None:
+    """``tree`` as a root plus edits, where the root is ``base`` or its card-free view."""
+    found = _root_and_edits(tree)
+    if found is None or not isinstance(base, SnapshotTree) or base._parent is not None:
+        return None
+    root = found[0]
+    return found if root is base or (root is base._card_free and root is not None) else None
+
+
+_Spellings = tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
+class PathFacts:
+    """What whole-tree path checks conclude about one tree, advanced by deltas.
+
+    Proposal receive and tree writes refuse a tree whose paths are not
+    canonical, collide after case folding, run too deep, or whose files are too
+    large. Each answer here equals what a pass over every path concludes; a
+    successor's facts follow from its parent's and the changed paths alone.
+    ``folded`` maps every case-folded path prefix to the spellings that fold
+    to it, so a collision is any prefix with more than one spelling.
+    """
+
+    content_bytes: int
+    noncanonical: int
+    colliding: int
+    depths: Mapping[int, int]
+    folded: PersistentMap[_Spellings]
+    # Files larger than each limit asked about, carried forward like the rest.
+    oversize: dict[int, int]
+
+    @property
+    def max_depth(self) -> int:
+        return max((depth for depth, count in self.depths.items() if count), default=0)
+
+    def oversize_count(self, limit: int, rows: Mapping[str, bytes | BlobRef]) -> int:
+        count = self.oversize.get(limit)
+        if count is None:
+            count = sum(1 for row in rows.values() if _size(row) > limit)
+            self.oversize[limit] = count
+        return count
+
+    def advanced(
+        self,
+        rows: Mapping[str, bytes | BlobRef],
+        edits: Mapping[str, bytes | BlobRef | None],
+    ) -> PathFacts:
+        """These facts for ``rows`` with ``edits`` applied."""
+        content = self.content_bytes
+        noncanonical = self.noncanonical
+        colliding = self.colliding
+        depths = dict(self.depths)
+        oversize = dict(self.oversize)
+        folded = self.folded
+        for path, new in edits.items():
+            old = rows.get(path)
+            if old is None and new is None:
+                continue
+            for row, sign in ((old, -1), (new, 1)):
+                if row is None:
+                    continue
+                content += sign * _size(row)
+                for limit in oversize:
+                    oversize[limit] += sign * (_size(row) > limit)
+            if (old is None) == (new is None):
+                continue  # the path stays; only its bytes changed
+            sign = 1 if old is None else -1
+            noncanonical += sign * (not _canonical(path))
+            depth = path.count("/") + 1
+            depths[depth] = depths.get(depth, 0) + sign
+            for key, spelling in _prefixes(path):
+                before = folded.get(key, ())
+                after = _respelled(before, spelling, sign)
+                colliding += (len(after) > 1) - (len(before) > 1)
+                folded = folded.set(key, after) if after else folded.delete(key)
+        return PathFacts(content, noncanonical, colliding, depths, folded, oversize)
+
+
+def path_facts(root: SnapshotTree) -> PathFacts:
+    """``root``'s path facts: one pass over its paths the first time, then carried."""
+    if root._parent is not None:
+        raise ValueError("only an immutable root carries path facts")
+    with root._lock:
+        facts = root._path_facts
+        if facts is None:
+            content = noncanonical = colliding = 0
+            depths: dict[int, int] = {}
+            folded: dict[str, _Spellings] = {}
+            for path, row in root._rows.items():
+                content += _size(row)
+                noncanonical += not _canonical(path)
+                depth = path.count("/") + 1
+                depths[depth] = depths.get(depth, 0) + 1
+                for key, spelling in _prefixes(path):
+                    folded[key] = _respelled(folded.get(key, ()), spelling, 1)
+            colliding = sum(1 for spellings in folded.values() if len(spellings) > 1)
+            facts = PathFacts(content, noncanonical, colliding, depths, PersistentMap(folded), {})
+            root._path_facts = facts
+    return facts
+
+
+def _canonical(path: str) -> bool:
+    try:
+        return normalize_ledger_path(path) == path
+    except (PlaybillError, ValueError):
+        return False
+
+
+def _prefixes(path: str) -> Iterator[tuple[str, str]]:
+    # Folding is per character and never yields "/", so folding a whole prefix
+    # equals folding each part: one key per (folded parent, folded part) pair.
+    end = path.find("/")
+    while end != -1:
+        prefix = path[:end]
+        yield prefix.casefold(), prefix
+        end = path.find("/", end + 1)
+    yield path.casefold(), path
+
+
+def _respelled(spellings: _Spellings, spelling: str, sign: int) -> _Spellings:
+    counts = dict(spellings)
+    counts[spelling] = counts.get(spelling, 0) + sign
+    return tuple(sorted((name, count) for name, count in counts.items() if count > 0))

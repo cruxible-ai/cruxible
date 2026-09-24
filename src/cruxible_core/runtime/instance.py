@@ -1801,6 +1801,8 @@ class PlaybillInstance:
             return SnapshotTree(self._ledger.blob_refs_at(oid))
 
         tree = self.derived.accepted_tree(binding, load, advance)
+        # Loaded or advanced from exactly this commit's tree, so its rows are that tree.
+        tree._commit_oid = oid
         tree._accepted_reader = (
             None
             if coordinate.git_oid == self._verified_genesis.oid

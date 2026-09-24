@@ -28,7 +28,15 @@ from cruxible_client.contracts.canonical import CandidateDigest, normalize_manif
 from cruxible_client.contracts.errors import PlaybillGitError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.types import GitObjectFormat
-from cruxible_core.derived.derived_state import BlobRef, SnapshotTree, row_values
+from cruxible_core.derived.derived_state import (
+    BlobRef,
+    SnapshotTree,
+    edited_paths,
+    path_facts,
+    root_and_edits,
+    row_values,
+    same_row,
+)
 from cruxible_core.governance.keys import raw_public_key_hex_from_openssh
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -255,13 +263,15 @@ class GitLedger:
         timestamp: str,
         message: str,
         extends_tree: str | None = None,
+        extends_rows: Mapping[str, bytes] | None = None,
     ) -> str:
         """Create one signed, still-unsettled generation commit over an exact parent.
 
         ``extends_tree`` names a stored tree whose members ``tree`` carries
         unchanged, as a settled proposal's tree is carried into its generation.
         Only the members it lacks are written; the caller's readback of the
-        stored generation still compares every member.
+        stored generation still compares every member. ``extends_rows`` is the
+        caller's proven tree at ``extends_tree``, when it holds one.
         """
 
         self._validate_oid(parent_oid)
@@ -271,7 +281,7 @@ class GitLedger:
         tree_oid = (
             self._write_tree(tree, accepted_parent=parent_oid)
             if extends_tree is None
-            else self._extend_tree(extends_tree, tree)
+            else self._extend_tree(extends_tree, tree, base_rows=extends_rows)
         )
         environment = {
             "GIT_AUTHOR_NAME": "playbill-daemon",
@@ -482,6 +492,10 @@ class GitLedger:
         write produces.
         """
 
+        if accepted_parent is not None:
+            delta_oid = self._write_tree_delta(tree, accepted_parent=accepted_parent)
+            if delta_oid is not None:
+                return delta_oid
         normalized_to_raw: dict[str, str] = {}
         for raw_path in tree:
             normalized = normalize_manifest_paths([raw_path])[0]
@@ -557,20 +571,80 @@ class GitLedger:
         _remember_listing(_repository_key(self.path), oid, listing)
         return oid
 
-    def _extend_tree(self, base_tree: str, tree: Mapping[str, bytes]) -> str:
+    def _write_tree_delta(self, tree: Mapping[str, bytes], *, accepted_parent: str) -> str | None:
+        """``_write_tree`` for a fork of the accepted root ``accepted_parent`` names.
+
+        The fork is that root's rows plus its edits, so the root's carried path
+        facts answer the normalization checks and only edited paths are staged.
+        None when ``tree`` is not such a fork, or when a path check fails and the
+        whole-tree write must report it.
+        """
+
+        found = root_and_edits(tree)
+        rows = row_values(tree)
+        if found is None or rows is None or found[0]._commit_oid != accepted_parent:
+            return None
+        root, edits = found
+        facts = path_facts(root).advanced(root._rows, edits)
+        if facts.noncanonical or facts.colliding:
+            return None
+        changes: dict[str, str | None] = {}
+        sizes: dict[str, int] = {}
+        blobs: dict[str, bytes] = {}
+        for path in sorted(edits, key=lambda item: item.encode("utf-8")):
+            new, old = rows.get(path), root._rows.get(path)
+            if new is None:
+                if old is not None:
+                    changes[path] = None
+                continue
+            if old is not None and same_row(new, old):
+                continue
+            if isinstance(new, BlobRef):
+                changes[path], sizes[path] = new.oid, new.size
+                continue
+            blob_oid = self._blob_oid(new)
+            if blob_oid in blobs and blobs[blob_oid] != new:
+                raise PlaybillGitError("different blob bytes share a computed content address")
+            blobs[blob_oid] = new
+            changes[path], sizes[path] = blob_oid, len(new)
+        oid = self._commit_changes_to_tree(self._commit_tree(accepted_parent), changes, blobs)
+        self._validate_oid(oid)
+        repository = _repository_key(self.path)
+        parent_listing = _remembered_listing(repository, accepted_parent, with_sizes=True)
+        if parent_listing is not None:
+            _remember_listing(repository, oid, _listing_with(parent_listing, changes, sizes))
+        return oid
+
+    def _extend_tree(
+        self,
+        base_tree: str,
+        tree: Mapping[str, bytes],
+        *,
+        base_rows: Mapping[str, bytes] | None = None,
+    ) -> str:
         """Write ``tree`` as ``base_tree`` plus the members ``base_tree`` lacks.
 
         Only the added paths' blobs and their parent directories are written;
         every untouched subtree keeps its object ID, so the cost follows the
-        added members rather than the size of the whole tree.
+        added members rather than the size of the whole tree. ``base_rows``,
+        when the caller holds the proven tree at ``base_tree`` as a fork of the
+        root ``tree`` descends from, lets the added members follow from the two
+        trees' edits instead of from a listing of every member.
         """
 
         self._validate_oid(base_tree)
-        base = self._list_tree(base_tree, with_sizes=True)
-        base_paths = {entry.path for entry in base}
-        if any(entry.object_type != "blob" for entry in base) or not base_paths <= set(tree):
-            raise PlaybillGitError("extended tree does not carry every member of its base")
-        added = [path for path in tree if path not in base_paths]
+        shared = None if base_rows is None else edited_paths(tree, base_rows)
+        base: tuple[GitTreeEntry, ...] | None = None
+        if base_rows is not None and shared is not None:
+            if any(path in base_rows and path not in tree for path in shared):
+                raise PlaybillGitError("extended tree does not carry every member of its base")
+            added = [path for path in shared if path in tree and path not in base_rows]
+        else:
+            base = self._list_tree(base_tree, with_sizes=True)
+            base_paths = {entry.path for entry in base}
+            if any(entry.object_type != "blob" for entry in base) or not base_paths <= set(tree):
+                raise PlaybillGitError("extended tree does not carry every member of its base")
+            added = [path for path in tree if path not in base_paths]
         ordered_added = normalize_manifest_paths(added)
         if set(ordered_added) != set(added):
             raise PlaybillGitError("extended tree adds a path that is not normalized")
@@ -583,17 +657,16 @@ class GitLedger:
             blobs[blob_oid] = tree[path]
         oid = self._commit_changes_to_tree(base_tree, dict(oids), blobs)
         self._validate_oid(oid)
-        entries = {entry.path: entry for entry in base}
-        for path in ordered_added:
-            entries[path] = GitTreeEntry(
-                path=path,
-                mode="100644",
-                object_type="blob",
-                oid=oids[path],
-                size=len(tree[path]),
+        repository = _repository_key(self.path)
+        if base is None:
+            base = _remembered_listing(repository, base_tree, with_sizes=True)
+        if base is not None:
+            listing = _listing_with(
+                base,
+                dict(oids),
+                {path: len(tree[path]) for path in ordered_added},
             )
-        listing = tuple(entries[path] for path in normalize_manifest_paths(list(entries)))
-        _remember_listing(_repository_key(self.path), oid, listing)
+            _remember_listing(repository, oid, listing)
         return oid
 
     def create_proposal_commit(
@@ -2835,6 +2908,33 @@ def _select_from_listing(
             selected.add(positions[ordered[cursor]])
             cursor += 1
     return tuple(listing[position] for position in sorted(selected))
+
+
+def _listing_with(
+    listing: tuple[GitTreeEntry, ...],
+    changes: Mapping[str, str | None],
+    sizes: Mapping[str, int],
+) -> tuple[GitTreeEntry, ...]:
+    """A path-ordered listing with changed paths replaced, added or removed."""
+
+    entries = list(listing)
+    for path, oid in changes.items():
+        position = bisect.bisect_left(
+            entries, path.encode("utf-8"), key=lambda entry: entry.path.encode("utf-8")
+        )
+        present = position < len(entries) and entries[position].path == path
+        if oid is None:
+            if present:
+                del entries[position]
+            continue
+        entry = GitTreeEntry(
+            path=path, mode="100644", object_type="blob", oid=oid, size=sizes[path]
+        )
+        if present:
+            entries[position] = entry
+        else:
+            entries.insert(position, entry)
+    return tuple(entries)
 
 
 def _remembered_listing(
