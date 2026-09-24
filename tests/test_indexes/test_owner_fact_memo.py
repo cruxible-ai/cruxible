@@ -32,3 +32,35 @@ def test_memoized_facts_equal_a_fresh_compile_and_are_reused(
     monkeypatch.setattr(TypedStateReader, "_compile_paths", refuse)
     with instance.bind_accepted_projection(coordinate) as projection:
         assert projection.typed.facts_for(rows) == first
+
+
+def test_a_caller_changing_returned_facts_never_changes_a_later_read(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(
+        instance, owner, contract=foreign_source_capture_contract("repo.work-items")
+    )
+    coordinate = instance.accepted_coordinate()
+
+    def read():
+        with instance.bind_accepted_projection(coordinate) as projection:
+            rows = projection.typed.envelopes()
+            return rows, projection.typed.facts_for(rows)
+
+    rows, first = read()
+    original = {
+        identity: [fact.model_dump() for fact in facts] for identity, facts in first.items()
+    }
+    mutated = 0
+    for facts in first.values():
+        for fact in facts:
+            if isinstance(fact.value, dict):
+                fact.value["tampered"] = True
+                mutated += 1
+            elif isinstance(fact.value, list):
+                fact.value.append("tampered")
+                mutated += 1
+    assert mutated
+    for reread in (read()[1], read()[1]):
+        assert {
+            identity: [fact.model_dump() for fact in facts] for identity, facts in reread.items()
+        } == original

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import pickle
 from collections import OrderedDict
 from collections.abc import Iterator, Mapping, MutableSet
 from dataclasses import dataclass
@@ -808,13 +809,15 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
             return None
         # A path's law evidence at one accepted sequence never changes, so it
         # is parsed once per instance rather than re-read from its record.
+        # Kept as immutable bytes; each read gets its own objects.
         memo = self.instance.claim_law_memo
         key = (path, locations[0].sequence)
         cached = memo.get(key)
         if cached is not None:
-            return cast(ClaimLawEvidenceAny | None, cached[0])
+            return cast(ClaimLawEvidenceAny | None, pickle.loads(cached))
         found = self._read_record(history, path, locations[0])
-        memo.put(key, (found,), weight=2048)
+        frozen = pickle.dumps(found, protocol=pickle.HIGHEST_PROTOCOL)
+        memo.put(key, frozen, weight=len(frozen))
         return found
 
     def _read_record(

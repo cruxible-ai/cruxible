@@ -301,7 +301,7 @@ class PlaybillInstance:
             "owner-facts", max_entries=65536, max_bytes=64 * 1024 * 1024
         )
         # Parsed Claim law evidence per (path, accepting sequence).
-        self.claim_law_memo: BoundedCache[tuple[Any, ...]] = self.derived.memo(
+        self.claim_law_memo: BoundedCache[bytes] = self.derived.memo(
             "claim-law-evidence", max_entries=65536, max_bytes=64 * 1024 * 1024
         )
         self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)

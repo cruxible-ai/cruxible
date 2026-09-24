@@ -9,6 +9,7 @@ artifact digest rules remain authoritative.
 
 from __future__ import annotations
 
+import pickle
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -1207,6 +1208,9 @@ class TypedStateReader:
                 )
                 for row in rows
             }
+        # Facts carry arbitrary nested values; the memo keeps them as immutable
+        # bytes and every read gets its own objects, so no caller can change
+        # what a later read at the same version sees.
         found: dict[str, tuple[Any, ...]] = {}
         missing: list[ArtifactEnvelopeRow] = []
         for row in rows:
@@ -1216,10 +1220,11 @@ class TypedStateReader:
             if cached is None:
                 missing.append(row)
             else:
-                found[row.identity] = cached
+                found[row.identity] = pickle.loads(cached)
         if missing:
             for identity, facts in self._compile_facts(tuple(missing)).items():
-                self.fact_memo.put(keys[identity], facts, weight=256 + 1024 * len(facts))
+                frozen = pickle.dumps(facts, protocol=pickle.HIGHEST_PROTOCOL)
+                self.fact_memo.put(keys[identity], frozen, weight=len(frozen))
                 found[identity] = facts
         return {row.identity: found[row.identity] for row in rows}
 
