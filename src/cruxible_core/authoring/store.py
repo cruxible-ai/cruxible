@@ -51,20 +51,23 @@ AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN = "playbill-authoring-intent-event-v2"
 AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN = "playbill-authoring-intent-event-v3"
 _TERMINAL_STATES = frozenset({"accepted", "superseded", "terminal"})
 
-# Local instances keep authoring intents only while they are in use; a managed
-# deployment sets ``durable`` to retain every intent's full event stream.
+# Local instances keep an authoring intent only while it is in progress; a
+# managed deployment sets ``durable`` to retain every intent's full event stream.
 AUTHORING_INTENTS_ENV = "CRUXIBLE_AUTHORING_INTENTS"
-_EPHEMERAL_FINISHED_RETAINED = 16
-_EPHEMERAL_STALE_SECONDS = 24 * 60 * 60
+_STALE_DRAFT_SECONDS = 24 * 60 * 60
+# A finished intent leaves only its final event, so a retried submit or status
+# read still answers; the newest few are kept, on disk only.
+_FINISHED_RECEIPTS_RETAINED = 16
+_FINISHED_RECEIPTS = ".finished"
 
 
-def authoring_intent_retention() -> Literal["ephemeral", "durable"]:
-    value = os.environ.get(AUTHORING_INTENTS_ENV, "ephemeral").strip().lower()
-    if value not in {"ephemeral", "durable"}:
+def authoring_intent_retention() -> Literal["off", "durable"]:
+    value = os.environ.get(AUTHORING_INTENTS_ENV, "off").strip().lower()
+    if value not in {"off", "durable"}:
         raise AuthoringIntentStoreError(
-            f"{AUTHORING_INTENTS_ENV} must be 'ephemeral' or 'durable', not {value!r}"
+            f"{AUTHORING_INTENTS_ENV} must be 'off' or 'durable', not {value!r}"
         )
-    return cast(Literal["ephemeral", "durable"], value)
+    return cast(Literal["off", "durable"], value)
 
 
 _LIVE_INSERTION_STATES = frozenset(
@@ -537,7 +540,7 @@ class AuthoringIntentStore:
             os.replace(temporary, directory)
             _fsync_directory(self.root)
             self._crash("after_create_publish")
-            self._prune_ephemeral()
+            self._prune_unretained()
             return intent
 
     def _recover_creating_directories(self) -> None:
@@ -574,7 +577,8 @@ class AuthoringIntentStore:
 
         return resolve_id_prefix(
             intent_id,
-            tuple(path.name for path in self._intent_directories()),
+            tuple(path.name for path in self._intent_directories())
+            + tuple(path.stem for path in self._finished_receipts()),
             marker="AIT-",
             label="AuthoringIntent",
         )
@@ -582,8 +586,11 @@ class AuthoringIntentStore:
     def get(self, intent_id: str, *, actor_id: str) -> AuthoringIntentV1:
         intent_id = self.resolve_intent_id(intent_id)
         with self._locked():
-            events = self._validated_events(self.root / intent_id)
-            intent = events[-1].intent
+            directory = self.root / intent_id
+            receipt = self._finished_receipt(intent_id) if not directory.exists() else None
+            intent = (
+                receipt if receipt is not None else self._validated_events(directory)[-1].intent
+            )
             if intent.actor_id != actor_id:
                 raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
             return intent.model_copy(deep=True)
@@ -728,8 +735,8 @@ class AuthoringIntentStore:
             path = directory / "events" / f"{event.sequence:020d}.json"
             _exclusive_write(path, self._render_event(event))
             self._crash("after_transition_event_sync")
-            if not _intent_is_pending(updated):
-                self._prune_ephemeral()
+            if not _intent_is_pending(updated) and self._retention == "off":
+                self._finish(directory, event)
             return updated
 
     def record_program_stamp(
@@ -777,20 +784,19 @@ class AuthoringIntentStore:
             raise AuthoringIntentStoreError("active AuthoringIntent fingerprint is not unique")
         return None if not matches else matches[0].model_copy(deep=True)
 
-    def _prune_ephemeral(self) -> None:
+    def _prune_unretained(self) -> None:
         """Delete finished and abandoned intents; the caller holds the store lock.
 
-        Ephemeral retention keeps an intent only while it can still matter: the
-        newest finished ones, so a retried write resolves to its original result
-        and a status read still answers, and drafts touched within a day. The
-        decision reads only each stream's last event; nothing it deletes is
-        ever validated or loaded.
+        With retention off an intent lives only while it is in progress: a
+        finished one is reduced to a receipt of its final event when it
+        finishes, and this sweep removes any stream a crash left behind plus
+        drafts untouched for a day. The decision reads
+        only each stream's last event; nothing it deletes is validated or loaded.
         """
 
-        if self._retention != "ephemeral":
+        if self._retention != "off":
             return
         now = time.time()
-        finished: list[tuple[float, Path]] = []
         for directory in self._intent_directories():
             events = sorted((directory / "events").glob("*.json"), key=lambda item: item.name)
             if not events:
@@ -806,13 +812,58 @@ class AuthoringIntentStore:
                 expectation.get("state") in _LIVE_INSERTION_STATES
                 or (intent.get("candidate_status") or {}).get("state") not in _TERMINAL_STATES
             )
-            if not pending:
-                finished.append((modified, directory))
-            elif now - modified > _EPHEMERAL_STALE_SECONDS:
+            if not pending or now - modified > _STALE_DRAFT_SECONDS:
+                # A finished stream a crash left behind, or a pre-existing one,
+                # is dropped outright; only intents finished here leave receipts.
                 self._delete_intent_directory(directory)
-        finished.sort(reverse=True)
-        for _modified, directory in finished[_EPHEMERAL_FINISHED_RETAINED:]:
-            self._delete_intent_directory(directory)
+
+    def _finish(self, directory: Path, event: AuthoringIntentEventAny) -> None:
+        """Replace a finished intent's stream with its final event; the lock is held."""
+
+        receipts = self.root / _FINISHED_RECEIPTS
+        receipts.mkdir(mode=0o700, exist_ok=True)
+        temporary = receipts / f".{event.intent.intent_id}-{secrets.token_hex(8)}"
+        _exclusive_write(temporary, self._render_event(event))
+        os.replace(temporary, receipts / f"{event.intent.intent_id}.json")
+        _fsync_directory(receipts)
+        self._delete_intent_directory(directory)
+        for stale in self._finished_receipts()[:-_FINISHED_RECEIPTS_RETAINED]:
+            stale.unlink(missing_ok=True)
+
+    def _finished_receipts(self) -> tuple[Path, ...]:
+        """Finished-intent receipts, oldest first."""
+
+        receipts = self.root / _FINISHED_RECEIPTS
+        if self._retention != "off" or not receipts.is_dir() or receipts.is_symlink():
+            return ()
+        found: list[tuple[float, Path]] = []
+        for path in receipts.glob("AIT-*.json"):
+            try:
+                found.append((path.stat().st_mtime, path))
+            except OSError:
+                continue
+        return tuple(path for _modified, path in sorted(found))
+
+    def _finished_receipt(self, intent_id: str) -> AuthoringIntentV1 | None:
+        if self._retention != "off":
+            return None
+        path = self.root / _FINISHED_RECEIPTS / f"{intent_id}.json"
+        if path.is_symlink() or not path.is_file():
+            return None
+        try:
+            raw = path.read_bytes()
+            event = _parse_authoring_intent_event(raw)
+        except (OSError, ValidationError, ValueError) as exc:
+            raise AuthoringIntentStoreError(
+                "finished AuthoringIntent receipt is malformed"
+            ) from exc
+        if (
+            raw != self._render_event(event)
+            or event.intent.intent_id != intent_id
+            or _intent_is_pending(event.intent)
+        ):
+            raise AuthoringIntentStoreError("finished AuthoringIntent receipt does not reproduce")
+        return event.intent
 
     def _delete_intent_directory(self, directory: Path) -> None:
         global _HISTORY_MEMO_BYTES
@@ -836,6 +887,12 @@ class AuthoringIntentStore:
 
     def _event_paths(self, directory: Path) -> tuple[Path, ...]:
         if directory.is_symlink() or not directory.is_dir():
+            if self._retention == "off":
+                raise AuthoringIntentStoreError(
+                    "AuthoringIntent does not exist; this instance keeps an intent only "
+                    "while it is in progress, so read a finished write's result from "
+                    "accepted state"
+                )
             raise AuthoringIntentStoreError("AuthoringIntent does not exist")
         events_directory = directory / "events"
         if events_directory.is_symlink() or not events_directory.is_dir():
