@@ -126,8 +126,11 @@ def test_shared_capture_emits_one_claim_cites_retired_row_and_retirement_clears_
     (row,) = rows
     assert row.subject_identity == f"Claim:{live_claim_id}"
     assert row.detail["relation_kind"] == "capture"
-    assert row.repair.operation == "playbill.claim.retire"
-    assert row.repair.required_change == "retire_or_replace_claim_citing_retired_evidence"
+    # Shared evidence asks for a review decision, never for a retirement.
+    assert row.repair.operation == "playbill.claim.attest"
+    assert row.repair.required_change == "review_claim_sharing_evidence_with_a_retired_claim"
+    assert row.repair.arguments["stances"] == ["support", "unsure", "contradict"]
+    assert row.repair.command is None
 
     _retire_claim(instance, owner, live_claim_id)
     assert not [item for item in _next(instance).items if item.reason == "claim_cites_retired"]
@@ -220,10 +223,11 @@ def test_post_retirement_examined_support_suppresses_and_rearms_through_real_sur
             for generation in instance.accepted_history()
         },
     )
+    # Holding it as unsure records the review without forcing a judgment.
     append(stance="unsure", basis="examined_existing", offset=2)
-    assert len(rows()) == 1
-    append(stance="support", basis="examined_existing", offset=3)
     assert rows() == ()
+    append(stance="contradict", basis="examined_existing", offset=3)
+    assert len(rows()) == 1, "an examined contradiction leaves the review open"
     append(stance="support", basis="new_capture", offset=4)
     assert len(rows()) == 1, "new-capture support is not an examined-existing review"
     append(stance="support", basis="examined_existing", offset=5)
@@ -521,3 +525,20 @@ def test_live_copy_association_suppresses_retired_source_staleness(tmp_path: Pat
 
     assert not [item for item in rows if item.reason == "retired_claim_source_stale"]
     assert len([item for item in rows if item.reason == "claim_cites_retired"]) == 1
+
+
+def test_a_review_decision_renders_a_runnable_attest_line_only_once_a_stance_is_chosen() -> None:
+    from cruxible_core.service.discovery.next import _repair_command
+
+    assert _repair_command("playbill.claim.attest", arguments={"claim_id": "c-1"}) is None
+    assert (
+        _repair_command(
+            "playbill.claim.attest",
+            arguments={"claim_id": "c-1", "stances": ["support", "unsure", "contradict"]},
+        )
+        is None
+    )
+    assert (
+        _repair_command("playbill.claim.attest", arguments={"claim_id": "c-1", "stance": "unsure"})
+        == "cruxible playbill claim attest c-1 --unsure"
+    )

@@ -150,6 +150,7 @@ NextRepairOperation = Literal[
     "playbill.authoring.create",
     "playbill.authoring.bind",
     "playbill.claim.retire",
+    "playbill.claim.attest",
     "playbill.floor.export",
     "playbill.block.depublish",
     "playbill.block.repin",
@@ -642,6 +643,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.block.repin": "playbill block repin",
     "playbill.block.sync": "playbill block sync",
     "playbill.document.propose": "playbill document propose",
+    "playbill.claim.attest": "playbill claim attest",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -726,6 +728,14 @@ def _repair_command(
             parts.append("--all")
         else:
             return None
+    elif operation == "playbill.claim.attest":
+        # A review decision is the caller's to make: with no stance chosen there
+        # is no runnable line, rather than one that picks a stance for them.
+        claim_id = values.get("claim_id")
+        stance = values.get("stance")
+        if not isinstance(claim_id, str) or stance not in {"support", "contradict", "unsure"}:
+            return None
+        parts.extend([shlex.quote(claim_id), f"--{stance}"])
     elif operation == "playbill.claim.retire":
         claim_id = values.get("claim_id")
         if isinstance(claim_id, str):
@@ -1247,7 +1257,11 @@ def post_retirement_examined_support_suppresses_claim_cites_retired(
     door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
     accepted_sequence_by_semantic_root: Mapping[str, int] | None = None,
 ) -> bool:
-    """Suppress only after a current Claim was examined after the cited retirement."""
+    """Suppress only after a current Claim was examined after the cited retirement.
+
+    Examining it and still supporting it, or holding it as unsure without
+    forcing a judgment, both record the review; contradicting it does not.
+    """
 
     if (
         claim_identity is None
@@ -1271,7 +1285,7 @@ def post_retirement_examined_support_suppresses_claim_cites_retired(
     return any(
         payload.current_at_append
         and payload.attestation.statement.attestation_basis == "examined_existing"
-        and payload.attestation.statement.stance == "support"
+        and payload.attestation.statement.stance in {"support", "unsure"}
         and (
             accepted_sequence_by_semantic_root.get(
                 payload.attestation.statement.referent_coordinate.semantic_root,
@@ -1511,13 +1525,16 @@ def _claim_cites_retired_item(
             "retired_claim_count": retired_claim_count,
             "retired_claim_witnesses": list(retired_claim_witnesses),
         },
+        # Sharing evidence with a retired Claim is a reason to look, not to
+        # retire: the retirement did not retire the evidence. The decision is
+        # an examined attestation -- support, unsure (hold), or contradict.
         repair=PlaybillNextRepairV1(
-            operation="playbill.claim.retire",
+            operation="playbill.claim.attest",
             target=live_claim_identity,
-            required_change="retire_or_replace_claim_citing_retired_evidence",
+            required_change="review_claim_sharing_evidence_with_a_retired_claim",
             arguments={
                 "claim_id": live_claim_identity.removeprefix("Claim:"),
-                "expected_coordinate": coordinate.model_dump(mode="json"),
+                "stances": ["support", "unsure", "contradict"],
             },
         ),
     )

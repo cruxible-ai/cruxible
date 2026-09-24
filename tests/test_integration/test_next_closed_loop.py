@@ -179,7 +179,7 @@ EXPECTED_OPERATIONS = {
     "claim_new_evidence_supporting": "playbill.authoring.create",
     "claim_new_evidence_unreviewed": "playbill.authoring.create",
     "document_modified": "playbill.document.propose",
-    "claim_cites_retired": "playbill.claim.retire",
+    "claim_cites_retired": "playbill.claim.attest",
     "retired_claim_source_stale": "playbill.document.propose",
     "unregistered_projection_block": "playbill.block.repin",
     "provider_lane_unavailable": "hand_edit",
