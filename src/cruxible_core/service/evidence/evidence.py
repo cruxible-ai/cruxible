@@ -806,7 +806,21 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
         locations = history.claim_law_locations(path=path, latest=True)
         if not locations:
             return None
-        record = history.read_member_record(locations[0], self._records)
+        # A path's law evidence at one accepted sequence never changes, so it
+        # is parsed once per instance rather than re-read from its record.
+        memo = self.instance.claim_law_memo
+        key = (path, locations[0].sequence)
+        cached = memo.get(key)
+        if cached is not None:
+            return cast(ClaimLawEvidenceAny | None, cached[0])
+        found = self._read_record(history, path, locations[0])
+        memo.put(key, (found,), weight=2048)
+        return found
+
+    def _read_record(
+        self, history: HistoryReader, path: str, location: Any
+    ) -> ClaimLawEvidenceAny | None:
+        record = history.read_member_record(location, self._records)
         if isinstance(record, ChangeSetRecord):
             return None
         if record.sequence not in self._evidence_by_sequence:

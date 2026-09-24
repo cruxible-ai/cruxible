@@ -79,6 +79,7 @@ from cruxible_core.compiler.projection_artifacts import (
 )
 from cruxible_core.compiler.projection_tree import TreeReadLimits, read_registered_tree
 from cruxible_core.curation.review_operational import ReviewOperationalStore
+from cruxible_core.derived.derived_runtime import BoundedCache
 from cruxible_core.derived.derived_state import (
     DerivedState,
     IndexDefinition,
@@ -298,6 +299,10 @@ class PlaybillInstance:
         # Compiled semantic facts per owner version; see TypedStateReader.facts_for.
         self._owner_facts = self.derived.memo(
             "owner-facts", max_entries=65536, max_bytes=64 * 1024 * 1024
+        )
+        # Parsed Claim law evidence per (path, accepting sequence).
+        self.claim_law_memo: BoundedCache[tuple[Any, ...]] = self.derived.memo(
+            "claim-law-evidence", max_entries=65536, max_bytes=64 * 1024 * 1024
         )
         self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)
         for name, namespace, adapter, source in (

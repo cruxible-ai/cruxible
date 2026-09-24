@@ -614,9 +614,10 @@ def _claim_admission_accounts(
     claim_type = parse_claim_type(tree[claim_type_path_value], path=claim_type_path_value)
     contracts = _capture_contracts(tree)
     accounts: list[CaptureAdmissionAccountV1] = []
+    bodies = instance.body_store()
     for citation in claim_citation_references(claim):
         envelope = parse_capture_envelope(
-            instance.body_store().read(
+            bodies.read(
                 citation.capture_digest,
                 access=BodyAccessContext(principal_id="playbill-service", can_read_body=True),
             )
