@@ -11,6 +11,7 @@ from cruxible_client.contracts.subjects import render_subject
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import P2_B5_COMPILER
 from cruxible_core.indexes import sqlite as storage
+from cruxible_core.indexes.logical_digest import compute_table_sums, store_table_sums
 from cruxible_core.indexes.projection import render_projection_manifest
 from cruxible_core.indexes.typed_sqlite import row_counts
 from tests.core_support._projection_support import MemoryLedger, accepted_coordinate
@@ -50,6 +51,8 @@ def _publication(tmp_path):
         "UPDATE subjects SET revision=100",
         "DELETE FROM subjects WHERE identity='Subject:test/dependent'",
         "UPDATE members SET byte_length=byte_length+1",
+        "DELETE FROM vocabulary_terms",
+        "UPDATE tree_inventory SET file_count=0, byte_total=0",
     ],
 )
 def test_self_consistent_forged_rows_and_manifest_refuse_source_authentication(tmp_path, mutation):
@@ -62,6 +65,8 @@ def test_self_consistent_forged_rows_and_manifest_refuse_source_authentication(t
             connection.execute("DELETE FROM subjects WHERE path LIKE '%dependent.json'")
         else:
             connection.execute(mutation)
+        # Self-consistent: the forged rows' own logical sums, too.
+        store_table_sums(connection, compute_table_sums(connection))
         counts = row_counts(connection)
     os.chmod(piece_path, 0o400)
     piece = result.manifest.pieces[0].model_copy(

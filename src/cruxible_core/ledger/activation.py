@@ -6,7 +6,7 @@ import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
 
 from cruxible_client.contracts.errors import SettlementIntegrityError
 from cruxible_client.contracts.types import GenesisCoordinate
@@ -30,7 +30,6 @@ from cruxible_core.ledger.checkpoints import (
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.ledger.witness import WitnessRecord, WitnessSink
 from cruxible_core.proposals.settlement import (
-    ChangeSetRecordAnyVersion,
     VerifiedGenerationBundle,
     render_generation_descriptor,
 )
@@ -49,6 +48,9 @@ ACTIVATION_CRASH_POINTS: Final = (
     WITNESS_PUBLICATION,
     ORPHAN_CLEANUP,
 )
+
+if TYPE_CHECKING:
+    from cruxible_core.compiler.projection_delta import MemberHistory
 
 
 class ActivationCrashHook(Protocol):
@@ -83,7 +85,7 @@ class ActivationPublisher:
         checkpoint_directory: Path | None = None,
         checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
         genesis: GenesisCoordinate | None = None,
-        verified_change_sets: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
+        member_history: MemberHistory | None = None,
         resolve_claim_digest: Callable[[str], tuple[str, ...]] | None = None,
     ) -> None:
         if checkpoint_interval < 1:
@@ -96,7 +98,7 @@ class ActivationPublisher:
         self.checkpoint_directory = checkpoint_directory
         self.checkpoint_interval = checkpoint_interval
         self.genesis = genesis
-        self.verified_change_sets = verified_change_sets
+        self.member_history = member_history
         self.resolve_claim_digest = resolve_claim_digest
 
     def prebuild(
@@ -135,8 +137,8 @@ class ActivationPublisher:
         from cruxible_core.compiler.projection_delta import GenerationDelta
 
         delta = (
-            GenerationDelta(base, bundle, self.verified_change_sets)
-            if self.verified_change_sets is not None and coordinate.compiler == base.compiler
+            GenerationDelta(base, bundle, self.member_history)
+            if self.member_history is not None and coordinate.compiler == base.compiler
             else None
         )
         return assembler.assemble(

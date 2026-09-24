@@ -563,6 +563,33 @@ class ReviewOperationalStore:
             )
             return event, value
 
+    def first_payload(
+        self, *, family: ReviewOperationalFamily, partition_id: str
+    ) -> dict[str, object] | None:
+        """The authenticated first event's payload of one partition, or None if absent."""
+        with self._locked():
+            if not self.root.exists() and not self.root.is_symlink():
+                return None
+            directory = self._partition_directory(family, partition_id, create=False)
+            if not directory.exists() and not directory.is_symlink():
+                return None
+            previous = review_operational_partition_genesis_digest(
+                instance_id=self.instance_id, family=family, partition_id=partition_id
+            )
+            return self._load_event(directory, family, partition_id, 0, previous)[1]
+
+    def partition_payloads(
+        self, *, family: ReviewOperationalFamily, partition_id: str
+    ) -> tuple[dict[str, object], ...]:
+        """One partition's authenticated payloads in chain order; () if absent."""
+        with self._locked():
+            if not self.root.exists() and not self.root.is_symlink():
+                return ()
+            directory = self._partition_directory(family, partition_id, create=False)
+            if not directory.exists() and not directory.is_symlink():
+                return ()
+            return tuple(payload for _event, payload in self._load_partition(family, partition_id))
+
     def append_batch(
         self,
         *,

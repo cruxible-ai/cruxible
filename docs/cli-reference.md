@@ -644,6 +644,24 @@ cruxible playbill authoring status INTENT_ID
 cruxible playbill authoring abandon-insertion INTENT_ID [--expectation-id ID]
 ~~~
 
+**Intent retention.** A local daemon keeps an authoring intent only while it is
+in progress. Only unsubmitted drafts expire, after a day untouched; submitted work
+stays available until it finishes. A finished intent (accepted, superseded or
+terminal), including one accepted through its proposal, is reduced to a receipt of
+its final state, and the 16 most recent receipts are kept, so a retried `submit`
+or `status` still answers. Read older results from accepted state. Set
+`CRUXIBLE_AUTHORING_INTENTS=durable` on a managed daemon to retain every intent's
+full event stream.
+
+**Read receipts.** A local daemon records no read-touch (consumption) receipts:
+`CRUXIBLE_CONSUMPTION_RECEIPTS` defaults to `off`, so reads write no receipts. Set it
+to `on` on a managed daemon to record one receipt per served artifact. Receipts
+feed curation only: with them off, dead-vocabulary detection stands down
+(`consumption_receipts_off`). If a daemon that was recording is later run with
+receipts off, it marks the instance unobserved once, and when recording resumes
+the detector stays silent (`consumption_observation_gap`) until a receipt is
+written, then counts zero use only from that point.
+
 One authoring intent is one changeset. The tagless `change_set` input carries
 any mix of members -- `claim`, `claim_type`, `claim_retirement`, `subject`,
 `query_definition`, `procedure`, `procedure_mandate` -- and the whole intent

@@ -110,6 +110,7 @@ from cruxible_core.storage.cas import BodyAccessContext
 
 if TYPE_CHECKING:
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+    from cruxible_core.storage.cas import ContentAddressedBodyStore
 
 
 class _StrictClaimServiceModel(BaseModel):
@@ -480,6 +481,7 @@ def materialize_playbill_claim_view(
     evaluation_time: datetime,
     law: ClaimLawEvidenceAny | None,
     admission_tree: dict[str, bytes] | None = None,
+    bodies: ContentAddressedBodyStore | None = None,
 ) -> PlaybillClaimViewV2:
     """Shared single/batch admission semantics; binding and selection happen upstream."""
     if law is None:
@@ -499,6 +501,7 @@ def materialize_playbill_claim_view(
                 else _claim_admission_tree(instance, claim=parsed, coordinate=coordinate)
             ),
             law=law,
+            bodies=bodies,
         ),
         statement=claim_statement_card(parsed),
     )
@@ -619,6 +622,7 @@ def _claim_admission_accounts(
     claim: ClaimArtifactAny,
     tree: Mapping[str, bytes],
     law: ClaimLawEvidenceAny,
+    bodies: ContentAddressedBodyStore | None = None,
 ) -> tuple[CaptureAdmissionAccountV1, ...]:
     from cruxible_core.evidence.attestation_verification import _capture_contracts
 
@@ -626,9 +630,11 @@ def _claim_admission_accounts(
     claim_type = parse_claim_type(tree[claim_type_path_value], path=claim_type_path_value)
     contracts = _capture_contracts(tree)
     accounts: list[CaptureAdmissionAccountV1] = []
+    # A batch resolves the confined body store once and passes it down.
+    bodies = instance.body_store() if bodies is None else bodies
     for citation in claim_citation_references(claim):
         envelope = parse_capture_envelope(
-            instance.body_store().read(
+            bodies.read(
                 citation.capture_digest,
                 access=BodyAccessContext(principal_id="playbill-service", can_read_body=True),
             )

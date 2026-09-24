@@ -303,6 +303,7 @@ class AuthoringIntentCoordinator:
                 "instance_id": intent.instance_id,
             },
         ).tagged
+        self.finalize_completed()
         stored = self.store.create(intent, operation_key=operation_key)
         if reference_expectations is not None and (
             not isinstance(stored, AuthoringIntentV2)
@@ -681,11 +682,8 @@ class AuthoringIntentCoordinator:
 
     def _projected_claim_revision(self, *, claim_id: str, artifact_digest: str) -> int:
         path = claim_path(claim_id)
-        records = tuple(
-            (path, generation.record)
-            for generation in self.instance.accepted_history()
-            if generation.record is not None
-        )
+        # Only the records that touched this Claim count toward its revision.
+        records = self.instance.member_record_history((path,))
         return projected_revision(
             records,
             path=path,
@@ -1466,6 +1464,45 @@ class AuthoringIntentCoordinator:
             ),
         )
 
+    def finalize_completed(self) -> None:
+        """Record acceptance on submitted intents whose candidate was accepted.
+
+        An intent accepted through its proposal is otherwise only reported as
+        accepted on a status read; persisting it lets a local instance compact
+        it to its receipt. Runs after an activation and before each create.
+        """
+        if not self.store.finishes_completed:
+            return
+        candidates = self.store.submitted_candidates()
+        if not candidates:
+            return
+        # Only a candidate the history index names as accepted is loaded; the
+        # rest cost one index lookup, not a read of their candidate record.
+        with self.instance.accepted_history_reader() as history:
+            accepted = [
+                (intent_id, actor_id)
+                for intent_id, actor_id, digest in candidates
+                if history.generation_for_candidate(digest) is not None
+            ]
+        for intent_id, actor_id in accepted:
+            intent = self.store.get(intent_id, actor_id=actor_id)
+            if intent.candidate_status.state == "accepted":
+                continue  # another caller already finished it
+            reduced = self._reduce_status(intent)
+            if reduced.state != "accepted":
+                continue
+            key = typed_digest(
+                Sha256Value,
+                "playbill-authoring-accepted-v1",
+                {"intent_id": intent.intent_id, "candidate_digest": reduced.candidate_digest},
+            ).tagged
+            self.store.complete(
+                intent.intent_id,
+                actor_id=intent.actor_id,
+                operation_key=key,
+                status=reduced,
+            )
+
     def _reduce_status(self, intent: AuthoringIntentV1) -> CandidateStatusV1:
         status = intent.candidate_status
         if status.proposal_id is None or status.candidate_digest is None:
@@ -1476,20 +1513,21 @@ class AuthoringIntentCoordinator:
                     )
                 }
             )
-        for generation in self.instance.accepted_history():
-            if generation.record is not None and (
-                generation.record.candidate_digest == status.candidate_digest
-            ):
-                accepted = self.instance.coordinate_for_oid(generation.oid)
-                return CandidateStatusV1(
-                    state="accepted",
-                    proposal_id=status.proposal_id,
-                    candidate_digest=status.candidate_digest,
-                    current_accepted_coordinate=AcceptedCoordinate.from_internal(
-                        self.instance.accepted_coordinate()
-                    ),
-                    accepted_generation=AcceptedCoordinate.from_internal(accepted),
-                )
+        # The history index names the generation that published this candidate,
+        # so no change-set record is read.
+        with self.instance.accepted_history_reader() as history:
+            location = history.generation_for_candidate(status.candidate_digest)
+        if location is not None:
+            accepted = self.instance.coordinate_for_oid(location.git_oid)
+            return CandidateStatusV1(
+                state="accepted",
+                proposal_id=status.proposal_id,
+                candidate_digest=status.candidate_digest,
+                current_accepted_coordinate=AcceptedCoordinate.from_internal(
+                    self.instance.accepted_coordinate()
+                ),
+                accepted_generation=AcceptedCoordinate.from_internal(accepted),
+            )
         candidate = self.instance.proposal_evidence().read_candidate(status.candidate_digest)
         if (
             candidate.candidate.parent_semantic_root

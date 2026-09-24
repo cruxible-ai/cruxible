@@ -131,7 +131,10 @@ def test_two_served_writes_handoff_without_recovery_and_detach_mutable_state(
                 pass
             expected_record = render_change_set(instance.accepted_history()[-1].record)
             bundles[-1].record.law_digests.clear()
-            bundles[-1].tree[bundles[-1].record_path] = b"mutated detached bundle\n"
+            # The generation tree is an immutable snapshot; nothing can write
+            # through it into instance state.
+            with pytest.raises(TypeError):
+                bundles[-1].tree[bundles[-1].record_path] = b"mutated detached bundle\n"  # type: ignore[index]
             assert render_change_set(instance.accepted_history()[-1].record) == expected_record
     _assert_reopened_parity(instance)
 

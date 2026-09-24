@@ -83,16 +83,17 @@ def test_tree_writes_check_only_members_the_accepted_parent_lacks(tmp_path, monk
     )
     successor = {**base, "claims/c.json": b"c"}
     expected = ledger._write_tree(successor)
-    checked: list[tuple[str, ...]] = []
-    absent = ledger._absent_objects
+    stored: list[set[str]] = []
+    store = ledger._store_loose_objects
 
-    def counted(oids):
-        checked.append(tuple(oids))
-        return absent(oids)
+    def counted(objects):
+        stored.append({oid for oid, (kind, _body) in objects.items() if kind == "blob"})
+        return store(objects)
 
-    monkeypatch.setattr(ledger, "_absent_objects", counted)
+    monkeypatch.setattr(ledger, "_store_loose_objects", counted)
     assert ledger._write_tree(successor, accepted_parent=parent) == expected
-    assert checked == [(ledger._blob_oid(b"c"),)]
+    # Only the member the accepted parent lacks is stored.
+    assert stored == [{ledger._blob_oid(b"c")}]
 
 
 def test_a_written_tree_records_exactly_the_listing_git_reports(tmp_path):

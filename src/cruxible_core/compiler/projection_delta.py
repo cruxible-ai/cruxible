@@ -9,6 +9,7 @@ shapes deliberately use the existing full assembler.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, TypeVar
@@ -16,14 +17,19 @@ from typing import TYPE_CHECKING, Callable, TypeVar
 from cruxible_client.contracts.canonical import is_candidate_card_path
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
-from cruxible_core.compiler.projection_tree import _read_registered_entries
+from cruxible_core.compiler.projection_tree import read_registered_delta
 from cruxible_core.indexes.projection import (
     AcceptedProjectionCoordinate,
     AssemblerRequest,
     CandidateGenerationProjectionCoordinate,
     projection_manifest_name,
 )
-from cruxible_core.indexes.sqlite import bind_projection, update_projection_database
+from cruxible_core.indexes.sqlite import (
+    bind_projection,
+    projection_tree_inventory,
+    update_projection_database,
+)
+from cruxible_core.ledger.git import GitLedger
 from cruxible_core.proposals.settlement import (
     ChangeSetRecordAnyVersion,
     ChangeSetRecordV2,
@@ -58,11 +64,15 @@ _LOCAL_KINDS = frozenset(
 T = TypeVar("T")
 
 
+# The verified change-set records that touched each of these paths, at the base.
+MemberHistory = Callable[[Sequence[str]], tuple[tuple[str, ChangeSetRecordAnyVersion], ...]]
+
+
 @dataclass(frozen=True)
 class GenerationDelta:
     base: AcceptedProjectionCoordinate
     bundle: VerifiedGenerationBundle
-    verified_prefix: tuple[tuple[str, ChangeSetRecordAnyVersion], ...]
+    member_history: MemberHistory
 
 
 def _timed(timings: dict[str, int], phase: str, fn: Callable[[], T]) -> T:
@@ -91,10 +101,6 @@ def populate_successor(
         return None
     if not isinstance(bundle.record, (ChangeSetRecordV2, ChangeSetRecordV3)):
         return None
-    if tuple(r.sequence for _, r in delta.verified_prefix) != tuple(
-        range(1, bundle.record.sequence)
-    ):
-        raise ProjectionIntegrityError("derived-index delta has a noncontiguous verified prefix")
     if any(member.artifact_kind not in _LOCAL_KINDS for member in bundle.record.members):
         return None
 
@@ -115,40 +121,45 @@ def populate_successor(
     if not parent_manifest.is_file():
         return None
 
-    def changed_inputs() -> tuple[frozenset[str], dict[str, bytes]]:
-        repository = assembler._repository
-        parent_entries = {e.path: e for e in repository.list_tree_with_sizes(base.git_oid)}
-        current_inventory = repository.list_tree_with_sizes(request.git_oid)
-        current_entries = {entry.path: entry for entry in current_inventory}
-        changed = frozenset(
-            path
-            for path in parent_entries.keys() | current_entries.keys()
-            if parent_entries.get(path) != current_entries.get(path)
-        )
-        members = frozenset(member.path for member in bundle.record.members)
-        extra = {p for p in changed - members if not is_candidate_card_path(p)}
-        if extra != {bundle.record_path}:
-            raise ProjectionIntegrityError("Git successor differs outside its changeset")
-        # Validate the whole inventory boundary, but read only changeset members.
-        selected = members
-        blobs = _read_registered_entries(
-            repository,
-            current_inventory,
-            limits=request.limits,
-            artifact_kinds=assembler.artifact_kinds,
-            include_paths=selected,
-        )
-        result = {blob.path: blob.content for blob in blobs}
-        record_bytes = repository.read_blob(current_entries[bundle.record_path].oid)
-        if record_bytes is None:
-            raise ProjectionIntegrityError("verified successor changeset is absent")
-        result[bundle.record_path] = record_bytes
-        return members, result
-
-    members, inputs = _timed(timings, "git_traversal", changed_inputs)
+    repository = assembler._repository
+    # The delta is gated through Git's structural diff; any other repository
+    # rebuilds from its whole inventory.
+    if not isinstance(repository, GitLedger):
+        return None
+    members = frozenset(member.path for member in bundle.record.members)
     with bind_projection(parent_manifest, expected=base) as parent:
-        parent.require_source_authentication(repository=assembler._repository)
-        records = (*delta.verified_prefix, (bundle.record_path, bundle.record))
+        parent.require_source_authentication(repository=repository)
+
+        def changed_inputs() -> tuple[dict[str, bytes], tuple[int, int]]:
+            # Git's structural diff costs what changed; the unreported
+            # complement is byte-identical to the verified parent's tree.
+            changes = repository.changed_entries(base.git_oid, request.git_oid)
+            changed = {change.path for change in changes}
+            extra = {p for p in changed - members if not is_candidate_card_path(p)}
+            if extra != {bundle.record_path}:
+                raise ProjectionIntegrityError("Git successor differs outside its changeset")
+            blobs, inventory = read_registered_delta(
+                repository,
+                changes,
+                base_oid=base.git_oid,
+                head_oid=request.git_oid,
+                parent_inventory=projection_tree_inventory(parent),
+                limits=request.limits,
+                artifact_kinds=assembler.artifact_kinds,
+                include_paths=members | {bundle.record_path},
+            )
+            result = {blob.path: blob.content for blob in blobs}
+            if bundle.record_path not in result:
+                raise ProjectionIntegrityError("verified successor changeset is absent")
+            return result, inventory
+
+        inputs, inventory = _timed(timings, "git_traversal", changed_inputs)
+        # Only records that touched these members bear on their revisions and
+        # explanation proofs, so the build never walks the whole history.
+        prior = delta.member_history(tuple(sorted(members)))
+        if any(record.sequence >= bundle.record.sequence for _path, record in prior):
+            raise ProjectionIntegrityError("derived-index member history is not before the delta")
+        records = (*prior, (bundle.record_path, bundle.record))
         parsed = _timed(
             timings,
             "parse_normalize",
@@ -160,7 +171,7 @@ def populate_successor(
                 bodies=assembler.bodies,
                 coordinate=request,
                 accepted_coordinates_by_sequence=assembler.accepted_coordinates_by_sequence,
-                verified_change_sets=records,
+                selected_member_history=records,
             ),
         )
         # Verify the compiled member identities/digests against the changeset, not
@@ -182,6 +193,7 @@ def populate_successor(
                 parsed=parsed,
                 changed_paths=members,
                 sources=inputs,
+                inventory=inventory,
                 bodies=assembler.bodies,
                 resolve_digest=assembler.resolve_claim_digest,
             ),

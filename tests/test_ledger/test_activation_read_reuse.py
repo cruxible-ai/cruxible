@@ -106,9 +106,9 @@ def test_activation_extends_the_proposal_tree_instead_of_rewriting_it(
     extended: list[str] = []
     extend = GitLedger._extend_tree
 
-    def counted(self, base_tree, tree):
+    def counted(self, base_tree, tree, **kwargs):
         extended.append(base_tree)
-        return extend(self, base_tree, tree)
+        return extend(self, base_tree, tree, **kwargs)
 
     def full_write(*args, **kwargs):
         pytest.fail("activation rewrote the whole generation tree")

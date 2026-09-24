@@ -79,6 +79,7 @@ from cruxible_core.compiler.projection_artifacts import (
 )
 from cruxible_core.compiler.projection_tree import TreeReadLimits, read_registered_tree
 from cruxible_core.curation.review_operational import ReviewOperationalStore
+from cruxible_core.derived.derived_runtime import BoundedCache
 from cruxible_core.derived.derived_state import (
     DerivedState,
     IndexDefinition,
@@ -99,6 +100,7 @@ from cruxible_core.indexes.history.history_index import (
     AcceptedGenerationLocation,
     AcceptedHistoryIndex,
     HistoryReader,
+    PriorMemberSequences,
     RetainedRecordReader,
 )
 from cruxible_core.indexes.projection import (
@@ -294,6 +296,14 @@ class PlaybillInstance:
         self._recovered = recovered
         self._state_lock = threading.RLock()
         self.derived = DerivedState()
+        # Compiled semantic facts per owner version; see TypedStateReader.facts_for.
+        self._owner_facts = self.derived.memo(
+            "owner-facts", max_entries=65536, max_bytes=64 * 1024 * 1024
+        )
+        # Parsed Claim law evidence per (path, accepting sequence).
+        self.claim_law_memo: BoundedCache[bytes] = self.derived.memo(
+            "claim-law-evidence", max_entries=65536, max_bytes=64 * 1024 * 1024
+        )
         self.prepared_evaluations = PreparedEvaluationAdapter(self.derived)
         for name, namespace, adapter, source in (
             ("accepted-artifacts", "accepted", self.derived, "verified-ledger-tree-v1"),
@@ -339,6 +349,8 @@ class PlaybillInstance:
     def _accepted_query_facts(
         source: object,
         coordinate: AcceptedProjectionCoordinate,
+        *,
+        predicates: tuple[str, ...] | None = None,
     ) -> "ClaimQueryFactsV1":
         """Build the one accepted-Claim facts projection for live and replay paths."""
 
@@ -348,6 +360,7 @@ class PlaybillInstance:
         return build_accepted_query_facts(
             cast(ClaimReadSourceProtocol, source),
             coordinate=coordinate,
+            predicates=predicates,
         )
 
     @classmethod
@@ -1249,7 +1262,9 @@ class PlaybillInstance:
                 instance_id=self.descriptor.instance_id,
                 bodies=bodies,
             ),
-            query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
+            query_facts_provider=lambda coordinate, *, predicates=None: self._accepted_query_facts(
+                self, coordinate, predicates=predicates
+            ),
             workspace_advertiser=self.advertise_workspace,
             receive_limits=self._receive_limits,
             require_writable=self.require_writable,
@@ -1598,7 +1613,9 @@ class PlaybillInstance:
         if self._accepted_history_index.path.parent != paths["projections"]:
             raise ProjectionIntegrityError("history index storage binding changed")
 
-        def envelopes(sequence: int) -> tuple[ArtifactEnvelopeRow, ...]:
+        def envelopes(
+            sequence: int, prior_members: PriorMemberSequences
+        ) -> tuple[ArtifactEnvelopeRow, ...]:
             if (
                 sequence == 0
                 and recovered.coordinate.compiler not in PC_HR_ARTIFACT_CODEC_COMPILERS
@@ -1659,15 +1676,21 @@ class PlaybillInstance:
                 or registered_path_kind(path, artifact_kinds=assembler.artifact_kinds)
                 != "changeset"
             )
-            verified = tuple(
+            # Only the records that touched these members bear on their
+            # revisions and proofs: earlier ones from the rows this sync already
+            # wrote, plus this generation's own. Each is read back on demand.
+            sequences = {
+                prior for touched in prior_members(member_paths).values() for prior in touched
+            } | {sequence}
+            history = tuple(
                 (f"changesets/cs-{item.sequence:020d}.json", item.record)
-                for item in recovered.history[1 : sequence + 1]
+                for item in (recovered.history[prior] for prior in sorted(sequences))
                 if item.record is not None
             )
             parsed = parse_static_owners(
                 self._ledger.blobs_at(generation.oid, member_paths),
                 accepted=coordinate,
-                verified_change_sets=verified,
+                selected_member_history=history,
             )
             selected = frozenset(changed)
             return tuple(row for row in parsed.envelopes if row.path in selected)
@@ -1699,6 +1722,23 @@ class PlaybillInstance:
         ):
             raise ProjectionIntegrityError("indexed generation differs from captured replay")
         return generation
+
+    def member_record_history(
+        self, paths: Sequence[str]
+    ) -> tuple[tuple[str, ChangeSetRecordAnyVersion], ...]:
+        """The verified records that touched these paths, found through the index."""
+
+        recovered = self._recovered
+        with self._history_reader_for_epoch(recovered) as history:
+            sequences = sorted(
+                {location.sequence for path in paths for location in history.member_history(path)}
+            )
+        records = []
+        for sequence in sequences:
+            record = recovered.history[sequence].record
+            if record is not None:
+                records.append((f"changesets/cs-{sequence:020d}.json", record))
+        return tuple(records)
 
     def accepted_evaluation_time(self, oid: str) -> datetime:
         """Resolve the immutable acceptance instant for one replayed generation."""
@@ -1763,11 +1803,15 @@ class PlaybillInstance:
 
             previous_oid = json.loads(previous_binding)["coordinate"]["git_oid"]
             self.coordinate_for_oid(previous_oid)
-            paths = self._ledger.changed_tree_paths(previous_oid, oid)
-            blobs = self._ledger.blobs_at(oid, paths)
-            return advance_accepted_tree(previous, {path: blobs.get(path) for path in paths})
+            return advance_accepted_tree(previous, self._ledger.blob_ref_changes(previous_oid, oid))
 
-        tree = self.derived.accepted_tree(binding, lambda: self.tree_at(oid), advance)
+        def load() -> SnapshotTree:
+            self.coordinate_for_oid(oid)
+            return SnapshotTree(self._ledger.blob_refs_at(oid))
+
+        tree = self.derived.accepted_tree(binding, load, advance)
+        # Loaded or advanced from exactly this commit's tree, so its rows are that tree.
+        tree._commit_oid = oid
         tree._accepted_reader = (
             None
             if coordinate.git_oid == self._verified_genesis.oid
@@ -1841,7 +1885,7 @@ class PlaybillInstance:
 
     def proposal_tree(
         self, oid: str, *, base_oid: str | None = None, proposal_id: str | None = None
-    ) -> dict[str, bytes]:
+    ) -> Mapping[str, bytes]:
         """Read an exact proposal tree, optionally carrying a proven accepted base."""
 
         self._require_proposal_object(oid, proposal_id)
@@ -1892,6 +1936,7 @@ class PlaybillInstance:
             records=RetainedRecordReader(
                 self._ledger.blob_at, verified=self.verified_change_set_records
             ),
+            fact_memo=self._owner_facts,
         )
 
     def bind_accepted_projection(
@@ -1979,11 +2024,7 @@ class PlaybillInstance:
             checkpoint_directory=self._checkpoint_directory(self.root),
             checkpoint_interval=DEFAULT_CHECKPOINT_INTERVAL,
             genesis=self.descriptor.genesis,
-            verified_change_sets=tuple(
-                (f"changesets/cs-{generation.record.sequence:020d}.json", generation.record)
-                for generation in self._recovered.history
-                if generation.record is not None
-            ),
+            member_history=self.member_record_history,
             resolve_claim_digest=self._claim_identities_for_digest,
         )
 
@@ -1991,7 +2032,7 @@ class PlaybillInstance:
         self,
         *,
         base: AcceptedProjectionCoordinate,
-        candidate_tree: dict[str, bytes],
+        candidate_tree: Mapping[str, bytes],
         candidate: CandidateRecordAnyVersion,
         approvals: tuple[ApprovalSubmission, ...],
         actor_binding: ChangeActorBinding,
@@ -2031,7 +2072,9 @@ class PlaybillInstance:
                 instance_id=self.descriptor.instance_id,
                 bodies=self.body_store(),
             ),
-            query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
+            query_facts_provider=lambda coordinate, *, predicates=None: self._accepted_query_facts(
+                self, coordinate, predicates=predicates
+            ),
             tree_state_provider=derive_indexed_state,
             accepted_tree_provider=self.immutable_tree_at,
             claim_law_provider=self.accepted_claim_law_evidence,
@@ -2044,7 +2087,7 @@ class PlaybillInstance:
         self,
         *,
         base: AcceptedProjectionCoordinate,
-        candidate_tree: dict[str, bytes],
+        candidate_tree: Mapping[str, bytes],
         candidate: CandidateRecordAnyVersion,
         approvals: tuple[ApprovalSubmission, ...],
         actor_binding: ChangeActorBinding,
@@ -2123,7 +2166,12 @@ class PlaybillInstance:
                 advanced = RecoveredInstanceState(
                     genesis=previous.genesis,
                     head=successor,
-                    history=(*previous.history, successor),
+                    # The previous head's record now lives only in the ledger.
+                    history=(
+                        *previous.history[:-1],
+                        previous.history[-1].released(self._ledger.record_at),
+                        successor,
+                    ),
                     coordinate=copy.deepcopy(result.accepted),
                     projection=copy.deepcopy(result.projection),
                 )

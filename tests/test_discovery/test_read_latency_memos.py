@@ -60,6 +60,13 @@ from tests.core_support._knowledge_loop_support import seed_claims
 from tests.test_claims.test_claims import _claim as _test_claim
 from tests.test_claims.test_claims import _claim_type as _test_claim_type
 
+
+@pytest.fixture(autouse=True)
+def _consumption_receipts_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests exercise recorded receipts, which a local daemon leaves off.
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "on")
+
+
 EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
 ACCESS = CoverageAccessProfileV1(profile_id="read-latency-test")
 

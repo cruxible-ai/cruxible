@@ -86,6 +86,7 @@ from tests.core_support._published_world import (
     retire_claim as _retire,
 )
 from tests.core_support._support import initialize_local
+from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 from tests.test_claims.test_claims import _claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_integration.test_graph_v4_provider_closure import _accepted_procedure

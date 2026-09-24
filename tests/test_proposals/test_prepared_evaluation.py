@@ -13,7 +13,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalReceiveLimits,
 )
 from cruxible_core.authoring import preflight
-from cruxible_core.derived.derived_state import DerivedState, SnapshotTree
+from cruxible_core.derived.derived_state import DerivedState, SnapshotTree, card_free_edits
 from cruxible_core.proposals import proposals
 from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationAdapter
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -364,10 +364,8 @@ def test_card_stripping_preserves_parent_edits_and_original_outcome(world, has_p
         assert dict(submission) == expected
         assert tree["cards/old.md"] == b"old"
         assert tree["cards/new.md"] == b"generated"
+        # The submission is its root's card-free view plus the non-card edits.
         if has_parent:
-            assert submission.edits_from(parent) == {
-                "documents/new.md": b"new",
-                "cards/old.md": None,
-            }
+            assert dict(card_free_edits(submission, parent) or {}) == {"documents/new.md": b"new"}
         else:
-            assert submission.edits_from(tree) == {"cards/old.md": None, "cards/new.md": None}
+            assert card_free_edits(submission, tree) == {}

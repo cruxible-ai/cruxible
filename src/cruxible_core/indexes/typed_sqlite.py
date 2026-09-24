@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping
@@ -18,7 +19,14 @@ from cruxible_core.indexes.evidence.citation_sql import (
     populate_citations,
     remove_owner_citations,
 )
-from cruxible_core.indexes.projection import AssemblerRequest
+from cruxible_core.indexes.logical_digest import (
+    NON_LOGICAL_TABLES,
+    RowDeltaRecorder,
+    compute_table_sums,
+    store_table_sums,
+    stored_table_sums,
+)
+from cruxible_core.indexes.projection import PROJECTION_STORAGE_SCHEMA_VERSION, AssemblerRequest
 from cruxible_core.indexes.typed_state import (
     OWNER_CODECS,
     insert_owners,
@@ -40,6 +48,15 @@ CREATE TABLE generation_metadata (
     instance_id TEXT NOT NULL, git_object_format TEXT NOT NULL, git_oid TEXT NOT NULL,
     semantic_root TEXT NOT NULL, generation_root TEXT NOT NULL
 ) STRICT;
+CREATE TABLE tree_inventory (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    file_count INTEGER NOT NULL CHECK(file_count >= 0),
+    byte_total INTEGER NOT NULL CHECK(byte_total >= 0)
+) STRICT;
+CREATE TABLE logical_accumulators (
+    table_name TEXT PRIMARY KEY, row_count INTEGER NOT NULL CHECK(row_count >= 0),
+    row_sum BLOB NOT NULL
+) STRICT, WITHOUT ROWID;
 """
 
 
@@ -114,11 +131,13 @@ def parse_static_owners(
     *,
     accepted: Any,
     verified_change_sets: tuple[tuple[str, Any], ...] | None = None,
+    selected_member_history: tuple[tuple[str, Any], ...] | None = None,
 ) -> ParsedProjectionTree:
     """Parse exact owner contracts without making CAS availability an index authority.
 
     ``verified_change_sets`` supplies the complete, already replay-verified record
-    prefix; ``sources`` then need not carry the change-set blobs.
+    prefix; ``selected_member_history`` instead supplies only the verified records
+    that touched ``sources``. Either way ``sources`` need not carry change-set blobs.
     """
     from dataclasses import replace
 
@@ -146,6 +165,7 @@ def parse_static_owners(
         artifact_kinds=kinds,
         artifact_codec=codec,
         verified_change_sets=verified_change_sets,
+        selected_member_history=selected_member_history,
     )
     envelopes = list(parsed.envelopes)
     pins = {(pin.source_identity, pin.target_identity): pin for pin in parsed.pins}
@@ -181,7 +201,8 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
     """Cold completeness proof for static owner selection; requires no live CAS.
 
     Covers all member commitments, every registered typed owner field, principal
-    rows and both pin kinds. Citation envelope availability is evaluated under
+    rows, both pin kinds, the reuse vocabulary index and the carried tree
+    inventory. Citation envelope availability is evaluated under
     its own live source rules, outside this proof.
     """
     from cruxible_core.compiler.compiler import (
@@ -224,6 +245,7 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
             "principals",
             "pins",
             "claim_type_names",
+            "vocabulary_terms",
             *(owner.table for owner in OWNER_CODECS),
         ):
             info = expected.execute(f"PRAGMA table_info({table})").fetchall()
@@ -238,6 +260,18 @@ def authenticate_source_rows(projection: Any, *, repository: Any) -> None:
                 raise ProjectionIntegrityError(
                     f"typed projection {table} rows differ from accepted source"
                 )
+        # The carried reader-limit totals successors build on: every file of
+        # the accepted tree, cards included.
+        inventory = projection._connection.execute(
+            "SELECT file_count,byte_total FROM main.tree_inventory WHERE singleton=1"
+        ).fetchone()
+        if inventory is None or tuple(inventory) != (
+            len(sources),
+            sum(len(content) for content in sources.values()),
+        ):
+            raise ProjectionIntegrityError(
+                "typed projection tree_inventory rows differ from accepted source"
+            )
     finally:
         expected.close()
 
@@ -255,30 +289,35 @@ def schema_objects(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
     ]
 
 
-def verify_schema(connection: sqlite3.Connection) -> None:
+@functools.cache
+def _reference_schema_objects() -> tuple[tuple[object, ...], ...]:
+    """The registry schema is fixed per process; build its reference once."""
+
     reference = sqlite3.connect(":memory:")
     try:
         reference.executescript(complete_schema_sql())
-        if schema_objects(connection) != schema_objects(reference):
-            raise ProjectionIntegrityError(
-                "typed projection SQLite schema differs from its registry"
-            )
+        return tuple(schema_objects(reference))
     finally:
         reference.close()
+
+
+def verify_schema(connection: sqlite3.Connection) -> None:
+    if tuple(schema_objects(connection)) != _reference_schema_objects():
+        raise ProjectionIntegrityError("typed projection SQLite schema differs from its registry")
 
 
 def logical_export(connection: sqlite3.Connection) -> dict[str, object]:
     verify_schema(connection)
     tables = []
     for object_type, name, _table, sql in schema_objects(connection):
-        if object_type != "table" or name in ("generation_metadata", "assembler_metadata"):
+        if object_type != "table" or name in NON_LOGICAL_TABLES:
             continue
         info = connection.execute(f"PRAGMA table_info({name})").fetchall()
         keys = [row[1] for row in sorted(info, key=lambda row: row[5]) if row[5]]
         rows = connection.execute(f"SELECT * FROM {name} ORDER BY {','.join(keys)}").fetchall()
         tables.append({"name": name, "sql": sql, "rows": [list(row) for row in rows]})
     return {
-        "storage_schema_version": 7,
+        "storage_schema_version": PROJECTION_STORAGE_SCHEMA_VERSION,
         "schema": [list(row) for row in schema_objects(connection)],
         "tables": tables,
     }
@@ -318,6 +357,7 @@ def replace_rows(
     changed_paths: Iterable[str] = (),
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
     bodies: Any = None,
+    whole_checks: bool = True,
 ) -> None:
     changed = tuple(sorted(set(changed_paths)))
     for path in changed:
@@ -333,6 +373,7 @@ def replace_rows(
                 remove_owner_citations(connection, (("attestation", key),))
             connection.execute("DELETE FROM pins WHERE source_identity=?", (identity,))
             connection.execute("DELETE FROM claim_type_names WHERE source_identity=?", (identity,))
+            connection.execute("DELETE FROM vocabulary_terms WHERE source_identity=?", (identity,))
             if kind == "exhaust-promotion":
                 connection.execute(
                     "DELETE FROM promotion_subjects WHERE promotion_identity=?", (identity,)
@@ -376,12 +417,26 @@ def replace_rows(
             "INSERT INTO promotion_subjects VALUES (?,?,?,?)",
             (owners[0][0], fact.subject_identity, fact.schema_id.split(".")[1], fact.fact_key),
         )
+    if whole_checks:
+        check_whole_projection(connection, request=request)
+
+
+def check_whole_projection(connection: sqlite3.Connection, *, request: AssemblerRequest) -> None:
     # Full registry validation is O(principals), explicitly distinct from indexed
     # active-actor checks. This publication is a derivative, never a trust root.
     if connection.execute("SELECT 1 FROM principals LIMIT 1").fetchone():
         principal_registry(connection, request.semantic_root)
     if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
         raise ProjectionIntegrityError("typed projection has invalid ownership references")
+
+
+def _row_counts_from_sums(
+    connection: sqlite3.Connection, sums: Mapping[str, tuple[int, int]]
+) -> dict[str, int]:
+    counts = {name: count for name, (count, _total) in sums.items()}
+    for name in NON_LOGICAL_TABLES:
+        counts[name] = connection.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+    return dict(sorted(counts.items()))
 
 
 def initialize(
@@ -398,7 +453,7 @@ def initialize(
     connection = sqlite3.connect(path)
     try:
         connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA user_version=7")
+        connection.execute(f"PRAGMA user_version={PROJECTION_STORAGE_SCHEMA_VERSION}")
         connection.executescript(complete_schema_sql())
         replace_rows(
             connection,
@@ -427,6 +482,13 @@ def initialize(
                 request.generation_root,
             ),
         )
+        # Every file of the accepted tree, cards included: the reader limits'
+        # aggregates, carried forward so a successor checks only its changes.
+        connection.execute(
+            "INSERT INTO tree_inventory VALUES (1,?,?)",
+            (len(sources), sum(len(content) for content in sources.values())),
+        )
+        store_table_sums(connection, compute_table_sums(connection))
         connection.commit()
         verify_schema(connection)
         return row_counts(connection)
@@ -437,19 +499,31 @@ def initialize(
 def update(
     path: Path,
     *,
-    parent: sqlite3.Connection,
+    parent: sqlite3.Connection | None,
     request: AssemblerRequest,
     parsed: ParsedProjectionTree,
     sources: Mapping[str, bytes],
     changed_paths: Iterable[str],
     codec: ArtifactCodec,
+    inventory: tuple[int, int],
     bodies: Any = None,
     resolve_digest: Callable[[str], Iterable[str]] | None = None,
 ) -> dict[str, int]:
+    """Apply changed owners to a copy of a verified parent in O(changed rows).
+
+    ``parent`` is copied page by page unless ``path`` already holds a
+    byte-identical clone of it (``parent=None``). The logical sums are carried
+    forward through the rows the transaction touched. With foreign keys
+    enforced on every statement, a delta cannot orphan a row the verified
+    parent held, so only a changed principal registry is re-validated.
+    """
     connection = sqlite3.connect(path)
     try:
-        parent.backup(connection)
+        if parent is not None:
+            parent.backup(connection)
         connection.execute("PRAGMA foreign_keys=ON")
+        recorder = RowDeltaRecorder(connection)
+        parent_sums = stored_table_sums(connection)
         connection.execute("BEGIN IMMEDIATE")
         replace_rows(
             connection,
@@ -460,6 +534,14 @@ def update(
             codec=codec,
             bodies=bodies,
             resolve_digest=resolve_digest,
+            whole_checks=False,
+        )
+        sums, changed_tables = recorder.apply(parent_sums)
+        if "principals" in changed_tables:
+            principal_registry(connection, request.semantic_root)
+        store_table_sums(connection, sums)
+        connection.execute(
+            "UPDATE tree_inventory SET file_count=?,byte_total=? WHERE singleton=1", inventory
         )
         connection.execute(
             "UPDATE generation_metadata SET instance_id=?,git_object_format=?,git_oid=?,semantic_root=?,generation_root=? WHERE singleton=1",
@@ -472,7 +554,8 @@ def update(
             ),
         )
         connection.commit()
+        recorder.close()
         verify_schema(connection)
-        return row_counts(connection)
+        return _row_counts_from_sums(connection, sums)
     finally:
         connection.close()
