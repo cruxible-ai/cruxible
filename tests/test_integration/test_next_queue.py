@@ -623,6 +623,39 @@ def test_a_claim_not_yet_in_effect_is_not_reported_uncovered(tmp_path: Path) -> 
     ]
 
 
+def test_a_caller_without_instance_access_is_told_nothing_about_claims(tmp_path: Path) -> None:
+    instance, owner = seed_claims(tmp_path)
+    second = service_propose_playbill_claim(
+        instance,
+        authoring=work_item_authoring("wi-42", "blocked", with_claim_type=False),
+        actor_id="owner",
+        proposal_name="conflicting-work-item",
+        timestamp="2026-08-24T17:00:03.000000Z",
+    )
+    activate_work_item_claim(instance, owner, second)
+    claim_reasons = {
+        "claim_conflicted",
+        "claim_stale_evidence",
+        "evidence_expiring",
+        "claim_uncovered",
+        "claim_attestation_threshold_met",
+        "claim_contradicting_evidence_available",
+        "claim_new_evidence_supporting",
+        "claim_new_evidence_unreviewed",
+    }
+
+    def reasons(profile: CoverageAccessProfileV1) -> set[str]:
+        result = service_playbill_next(
+            instance,
+            request=PlaybillNextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=profile),
+        )
+        return {item.reason for item in result.items} & claim_reasons
+
+    assert "claim_conflicted" in reasons(_access())
+    public = CoverageAccessProfileV1(profile_id="public-only", permitted_access_classes=("public",))
+    assert reasons(public) == set()
+
+
 def test_conflict_repair_names_the_first_byte_ordered_disjoint_value_discriminator() -> None:
     claims = [
         status_claim(1, "wi-1", {"topic": "paging", "rule": "page"}).accepted.claim,

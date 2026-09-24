@@ -991,7 +991,13 @@ def _claim_items(
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     claims: tuple[ClaimArtifactAny, ...] | None = None,
     resolution_statuses: Mapping[str, str] | None = None,
+    access_profile: CoverageAccessProfileV1 | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
+    # Claims are instance material: a caller not permitted to see it is told
+    # nothing about them -- no identities, values, or verdicts -- exactly as the
+    # citation and dependency folds already refuse.
+    if access_profile is not None and not access_profile.permits("instance"):
+        return ()
     if claims is None:
         listed = service_list_playbill_claims(instance, at=coordinate)
         claims = tuple(_claim_from_view(view) for view in listed.claims)
@@ -1993,8 +1999,12 @@ def _claim_attestation_door_items(
     *,
     coordinate: AcceptedProjectionCoordinate,
     door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...],
+    access_profile: CoverageAccessProfileV1 | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Fold new-capture memberships against immutable acceptance-time accounts."""
+
+    if access_profile is not None and not access_profile.permits("instance"):
+        return ()
 
     from cruxible_client.contracts.claim_attestations import claim_attestation_v2_envelope_digest
 
@@ -3260,9 +3270,13 @@ def service_playbill_next(
                     verdicts_by_identity=verdicts_by_identity,
                     claims=parsed_claims,
                     resolution_statuses=resolution_statuses,
+                    access_profile=request.access_profile,
                 ),
                 *_claim_attestation_door_items(
-                    instance, coordinate=coordinate, door_events=door_events
+                    instance,
+                    coordinate=coordinate,
+                    door_events=door_events,
+                    access_profile=request.access_profile,
                 ),
                 *workspace_items,
                 *_projection_items(
