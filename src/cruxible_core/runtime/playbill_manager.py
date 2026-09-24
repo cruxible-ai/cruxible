@@ -57,6 +57,10 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+# Every this many activations, frozen state is collected once in full.
+_RECLAIM_EVERY_ACTIVATIONS = 64
+
+
 class PlaybillInstanceManager:
     """Open Playbill only from a registry-owned root and pinned trust-root file."""
 
@@ -66,6 +70,7 @@ class PlaybillInstanceManager:
         self._lock = threading.RLock()
         # Set by the daemon process only: see ``_long_lived``.
         self.freeze_opened_state = False
+        self._activations = 0
         from cruxible_core.runtime.line_listener import LineListener
 
         self.line_listener = LineListener(self)
@@ -234,6 +239,8 @@ class PlaybillInstanceManager:
                 raise PlaybillFormatError("persisted Playbill trust root is not canonical")
             with self._long_lived():
                 instance = PlaybillInstance.open(managed_root, trust_root=trust)
+            if self.freeze_opened_state:
+                instance.after_activation = self._after_activation
             instance.bind_receive_limits(
                 load_proposal_receive_config(get_server_state_root()).limits()
             )
@@ -263,6 +270,22 @@ class PlaybillInstanceManager:
                 gc.enable()
             gc.collect()
             gc.freeze()
+
+    def _after_activation(self) -> None:
+        """Freeze what an activation left resident, after collecting its garbage.
+
+        Only objects allocated since the last freeze are walked, so this costs
+        one write's worth of objects. A frozen cycle that later becomes garbage
+        is never collected while frozen, so every so often everything is
+        unfrozen and collected once to reclaim those.
+        """
+        with self._lock:
+            self._activations += 1
+            reclaim = self._activations % _RECLAIM_EVERY_ACTIVATIONS == 0
+        if reclaim:
+            gc.unfreeze()
+        gc.collect()
+        gc.freeze()
 
     def register(self, instance_id: str, instance: PlaybillInstance) -> None:
         """Testing/embedded seam; production instances load through pinned storage."""
