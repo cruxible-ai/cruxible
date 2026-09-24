@@ -73,9 +73,12 @@ def test_next_shares_population_and_facts_without_changing_complete_result(
     monkeypatch.setattr(playbill_query, "_fact_row", row)
     optimized = playbill_next.service_playbill_next(instance, request=request)
     assert counts == {"population": 1, "fact_row": 2}
-    assert {item.reason for item in optimized.items}.issuperset(
-        {"projection_dirty", "projection_backing_stale"}
-    )
+    # A block's findings share one row; the reasons are all still reported.
+    assert {
+        reason
+        for item in optimized.items
+        for reason in (item.reason, *(finding.reason for finding in item.findings))
+    }.issuperset({"projection_dirty", "projection_backing_stale"})
 
     counts.clear()
     _uncached_folds(monkeypatch)

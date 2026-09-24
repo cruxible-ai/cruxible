@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shlex
 from collections import Counter, OrderedDict, defaultdict
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import RLock
@@ -526,6 +526,23 @@ class PlaybillNextRepairV1(_StrictNextModel):
         return self
 
 
+class PlaybillNextFindingV1(_StrictNextModel):
+    """One more finding about the same underlying fact as the row that carries it."""
+
+    tag: Literal["playbill-next-finding-v1"] = "playbill-next-finding-v1"
+    severity: NextSeverity
+    reason: NextReason
+    subject_identity: str
+    related_identities: tuple[str, ...] = ()
+    detail: object = Field(default_factory=dict)
+    repair: PlaybillNextRepairV1
+
+    @field_validator("detail", mode="before")
+    @classmethod
+    def _detail(cls, value: object) -> CanonicalValue:
+        return normalize_canonical(value)
+
+
 class PlaybillNextItemV1(_StrictNextModel):
     tag: Literal["playbill-next-item-v1"] = "playbill-next-item-v1"
     item_id: str
@@ -535,6 +552,12 @@ class PlaybillNextItemV1(_StrictNextModel):
     related_identities: tuple[str, ...] = ()
     detail: object = Field(default_factory=dict)
     repair: PlaybillNextRepairV1
+    # The row's other findings about the same block, source, document,
+    # evidence or conflicted slot, each keeping its own reason, detail and
+    # repair. Absent on a row that stands alone, so its bytes do not change.
+    findings: tuple[PlaybillNextFindingV1, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
 
     @field_validator("item_id")
     @classmethod
@@ -804,6 +827,132 @@ def _item(
     )
 
 
+#: Rows about the same underlying fact that the queue reports as one row.
+_BLOCK_REASONS = frozenset(
+    {
+        "projection_backing_stale",
+        "projection_dirty",
+        "unregistered_projection_block",
+        "projection_marker_invalid",
+    }
+)
+#: Stances heading a new-evidence row, strongest first.
+_EVIDENCE_REASON_ORDER: tuple[NextReason, ...] = (
+    "claim_contradicting_evidence_available",
+    "claim_new_evidence_unreviewed",
+    "claim_new_evidence_supporting",
+)
+
+
+def _detail_value(item: PlaybillNextItemV1, key: str) -> str | None:
+    value = item.detail.get(key) if isinstance(item.detail, Mapping) else None
+    return value if isinstance(value, str) else None
+
+
+def _group_key(
+    item: PlaybillNextItemV1, *, edited_sources: frozenset[str]
+) -> tuple[str, ...] | None:
+    if item.reason in _BLOCK_REASONS:
+        return ("block", item.subject_identity)
+    if item.reason in _EVIDENCE_REASON_ORDER:
+        capture = _detail_value(item, "capture_digest")
+        return None if capture is None else ("evidence", item.subject_identity, capture)
+    source_id = _detail_value(item, "source_id")
+    if source_id is None:
+        return None
+    if item.reason == "citation_source_unobserved":
+        return ("unobserved-source", source_id)
+    if item.reason == "document_modified" or (
+        item.reason == "citation_drifted" and source_id in edited_sources
+    ):
+        return ("edited-document", source_id)
+    return None
+
+
+def _group_head(key: tuple[str, ...], members: list[PlaybillNextItemV1]) -> PlaybillNextItemV1:
+    if key[0] == "edited-document":
+        return next(item for item in members if item.reason == "document_modified")
+    if key[0] == "evidence":
+        return min(members, key=lambda item: (_EVIDENCE_REASON_ORDER.index(item.reason),))
+    return min(members, key=_item_sort_key)
+
+
+def _group_items(items: tuple[PlaybillNextItemV1, ...]) -> tuple[PlaybillNextItemV1, ...]:
+    """Report each underlying fact once, with every finding about it inside.
+
+    A block is one row whatever made it stale, dirty or unregistered; an
+    unobserved source is one row however many citations point at it; an
+    edited document carries the citations its edit moved; one captured piece
+    of new evidence is one row whoever attested to it. The head keeps its own
+    reason and repair at the group's highest severity; the rest ride along.
+    """
+
+    edited_sources = frozenset(
+        source
+        for item in items
+        if item.reason == "document_modified"
+        and (source := _detail_value(item, "source_id")) is not None
+    )
+    grouped: dict[tuple[str, ...], list[PlaybillNextItemV1]] = defaultdict(list)
+    singles: list[PlaybillNextItemV1] = []
+    for item in items:
+        key = _group_key(item, edited_sources=edited_sources)
+        if key is None:
+            singles.append(item)
+        else:
+            grouped[key].append(item)
+    for key, members in grouped.items():
+        if len(members) == 1:
+            singles.append(members[0])
+            continue
+        head = _group_head(key, members)
+        rest = sorted((item for item in members if item is not head), key=_item_sort_key)
+        singles.append(_with_findings(head, rest))
+    return tuple(singles)
+
+
+def _with_findings(
+    head: PlaybillNextItemV1, rest: Iterable[PlaybillNextItemV1]
+) -> PlaybillNextItemV1:
+    rest = tuple(rest)
+    findings = tuple(
+        PlaybillNextFindingV1(
+            severity=item.severity,
+            reason=item.reason,
+            subject_identity=item.subject_identity,
+            related_identities=item.related_identities,
+            detail=item.detail,
+            repair=item.repair,
+        )
+        for item in rest
+    )
+    severity = min((head, *rest), key=lambda item: _SEVERITY_RANK[item.severity]).severity
+    related = tuple(
+        sorted(
+            {
+                identity
+                for item in (head, *rest)
+                for identity in (*item.related_identities, item.subject_identity)
+                if identity != head.subject_identity
+            },
+            key=lambda identity: identity.encode("utf-8"),
+        )
+    )
+    values = {
+        **head.model_dump(exclude={"item_id", "tag", "findings"}),
+        "severity": severity,
+        "related_identities": related,
+        "repair": head.repair,
+        "findings": findings,
+    }
+    provisional = PlaybillNextItemV1.model_construct(
+        _fields_set=None, item_id="sha256:" + "0" * 64, **values
+    )
+    return PlaybillNextItemV1.model_validate(
+        {**values, "item_id": playbill_next_item_id(provisional)}
+    )
+
+
 def _item_sort_key(item: PlaybillNextItemV1) -> tuple[int, bytes, bytes, bytes]:
     return (
         _SEVERITY_RANK[item.severity],
@@ -1065,22 +1214,24 @@ def _claim_items(
             if discriminator is not None:
                 detail["suggested_qualifier_field"] = discriminator
                 arguments["qualifier_field"] = discriminator
-            items.append(
-                _item(
-                    severity="blocking",
-                    reason="claim_conflicted",
-                    subject_identity=subject,
-                    related_identities=identities,
-                    detail=detail,
-                    repair=PlaybillNextRepairV1(
-                        operation="playbill.authoring.create",
-                        target=subject,
-                        required_change="revise_claims_into_distinct_qualifiers",
-                        arguments=arguments,
-                    ),
-                )
+            conflict_row: PlaybillNextItemV1 | None = _item(
+                severity="blocking",
+                reason="claim_conflicted",
+                subject_identity=subject,
+                related_identities=identities,
+                detail=detail,
+                repair=PlaybillNextRepairV1(
+                    operation="playbill.authoring.create",
+                    target=subject,
+                    required_change="revise_claims_into_distinct_qualifiers",
+                    arguments=arguments,
+                ),
             )
-            continue
+        else:
+            conflict_row = None
+        # A conflicted slot's members still report their own evidence rows,
+        # inside the conflict row rather than hidden behind it.
+        member_rows: list[PlaybillNextItemV1] = []
         for claim in group:
             verdict = (
                 None
@@ -1102,7 +1253,7 @@ def _claim_items(
                     if isinstance(verdict, ClaimVerdictResultV2)
                     else ()
                 )
-                items.append(
+                member_rows.append(
                     _item(
                         severity="repair",
                         reason="claim_stale_evidence",
@@ -1146,7 +1297,7 @@ def _claim_items(
                 if expiring and not any(
                     item.expires_at > lead_end for item in current_support_expirations
                 ):
-                    items.append(
+                    member_rows.append(
                         _item(
                             severity="warning",
                             reason="evidence_expiring",
@@ -1168,7 +1319,7 @@ def _claim_items(
             # when its interval begins, not before.
             if verdict.verdict != "uncovered" or verdict.currency == "not_applicable":
                 continue
-            items.append(
+            member_rows.append(
                 _item(
                     severity="repair",
                     reason="claim_uncovered",
@@ -1191,6 +1342,10 @@ def _claim_items(
                     ),
                 )
             )
+        if conflict_row is None:
+            items.extend(member_rows)
+        else:
+            items.append(_with_findings(conflict_row, member_rows) if member_rows else conflict_row)
     return tuple(items)
 
 
@@ -3287,104 +3442,106 @@ def service_playbill_next(
     )
     items = tuple(
         sorted(
-            (
-                *_claim_items(
-                    instance,
-                    coordinate=public_coordinate,
-                    evaluation_time=request.evaluation_time,
-                    expiring_within=request.expiring_within,
-                    door_events=door_events,
-                    verdicts_by_identity=verdicts_by_identity,
-                    claims=parsed_claims,
-                    resolution_statuses=resolution_statuses,
-                    access_profile=request.access_profile,
-                ),
-                *_claim_attestation_door_items(
-                    instance,
-                    coordinate=coordinate,
-                    door_events=door_events,
-                    evaluation_time=request.evaluation_time,
-                    access_profile=request.access_profile,
-                ),
-                *workspace_items,
-                *_projection_items(
-                    instance,
-                    coordinate=coordinate,
-                    evaluation_time=request.evaluation_time,
-                    access_profile=request.access_profile,
-                    observation=request.workspace_observation,
-                    verdicts_by_identity=verdicts_by_identity,
-                    facts_reader=facts_reader,
-                    resolution_statuses=resolution_statuses,
-                ),
-                *_procedure_projection_items(
-                    instance,
-                    coordinate=coordinate,
-                    access_profile=request.access_profile,
-                    observation=request.workspace_observation,
-                ),
-                *relation_items,
-                *_claim_dependency_items(
-                    instance,
-                    coordinate=coordinate,
-                    evaluation_time=request.evaluation_time,
-                    access_profile=request.access_profile,
-                    facts_reader=facts_reader,
-                ),
-                *_document_items(
-                    instance,
-                    coordinate=coordinate,
-                    access_profile=request.access_profile,
-                    observation=request.workspace_observation,
-                ),
-                *(
-                    (
-                        _item(
-                            severity="blocking",
-                            reason="instance_decommissioned",
-                            subject_identity=instance.descriptor.instance_id,
-                            detail={
-                                "reason": terminal.reason,
-                                "decommissioned_at": terminal.decommissioned_at,
-                                "decommissioned_by": terminal.decommissioned_by,
-                            },
-                            repair=PlaybillNextRepairV1(
-                                operation="hand_edit",
-                                target="instance.json",
-                                required_change=(
-                                    "allocate_a_new_instance_with_playbill_host_create_or_"
-                                    "archive_this_directory_yourself"
+            _group_items(
+                (
+                    *_claim_items(
+                        instance,
+                        coordinate=public_coordinate,
+                        evaluation_time=request.evaluation_time,
+                        expiring_within=request.expiring_within,
+                        door_events=door_events,
+                        verdicts_by_identity=verdicts_by_identity,
+                        claims=parsed_claims,
+                        resolution_statuses=resolution_statuses,
+                        access_profile=request.access_profile,
+                    ),
+                    *_claim_attestation_door_items(
+                        instance,
+                        coordinate=coordinate,
+                        door_events=door_events,
+                        evaluation_time=request.evaluation_time,
+                        access_profile=request.access_profile,
+                    ),
+                    *workspace_items,
+                    *_projection_items(
+                        instance,
+                        coordinate=coordinate,
+                        evaluation_time=request.evaluation_time,
+                        access_profile=request.access_profile,
+                        observation=request.workspace_observation,
+                        verdicts_by_identity=verdicts_by_identity,
+                        facts_reader=facts_reader,
+                        resolution_statuses=resolution_statuses,
+                    ),
+                    *_procedure_projection_items(
+                        instance,
+                        coordinate=coordinate,
+                        access_profile=request.access_profile,
+                        observation=request.workspace_observation,
+                    ),
+                    *relation_items,
+                    *_claim_dependency_items(
+                        instance,
+                        coordinate=coordinate,
+                        evaluation_time=request.evaluation_time,
+                        access_profile=request.access_profile,
+                        facts_reader=facts_reader,
+                    ),
+                    *_document_items(
+                        instance,
+                        coordinate=coordinate,
+                        access_profile=request.access_profile,
+                        observation=request.workspace_observation,
+                    ),
+                    *(
+                        (
+                            _item(
+                                severity="blocking",
+                                reason="instance_decommissioned",
+                                subject_identity=instance.descriptor.instance_id,
+                                detail={
+                                    "reason": terminal.reason,
+                                    "decommissioned_at": terminal.decommissioned_at,
+                                    "decommissioned_by": terminal.decommissioned_by,
+                                },
+                                repair=PlaybillNextRepairV1(
+                                    operation="hand_edit",
+                                    target="instance.json",
+                                    required_change=(
+                                        "allocate_a_new_instance_with_playbill_host_create_or_"
+                                        "archive_this_directory_yourself"
+                                    ),
                                 ),
                             ),
-                        ),
-                    )
-                    if (terminal := instance.descriptor.decommissioned) is not None
-                    else ()
-                ),
-                *_ledger_mirror_items(instance),
-                *(
-                    (
-                        _item(
-                            severity="warning",
-                            reason="provider_lane_unavailable",
-                            subject_identity="provider-runtime",
-                            detail={
-                                "code": provider_lane.code,
-                                "detail": provider_lane.detail,
-                            },
-                            repair=PlaybillNextRepairV1(
-                                operation="hand_edit",
-                                target="daemon/provider-runtime.json",
-                                required_change=(
-                                    "repair_provider_runtime_configuration_or_use_a_shorter_"
-                                    "state_root_then_retry"
+                        )
+                        if (terminal := instance.descriptor.decommissioned) is not None
+                        else ()
+                    ),
+                    *_ledger_mirror_items(instance),
+                    *(
+                        (
+                            _item(
+                                severity="warning",
+                                reason="provider_lane_unavailable",
+                                subject_identity="provider-runtime",
+                                detail={
+                                    "code": provider_lane.code,
+                                    "detail": provider_lane.detail,
+                                },
+                                repair=PlaybillNextRepairV1(
+                                    operation="hand_edit",
+                                    target="daemon/provider-runtime.json",
+                                    required_change=(
+                                        "repair_provider_runtime_configuration_or_use_a_shorter_"
+                                        "state_root_then_retry"
+                                    ),
                                 ),
                             ),
-                        ),
-                    )
-                    if provider_lane is not None and provider_lane.state == "unavailable"
-                    else ()
-                ),
+                        )
+                        if provider_lane is not None and provider_lane.state == "unavailable"
+                        else ()
+                    ),
+                )
             ),
             key=_item_sort_key,
         )

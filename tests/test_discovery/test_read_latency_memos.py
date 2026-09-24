@@ -430,8 +430,12 @@ def test_a_defective_coverage_scan_reports_one_row_naming_its_cause(
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
 
+    def citations(rows) -> int:  # type: ignore[no-untyped-def]
+        return sum(1 + len(row.findings) for row in rows)
+
+    # A healthy source is one row, carrying each unobserved citation's finding.
     healthy = _unobserved_rows(instance, scan_notes=())
-    assert len(healthy) > 1
+    assert len(healthy) == 1 and citations(healthy) > 1
     assert all("unobserved_cause" not in row.detail for row in healthy)
 
     # Every note that says the source's own scan is incomplete collapses its
@@ -456,13 +460,15 @@ def test_a_defective_coverage_scan_reports_one_row_naming_its_cause(
         assert row.detail["source_id"] == "fixture.work-items"
         assert row.detail["unobserved_cause"] == "source_scan_incomplete"
         assert row.detail["source_scan_notes"] == list(notes)
-        assert row.detail["collapsed_citation_count"] == len(healthy)
+        assert row.detail["collapsed_citation_count"] == citations(healthy)
         assert row.repair.operation == "playbill.authoring.bind"
 
     # A note about one dropped item is not a whole-source defect: those
     # citations each keep their own row, because the scan can still speak to
     # them one at a time.
-    assert len(_unobserved_rows(instance, scan_notes=("coverage_proof_invalid",))) == len(healthy)
+    assert citations(_unobserved_rows(instance, scan_notes=("coverage_proof_invalid",))) == (
+        citations(healthy)
+    )
 
     # A second, healthy source in the same observation is untouched.
     mixed = _unobserved_rows(
