@@ -1999,9 +1999,15 @@ def _claim_attestation_door_items(
     *,
     coordinate: AcceptedProjectionCoordinate,
     door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...],
+    evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1 | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
-    """Fold new-capture memberships against immutable acceptance-time accounts."""
+    """Fold new-capture memberships against immutable acceptance-time accounts.
+
+    Only attestations current at the evaluation time count, exactly as for the
+    attestation threshold: one not yet made, or past its ``valid_until``, asks
+    nothing of anyone.
+    """
 
     if access_profile is not None and not access_profile.permits("instance"):
         return ()
@@ -2046,6 +2052,10 @@ def _claim_attestation_door_items(
     for envelope, event_digest, current_at_append in observations:
         statement = envelope.statement
         if statement.attestation_basis != "new_capture":
+            continue
+        if statement.attested_at > evaluation_time or (
+            statement.valid_until is not None and evaluation_time >= statement.valid_until
+        ):
             continue
         claim_id = statement.claim_identity.name
         cached_lineage = lineage_cache.get(claim_id)
@@ -3276,6 +3286,7 @@ def service_playbill_next(
                     instance,
                     coordinate=coordinate,
                     door_events=door_events,
+                    evaluation_time=request.evaluation_time,
                     access_profile=request.access_profile,
                 ),
                 *workspace_items,

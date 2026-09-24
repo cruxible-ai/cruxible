@@ -824,3 +824,57 @@ def test_copy_successor_keeps_membership_and_evidence_successor_resolves_it(
         stance="contradict",
         reason="claim_contradicting_evidence_available",
     )
+
+
+def test_new_evidence_rows_count_only_attestations_current_at_the_evaluation_time(
+    tmp_path: Path,
+) -> None:
+    from datetime import timedelta
+
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    capture = build_coordinator_self_source_capture(
+        store=instance.body_store(),
+        actor_id="owner",
+        claim_id=claim_id,
+        body=b"contradicting observation\n",
+        observed_at=RECORDED_AT,
+        accepted_coordinate=coordinate,
+    )
+    appended = service_append_claim_attestation(
+        instance,
+        request=_request(
+            instance,
+            owner,
+            claim_id,
+            tmp_path,
+            basis="new_capture",
+            stance="contradict",
+            captures=(capture.capture_digest,),
+            valid_until=RECORDED_AT + timedelta(hours=1),
+        ),
+        actor_id="owner",
+        recorded_at=RECORDED_AT,
+    )
+    access = CoverageAccessProfileV1(
+        profile_id="attestation-door-test",
+        permitted_access_classes=("instance", "public"),
+    )
+
+    def rows(at: datetime) -> tuple:  # type: ignore[type-arg]
+        result = service_playbill_next(
+            instance,
+            request=PlaybillNextRequestV2(
+                evaluation_time=at,
+                access_profile=access,
+                at_attestation_head_digest=appended.current_head,
+            ),
+        )
+        return tuple(
+            item for item in result.items if item.reason == "claim_contradicting_evidence_available"
+        )
+
+    assert len(rows(RECORDED_AT)) == 1
+    # Not yet attested, and past valid_until: neither asks for adjudication.
+    assert rows(RECORDED_AT - timedelta(minutes=1)) == ()
+    assert rows(RECORDED_AT + timedelta(hours=2)) == ()
