@@ -259,7 +259,7 @@ def record_consumption(
         generation=generation,
         actor_context=context.actor_context,
     )
-    _resume_observation(instance, context=context, coordinate=coordinate, generation=generation)
+    _resume_observation(instance, context=context)
     receipts = tuple(
         build_consumption_receipt(
             context=context,
@@ -322,7 +322,7 @@ def note_consumption_unobserved(
         return
     if _observation_open_gap(store):
         return
-    generation = _generation(instance, coordinate)
+    coordinate, generation = _observation_head(instance)
     gap = ConsumptionObservationGapV1(
         event_id=typed_digest(
             Sha256Value, "playbill-consumption-gap-v1", {"token": secrets.token_hex(16)}
@@ -342,18 +342,23 @@ def note_consumption_unobserved(
     )
 
 
-def _resume_observation(
-    instance: PlaybillInstance,
-    *,
-    context: ConsumptionContextV1,
-    coordinate: AcceptedCoordinate,
-    generation: int,
-) -> None:
+def _observation_head(instance: PlaybillInstance) -> tuple[AcceptedCoordinate, int]:
+    """The current accepted head and its generation.
+
+    Observation starts and stops now, whatever historical coordinate the read
+    that notices it happens to serve; receipts keep the coordinate they read.
+    """
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    return head, _generation(instance, head)
+
+
+def _resume_observation(instance: PlaybillInstance, *, context: ConsumptionContextV1) -> None:
     if not _first_check(instance, recording=True):
         return
     store = instance.review_operational_store()
     if not _observation_open_gap(store):
         return
+    coordinate, generation = _observation_head(instance)
     resume = ConsumptionObservationResumeV1(
         event_id=typed_digest(
             Sha256Value, "playbill-consumption-resume-v1", {"token": secrets.token_hex(16)}
