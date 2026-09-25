@@ -305,7 +305,7 @@ class ActivationPublisher:
             tree=bundle.tree,
             members=bundle.members,
         )
-        write_checkpoint(self.checkpoint_directory, body)
+        write_checkpoint(self.checkpoint_directory, body, verified=True)
 
 
 __all__ = [

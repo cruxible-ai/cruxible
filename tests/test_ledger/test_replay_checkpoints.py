@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -187,8 +188,8 @@ def test_an_absent_checkpoint_directory_is_legal(tmp_path: Path) -> None:
     fixture = build_fixture(tmp_path, PROFILE)
     expected = _observable(_reopen(fixture))
     directory = _checkpoints(fixture.instance)
-    checkpoint_path(directory).unlink()
-    directory.rmdir()
+    assert checkpoint_path(directory).is_file()
+    shutil.rmtree(directory)  # the checkpoint and its verification record
     assert _observable(_reopen(fixture)) == expected
 
 
@@ -448,3 +449,35 @@ def test_activation_writes_a_checkpoint_on_its_configured_stride(
     monkeypatch.undo()
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate().git_oid == bundle.oid
+
+
+def test_a_verified_checkpoint_at_the_head_reopens_without_reading_its_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.ledger.git import GitLedger
+
+    fixture = build_fixture(tmp_path, PROFILE)
+    expected = _observable(_reopen(fixture))  # leaves a verified checkpoint at the head
+    directory = _checkpoints(fixture.instance)
+    record = load_checkpoint_file(directory)
+    assert record is not None
+    assert (directory / (checkpoint_path(directory).name + ".verified")).read_text().strip() == (
+        record.checkpoint_digest
+    )
+    reads: list[str] = []
+    original = GitLedger.read_tree
+
+    def counted(self, oid, *args, **kwargs):  # type: ignore[no-untyped-def]
+        reads.append(oid)
+        return original(self, oid, *args, **kwargs)
+
+    monkeypatch.setattr(GitLedger, "read_tree", counted)
+    assert _observable(_reopen(fixture)) == expected
+    assert record.body.git_oid not in reads
+
+    # A record naming any other body is not this checkpoint's: full re-derivation.
+    (directory / (checkpoint_path(directory).name + ".verified")).write_text(
+        "sha256:" + "0" * 64 + "\n"
+    )
+    assert _observable(_reopen(fixture)) == expected
+    assert record.body.git_oid in reads
