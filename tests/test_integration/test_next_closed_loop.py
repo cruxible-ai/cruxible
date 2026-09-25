@@ -53,6 +53,7 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.subjects import render_subject, subject_path
+from cruxible_core.authoring.store import AUTHORING_INTENTS_ENV
 from cruxible_core.claims.claim_retirement import ClaimRetireResultV1, service_retire_claim
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
@@ -1241,7 +1242,11 @@ def _claim_attestation_door(
     )
 
 
-def _unregistered_projection_block(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+def _unregistered_projection_block(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The borrowed body runs outside its module's autouse fixture, and its
+    # legacy publication road registers on accepted intents, which only a
+    # durable intent store retains.
+    monkeypatch.setenv(AUTHORING_INTENTS_ENV, "durable")
     publication_v2.test_prepared_publication_can_be_abandoned_without_observing_the_source(root)
 
 

@@ -119,16 +119,18 @@ def test_filtered_claim_list_materializes_only_selected_rows(tmp_path: Path, mon
     before = service_list_playbill_claims(instance).claims
     selected = playbill_claims._claim_from_view(before[0])
     materialized = []
-    original = ProjectionHandle.claim
+    # Every Claim view is built by the batch materializer; the single-Claim
+    # read delegates to it, so counting here sees every materialized row.
+    original = ProjectionHandle.claims
 
-    def counted(self, identity):
-        materialized.append(identity)
-        return original(self, identity)
+    def counted(self, identities):
+        materialized.extend(identities)
+        return original(self, identities)
 
     def forbidden(*args, **kwargs):
         pytest.fail("filtered Claim list must not scan accepted history or source inventory")
 
-    monkeypatch.setattr(ProjectionHandle, "claim", counted)
+    monkeypatch.setattr(ProjectionHandle, "claims", counted)
     monkeypatch.setattr(instance, "accepted_history", forbidden)
     monkeypatch.setattr(instance, "tree_at", forbidden)
     monkeypatch.setattr(instance, "paths_at", forbidden)

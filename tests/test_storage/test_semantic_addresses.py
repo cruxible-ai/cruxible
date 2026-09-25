@@ -46,6 +46,7 @@ def test_content_spans_count_utf8_bytes_not_characters_or_utf16_units() -> None:
 def test_unknown_line_number_and_malformed_selectors_refuse() -> None:
     assert registered_selector_schemes() == (
         "artifact-v1",
+        "claim-statement-field-v1",
         "claim-statement-v1",
         "line-v1",
         "procedure-arm-v1",
@@ -58,6 +59,8 @@ def test_unknown_line_number_and_malformed_selectors_refuse() -> None:
         SemanticSelector(scheme="artifact-v1", value="/headings/intro")
     with pytest.raises(ValidationError, match="must be empty"):
         SemanticSelector(scheme="claim-statement-v1", value="line:12")
+    with pytest.raises(ValidationError, match="must name one Claim statement field"):
+        SemanticSelector(scheme="claim-statement-field-v1", value="line:12")
     with pytest.raises(ValidationError, match="ledger path"):
         SemanticAddress.whole_artifact("/workspace/document.md")
     with pytest.raises(ValidationError, match="extra_forbidden"):
