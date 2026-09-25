@@ -4037,13 +4037,18 @@ def _continuation_of(cursor: str) -> _Continuation:
         head = payload["attestation_head_digest"]
         since = payload["delta_since"]
         offset = payload["offset"]
+        raw_time = payload["evaluation_time"]
+        # A decoded cursor is caller input: every field is typed before use.
+        if not isinstance(result_digest, str) or not isinstance(raw_time, str):
+            raise ValueError("cursor fields are malformed")
         for digest in (result_digest, head, since):
             if digest is not None:
+                if not isinstance(digest, str):
+                    raise ValueError("cursor digest is malformed")
                 Sha256Value.from_tagged(digest)
-        evaluation_time = parse_datetime(payload["evaluation_time"])
+        evaluation_time = parse_datetime(raw_time)
         if (
-            result_digest is None
-            or evaluation_time is None
+            evaluation_time is None
             or not isinstance(offset, int)
             or isinstance(offset, bool)
             or offset < 1

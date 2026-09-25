@@ -154,6 +154,33 @@ def test_a_cursor_that_is_not_a_next_cursor_is_refused(
         service_playbill_next(instance, request=_request(cursor=cursor))
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("evaluation_time", 123),
+        ("result_digest", 123),
+        ("attestation_head_digest", 123),
+        ("delta_since", ["sha256:" + "0" * 64]),
+        ("offset", "2"),
+    ],
+)
+def test_a_cursor_with_a_mistyped_field_is_refused(
+    queue: tuple[Any, _Queue], field: str, value: object
+) -> None:
+    import base64
+    import json
+
+    instance, _rows = queue
+    first = service_playbill_next(instance, request=_request(limit=2))
+    assert first.next_cursor is not None
+    payload = json.loads(base64.urlsafe_b64decode(first.next_cursor.encode("ascii")))
+    payload[field] = value
+    forged = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+
+    with pytest.raises(PlaybillNextCursorMismatch, match="not a next page cursor"):
+        service_playbill_next(instance, request=_request(cursor=forged))
+
+
 def test_a_cursor_does_not_cross_request_versions(queue: tuple[Any, _Queue]) -> None:
     instance, _rows = queue
     v2 = service_playbill_next(instance, request=_request(limit=2))
