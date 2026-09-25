@@ -54,7 +54,7 @@ from cruxible_client.authoring.workspace import (
     write_playbill_workspace_config,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for
-from cruxible_client.contracts.artifacts import parse_artifact_identity
+from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestations import (
@@ -2503,14 +2503,101 @@ def predict(request_file: str, output_json: bool) -> None:
     click.echo(f"Proposal: {result.proposal_id}")
 
 
+def _settle_example(
+    prediction_id: str, contract_json: str | None, event_json: str | None
+) -> contracts.PlaybillSettleRequestV2:
+    """A settlement request for one prediction with everything but its evidence filled in."""
+
+    placeholder = AcceptedCoordinate(
+        git_oid="0" * 40,
+        semantic_root="sha256:" + "0" * 64,
+        generation_root="sha256:" + "0" * 64,
+        compiler_digest="sha256:" + "0" * 64,
+    )
+    try:
+        contract = (
+            ResolutionContractReferenceV1(
+                identity=ArtifactIdentity(
+                    kind="ResolutionContract",
+                    name=prediction_id.removeprefix("ResolutionContract:"),
+                ),
+                artifact_digest="sha256:" + "0" * 64,
+                coordinate=placeholder,
+            )
+            if contract_json is None
+            else ResolutionContractReferenceV1.model_validate_json(contract_json)
+        )
+        event = (
+            None
+            if event_json is None
+            else contracts.TriggerEventReferenceV1.model_validate_json(event_json)
+        )
+    except ValidationError as exc:
+        raise click.UsageError(f"Invalid settlement binding: {exc}") from exc
+    if prediction_id not in {contract.identity.name, contract.identity.qualified}:
+        raise click.UsageError("--contract names a different prediction than PREDICTION_ID")
+    return contracts.PlaybillSettleRequestV2(
+        contract=contract,
+        trigger_event=event,
+        evidence=contracts.ObservationSettlementEvidenceV2(
+            claim=contracts.ClaimVersionReferenceV1(
+                identity=ArtifactIdentity(kind="Claim", name="CLM-" + "0" * 32),
+                artifact_digest="sha256:" + "0" * 64,
+                statement_digest="sha256:" + "0" * 64,
+                coordinate=placeholder,
+            )
+        ),
+    )
+
+
 @playbill_group.command("settle")
 @click.argument("prediction_id")
-@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("request_file", required=False, type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--example",
+    is_flag=True,
+    help="Print a settlement request for PREDICTION_ID whose evidence is left to fill in.",
+)
+@click.option(
+    "--contract",
+    "contract_json",
+    default=None,
+    help="With --example: the exact accepted contract reference, as JSON.",
+)
+@click.option(
+    "--trigger-event",
+    "event_json",
+    default=None,
+    help="With --example: the anchor event the prediction's window is bound to, as JSON.",
+)
 @json_option
 @handle_errors
-def settle(prediction_id: str, request_file: str, output_json: bool) -> None:
-    """Settle one prediction from a later observation or retained terminal."""
+def settle(
+    prediction_id: str,
+    request_file: str | None,
+    example: bool,
+    contract_json: str | None,
+    event_json: str | None,
+    output_json: bool,
+) -> None:
+    """Settle one prediction from a later observation or retained terminal.
 
+    `playbill next` names each settleable prediction with a --example command
+    that fills in its exact contract and bound window; replace the evidence
+    Claim reference with the accepted observation, then pass the file here.
+    """
+
+    if example:
+        if request_file is not None:
+            raise click.UsageError("--example does not accept REQUEST_FILE")
+        _emit_json(
+            _settle_example(prediction_id, contract_json, event_json).model_dump(mode="json")
+        )
+        return
+    if contract_json is not None or event_json is not None:
+        raise click.UsageError("--contract/--trigger-event require --example")
+    if request_file is None:
+        raise click.UsageError("provide PREDICTION_ID REQUEST_FILE or --example")
     try:
         request = contracts.PlaybillSettleRequestV2.model_validate(_read_mapping(request_file))
     except ValidationError as exc:
