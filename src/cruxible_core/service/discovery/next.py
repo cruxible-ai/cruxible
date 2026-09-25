@@ -3413,28 +3413,48 @@ def _proposal_items(
 
     if not access_profile.permits("instance"):
         return ()
-    return tuple(
-        _item(
-            severity="repair",
-            reason="proposal_stale",
-            subject_identity=proposal.proposal_id,
-            related_identities=(proposal.target_ref,),
-            detail={
-                "actor_id": proposal.actor_id,
-                "admitted_at": proposal.admitted_at,
-                "candidate_parent_semantic_root": proposal.candidate_parent_semantic_root,
-                "accepted_semantic_root": coordinate.semantic_root,
-                "target_ref": proposal.target_ref,
-            },
-            repair=PlaybillNextRepairV1(
-                operation="playbill.proposal.readmit",
-                target=proposal.proposal_id,
-                required_change="readmit_as_its_author_or_withdraw_the_stale_proposal",
-                arguments={"proposal_id": proposal.proposal_id},
-            ),
+    evidence = instance.proposal_evidence()
+    items: list[PlaybillNextItemV1] = []
+    for proposal in stale_unreadmitted_proposals(instance, coordinate):
+        detail: dict[str, object] = {
+            "actor_id": proposal.actor_id,
+            "admitted_at": proposal.admitted_at,
+            "candidate_parent_semantic_root": proposal.candidate_parent_semantic_root,
+            "accepted_semantic_root": coordinate.semantic_root,
+            "target_ref": proposal.target_ref,
+        }
+        required_change = "readmit_as_its_author_or_withdraw_the_stale_proposal"
+        # A settle terminal's proposal says how it was submitted. A delegated
+        # settle that lost its race with head is automation that did not
+        # finish: readmitting it re-evaluates it as an ordinary proposal that
+        # needs approval, because the mandate authorized the submission it
+        # was, not a rebased one.
+        settle = evidence.read_admission(proposal.proposal_id).settle_submission
+        if settle is not None:
+            detail["settle_submission"] = {
+                "mode": settle.mode,
+                "mandate_digest": settle.mandate_digest,
+            }
+            if settle.mode == "delegated":
+                required_change = (
+                    "readmit_to_route_the_delegated_settle_for_approval_or_withdraw_it"
+                )
+        items.append(
+            _item(
+                severity="repair",
+                reason="proposal_stale",
+                subject_identity=proposal.proposal_id,
+                related_identities=(proposal.target_ref,),
+                detail=detail,
+                repair=PlaybillNextRepairV1(
+                    operation="playbill.proposal.readmit",
+                    target=proposal.proposal_id,
+                    required_change=required_change,
+                    arguments={"proposal_id": proposal.proposal_id},
+                ),
+            )
         )
-        for proposal in stale_unreadmitted_proposals(instance, coordinate)
-    )
+    return tuple(items)
 
 
 def _approval_items(

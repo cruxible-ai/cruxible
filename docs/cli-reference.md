@@ -1401,6 +1401,11 @@ the proposal's author in `detail.actor_id`; its repair is
 `cruxible playbill proposal readmit PROPOSAL_ID`, which only that author may
 run, and `proposal withdraw` is the alternative when the change is no longer
 wanted. A readmission at the same coordinate, or a withdrawal, closes the row.
+A proposal a settle terminal made carries `detail.settle_submission` (`mode`
+and `mandate_digest`). A `delegated` settle that went stale is automation that
+did not finish: readmitting it re-evaluates it as an ordinary proposal that
+needs approval, because the mandate authorized the submission it was, not a
+rebased one, so its repair says so.
 
 A `proposal_awaiting_approval` row is an open candidate whose parent is the
 coordinate's semantic root and whose approval requirement is not yet met, and
