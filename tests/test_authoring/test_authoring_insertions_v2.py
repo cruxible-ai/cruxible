@@ -710,7 +710,9 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
     else:
         corrupted = landed[: parsed.opening_start] + landed[parsed.opening_end :]
 
-    marker_summaries, marker_notes = _projection_marker_observation(source_id, corrupted)
+    marker_summaries, marker_notes = _projection_marker_observation(
+        source_id, corrupted, workspace=tmp_path / "workspace"
+    )
     assert marker_summaries == []
     assert marker_notes == ("projection_marker_invalid",)
     assert request.workspace_observation is not None
@@ -1075,7 +1077,9 @@ def test_depublishing_releases_the_registration_and_leaves_the_marker_to_remove(
     assert bound.preparation is not None
     preparation = bound.preparation
 
-    marker_summaries, marker_notes = _projection_marker_observation(preparation.source_id, landed)
+    marker_summaries, marker_notes = _projection_marker_observation(
+        preparation.source_id, landed, workspace=tmp_path / "workspace"
+    )
     assert [summary["stamp"]["block_id"] for summary in marker_summaries] == [preparation.block_id]
 
     def _next_items():  # type: ignore[no-untyped-def]
