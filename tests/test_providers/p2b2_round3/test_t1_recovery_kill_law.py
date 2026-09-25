@@ -370,8 +370,20 @@ def test_an_unkillable_group_degrades_the_lane_and_strands_the_durable_start(
         assert "provider_process_group_survived_recovery" in operator.unavailable_reason
         assert _grew(marker)
         monkeypatch.setattr(lease_module.os, "killpg", real_killpg)
+        # An accepted projection with no Provider members: the lazy re-arm is
+        # what this call exercises, not the catalog it then reads.
+        empty_typed = SimpleNamespace(
+            envelopes=lambda *, kind: (),
+            prefetch_members=lambda paths: None,
+            member_bytes=lambda path: b"",
+        )
         operator.invoker_for(
-            SimpleNamespace(tree_at=lambda _oid: {}),  # type: ignore[arg-type]
+            SimpleNamespace(  # type: ignore[arg-type]
+                coordinate_for_oid=lambda oid: oid,
+                bind_accepted_projection=lambda _coordinate: contextlib.nullcontext(
+                    SimpleNamespace(typed=empty_typed)
+                ),
+            ),
             accepted_oid="a" * 40,
         )
         assert operator.unavailable_reason is None
