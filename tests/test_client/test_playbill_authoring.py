@@ -416,6 +416,9 @@ def _retirement_playbill(workspace: Path) -> tuple[Playbill, list[httpx.Request]
         ),
         clock=lambda: datetime(2026, 9, 4, 12, tzinfo=UTC),
     )
+    # `changes()` retains the last observed coordinate for the draft's lookups
+    # and typed references; stand in for the orientation read that installs it.
+    pb._coordinate = AcceptedCoordinate(**COORDINATE)
     return pb, captured
 
 
