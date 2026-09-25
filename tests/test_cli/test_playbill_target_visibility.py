@@ -63,6 +63,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "proposal", "readmit"): "active",
     ("playbill", "proposal", "withdraw"): "active",
     ("playbill", "sources", "propose"): "active",
+    ("playbill", "compiler", "upgrade"): "active",
     ("playbill", "principal", "add"): "active",
     ("playbill", "principal", "rotate"): "active",
     ("playbill", "principal", "recover"): "active",
