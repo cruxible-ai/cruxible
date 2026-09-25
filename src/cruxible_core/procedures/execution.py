@@ -6,6 +6,7 @@ import base64
 import json
 import time
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
@@ -201,6 +202,7 @@ from cruxible_core.procedures.input_planes import (
     validate_node_input_plane,
     validate_run_input_vector,
 )
+from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
 from cruxible_core.procedures.run_index import ProcedureRunIndex
 from cruxible_core.procedures.terminal_dependencies import (
     TAINT_ACCEPTED_STATE,
@@ -2635,66 +2637,70 @@ class ProcedureExecutor:
                 self.parent_context.deadline_ns - admission.budget.wall_clock.microseconds * 1000,
             )
 
-        self._append_event(
-            admission,
-            records,
-            "attempt_started",
-            {"attempt": admission.attempt, "admitted_at": admission.admitted_at.isoformat()},
-        )
-        self._append_event(
-            admission,
-            records,
-            "admission_bound",
-            (
+        # An automatic Line dispatch orders this admission against a disarm; a
+        # child run inherits its parent's admission and is never gated again.
+        gate = LINE_ARM_ADMISSION_GATE.get() if self.parent_context is None else None
+        with gate() if gate is not None else nullcontext():
+            self._append_event(
+                admission,
+                records,
+                "attempt_started",
+                {"attempt": admission.attempt, "admitted_at": admission.admitted_at.isoformat()},
+            )
+            self._append_event(
+                admission,
+                records,
+                "admission_bound",
                 (
-                    ProcedureAdmissionBoundPayloadV8
-                    if isinstance(admission, ProcedureRunAdmissionV8)
-                    else ProcedureAdmissionBoundPayloadV7
-                    if isinstance(admission, ProcedureRunAdmissionV7)
-                    else ProcedureAdmissionBoundPayloadV5
-                )(
-                    admission=cast(ProcedureRunAdmissionV8, admission),
-                    admission_material_manifest=prepared.admission_material_manifest,
-                    admission_material_manifest_digest=(
-                        prepared.admission_material_manifest_digest
-                    ),
-                    acquisition_plan=prepared.acquisition_plan,
-                    acquisition_plan_digest=prepared.acquisition_plan_digest,
-                    required_reservation_ids=prepared.required_reservation_ids,
-                ).model_dump(mode="json")
-                if isinstance(admission, ProcedureRunAdmissionV5)
-                and isinstance(prepared, PreparedProcedureRunV5)
-                else ProcedureAdmissionBoundPayloadV4(
-                    admission=admission,
-                    admission_material_manifest=prepared.admission_material_manifest,
-                    admission_material_manifest_digest=(
-                        prepared.admission_material_manifest_digest
-                    ),
-                ).model_dump(mode="json")
-                if isinstance(admission, ProcedureRunAdmissionV4)
-                and isinstance(prepared, PreparedProcedureRunV4)
-                else ProcedureAdmissionBoundPayloadV3(
-                    admission=admission,
-                    admission_material_manifest=prepared.admission_material_manifest,
-                    admission_material_manifest_digest=(
-                        prepared.admission_material_manifest_digest
-                    ),
-                ).model_dump(mode="json")
-                if isinstance(admission, ProcedureRunAdmissionV3)
-                and isinstance(prepared, PreparedProcedureRunV3)
-                else (
-                    ProcedureAdmissionBoundPayloadV6
-                    if isinstance(admission, ProcedureRunAdmissionV6)
-                    else ProcedureAdmissionBoundPayloadV2
-                )(
-                    admission=cast(ProcedureRunAdmissionV6, admission),
-                    accepted_state_materials=prepared.accepted_state_materials,
-                ).model_dump(mode="json")
-                if isinstance(admission, ProcedureRunAdmissionV2)
-                and isinstance(prepared, PreparedProcedureRunV2)
-                else admission.model_dump(mode="json")
-            ),
-        )
+                    (
+                        ProcedureAdmissionBoundPayloadV8
+                        if isinstance(admission, ProcedureRunAdmissionV8)
+                        else ProcedureAdmissionBoundPayloadV7
+                        if isinstance(admission, ProcedureRunAdmissionV7)
+                        else ProcedureAdmissionBoundPayloadV5
+                    )(
+                        admission=cast(ProcedureRunAdmissionV8, admission),
+                        admission_material_manifest=prepared.admission_material_manifest,
+                        admission_material_manifest_digest=(
+                            prepared.admission_material_manifest_digest
+                        ),
+                        acquisition_plan=prepared.acquisition_plan,
+                        acquisition_plan_digest=prepared.acquisition_plan_digest,
+                        required_reservation_ids=prepared.required_reservation_ids,
+                    ).model_dump(mode="json")
+                    if isinstance(admission, ProcedureRunAdmissionV5)
+                    and isinstance(prepared, PreparedProcedureRunV5)
+                    else ProcedureAdmissionBoundPayloadV4(
+                        admission=admission,
+                        admission_material_manifest=prepared.admission_material_manifest,
+                        admission_material_manifest_digest=(
+                            prepared.admission_material_manifest_digest
+                        ),
+                    ).model_dump(mode="json")
+                    if isinstance(admission, ProcedureRunAdmissionV4)
+                    and isinstance(prepared, PreparedProcedureRunV4)
+                    else ProcedureAdmissionBoundPayloadV3(
+                        admission=admission,
+                        admission_material_manifest=prepared.admission_material_manifest,
+                        admission_material_manifest_digest=(
+                            prepared.admission_material_manifest_digest
+                        ),
+                    ).model_dump(mode="json")
+                    if isinstance(admission, ProcedureRunAdmissionV3)
+                    and isinstance(prepared, PreparedProcedureRunV3)
+                    else (
+                        ProcedureAdmissionBoundPayloadV6
+                        if isinstance(admission, ProcedureRunAdmissionV6)
+                        else ProcedureAdmissionBoundPayloadV2
+                    )(
+                        admission=cast(ProcedureRunAdmissionV6, admission),
+                        accepted_state_materials=prepared.accepted_state_materials,
+                    ).model_dump(mode="json")
+                    if isinstance(admission, ProcedureRunAdmissionV2)
+                    and isinstance(prepared, PreparedProcedureRunV2)
+                    else admission.model_dump(mode="json")
+                ),
+            )
 
         state = _RunState(
             outputs={},

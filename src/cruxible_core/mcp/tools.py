@@ -743,11 +743,19 @@ def register_tools(
         return handlers.handle_playbill_line_check(instance_id, line, request)
 
     @_tool
-    def cruxible_playbill_line_listen(
-        instance_id: str, line: str, request: contracts.LineListenRequestV1
-    ) -> contracts.LineListeningSessionV1:
-        """Start or stop forward listening; this never executes a Procedure."""
-        return handlers.handle_playbill_line_listen(instance_id, line, request)
+    def cruxible_playbill_line_arm(instance_id: str, line: str) -> contracts.LineArmV1:
+        """Arm a Line forward-only; the daemon admits what it matches under your credential."""
+        return handlers.handle_playbill_line_arm(instance_id, line)
+
+    @_tool
+    def cruxible_playbill_line_disarm(instance_id: str, line: str) -> contracts.LineArmV1:
+        """Stop a Line admitting work on its own; admitted runs are not cancelled."""
+        return handlers.handle_playbill_line_disarm(instance_id, line)
+
+    @_tool
+    def cruxible_playbill_line_arm_status(instance_id: str, line: str) -> contracts.LineArmV1:
+        """Read a Line's current arm, or its last one and why it stopped."""
+        return handlers.handle_playbill_line_arm_status(instance_id, line)
 
     @_tool
     def cruxible_playbill_line_evaluate(

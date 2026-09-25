@@ -38,10 +38,16 @@ def test_typed_sdk_http_check_listen_evaluate_and_dispatch(playbill_http, tmp_pa
     checked = sdk.check_line(line.identity.name)
     assert checked.status == "met" and not checked.occurrences[0].pending
     assert not dispatch_root(instance).exists()
-    session = sdk.listen_line(line.identity.name)
-    assert session.stops_at is None
-    stopped = sdk.listen_line(line.identity.name, enabled=False)
-    assert stopped.session_id == session.session_id and stopped.stops_at == session.evaluated_until
+    armed = sdk.arm_line(line.identity.name)
+    assert armed.state == "armed" and armed.armed_by.kind == "local_operator"
+    assert sdk.line_arm(line.identity.name) == armed
+    disarmed = sdk.disarm_line(line.identity.name)
+    assert (disarmed.arm_id, disarmed.state, disarmed.stop_reason) == (
+        armed.arm_id,
+        "stopped",
+        "disarmed",
+    )
+    assert disarmed.stopped_at == armed.evaluated_until
     evaluated = sdk.evaluate_line(line.identity.name, since=READ_TIME, until=now)
     assert evaluated.occurrences[0].pending
     result = sdk.dispatch_line(line.identity.name)

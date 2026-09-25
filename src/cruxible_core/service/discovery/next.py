@@ -6,7 +6,7 @@ import base64
 import json
 import shlex
 from collections import OrderedDict, defaultdict
-from collections.abc import Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import RLock
@@ -763,6 +763,8 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.block.repin": "playbill block repin",
     "playbill.block.sync": "playbill block sync",
     "playbill.document.propose": "playbill document propose",
+    "playbill.line.arm": "playbill line arm",
+    "playbill.line.dispatch": "playbill line dispatch",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -847,6 +849,11 @@ def _repair_command(
             parts.append("--all")
         else:
             return None
+    elif operation in {"playbill.line.arm", "playbill.line.dispatch"}:
+        line = values.get("line")
+        if not isinstance(line, str) or not line:
+            return None
+        parts.append(shlex.quote(line))
     elif operation == "playbill.claim.retire":
         claim_id = values.get("claim_id")
         if isinstance(claim_id, str):
@@ -997,6 +1004,26 @@ def _group_items(items: tuple[PlaybillNextItemV1, ...]) -> tuple[PlaybillNextIte
             # The first row the capture would resolve carries it; later ones don't.
             singles.append(_with_findings(item, supporting.pop(item.subject_identity)))
             continue
+        nested = [
+            finding.subject_identity
+            for finding in item.findings
+            if finding.reason in _SUPPORT_RESOLVES and finding.subject_identity in supporting
+        ]
+        if nested:
+            singles.append(
+                _with_findings(
+                    item.model_copy(update={"findings": ()}),
+                    [
+                        *map(_row_of, item.findings),
+                        *(
+                            row
+                            for subject in dict.fromkeys(nested)
+                            for row in supporting.pop(subject)
+                        ),
+                    ],
+                )
+            )
+            continue
         key = _group_key(item, edited_sources=edited_sources)
         if key is None:
             singles.append(item)
@@ -1028,7 +1055,14 @@ def _fold_supporting(
         for item in items
         if item.reason in _EVIDENCE_REASON_ORDER and item.reason != "claim_new_evidence_supporting"
     }
-    resolvable = {item.subject_identity for item in items if item.reason in _SUPPORT_RESOLVES}
+    # A resolvable row may already sit inside another -- a conflict carries its
+    # members' rows -- and still counts as the work the capture resolves.
+    resolvable = {item.subject_identity for item in items if item.reason in _SUPPORT_RESOLVES} | {
+        finding.subject_identity
+        for item in items
+        for finding in item.findings
+        if finding.reason in _SUPPORT_RESOLVES
+    }
     kept: list[PlaybillNextItemV1] = []
     folded: dict[str, list[PlaybillNextItemV1]] = defaultdict(list)
     # Resolvable rows first, in carrier order, so the first one reached carries.
@@ -1128,6 +1162,10 @@ class _Holds:
         coordinate: AcceptedProjectionCoordinate,
         claims: tuple[ClaimArtifactAny, ...],
         door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...],
+        door_history: Callable[
+            [], tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...]
+        ]
+        | None = None,
         evaluation_time: datetime,
     ) -> None:
         self._instance = instance
@@ -1142,43 +1180,64 @@ class _Holds:
         self._claims = live
         self._hold_for: dict[str, timedelta] = {}
         self._seen: dict[tuple[str, tuple[tuple[str, str], ...]], bool] = {}
-        # The latest examined stance per Claim and principal; a later support or
-        # contradict by the same principal ends that principal's hold.
-        latest: dict[
-            tuple[str, str], tuple[tuple[datetime, int, int], ClaimAttestationStatementV2]
-        ] = {}
 
-        def consider(
-            statement: ClaimAttestationStatementV2, order: tuple[datetime, int, int]
-        ) -> None:
+        # The latest examined stance per Claim and principal as of the evaluation
+        # time; a later support or contradict by the same principal ends that
+        # principal's hold, and one made after the evaluation time does not.
+        def eligible(statement: ClaimAttestationStatementV2) -> tuple[str, str] | None:
             identity = statement.claim_identity.qualified
             if (
                 statement.attestation_basis != "examined_existing"
+                or statement.attested_at > evaluation_time
                 or self._current.get(identity) != statement.claim_artifact_digest
             ):
-                return
-            key = (identity, statement.attesting_principal_id)
-            if key not in latest or latest[key][0] < order:
-                latest[key] = (order, statement)
+                return None
+            return identity, statement.attesting_principal_id
 
+        accepted_latest: dict[tuple[str, str], ClaimAttestationStatementV2] = {}
         if self._current:
             with instance.bind_accepted_projection(coordinate) as projection:
                 accepted = projection.typed.claim_attestations(
                     basis="examined_existing", current_claims_only=True
                 )
             for envelope in accepted:
-                consider(envelope.statement, (envelope.statement.attested_at, 0, 0))
+                key = eligible(envelope.statement)
+                if key is not None and (
+                    key not in accepted_latest
+                    or accepted_latest[key].attested_at < envelope.statement.attested_at
+                ):
+                    accepted_latest[key] = envelope.statement
+        # The folded door keeps only each principal's latest examined statement.
+        # When that one postdates the evaluation time, the statement in force
+        # then was superseded out of the fold, so read the whole chain.
+        if door_history is not None and any(
+            payload.attestation.statement.attestation_basis == "examined_existing"
+            and payload.attestation.statement.attested_at > evaluation_time
+            for _event, payload in door_events
+        ):
+            door_events = door_history()
+        # Within the door, the latest append wins, exactly as the fold chooses,
+        # so reading the whole chain never picks a different statement than the
+        # fold would have at the same evaluation time.
+        door_latest: dict[tuple[str, str], tuple[int, ClaimAttestationEventPayloadV1]] = {}
         for event, payload in door_events:
-            if payload.current_at_append is False:
-                continue
+            key = eligible(payload.attestation.statement)
+            if key is not None and (key not in door_latest or door_latest[key][0] < event.sequence):
+                door_latest[key] = (event.sequence, payload)
+        latest: dict[tuple[str, str], ClaimAttestationStatementV2] = dict(accepted_latest)
+        for key, (_sequence, payload) in door_latest.items():
             statement = payload.attestation.statement
-            consider(statement, (statement.attested_at, 1, event.sequence))
+            if key in latest and statement.attested_at < latest[key].attested_at:
+                continue
+            if payload.current_at_append is False:
+                # Appended against a stale head: it ends a hold but never makes one.
+                latest.pop(key, None)
+                continue
+            latest[key] = statement
         holds: dict[str, list[_UnsureHold]] = defaultdict(list)
-        for (identity, _principal), (_order, statement) in latest.items():
-            if (
-                statement.stance == "unsure"
-                and statement.attested_at <= evaluation_time
-                and (statement.valid_until is None or evaluation_time < statement.valid_until)
+        for (identity, _principal), statement in latest.items():
+            if statement.stance == "unsure" and (
+                statement.valid_until is None or evaluation_time < statement.valid_until
             ):
                 holds[identity].append(
                     _UnsureHold(
@@ -1302,8 +1361,10 @@ def _apply_holds(
             held += 1
             kept.extend(_row_of(finding) for finding in remaining)
         elif len(remaining) != len(item.findings):
-            head = item.model_copy(update={"findings": ()})
-            kept.append(_with_findings(head, map(_row_of, remaining)) if remaining else head)
+            # Rebuilt, never copied: the item id digests the findings it carries.
+            kept.append(
+                _with_findings(item.model_copy(update={"findings": ()}), map(_row_of, remaining))
+            )
         else:
             kept.append(item)
     return tuple(kept), held
@@ -2708,6 +2769,61 @@ def _workspace_items(
     return tuple(domains), tuple(items)
 
 
+#: How long an armed Line's own due work may wait before automation reads as stalled.
+LINE_STALL_AFTER = timedelta(minutes=15)
+
+
+def _line_stalled_items(
+    instance: PlaybillInstance,
+    *,
+    evaluation_time: datetime,
+    access_profile: CoverageAccessProfileV1,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """An armed Line that stopped by itself, or stopped draining what it matched.
+
+    Arms are operational state, measured now, like mirror health: a stopped arm
+    is invisible anywhere else, and a Line that quietly stopped running is the
+    failure automation otherwise hides. A deliberate disarm is not a finding.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.service.procedures.line_dispatch import stalled_line_arms
+
+    items: list[PlaybillNextItemV1] = []
+    for arm in stalled_line_arms(instance, now=evaluation_time, stall_after=LINE_STALL_AFTER):
+        stopped = arm.state == "stopped"
+        items.append(
+            _item(
+                severity="repair",
+                reason="line_stalled",
+                subject_identity=arm.line,
+                detail={
+                    "arm_id": arm.arm_id,
+                    "state": arm.state,
+                    "stop_reason": arm.stop_reason,
+                    "stopped_at": None if arm.stopped_at is None else arm.stopped_at.isoformat(),
+                    "pending_automatic": arm.pending_automatic,
+                    "pending_explicit": arm.pending_explicit,
+                    "detail": arm.detail,
+                },
+                # A stopped arm is resumed by rearming under authority that holds;
+                # a Line that stopped draining shows its refusal when dispatched.
+                repair=PlaybillNextRepairV1(
+                    operation="playbill.line.arm" if stopped else "playbill.line.dispatch",
+                    target=arm.line,
+                    required_change=(
+                        "rearm_the_line_under_a_current_credential_and_version"
+                        if stopped
+                        else "dispatch_the_line_to_read_why_its_work_is_blocked"
+                    ),
+                    arguments={"line": arm.line.removeprefix("Line:")},
+                ),
+            )
+        )
+    return tuple(items)
+
+
 def _ledger_mirror_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
     """Where this instance's published copy of its ledger stands against the head.
 
@@ -3408,6 +3524,11 @@ def service_playbill_next(
             access_profile=request.access_profile,
             observation=request.workspace_observation,
         ),
+        *_line_stalled_items(
+            instance,
+            evaluation_time=request.evaluation_time,
+            access_profile=request.access_profile,
+        ),
     )
     held = 0
     if parsed_claims is not None and request.access_profile.permits("instance"):
@@ -3418,6 +3539,13 @@ def service_playbill_next(
                 coordinate=coordinate,
                 claims=parsed_claims,
                 door_events=door_events,
+                door_history=(
+                    None
+                    if attestation_head is None
+                    else lambda: instance.claim_attestation_evidence_store().events(
+                        at_head=attestation_head
+                    )
+                ),
                 evaluation_time=request.evaluation_time,
             ),
         )

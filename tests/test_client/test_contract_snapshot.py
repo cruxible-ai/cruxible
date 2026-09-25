@@ -99,8 +99,8 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "LineDispatchRequestV1",
         "LineDispatchResultV1",
         "LineEvaluateRequestV1",
-        "LineListenRequestV1",
-        "LineListeningSessionV1",
+        "LineArmPrincipalV1",
+        "LineArmV1",
         "LineTriggerCheckRequestV1",
         "LineTriggerCheckResultV1",
         "LineTriggerOccurrenceV1",
@@ -284,6 +284,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
     }
     assert set(current["literal_aliases"]) == {
         "ProcedureMeasurementRefusalCodeV1",
+        "LineArmStopReasonV1",
         "ApprovalPolicyMode",
         "PlaybillAuthoringExampleName",
         "PlaybillHostCompatibilityReasonCodeV1",

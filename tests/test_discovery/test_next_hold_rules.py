@@ -147,3 +147,44 @@ def test_a_standing_hold_lasts_as_long_as_its_claim_type_declares() -> None:
     undeclared = lambda *_args: render_claim_type(_claim_type())  # noqa: E731
     assert at(AT + DEFAULT_UNSURE_HOLD - timedelta(seconds=1), undeclared)
     assert not at(AT + DEFAULT_UNSURE_HOLD, undeclared)
+
+
+def test_a_held_member_leaves_its_conflict_row_valid_and_rebuilt() -> None:
+    from cruxible_core.service.discovery.next import (
+        PlaybillNextItemV1,
+        _apply_holds,
+        _with_findings,
+    )
+
+    def row(reason: str, subject: str, **arguments: object):  # type: ignore[no-untyped-def]
+        return _item(
+            severity="blocking" if reason == "claim_conflicted" else "warning",
+            reason=reason,  # type: ignore[arg-type]
+            subject_identity=subject,
+            detail={},
+            repair=PlaybillNextRepairV1(
+                operation="hand_edit", target=subject, required_change="x", arguments=arguments
+            ),
+        )
+
+    conflict = _with_findings(
+        row("claim_conflicted", "subjects/wi.json", claim_ids=["Claim:CLM-a", "Claim:CLM-b"]),
+        [row("claim_uncovered", "Claim:CLM-a")],
+    )
+    current = {"Claim:CLM-a": "sha256:" + "a" * 64, "Claim:CLM-b": "sha256:" + "b" * 64}
+    # Only CLM-a is held, so the conflict stands but its uncovered member is parked.
+    holds = _holds(
+        seen=set(current.items()),
+        holds={
+            "Claim:CLM-a": [
+                _UnsureHold(referent=REFERENT, attested_at=AT, valid_until=AT + timedelta(days=1))  # type: ignore[arg-type]
+            ]
+        },
+        current=current,
+    )
+
+    (kept,), held = _apply_holds((conflict,), holds)
+
+    assert held == 1
+    assert kept.reason == "claim_conflicted" and kept.findings == ()
+    assert PlaybillNextItemV1.model_validate(kept.model_dump(mode="json")) == kept

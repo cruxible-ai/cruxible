@@ -932,15 +932,30 @@ def _line_occurrence(
     evaluation_time: datetime,
     prior: tuple[ProcedureRunAdmissionV5, ...],
     binding: LineTriggerBindingV1 | None = None,
+    not_before: datetime | None = None,
+    exact_basis: datetime | None = None,
 ) -> tuple[str, datetime | None]:
+    """Derive one occurrence's identity and its next due instant.
+
+    A cadence occurrence is the tick after the last admitted one. `not_before`
+    floors it for forward-only matching: an arm that starts or resumes later
+    than that tick starts ticking from its own start, never catching up.
+    `exact_basis` names a retained tick outright, for an explicit dispatch or
+    retry of that exact occurrence.
+    """
+
     trigger = accepted_line.line.trigger_policy
     last = max(prior, key=lambda item: item.occurrence_evaluation_time, default=None)
     next_due = None
     if isinstance(trigger, ManualTriggerPolicyV1):
         occurrence_basis: object = format_datetime(evaluation_time)
     elif isinstance(trigger, CadenceTriggerPolicyV1):
-        if last is not None:
+        if exact_basis is not None:
+            next_due = exact_basis
+        elif last is not None:
             next_due = last.occurrence_evaluation_time + timedelta(seconds=trigger.interval_seconds)
+        if exact_basis is None and next_due is not None and not_before is not None:
+            next_due = max(next_due, not_before)
         occurrence_basis = format_datetime(next_due or evaluation_time)
     elif isinstance(trigger, (CaptureLandingTriggerPolicyV2, WindowCloseTriggerPolicyV2)):
         if binding is None or binding.kind != trigger.kind:
@@ -3460,6 +3475,7 @@ def service_run_playbill_line(
     evaluation_instant_skew: timedelta | None = None,
     occurrence_basis_time: datetime | None = None,
     expected_line_artifact_digest: str | None = None,
+    explicit_occurrence: bool = False,
 ) -> ProcedureRunStateV2:
     instance.require_writable()
     if request.line != path_identity_digest:
@@ -3481,6 +3497,7 @@ def service_run_playbill_line(
             evaluation_instant_skew=evaluation_instant_skew,
             occurrence_basis_time=occurrence_basis_time,
             expected_line_artifact_digest=expected_line_artifact_digest,
+            explicit_occurrence=explicit_occurrence,
         )
 
 
@@ -3497,6 +3514,7 @@ def _run_playbill_line(
     evaluation_instant_skew: timedelta | None = None,
     occurrence_basis_time: datetime | None = None,
     expected_line_artifact_digest: str | None = None,
+    explicit_occurrence: bool = False,
 ) -> ProcedureRunStateV2:
     """Derive, admit, and execute one occurrence of an accepted Line.
 
@@ -3704,15 +3722,21 @@ def _run_playbill_line(
             "Line and resolution contract must bind the same observation window"
         )
     prior = _line_admissions(instance, accepted_line)
+    cadence_basis = (
+        min(occurrence_basis_time, evaluation_time)
+        if occurrence_basis_time is not None and isinstance(trigger, CadenceTriggerPolicyV1)
+        else None
+    )
     occurrence_id, next_due = _line_occurrence(
         accepted_line,
-        evaluation_time=(
-            min(occurrence_basis_time, evaluation_time)
-            if occurrence_basis_time is not None and isinstance(trigger, CadenceTriggerPolicyV1)
-            else evaluation_time
-        ),
+        evaluation_time=cadence_basis or evaluation_time,
         prior=prior,
         binding=trigger_binding,
+        # A retained tick is validated against the same calculation that queued
+        # it: automatically, as the chain's next tick floored at its own due
+        # instant; explicitly, as exactly the tick it names.
+        not_before=None if explicit_occurrence else cadence_basis,
+        exact_basis=cadence_basis if explicit_occurrence else None,
     )
     if request.occurrence_id is not None and request.occurrence_id != occurrence_id:
         return _line_refusal_state(

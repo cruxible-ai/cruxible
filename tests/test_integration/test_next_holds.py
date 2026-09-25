@@ -234,3 +234,40 @@ def _capture(instance, claim_id: str, selected: bytes) -> str:  # type: ignore[n
         selector={"anchor": "new", "start_byte": 0, "end_byte": len(selected)},
         selected_content=selected,
     ).capture_digest
+
+
+def test_a_hold_read_before_a_later_change_of_mind_still_holds_then(tmp_path: Path) -> None:
+    instance, owner, *_rest = _foreign_world(tmp_path, bind=False)
+    claim = _current_claim(instance)
+    subject = claim.identity.qualified
+    unsure_at = EVALUATION_TIME - timedelta(minutes=10)
+    _attest(instance, owner, claim, tmp_path, at=unsure_at)
+    _attest(instance, owner, claim, tmp_path, stance="support", at=unsure_at + timedelta(minutes=1))
+
+    # Before the support, the unsure hold was in force; after it, it is not.
+    between = _next(instance, at=unsure_at + timedelta(seconds=30))
+    assert not _rows(between, "claim_uncovered", subject)
+    assert between.status.held == 1
+    assert _rows(_next(instance), "claim_uncovered", subject)
+
+
+def test_a_later_statement_never_changes_which_one_held_at_an_earlier_time(
+    tmp_path: Path,
+) -> None:
+    instance, owner, *_rest = _foreign_world(tmp_path, bind=False)
+    claim = _current_claim(instance)
+    subject = claim.identity.qualified
+    base = EVALUATION_TIME - timedelta(hours=1)
+    # Appended in this order, asserted out of it: the later append is the
+    # principal's latest word, as the folded door reads it.
+    _attest(instance, owner, claim, tmp_path, at=base + timedelta(minutes=10))
+    _attest(instance, owner, claim, tmp_path, stance="support", at=base + timedelta(minutes=5))
+    read_at = base + timedelta(minutes=20)
+    before = _next(instance, at=read_at)
+    assert _rows(before, "claim_uncovered", subject) and before.status.held == 0
+
+    # A statement asserted after the read time forces the whole-chain read,
+    # which must choose the same statement the fold did.
+    _attest(instance, owner, claim, tmp_path, stance="support", at=base + timedelta(minutes=30))
+    after = _next(instance, at=read_at)
+    assert _rows(after, "claim_uncovered", subject) and after.status.held == 0

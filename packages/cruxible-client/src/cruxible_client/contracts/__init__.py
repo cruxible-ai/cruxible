@@ -34,6 +34,15 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
 from cruxible_client.contracts.line_dispatch import (
+    LineArmPrincipalV1 as LineArmPrincipalV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineArmStopReasonV1 as LineArmStopReasonV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineArmV1 as LineArmV1,
+)
+from cruxible_client.contracts.line_dispatch import (
     LineDispatchItemV1 as LineDispatchItemV1,
 )
 from cruxible_client.contracts.line_dispatch import (
@@ -44,12 +53,6 @@ from cruxible_client.contracts.line_dispatch import (
 )
 from cruxible_client.contracts.line_dispatch import (
     LineEvaluateRequestV1 as LineEvaluateRequestV1,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineListeningSessionV1 as LineListeningSessionV1,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineListenRequestV1 as LineListenRequestV1,
 )
 from cruxible_client.contracts.line_dispatch import (
     LineTriggerCheckRequestV1 as LineTriggerCheckRequestV1,
@@ -257,6 +260,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "document_modified",
     "unregistered_projection_block",
     "projection_marker_invalid",
+    "line_stalled",
 ]
 PlaybillNextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
 PlaybillNextRepairOperation: TypeAlias = Literal[
@@ -268,6 +272,8 @@ PlaybillNextRepairOperation: TypeAlias = Literal[
     "playbill.block.repin",
     "playbill.block.sync",
     "playbill.document.propose",
+    "playbill.line.arm",
+    "playbill.line.dispatch",
     "hand_edit",
 ]
 # The next queue's own refusals that carry a declared repair. A page cursor

@@ -111,6 +111,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "claim_new_evidence_unreviewed",
         "document_modified",
         "unregistered_projection_block",
+        # An armed Line that stopped by itself, or stopped draining its own work.
+        "line_stalled",
     }
     assert set(get_args(NextRepairOperation)) == {
         "playbill.authoring.create",
@@ -124,5 +126,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "playbill.block.repin",
         "playbill.block.sync",
         "playbill.document.propose",
+        "playbill.line.arm",
+        "playbill.line.dispatch",
         "hand_edit",
     }

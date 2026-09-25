@@ -102,3 +102,21 @@ def test_supporting_evidence_rides_inside_the_first_row_it_would_resolve() -> No
     # Carried once: the other row it would resolve stays as it was.
     assert rows[("claim_uncovered", "Claim:a")] == uncovered
     assert rows[("claim_uncovered", "Claim:b")] == elsewhere
+
+
+def test_supporting_evidence_reaches_a_resolvable_row_nested_in_a_conflict() -> None:
+    from cruxible_core.service.discovery.next import _with_findings
+
+    conflict = _with_findings(
+        _row("claim_conflicted", "subjects/wi.json", severity="blocking"),
+        [_row("claim_uncovered", "Claim:a")],
+    )
+    support = _row("claim_new_evidence_supporting", "Claim:a", capture_digest="sha256:" + "1" * 64)
+
+    (row,) = _group_items((conflict, support))
+
+    assert row.reason == "claim_conflicted"
+    assert [finding.reason for finding in row.findings] == [
+        "claim_uncovered",
+        "claim_new_evidence_supporting",
+    ]

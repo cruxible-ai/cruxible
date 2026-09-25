@@ -3989,27 +3989,68 @@ def check_line(
             )
 
 
-@line_group.command("listen")
+def _echo_line_arm(result: Any) -> None:
+    state = "armed" if result.state == "armed" else f"stopped ({result.stop_reason})"
+    click.echo(f"{result.line}: {state}")
+    click.echo(f"Armed by: {result.armed_by.label} at {result.armed_at.isoformat()}")
+    click.echo(f"Matched through: {result.evaluated_until.isoformat()}")
+    click.echo(
+        f"Pending: {result.pending_automatic} automatic, "
+        f"{result.pending_explicit} awaiting explicit dispatch"
+    )
+    if result.detail:
+        click.echo(result.detail)
+
+
+@line_group.command("arm")
 @click.argument("line")
-@click.option("--stop", is_flag=True, help="Stop listening; leave pending work intact.")
 @json_option
 @handle_errors
-def listen_line(line: str, stop: bool, output_json: bool) -> None:
-    from cruxible_client.contracts.line_dispatch import LineListenRequestV1
+def arm_line(line: str, output_json: bool) -> None:
+    """Admit what this Line matches from now on, under your credential."""
 
     result = _server_call(
-        lambda client, instance_id: client.listen_playbill_line(
-            instance_id, line, request=LineListenRequestV1(action="stop" if stop else "start")
-        ),
-        command_name="playbill line listen",
+        lambda client, instance_id: client.arm_playbill_line(instance_id, line),
+        command_name="playbill line arm",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        click.echo(f"{result.line}: {'stopped' if result.stops_at else 'listening'}")
-        click.echo(f"Evaluated through: {result.evaluated_until.isoformat()}")
-        if result.detail:
-            click.echo(result.detail)
+        _echo_line_arm(result)
+
+
+@line_group.command("disarm")
+@click.argument("line")
+@json_option
+@handle_errors
+def disarm_line(line: str, output_json: bool) -> None:
+    """Stop admitting work automatically; admitted runs keep going."""
+
+    result = _server_call(
+        lambda client, instance_id: client.disarm_playbill_line(instance_id, line),
+        command_name="playbill line disarm",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_line_arm(result)
+
+
+@line_group.command("status")
+@click.argument("line")
+@json_option
+@handle_errors
+def line_arm_status(line: str, output_json: bool) -> None:
+    """Show whether the Line is armed and why an arm stopped."""
+
+    result = _server_call(
+        lambda client, instance_id: client.playbill_line_arm_status(instance_id, line),
+        command_name="playbill line status",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_line_arm(result)
 
 
 @line_group.command("evaluate")
