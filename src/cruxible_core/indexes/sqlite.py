@@ -874,7 +874,10 @@ def bind_projection(
                             uri=True,
                         )
                     except sqlite3.OperationalError as exc:
-                        if descriptor_uri is None or exc.sqlite_errorname != "SQLITE_CANTOPEN":
+                        if (
+                            descriptor_uri is None
+                            or getattr(exc, "sqlite_errorname", None) != "SQLITE_CANTOPEN"
+                        ):
                             raise
                         # SQLite lstat()s every component of the alias it opens,
                         # and Darwin's descriptor filesystem transiently answers

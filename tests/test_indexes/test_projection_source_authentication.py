@@ -11,6 +11,7 @@ from cruxible_client.contracts.subjects import render_subject
 from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import P2_B5_COMPILER
 from cruxible_core.indexes import sqlite as storage
+from cruxible_core.indexes.acquisition import ACQUISITION_ATTEMPTS
 from cruxible_core.indexes.logical_digest import compute_table_sums, store_table_sums
 from cruxible_core.indexes.projection import render_projection_manifest
 from cruxible_core.indexes.typed_sqlite import row_counts
@@ -129,7 +130,7 @@ def test_bound_file_identity_change_invalidates_source_authentication(tmp_path):
 
 
 @pytest.mark.parametrize("descriptor_namespace", ["native", "canonicalized", "absent"])
-@pytest.mark.parametrize("swap_count", [1, 3])
+@pytest.mark.parametrize("swap_count", [1, ACQUISITION_ATTEMPTS])
 def test_warm_bind_cannot_open_a_swapped_directory_then_certify_restored_path(
     tmp_path, monkeypatch, descriptor_namespace, swap_count
 ):
@@ -188,7 +189,8 @@ def test_warm_bind_cannot_open_a_swapped_directory_then_certify_restored_path(
                     f"{(publication / result.manifest.pieces[0].name).as_uri()}?mode=ro&immutable=1"
                 ),
             )
-        if swap_count == 3:
+        if swap_count == ACQUISITION_ATTEMPTS:
+            # A swap repeated on every bounded attempt exhausts the bound and refuses.
             with pytest.raises(ProjectionIntegrityError, match="namespace changed"):
                 storage.bind_projection(manifest, expected=coordinate)
         else:
