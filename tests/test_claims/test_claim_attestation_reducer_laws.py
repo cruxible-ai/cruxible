@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,12 +19,14 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
-from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.indexes.history.history_index import ArtifactVersionLocation
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.service.claims.claims import (
     CaptureAdmissionAccountV1,
     _claim_law_evidence,
 )
 from cruxible_core.service.discovery.next import (
+    MAX_DEPENDENCY_LINEAGE_NODES,
     PlaybillNextRequestV2,
     _attestation_claim_lineage,
     _AttestationLineageArtifact,
@@ -329,23 +332,74 @@ def test_terminal_retirement_resolves_and_incomplete_lineage_retains_typed_statu
 
 @dataclass(frozen=True)
 class _Generation:
-    oid: str
+    sequence: int
+    git_oid: str
+
+
+class _LineageHistory:
+    """The exact-locator reads a lineage walk makes, bound to one accepted cutoff."""
+
+    def __init__(
+        self,
+        versions: Mapping[tuple[str, str], ArtifactVersionLocation],
+        generations: tuple[_Generation, ...],
+        cutoff: int,
+    ) -> None:
+        self._versions = versions
+        self._generations = generations
+        self._cutoff = cutoff
+
+    def artifact(
+        self, artifact_digest: str, *, identity: str | None = None
+    ) -> ArtifactVersionLocation | None:
+        assert identity is not None
+        location = self._versions.get((identity, artifact_digest))
+        if location is None or location.occurrence_sequence > self._cutoff:
+            return None
+        return location
+
+    def generation(self, sequence: int) -> _Generation:
+        assert 0 <= sequence <= self._cutoff
+        return self._generations[sequence]
 
 
 class _LineageInstance:
+    """One Claim rewritten once per generation, readable only through its locators."""
+
     def __init__(
         self,
         trees: dict[str, dict[str, bytes]],
         history: tuple[_Generation, ...],
+        coordinate: AcceptedProjectionCoordinate,
     ) -> None:
         self._trees = trees
         self._history = history
+        self._coordinate = coordinate
+        self.lookups = 0
+        versions: dict[tuple[str, str], ArtifactVersionLocation] = {}
+        for generation in history:
+            for path, raw in trees[generation.git_oid].items():
+                claim = parse_claim(raw, path=path)
+                digest = claim_artifact_digest(claim).tagged
+                versions[(claim.identity.qualified, digest)] = ArtifactVersionLocation(
+                    identity=claim.identity.qualified,
+                    artifact_digest=digest,
+                    occurrence_sequence=generation.sequence,
+                    path=path,
+                    predecessor_digest=claim.lifecycle.predecessor_digest,
+                    artifact_revision=generation.sequence,
+                )
+        self._versions = versions
 
-    def accepted_history(self) -> tuple[_Generation, ...]:
-        return self._history
+    @contextmanager
+    def accepted_history_reader(self, *, at: AcceptedCoordinate) -> Iterator[_LineageHistory]:
+        self.lookups += 1
+        (cutoff,) = (g.sequence for g in self._history if g.git_oid == at.git_oid)
+        yield _LineageHistory(self._versions, self._history, cutoff)
 
-    def tree_at(self, oid: str) -> dict[str, bytes]:
-        return self._trees[oid]
+    def coordinate_for_oid(self, oid: str) -> AcceptedProjectionCoordinate:
+        assert oid in self._trees
+        return self._coordinate.model_copy(update={"git_oid": oid})
 
     def blob_at(self, oid: str, path: str) -> bytes | None:
         return self._trees[oid].get(path)
@@ -355,19 +409,21 @@ class _LineageInstance:
         return {path: tree[path] for path in paths if path in tree}
 
 
-def test_lineage_walk_hits_256_cap_and_reports_incomplete(tmp_path: Path) -> None:
+def test_lineage_walk_hits_node_cap_and_reports_incomplete(tmp_path: Path) -> None:
     instance, claim_id, _owner = _accepted_claim_world(tmp_path)
     path = claim_path(claim_id)
     base_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     claim = parse_claim(base_tree[path], path=path)
+    assert claim.lifecycle.predecessor_digest is None
     trees: dict[str, dict[str, bytes]] = {}
     history: list[_Generation] = []
     from cruxible_client.contracts.claims import render_claim
 
-    for sequence in range(258):
+    # One version more than the walk may hold: the oldest is out of reach.
+    for sequence in range(MAX_DEPENDENCY_LINEAGE_NODES + 1):
         oid = f"{sequence:040x}"
         trees[oid] = {path: render_claim(claim)}
-        history.append(_Generation(oid=oid))
+        history.append(_Generation(sequence=sequence, git_oid=oid))
         claim = claim.model_copy(
             update={
                 "lifecycle": ArtifactLifecycle(
@@ -375,12 +431,27 @@ def test_lineage_walk_hits_256_cap_and_reports_incomplete(tmp_path: Path) -> Non
                 )
             }
         )
-    target = history[-1]
-    coordinate = instance.accepted_coordinate().model_copy(update={"git_oid": target.oid})
-    lineage, incomplete = _attestation_claim_lineage(
-        _LineageInstance(trees, tuple(history)),  # type: ignore[arg-type]
-        coordinate=coordinate,
-        claim_identity=claim_id,
-    )
-    assert len(lineage) == 257
+    fake = _LineageInstance(trees, tuple(history), instance.accepted_coordinate())
+
+    def walk(target: _Generation) -> tuple[tuple[_AttestationLineageArtifact, ...], bool]:
+        return _attestation_claim_lineage(
+            fake,  # type: ignore[arg-type]
+            coordinate=fake.coordinate_for_oid(target.git_oid),
+            claim_identity=claim_id,
+        )
+
+    lineage, incomplete = walk(history[-1])
+    assert len(lineage) == MAX_DEPENDENCY_LINEAGE_NODES
     assert incomplete is True
+    # Oldest first, and the walk stopped at the cap rather than at a gap.
+    assert (
+        lineage[0].claim.lifecycle.predecessor_digest
+        == claim_artifact_digest(parse_claim(trees[history[0].git_oid][path], path=path)).tagged
+    )
+    assert fake.lookups == MAX_DEPENDENCY_LINEAGE_NODES - 1
+
+    # One generation earlier the whole lineage fits the cap exactly.
+    lineage, incomplete = walk(history[-2])
+    assert len(lineage) == MAX_DEPENDENCY_LINEAGE_NODES
+    assert lineage[0].claim.lifecycle.predecessor_digest is None
+    assert incomplete is False

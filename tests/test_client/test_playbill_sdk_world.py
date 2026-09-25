@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -11,6 +12,7 @@ from typing import Any
 
 import pytest
 
+import cruxible_client
 from cruxible_client import Playbill
 from cruxible_client import contracts as api
 from cruxible_client.authoring.sdk_types import (
@@ -761,23 +763,7 @@ def test_a_type_checker_reads_the_generated_stub_as_exact_types(
         encoding="utf-8",
     )
 
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "mypy",
-            "--no-incremental",
-            "--follow-imports=silent",
-            "--no-error-summary",
-            "uses_world.py",
-        ],
-        cwd=project,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    report = completed.stdout + completed.stderr
+    report = _mypy(project, "uses_world.py")
     assert "uses_world.py:8" not in report, report
     assert "uses_world.py:12" in report, report
     assert "LiteralValue" in report, report
@@ -1274,6 +1260,20 @@ def test_a_type_checker_rejects_every_misspelling_the_stub_names(
 
 
 def _mypy(project: Path, target: str) -> str:
+    """Type-check `target` against the cruxible_client this test imported.
+
+    The checker runs from the stub project, where a relative PYTHONPATH entry no
+    longer resolves; mypy would then read whatever cruxible_client its
+    interpreter has installed rather than the one under test.
+    """
+
+    inherited = [
+        str(Path(entry).resolve())
+        for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep)
+        if entry
+    ]
+    client_root = str(Path(cruxible_client.__file__).resolve().parents[1])
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([client_root, *inherited])}
     completed = subprocess.run(
         [
             sys.executable,
@@ -1285,6 +1285,7 @@ def _mypy(project: Path, target: str) -> str:
             target,
         ],
         cwd=project,
+        env=env,
         capture_output=True,
         text=True,
         check=False,

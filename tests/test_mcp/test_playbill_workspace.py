@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ from cruxible_client import contracts
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
-    ProjectionBlockStampV1,
+    ProjectionBlockStampV2,
     ProjectionClaimBackingV1,
     frame_projection_block,
 )
@@ -179,7 +180,8 @@ def test_library_mode_activate_checks_an_attached_workspace(
         encoding="utf-8",
     )
     old_body = b"status: old\n"
-    stamp = ProjectionBlockStampV1(
+    # The page declares it must stay current, so drift under it gates the sweep.
+    stamp = ProjectionBlockStampV2(
         source_id="corpus.runbook",
         block_id="pub-mcp",
         declared_generation=1,
@@ -191,6 +193,7 @@ def test_library_mode_activate_checks_an_attached_workspace(
             ),
         ),
         body_digest="sha256:" + hashlib.sha256(old_body).hexdigest(),
+        currency_policy="require_current",
     )
     source = workspace / "runbook.md"
     source.write_bytes(frame_projection_block(stamp=stamp, body=old_body))
@@ -209,46 +212,63 @@ def test_library_mode_activate_checks_an_attached_workspace(
     )
     monkeypatch.setattr(handlers.playbill_api, "playbill_export_floor", lambda _instance: _export())
 
-    def read_backing(
+    checked: list[contracts.PlaybillProjectionCheckRequestV1] = []
+
+    def check_blocks(
         instance_id: str,
         *,
-        request: contracts.PlaybillBlockSyncReadRequestV1,
-    ) -> contracts.PlaybillBlockSyncReadResultV1:
+        request: contracts.PlaybillProjectionCheckRequestV1,
+    ) -> contracts.PlaybillProjectionCheckResultV1:
+        # Block sync asks the daemon for every stamp's currency in one batch.
         assert instance_id == "inst_test"
-        moved = ProjectionClaimBackingV1(
-            identity=request.stamp.backing[0].identity,
-            statement_digest="sha256:" + "a" * 64,
-        )
-        return contracts.PlaybillBlockSyncReadResultV1(
-            status="successor",
-            original_artifact_digest="sha256:" + "8" * 64,
-            artifact_digest="sha256:" + "9" * 64,
-            coordinate=AcceptedCoordinate.model_validate(_coordinate().model_dump()),
-            generation=2,
-            backing=moved,
-            moved_backings=(moved,),
+        checked.append(request)
+        coordinate = AcceptedCoordinate.model_validate(_coordinate().model_dump())
+        results = []
+        for held in request.stamps:
+            moved = ProjectionClaimBackingV1(
+                identity=held.backing[0].identity,
+                statement_digest="sha256:" + "a" * 64,
+            )
+            results.append(
+                contracts.PlaybillBlockSyncReadResultV1(
+                    status="successor",
+                    original_artifact_digest="sha256:" + "8" * 64,
+                    artifact_digest="sha256:" + "9" * 64,
+                    coordinate=coordinate,
+                    generation=2,
+                    backing=moved,
+                    moved_backings=(moved,),
+                )
+            )
+        return contracts.PlaybillProjectionCheckResultV1(
+            coordinate=coordinate,
+            evaluation_time=datetime(2026, 9, 16, tzinfo=UTC),
+            results=tuple(results),
         )
 
     monkeypatch.setattr(
         handlers.playbill_api,
-        "playbill_read_block_sync_backing",
-        read_backing,
+        "playbill_check_projection_blocks",
+        check_blocks,
     )
 
     result = handlers.handle_playbill_activate("inst_test", "proposal-1")
 
     # The closing sweep an activation runs REPORTS: nothing renders a block, so
     # a block whose held backing moved is named `stale` and the page is left
-    # exactly as the author wrote it. It counts as a refusal so the sweep does
-    # not answer clean over a page that has drifted from the state it declares.
+    # exactly as the author wrote it. Under the page's `require_current` policy
+    # it counts as a refusal, so the sweep does not answer clean over a page that
+    # has drifted from the state it declares.
     assert result.status == "accepted"
     assert result.block_sync is not None
     assert [(item.outcome, item.reason) for item in result.block_sync.items] == [
         ("stale", "block_backing_changed")
     ], result.block_sync.items
     assert result.block_sync.items[0].reason == "block_backing_changed"
+    assert result.block_sync.items[0].currency_policy == "require_current"
     assert result.block_sync.items[0].repair is not None
     assert result.block_sync.items[0].repair.operation == "playbill.block.repin"
+    assert [request.stamps for request in checked] == [(stamp,)]
     assert result.block_sync.has_refusals is True
     assert result.block_sync.changed_file_count == 0
     assert source.read_bytes() == before
