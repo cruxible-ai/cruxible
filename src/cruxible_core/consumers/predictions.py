@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS progress (
  capture_head INTEGER NOT NULL DEFAULT 0, resolution_ordinal INTEGER NOT NULL DEFAULT 0,
  last_error TEXT, last_error_at TEXT
 ) STRICT;
-CREATE TABLE IF NOT EXISTS pending (identity TEXT PRIMARY KEY) STRICT;
+CREATE TABLE IF NOT EXISTS pending (identity TEXT PRIMARY KEY, generation INTEGER NOT NULL) STRICT;
 CREATE TABLE IF NOT EXISTS contracts (
  identity TEXT PRIMARY KEY, artifact_digest TEXT NOT NULL, hypothesis TEXT NOT NULL,
  reference TEXT NOT NULL, contract TEXT NOT NULL, accepted_at TEXT NOT NULL,
@@ -340,8 +340,12 @@ class PredictionSettlementConsumers:
         mark = uuid4().hex
         with _state(instance) as connection:
             assert connection is not None
+            # A later generation re-queues a contract the worker may be loading
+            # now; the worker only clears the queueing it read.
             connection.executemany(
-                "INSERT OR IGNORE INTO pending VALUES (?)", ((identity,) for identity in contracts)
+                "INSERT INTO pending VALUES (?,?) "
+                "ON CONFLICT(identity) DO UPDATE SET generation=excluded.generation",
+                ((identity, through) for identity in contracts),
             )
             connection.executemany(
                 "UPDATE windows SET dirty=? WHERE contract_id=?",
@@ -426,19 +430,17 @@ class PredictionSettlementConsumers:
 
         with _state(instance) as connection:
             assert connection is not None
-            pending = [
-                row[0]
-                for row in connection.execute(
-                    "SELECT identity FROM pending ORDER BY identity LIMIT ?", (CONTRACT_BATCH,)
-                ).fetchall()
-            ]
+            pending = connection.execute(
+                "SELECT identity,generation FROM pending ORDER BY identity LIMIT ?",
+                (CONTRACT_BATCH,),
+            ).fetchall()
             (backfill_after,) = connection.execute("SELECT backfill_after FROM progress").fetchone()
         coordinate = instance.accepted_coordinate()
         live: dict[str, str | None] = {}
         backfilled: str | None = None
         with instance.bind_accepted_projection(coordinate) as projection:
             typed = projection.typed.connection
-            identities = list(pending)
+            identities = [identity for identity, _generation in pending]
             if backfill_after is not None:
                 page = [
                     row[0]
@@ -507,9 +509,7 @@ class PredictionSettlementConsumers:
                     "VALUES (?,?,?,?,'open')",
                     windows,
                 )
-            connection.executemany(
-                "DELETE FROM pending WHERE identity=?", ((identity,) for identity in pending)
-            )
+            connection.executemany("DELETE FROM pending WHERE identity=? AND generation=?", pending)
             if backfill_after is not None:
                 connection.execute("UPDATE progress SET backfill_after=?", (backfilled,))
 

@@ -322,14 +322,11 @@ def test_an_anchor_whose_material_is_gone_is_a_finding_until_restored(tmp_path: 
     assert len(_windows(instance)) == 1
 
 
-def test_retiring_a_contract_withdraws_what_it_owed(tmp_path: Path) -> None:
-    instance, owner, _capture, contract = fixed_world(tmp_path)
-    drain(instance, now=FIXED_CLOSES)
-    assert len(settleable_windows(instance)) == 1
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    path = resolution_contract_path(contract.identity.name)
+def retire(instance, owner, contract, *, at: str) -> None:  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.resolution_contracts import parse_resolution_contract
 
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = resolution_contract_path(contract.identity.name)
     accepted = parse_resolution_contract(tree[path], path=path)
     retired = accepted.model_copy(
         update={
@@ -339,13 +336,40 @@ def test_retiring_a_contract_withdraws_what_it_owed(tmp_path: Path) -> None:
         }
     )
     tree[path] = render_resolution_contract(retired)
-    _accept_tree(
-        instance, owner, tree, timestamp="2026-09-02T13:30:00.000000Z", proposal_name="retire"
-    )
+    _accept_tree(instance, owner, tree, timestamp=at, proposal_name="retire")
+
+
+def test_retiring_a_contract_withdraws_what_it_owed(tmp_path: Path) -> None:
+    instance, owner, _capture, contract = fixed_world(tmp_path)
+    drain(instance, now=FIXED_CLOSES)
+    assert len(settleable_windows(instance)) == 1
+    retire(instance, owner, contract, at="2026-09-02T13:30:00.000000Z")
 
     drain(instance, now=FIXED_CLOSES + timedelta(hours=1))
 
     assert settleable_windows(instance) == () and _windows(instance) == {}
+
+
+def test_a_retirement_landing_while_its_old_version_loads_is_not_lost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, owner, capture = served._world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)  # the worker runs before the contract exists
+    contract = served._predict(instance, owner, capture)
+    load = WORKER._load
+    raced: list[bool] = []
+
+    def load_while_retired(*args, **kwargs):  # type: ignore[no-untyped-def]
+        if not raced:
+            raced.append(True)
+            retire(instance, owner, contract, at="2026-09-02T12:30:00.000000Z")
+            WORKER.match(instance, now=served.PREDICTED_AT, daemon_id="daemon")
+        return load(*args, **kwargs)
+
+    monkeypatch.setattr(WORKER, "_load", load_while_retired)
+    drain(instance, now=FIXED_CLOSES)
+
+    assert raced and settleable_windows(instance) == () and _windows(instance) == {}
 
 
 def test_the_operator_can_turn_the_worker_off(monkeypatch: pytest.MonkeyPatch) -> None:
