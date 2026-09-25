@@ -419,6 +419,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("SourceEffectiveTimeV1", "effective_until"): "VALIDITY WINDOW",
     ("SourceSelectionReceiptV1", "evaluation_time"): "EVALUATION INSTANT",
     ("SubjectProfileV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("StaleProposal", "admitted_at"): "ASSERTION TIME",
     ("TerminalChildReceiptV1", "sequence"): "SETTLEMENT ORDER",
     ("TerminalEgressRequestV1", "prepared_at"): "EVALUATION INSTANT",
     ("TerminalEgressRequestV2", "evaluation_time"): "EVALUATION INSTANT",
