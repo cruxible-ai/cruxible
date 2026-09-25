@@ -1063,18 +1063,23 @@ def recover_instance(
     # Release the head tree before projection assembly, the peak-memory phase.
     del window
     recovered_history = tuple(history)
-    _clean_unaccepted_generations(
-        ledger,
-        history=recovered_history,
-        repository_path=repository_path,
-        object_format=object_format,
-        instance_id=instance_id,
-        bodies=bodies,
-        laws=laws,
-        promotion_verifier=promotion_verifier,
-        producer_receipt_resolver=producer_receipt_resolver,
-        query_facts_builder=query_facts_builder,
-    )
+    # The whole-object-store scan runs only when a generation was left in flight
+    # (or has never run on this ledger); a clean stop leaves nothing to collect.
+    markers = ledger.unaccepted_cleanup_due()
+    if markers is not None:
+        _clean_unaccepted_generations(
+            ledger,
+            history=recovered_history,
+            repository_path=repository_path,
+            object_format=object_format,
+            instance_id=instance_id,
+            bodies=bodies,
+            laws=laws,
+            promotion_verifier=promotion_verifier,
+            producer_receipt_resolver=producer_receipt_resolver,
+            query_facts_builder=query_facts_builder,
+        )
+        ledger.complete_unaccepted_cleanup(markers)
     _clean_unaccepted_publications(
         ledger,
         history=recovered_history,

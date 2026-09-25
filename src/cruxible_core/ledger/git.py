@@ -8,6 +8,7 @@ import fcntl
 import hashlib
 import os
 import re
+import secrets
 import signal
 import subprocess
 import tempfile
@@ -286,6 +287,9 @@ class GitLedger:
             "GIT_AUTHOR_DATE": timestamp,
             "GIT_COMMITTER_DATE": timestamp,
         }
+        # Marked before the commit exists, so a crash at any later point leaves
+        # a marker for recovery's collection of unsettled generations.
+        pending = self._mark_generation_in_flight(f"pending-{secrets.token_hex(8)}")
         oid = (
             self._git(
                 [
@@ -303,6 +307,9 @@ class GitLedger:
             .strip()
         )
         self._validate_oid(oid)
+        self._mark_generation_in_flight(oid)
+        pending.unlink()
+        _fsync_directory(pending.parent)
         if self.parent_of(oid) != parent_oid:
             raise PlaybillGitError("new generation commit parent differs from settlement base")
         if not self.verify_commit(oid):
@@ -1492,6 +1499,62 @@ class GitLedger:
         finally:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
             os.close(descriptor)
+
+    def _in_flight_directory(self) -> Path:
+        return self.path / _GENERATIONS_IN_FLIGHT
+
+    def _mark_generation_in_flight(self, name: str) -> Path:
+        directory = self._in_flight_directory()
+        directory.mkdir(mode=0o700, exist_ok=True)
+        marker = directory / name
+        descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        _fsync_directory(directory)
+        return marker
+
+    def settle_generation_in_flight(self, oid: str) -> None:
+        """Forget one generation's marker: it is on main, or it was collected."""
+
+        self._validate_oid(oid)
+        marker = self._in_flight_directory() / oid
+        if marker.exists():
+            marker.unlink()
+            _fsync_directory(marker.parent)
+
+    def unaccepted_cleanup_due(self) -> tuple[str, ...] | None:
+        """The markers a full unsettled-generation collection must answer for, or None.
+
+        Collection is due when a generation was left in flight (a crash after
+        its commit could exist), or when this ledger has never completed one.
+        """
+
+        directory = self._in_flight_directory()
+        markers = (
+            tuple(sorted(path.name for path in directory.iterdir())) if directory.is_dir() else ()
+        )
+        if markers or not (self.path / _UNSETTLED_CLEANUP_BASELINE).exists():
+            return markers
+        return None
+
+    def complete_unaccepted_cleanup(self, markers: tuple[str, ...]) -> None:
+        """Record a finished full collection and drop the markers it covered."""
+
+        directory = self._in_flight_directory()
+        for name in markers:
+            (directory / name).unlink(missing_ok=True)
+        if markers:
+            _fsync_directory(directory)
+        baseline = self.path / _UNSETTLED_CLEANUP_BASELINE
+        if not baseline.exists():
+            descriptor = os.open(baseline, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            _fsync_directory(self.path)
 
     def collect_unreachable_generation(self, oid: str) -> tuple[str, ...]:
         """Delete only loose objects proven reachable solely from one losing generation."""
@@ -2881,6 +2944,11 @@ def _require_object_hash(oid: str, object_type: str, body: bytes) -> None:
     if digest.hexdigest() != oid:
         raise PlaybillGitError(f"ledger object bytes do not hash to their ID: {oid}")
 
+
+# A generation commit is marked here from before it exists until it is on main
+# or collected; recovery scans for unsettled generations only when one is left.
+_GENERATIONS_IN_FLIGHT = "playbill-generations-in-flight"
+_UNSETTLED_CLEANUP_BASELINE = "playbill-unsettled-cleanup-v1"
 
 _BATCH_READER_CAPACITY = 16
 _BATCH_READERS: OrderedDict[tuple[str, int, int], _BatchBlobReader] = OrderedDict()

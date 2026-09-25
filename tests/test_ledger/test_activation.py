@@ -32,7 +32,10 @@ from cruxible_core.governance.keys import (
     generate_daemon_key,
 )
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
-from cruxible_core.indexes.serving import SERVING_MANIFEST_FILE, bind_current_projection
+from cruxible_core.indexes.serving import (
+    SERVING_MANIFEST_FILE,
+    load_serving_manifest,
+)
 from cruxible_core.ledger.activation import ActivationPublisher
 from cruxible_core.ledger.bootstrap import generation_root, prepare_genesis
 from cruxible_core.ledger.git import GitLedger
@@ -252,7 +255,12 @@ def test_prebuild_is_unserved_until_winning_cas_then_switches_atomically(
     projection = publisher.prebuild(bundle, base=base)
 
     assert Path(projection.manifest_path).is_file()
-    assert not (publication / SERVING_MANIFEST_FILE).exists()
+    # The genesis base may be served; the prebuilt candidate must not be.
+    if (publication / SERVING_MANIFEST_FILE).exists():
+        assert (
+            load_serving_manifest(publication).projection_manifest_name
+            != Path(projection.manifest_path).name
+        )
     assert instance._ledger.read_main() == base.git_oid
 
     result = publisher.activate(bundle, projection, base=base)
@@ -271,7 +279,10 @@ def test_prebuild_is_unserved_until_winning_cas_then_switches_atomically(
             sequence=1,
         )
     ]
-    with bind_current_projection(publication, expected=result.accepted) as handle:
+    # The instance serves what the publisher activated once it re-reads main,
+    # and binds with its body-metadata resolver attached.
+    instance.refresh()
+    with instance.bind_accepted_projection(result.accepted) as handle:
         view = handle.document(
             "document:design",
             access=BodyAccessContext(principal_id="owner", can_read_body=True),
