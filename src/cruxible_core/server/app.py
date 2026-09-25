@@ -26,6 +26,7 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.temporal import ISO_8601_FORMAT_HINT
 from cruxible_core import __version__
 from cruxible_core.errors import CoreError
+from cruxible_core.ledger.checkpoints import QUIET_CHECKPOINT_SECONDS
 from cruxible_core.runtime.execution_policy import discover_isolated_executors
 from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -116,6 +117,7 @@ def create_app() -> FastAPI:
             yield
         finally:
             manager.line_listener.close()
+            manager.flush_replay_checkpoints()
 
     app = FastAPI(title="cruxible", responses=STANDARD_ERROR_RESPONSES, lifespan=lifespan)
     app.middleware("http")(token_auth_middleware)
@@ -369,6 +371,7 @@ def _serve(resolved_socket: str | None) -> None:
     import uvicorn
 
     configure_request_logging()
+    get_playbill_manager().quiet_checkpoint_seconds = QUIET_CHECKPOINT_SECONDS
     app = create_app()
 
     if resolved_socket:

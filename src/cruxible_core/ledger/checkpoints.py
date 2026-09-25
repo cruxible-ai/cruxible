@@ -72,6 +72,7 @@ import os
 import re
 import secrets
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -128,6 +129,8 @@ CHECKPOINT_FILE: Final = "replay-checkpoint-v2.json"
 CHECKPOINT_TAG: Final = "playbill-replay-checkpoint-v2"
 _SUPERSEDED_CHECKPOINT_FILES: Final = ("replay-checkpoint-v1.json",)
 DEFAULT_CHECKPOINT_INTERVAL: Final = 50
+# The daemon summarizes an off-stride head after this long without an acceptance.
+QUIET_CHECKPOINT_SECONDS: Final = 5.0
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _PRINCIPAL_PATH_PREFIX: Final = "principals/"
@@ -278,6 +281,66 @@ class CheckpointSeed:
     @property
     def state(self) -> EvaluatedTreeState:
         return self._build()[1]
+
+
+class QuietCheckpointWriter:
+    """Run the newest deferred checkpoint write once acceptances go quiet.
+
+    Only the latest summary matters: each acceptance replaces the pending one,
+    and it runs `quiet_seconds` after the last acceptance, on a daemon thread,
+    so it never delays a write. `flush` runs it now (graceful shutdown). A
+    failure is dropped, because a missing checkpoint only costs replay time.
+    """
+
+    def __init__(self, *, quiet_seconds: float, name: str) -> None:
+        self.quiet_seconds = quiet_seconds
+        self.name = name
+        self._condition = threading.Condition()
+        self._pending: Callable[[], None] | None = None
+        self._deferred_at = 0.0
+        self._thread: threading.Thread | None = None
+
+    def defer(self, write: Callable[[], None]) -> None:
+        with self._condition:
+            self._pending = write
+            self._deferred_at = time.monotonic()
+            if self._thread is None:
+                thread = threading.Thread(target=self._run, name=self.name, daemon=True)
+                try:
+                    thread.start()
+                except RuntimeError:
+                    return
+                self._thread = thread
+            self._condition.notify_all()
+
+    def flush(self) -> None:
+        with self._condition:
+            write, self._pending = self._pending, None
+            self._condition.notify_all()
+        self._write(write)
+
+    def _run(self) -> None:
+        while True:
+            with self._condition:
+                while self._pending is not None:
+                    remaining = self._deferred_at + self.quiet_seconds - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self._condition.wait(remaining)
+                write, self._pending = self._pending, None
+                if write is None:
+                    self._thread = None
+                    return
+            self._write(write)
+
+    @staticmethod
+    def _write(write: Callable[[], None] | None) -> None:
+        if write is None:
+            return
+        try:
+            write()
+        except Exception:  # noqa: BLE001 - a checkpoint is a cache, never load bearing
+            return
 
 
 def checkpoint_digest(body: ReplayCheckpointBodyV2) -> ReplayCheckpointDigest:
@@ -882,8 +945,10 @@ __all__ = [
     "CHECKPOINT_FILE",
     "CHECKPOINT_TAG",
     "DEFAULT_CHECKPOINT_INTERVAL",
+    "QUIET_CHECKPOINT_SECONDS",
     "CheckpointGeneration",
     "CheckpointSeed",
+    "QuietCheckpointWriter",
     "ReplayCheckpointBodyV2",
     "ReplayCheckpointDigest",
     "ReplayCheckpointFileV2",
