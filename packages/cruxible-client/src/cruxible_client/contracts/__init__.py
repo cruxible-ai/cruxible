@@ -448,7 +448,7 @@ class ConsumerStatusV1(BaseModel):
     instance_id: str
     kind: str
     consumer_id: str
-    state: Literal["running", "stopped", "stalled", "disabled"]
+    state: Literal["running", "lagging", "stopped", "stalled", "disabled"]
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1690,6 +1690,7 @@ class PlaybillNextStatus(BaseModel):
     procedure_catalog: PlaybillNextHealth
     compiler: PlaybillNextHealth
     line_dispatch: PlaybillNextHealth
+    consumers: PlaybillNextHealth
     held: int = Field(default=0, ge=0)
 
 

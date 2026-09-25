@@ -1320,6 +1320,15 @@ read time:
 - `consumer_stalled` names a consumer that stopped by itself or stopped
   keeping up, with its kind in `detail.kind` and the kind's own repair.
 
+Because those rows are what a worker last observed, `status.consumers` says how
+current that observation is: `current`, `lagging` (a worker is behind on
+generations or overdue on its sweep; this is the facet that asks for
+attention), `stalled` (already a `consumer_stalled` row), or `not_running` when
+no consumer loop is running, as in a library read. There, worker rows stand as
+of each worker's last pass. `detail.workers` lists each built-in worker's state
+and cursor, including disabled ones. Worker-derived rows carry when they were
+observed in their own detail.
+
 A current `unsure` examined attestation holds a row, and `status.held` counts
 the rows held. A hold lasts only while its basis is unchanged:
 

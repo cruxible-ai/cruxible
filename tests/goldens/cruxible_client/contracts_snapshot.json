@@ -735,6 +735,7 @@
           "schema": {
             "enum": [
               "running",
+              "lagging",
               "stopped",
               "stalled",
               "disabled"
@@ -782,6 +783,7 @@
           "state": {
             "enum": [
               "running",
+              "lagging",
               "stopped",
               "stalled",
               "disabled"
@@ -26153,6 +26155,9 @@
               "compiler": {
                 "$ref": "#/$defs/PlaybillNextHealth"
               },
+              "consumers": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
               "floor": {
                 "$ref": "#/$defs/PlaybillNextHealth"
               },
@@ -26192,7 +26197,8 @@
               "provider_lane",
               "procedure_catalog",
               "compiler",
-              "line_dispatch"
+              "line_dispatch",
+              "consumers"
             ],
             "title": "PlaybillNextStatus",
             "type": "object"
@@ -26345,6 +26351,15 @@
           "has_default": false,
           "has_default_factory": false,
           "json_name": "compiler",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "consumers": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "consumers",
           "required": true,
           "schema": {
             "$ref": "#/$defs/PlaybillNextHealth"
@@ -26536,6 +26551,9 @@
           "compiler": {
             "$ref": "#/$defs/PlaybillNextHealth"
           },
+          "consumers": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
           "floor": {
             "$ref": "#/$defs/PlaybillNextHealth"
           },
@@ -26575,7 +26593,8 @@
           "provider_lane",
           "procedure_catalog",
           "compiler",
-          "line_dispatch"
+          "line_dispatch",
+          "consumers"
         ],
         "title": "PlaybillNextStatus",
         "type": "object"
@@ -26583,6 +26602,7 @@
       "required_fields": [
         "blocking",
         "compiler",
+        "consumers",
         "floor",
         "instance",
         "ledger_mirror",
@@ -81440,6 +81460,7 @@
               "state": {
                 "enum": [
                   "running",
+                  "lagging",
                   "stopped",
                   "stalled",
                   "disabled"

@@ -393,13 +393,20 @@ class EvidenceAvailabilityConsumers:
             return ()
         generation, sweep_after, completed, error, error_at = row
         failing = error is not None
+        with instance.accepted_history_reader() as history:
+            behind = history.sequence - generation
+        # Behind by more than one matching pass, or a sweep a full interval late.
+        lagging = behind > GENERATION_BATCH or (
+            completed is not None and now >= _instant(completed) + 2 * SWEEP_INTERVAL
+        )
         return (
             ConsumerHealth(
                 kind=self.name,
                 consumer_id="consumer:evidence",
-                state="stalled" if failing else "running",
+                state="stalled" if failing else "lagging" if lagging else "running",
                 detail={
                     "generation": generation,
+                    "generations_behind": behind,
                     "pending_checks": pending,
                     "sweep_in_progress": sweep_after is not None,
                     "sweep_completed_at": completed,
