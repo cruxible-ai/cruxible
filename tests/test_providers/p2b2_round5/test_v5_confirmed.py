@@ -598,8 +598,8 @@ def test_l8_fence_scope_is_required_and_fixed() -> None:
 
 def test_l9_no_tmp_remains_on_the_fence_path() -> None:
     for name in (
-        "playbill/provider_process_leases.py",
-        "playbill/provider_local_runtime.py",
+        "providers/provider_process_leases.py",
+        "providers/provider_local_runtime.py",
         "runtime/provider_runtime.py",
         "runtime/playbill_manager.py",
     ):
