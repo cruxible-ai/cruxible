@@ -2077,6 +2077,7 @@ def playbill_next(
             detail=lane_detail,
         ),
         caller_principal_id=None if actor is None else actor.actor_id,
+        consumers_running=get_playbill_manager().consumer_runner.running,
     )
     return contracts.PlaybillNextResult.model_validate(result.model_dump(mode="json"))
 

@@ -19,6 +19,7 @@ HEALTHY_STATUS = {
     "procedure_catalog": {"state": "not_observed"},
     "compiler": {"state": "current"},
     "line_dispatch": {"state": "idle"},
+    "consumers": {"state": "current"},
 }
 
 AUTHOR = {

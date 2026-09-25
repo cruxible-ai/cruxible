@@ -612,6 +612,7 @@ _HEALTH_STATES: dict[str, frozenset[str]] = {
     "procedure_catalog": frozenset({"not_observed", "not_required", "complete", "missing"}),
     "compiler": frozenset({"current", "upgrade_available", "no_upgrade_path"}),
     "line_dispatch": frozenset({"not_observed", "idle", "waiting", "due"}),
+    "consumers": frozenset({"not_observed", "not_running", "current", "lagging", "stalled"}),
 }
 #: Facet states that call for attention; every other state is healthy or unobserved.
 _HEALTH_ATTENTION: dict[str, frozenset[str]] = {
@@ -622,6 +623,8 @@ _HEALTH_ATTENTION: dict[str, frozenset[str]] = {
     "procedure_catalog": frozenset({"missing"}),
     "compiler": frozenset({"upgrade_available"}),
     "line_dispatch": frozenset({"due"}),
+    # A stalled worker is already a consumer_stalled row; lag is the silent case.
+    "consumers": frozenset({"lagging"}),
 }
 
 
@@ -645,8 +648,9 @@ class PlaybillNextStatusV1(_StrictNextModel):
     These are conditions of the instance and its workspace -- a decommissioned
     instance, an unexported floor, a lagging ledger mirror, an unavailable
     provider lane, an incomplete Procedure catalog, a compiler behind the
-    running one, Line occurrences waiting on dispatch -- not work items about
-    accepted state. `blocking` is set only when no write can succeed.
+    running one, Line occurrences waiting on dispatch, built-in workers behind
+    on what they report -- not work items about accepted state. `blocking` is
+    set only when no write can succeed.
     """
 
     tag: Literal["playbill-next-status-v1"] = "playbill-next-status-v1"
@@ -658,6 +662,7 @@ class PlaybillNextStatusV1(_StrictNextModel):
     procedure_catalog: PlaybillNextHealthV1
     compiler: PlaybillNextHealthV1
     line_dispatch: PlaybillNextHealthV1
+    consumers: PlaybillNextHealthV1
     #: Rows parked by a current ``unsure`` attestation whose basis is unchanged.
     held: int = Field(default=0, ge=0)
 
@@ -3173,6 +3178,49 @@ def _line_dispatch_health(
     )
 
 
+def _consumers_health(
+    instance: PlaybillInstance,
+    *,
+    evaluation_time: datetime,
+    access_profile: CoverageAccessProfileV1,
+    running: bool,
+) -> PlaybillNextHealthV1:
+    """How current the built-in workers' findings are that some rows are read from.
+
+    Rows such as `evidence_unavailable` are what a worker last observed, not a
+    computation at read time, so this says how far behind that observation is.
+    Without a running consumer loop -- a library read, a daemon shutting down --
+    those rows are as of each worker's last pass and nothing is advancing them.
+    """
+
+    if not access_profile.permits("instance"):
+        return PlaybillNextHealthV1(state="not_observed")
+    from cruxible_core.consumers.runner import consumer_kinds
+
+    workers: list[dict[str, object]] = []
+    for kind in consumer_kinds():
+        if kind.effect_class != "findings":
+            continue
+        if not kind.active(instance):
+            workers.append({"kind": kind.name, "state": "disabled"})
+            continue
+        workers.extend(
+            {"kind": health.kind, "state": health.state, **health.detail}
+            for health in kind.health(instance, now=evaluation_time)
+        )
+    states = {str(worker["state"]) for worker in workers}
+    state = (
+        "not_running"
+        if not running
+        else "stalled"
+        if "stalled" in states
+        else "lagging"
+        if "lagging" in states
+        else "current"
+    )
+    return PlaybillNextHealthV1(state=state, detail={"workers": workers})
+
+
 def _procedure_catalog_health(
     instance: PlaybillInstance,
     *,
@@ -3879,6 +3927,7 @@ def service_playbill_next(
     *,
     request: PlaybillNextRequestAny,
     provider_lane: ProviderLaneStatusV1 | None = None,
+    consumers_running: bool = False,
     caller_principal_id: str | None = None,
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
     """Fold accepted state and explicit client observations into one repair queue.
@@ -4099,6 +4148,12 @@ def service_playbill_next(
             coordinate=coordinate,
             evaluation_time=request.evaluation_time,
             access_profile=request.access_profile,
+        ),
+        consumers=_consumers_health(
+            instance,
+            evaluation_time=request.evaluation_time,
+            access_profile=request.access_profile,
+            running=consumers_running,
         ),
     )
     values = {

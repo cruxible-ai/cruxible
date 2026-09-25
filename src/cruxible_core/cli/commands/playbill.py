@@ -4422,6 +4422,7 @@ _NEXT_STATUS_ATTENTION = {
     "procedure_catalog": {"missing"},
     "compiler": {"upgrade_available"},
     "line_dispatch": {"due"},
+    "consumers": {"lagging"},
 }
 
 

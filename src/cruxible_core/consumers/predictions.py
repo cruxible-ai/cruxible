@@ -764,13 +764,19 @@ class PredictionSettlementConsumers:
             }
         generation, backfill_after, capture_head, resolution_ordinal, error, error_at = row
         failing = error is not None
+        with instance.accepted_history_reader() as history:
+            behind = history.sequence - generation
+        # Behind by more than one matching pass of generations; windows close on
+        # the clock each pass, so generations are the backlog that can build.
+        lagging = behind > GENERATION_BATCH
         return (
             ConsumerHealth(
                 kind=self.name,
                 consumer_id="consumer:prediction",
-                state="stalled" if failing else "running",
+                state="stalled" if failing else "lagging" if lagging else "running",
                 detail={
                     "generation": generation,
+                    "generations_behind": behind,
                     "contract_backfill_in_progress": backfill_after is not None,
                     "capture_position": capture_head,
                     "resolution_position": resolution_ordinal,

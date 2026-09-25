@@ -156,7 +156,8 @@ def test_server_status_lists_open_instances_consumers_including_disabled_workers
     from cruxible_core.consumers.runner import consumer_statuses
 
     instance, _capture = _world(tmp_path)
-    _drain(instance, now=NOW)
+    # Status measures lag at the real current time, so sweep then.
+    _drain(instance, now=datetime.now(UTC))
     manager = SimpleNamespace(open_instances=lambda: (("inst", instance),))
 
     (running,) = consumer_statuses(manager)
