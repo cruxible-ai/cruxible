@@ -261,6 +261,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "unregistered_projection_block",
     "projection_marker_invalid",
     "proposal_stale",
+    "proposal_awaiting_approval",
     "mandate_expiring",
     "line_stalled",
 ]
@@ -275,6 +276,7 @@ PlaybillNextRepairOperation: TypeAlias = Literal[
     "playbill.block.sync",
     "playbill.document.propose",
     "playbill.proposal.readmit",
+    "playbill.proposal.approve",
     "playbill.compiler.upgrade",
     "playbill.line.arm",
     "playbill.line.dispatch",

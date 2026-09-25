@@ -2065,6 +2065,9 @@ def playbill_next(
     lane_state, lane_code, lane_detail = (
         get_playbill_manager().provider_runtime_operator().lane_status()
     )
+    # The caller's principal comes from the authenticated transport, as
+    # `whoami` resolves it, so no request can ask for another signer's work.
+    actor = _actor_context()
     result = service_playbill_next(
         get_playbill_manager().get(instance_id),
         request=validate_playbill_next_request(request),
@@ -2073,6 +2076,7 @@ def playbill_next(
             code=lane_code,
             detail=lane_detail,
         ),
+        caller_principal_id=None if actor is None else actor.actor_id,
     )
     return contracts.PlaybillNextResult.model_validate(result.model_dump(mode="json"))
 

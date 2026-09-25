@@ -196,3 +196,39 @@ def test_http_next_maps_unknown_attestation_head_to_typed_400(
 
     assert response.status_code == 400, response.text
     assert response.json()["error_code"] == ("playbill.claim_attestation.attestation_head_unknown")
+
+
+def test_http_next_passes_the_authenticated_caller_not_a_request_field(
+    attestation_http,  # type: ignore[no-untyped-def]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance, _claim_id, _owner = attestation_http
+    seen: list[str | None] = []
+    real = playbill_api.service_playbill_next
+
+    def spy(*args, caller_principal_id=None, **kwargs):  # type: ignore[no-untyped-def]
+        seen.append(caller_principal_id)
+        return real(*args, caller_principal_id=caller_principal_id, **kwargs)
+
+    monkeypatch.setattr(playbill_api, "service_playbill_next", spy)
+    body = {
+        "tag": "playbill-next-request-v1",
+        "evaluation_time": "2026-08-28T18:00:00Z",
+        "access_profile": {
+            "tag": "playbill-coverage-access-profile-v1",
+            "profile_id": "caller-principal-test",
+            "permitted_access_classes": ["instance", "public"],
+            "disclose_restricted_existence": True,
+        },
+    }
+    response = client.post(f"/api/v1/{instance.descriptor.instance_id}/playbill/next", json=body)
+    assert response.status_code == 200, response.text
+    # An auth-off daemon has one caller: the local operator.
+    assert seen == ["operator"]
+
+    spoofed = client.post(
+        f"/api/v1/{instance.descriptor.instance_id}/playbill/next",
+        json=body | {"caller_principal_id": "reviewer"},
+    )
+    assert spoofed.status_code in {400, 422}
+    assert seen == ["operator"]

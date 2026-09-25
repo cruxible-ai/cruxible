@@ -318,6 +318,84 @@ def stale_unreadmitted_proposals(
     return tuple(stale)
 
 
+@dataclass(frozen=True)
+class ProposalAwaitingApproval:
+    """An open candidate one more eligible signer's approval would advance."""
+
+    proposal_id: str
+    actor_id: str
+    target_ref: str
+    admitted_at: str
+    candidate_digest: str
+    minimum_distinct_signers: int
+    eligible_approvals: int
+
+
+def proposals_awaiting_approval(
+    instance: PlaybillInstance,
+    coordinate: PlaybillAcceptedCoordinate,
+    *,
+    principal_id: str,
+    ordinary_principal_ids: frozenset[str],
+) -> tuple[ProposalAwaitingApproval, ...]:
+    """Open candidates at `coordinate` whose approval `principal_id` could supply.
+
+    Read through the open-parent locator: candidates neither refused, accepted
+    nor withdrawn whose parent is the coordinate's semantic root, so approval
+    is what stands between them and activation. A candidate qualifies while its
+    approval requirement is unmet -- counted exactly as activation counts it,
+    over distinct active ordinary signers other than its creator -- and this
+    principal is such a signer who has not signed it yet.
+    `ordinary_principal_ids` is the coordinate's active ordinary registry.
+    """
+
+    if principal_id not in ordinary_principal_ids:
+        return ()
+    evidence = instance.proposal_evidence()
+    with _bound_inventory(instance, coordinate) as bound:
+        if bound is None:
+            return ()
+        connection, sequence = bound
+        rows = connection.execute(
+            "SELECT proposal_id,actor_id,target_ref,admitted_at_us,candidate_digest "
+            "FROM proposals p "
+            "WHERE candidate_parent_semantic_root=? AND evaluation_status='candidate' "
+            "AND withdrawal_path IS NULL AND admission_path IS NOT NULL "
+            "AND actor_id!=? AND NOT EXISTS ("
+            "SELECT 1 FROM accepted_generations g "
+            "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?) "
+            "ORDER BY admitted_at_us,proposal_id",
+            (coordinate.semantic_root, principal_id, sequence),
+        ).fetchall()
+    awaiting = []
+    for row in rows:
+        candidate = evidence.read_candidate(row["candidate_digest"])
+        if not candidate.approval_requirements:
+            continue
+        signers = {
+            submission.attestation.signer_id
+            for submission in evidence.read_approvals(row["candidate_digest"])
+        }
+        if principal_id in signers:
+            continue
+        eligible = len((signers - {row["actor_id"]}) & ordinary_principal_ids)
+        minimum = candidate.approval_requirements[0].minimum_distinct_signers
+        if eligible >= minimum:
+            continue
+        awaiting.append(
+            ProposalAwaitingApproval(
+                proposal_id=row["proposal_id"],
+                actor_id=row["actor_id"],
+                target_ref=row["target_ref"],
+                admitted_at=timestamp(row["admitted_at_us"]),
+                candidate_digest=row["candidate_digest"],
+                minimum_distinct_signers=minimum,
+                eligible_approvals=eligible,
+            )
+        )
+    return tuple(awaiting)
+
+
 def service_resolve_playbill_proposal_selector(
     instance: PlaybillInstance,
     *,
@@ -570,10 +648,12 @@ __all__ = [
     "PlaybillWhoAmIV1",
     "CredentialPermissionMode",
     "PrincipalRegistrationStatus",
+    "ProposalAwaitingApproval",
     "ProposalInventoryStatus",
     "ProposalTerminalReason",
     "StaleProposal",
     "WhoAmIActorIdSource",
+    "proposals_awaiting_approval",
     "readmission_operation_digest",
     "service_list_playbill_proposals",
     "service_readmit_playbill_proposal",
