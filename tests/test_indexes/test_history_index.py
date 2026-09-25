@@ -128,7 +128,9 @@ def test_incremental_publication_rollback_restart_and_delete_rebuild(tmp_path, s
     calls.clear()
     with reopened.read(state, source) as reader:
         expected = reader.occurrences("Claim:a")
-    assert calls == [0, 1, 2]  # Restart validates persisted rows, not cursor-only trust.
+    # Restart trusts persisted rows only as far as its record's row digest
+    # reproduces from them; unchanged rows need no re-derivation.
+    assert calls == []
     assert reopened.generations_written == 0
     index.path.unlink()
     with reopened.read(state, source) as reader:

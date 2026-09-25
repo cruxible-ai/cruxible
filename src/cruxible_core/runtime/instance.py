@@ -2101,7 +2101,7 @@ class PlaybillInstance:
         lost CAS, stale epochs and publication failures use recovery. Locks are
         released before callers reconcile advisory review/workspace surfaces.
         """
-        with self._state_lock:
+        with self._state_lock, self._ledger.generation_attempt():
             previous = self._recovered
             bundle = self.prepare_generation(
                 base=base,

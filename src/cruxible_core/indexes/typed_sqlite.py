@@ -189,7 +189,7 @@ def parse_static_owners(
                 raise ProjectionIntegrityError(
                     "one artifact pins the same dependency identity at conflicting digests"
                 )
-            pins[key] = PinRow(document.identity, pin.target_identity, pin.target_digest)
+            pins[key] = PinRow(document.identity, pin.target_identity, pin.target_digest, pin.role)
     return replace(
         parsed,
         envelopes=tuple(sorted(envelopes, key=lambda row: row.identity)),

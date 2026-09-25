@@ -16,7 +16,6 @@ def _clean(instance):
         repository_path=str(instance._ledger.path),
         object_format=instance.descriptor.git_object_format,
         instance_id=instance.descriptor.instance_id,
-        compiler=instance.descriptor.compiler,
         bodies=instance.body_store(),
         laws=PLAYBILL_ACCEPTANCE_LAWS,
         promotion_verifier=None,

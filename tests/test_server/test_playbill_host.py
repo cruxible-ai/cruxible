@@ -1387,6 +1387,7 @@ def test_detaching_a_workspace_needs_the_local_socket_that_attaching_needs(
 def test_a_detach_refuses_while_the_host_still_registers_a_published_block(
     host_client: TestClient,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Card 88's one guarantee, which nothing exercised.
 
@@ -1403,6 +1404,9 @@ def test_a_detach_refuses_while_the_host_still_registers_a_published_block(
     one. Nothing authors such a record any more, which is exactly why the
     refusal has to keep reading it.
     """
+    # Publication registrations live in retained intent streams; this legacy
+    # road registers them on accepted intents, so it needs durable retention.
+    monkeypatch.setenv("CRUXIBLE_AUTHORING_INTENTS", "durable")
 
     from cruxible_core.service.proposals.publications import service_depublish_playbill_block
     from tests.test_authoring.test_authoring_insertions_v2 import (

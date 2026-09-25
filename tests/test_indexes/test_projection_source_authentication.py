@@ -97,8 +97,15 @@ def test_full_build_is_ready_and_unknown_persisted_piece_authenticates_once(tmp_
     with storage.bind_projection(manifest, expected=coordinate) as projection:
         projection.require_source_authentication(repository=repository)
     assert repository.list_calls == repository.read_calls == 0
-    # Process restart loses only the bounded verified-piece memo.
-    storage._VERIFIED_PIECES.clear()
+    # Process restart loses the bounded verified-piece memo; the build's
+    # persisted authentication record still covers this exact piece.
+    storage.reset_projection_verification_memo()
+    with storage.bind_projection(manifest, expected=coordinate) as projection:
+        projection.require_source_authentication(repository=repository)
+    assert repository.list_calls == repository.read_calls == 0
+    # A piece no record covers authenticates once.
+    (manifest.parent / storage.SOURCE_AUTHENTICATION_STAMPS).unlink()
+    storage.reset_projection_verification_memo()  # a process that finds no record
     with storage.bind_projection(manifest, expected=coordinate) as projection:
         projection.require_source_authentication(repository=repository)
     assert repository.list_calls == 1

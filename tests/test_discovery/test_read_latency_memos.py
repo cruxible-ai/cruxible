@@ -33,6 +33,7 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.exhaust.consumption import consumption_artifacts_for_paths
+from cruxible_core.indexes import logical_digest
 from cruxible_core.indexes import sqlite as playbill_projection
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.git import GitLedger
@@ -182,14 +183,15 @@ def test_a_serving_piece_is_verified_once_and_a_tampered_piece_is_refused(
     playbill_projection.reset_projection_verification_memo()
 
     calls = 0
-    original = playbill_projection.projection_logical_digest
+    # Full verification recomputes the logical digest; a memo hit does not.
+    original = logical_digest.verify_logical_digest
 
-    def counting(path: Path) -> Any:
+    def counting(*args: Any) -> Any:
         nonlocal calls
         calls += 1
-        return original(path)
+        return original(*args)
 
-    monkeypatch.setattr(playbill_projection, "projection_logical_digest", counting)
+    monkeypatch.setattr(logical_digest, "verify_logical_digest", counting)
     piece: Path | None = None
     for _ in range(3):
         with instance.bind_accepted_projection(coordinate) as handle:

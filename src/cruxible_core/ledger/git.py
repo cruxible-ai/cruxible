@@ -8,6 +8,7 @@ import fcntl
 import hashlib
 import os
 import re
+import secrets
 import signal
 import subprocess
 import tempfile
@@ -286,6 +287,22 @@ class GitLedger:
             "GIT_AUTHOR_DATE": timestamp,
             "GIT_COMMITTER_DATE": timestamp,
         }
+        # Marked before the commit exists, so a crash at any later point leaves
+        # a marker for recovery's collection of unsettled generations. The
+        # attempt keeps recovery from treating the marker or commit as residue
+        # while this writer is live; callers that go on to activate hold one
+        # across both.
+        with self.generation_attempt():
+            return self._commit_generation(tree_oid, parent_oid, message, environment)
+
+    def _commit_generation(
+        self,
+        tree_oid: str,
+        parent_oid: str,
+        message: str,
+        environment: Mapping[str, str],
+    ) -> str:
+        pending = self._mark_generation_in_flight(f"pending-{secrets.token_hex(8)}")
         oid = (
             self._git(
                 [
@@ -303,6 +320,9 @@ class GitLedger:
             .strip()
         )
         self._validate_oid(oid)
+        self._mark_generation_in_flight(oid)
+        pending.unlink()
+        _fsync_directory(pending.parent)
         if self.parent_of(oid) != parent_oid:
             raise PlaybillGitError("new generation commit parent differs from settlement base")
         if not self.verify_commit(oid):
@@ -1391,13 +1411,16 @@ class GitLedger:
         return objects
 
     def tree_oid(self, commit_oid: str) -> str:
+        """A commit's tree (a tree names itself), from hash-checked object bytes."""
+
         self._validate_oid(commit_oid)
         tree = self._commit_tree(commit_oid)
         if tree is not None:
             return tree
-        oid = self._git(["rev-parse", f"{commit_oid}^{{tree}}"]).decode().strip()
-        self._validate_oid(oid)
-        return oid
+        found = _batch_reader(self.path).objects((commit_oid,))[commit_oid]
+        if found is None or found[0] != "tree":
+            raise PlaybillGitError(f"ledger object names no tree: {commit_oid}")
+        return commit_oid
 
     def set_main_genesis(self, oid: str) -> None:
         self._validate_oid(oid)
@@ -1492,6 +1515,119 @@ class GitLedger:
         finally:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
             os.close(descriptor)
+
+    def _in_flight_directory(self) -> Path:
+        return self.path / _GENERATIONS_IN_FLIGHT
+
+    @contextmanager
+    def generation_attempt(self) -> Iterator[None]:
+        """Keep this thread's new generations out of recovery's collection until it ends.
+
+        A writer holds the in-flight lock shared from before its commit exists
+        until the attempt ends, settled or not. Recovery collects unsettled
+        generations only while it holds the lock exclusively, so it never sees
+        a live writer's marker or commit as residue. Nested attempts share the
+        outer one.
+        """
+
+        key = str(self.path)
+        active: set[str] = getattr(_ATTEMPTS, "paths", set())
+        if key in active:
+            yield
+            return
+        descriptor = os.open(self.path / _IN_FLIGHT_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH)
+            _ATTEMPTS.paths = active | {key}
+            try:
+                yield
+            finally:
+                _ATTEMPTS.paths = active
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+    @contextmanager
+    def unaccepted_cleanup(self) -> Iterator[tuple[str, ...] | None]:
+        """Hold off writers and yield the markers a collection must answer for.
+
+        Yields None when no collection is due, or when a writer's attempt is in
+        flight (its markers are not residue yet); the markers then wait for a
+        later recovery.
+        """
+
+        descriptor = os.open(self.path / _IN_FLIGHT_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                yield None
+                return
+            try:
+                yield self.unaccepted_cleanup_due()
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+    def _mark_generation_in_flight(self, name: str) -> Path:
+        directory = self._in_flight_directory()
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        else:
+            # The directory entry itself must survive a crash with the marker.
+            _fsync_directory(self.path)
+        marker = directory / name
+        descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        _fsync_directory(directory)
+        return marker
+
+    def settle_generation_in_flight(self, oid: str) -> None:
+        """Forget one generation's marker: it is on main, or it was collected."""
+
+        self._validate_oid(oid)
+        marker = self._in_flight_directory() / oid
+        if marker.exists():
+            marker.unlink()
+            _fsync_directory(marker.parent)
+
+    def unaccepted_cleanup_due(self) -> tuple[str, ...] | None:
+        """The markers a full unsettled-generation collection must answer for, or None.
+
+        Collection is due when a generation was left in flight (a crash after
+        its commit could exist), or when this ledger has never completed one.
+        """
+
+        directory = self._in_flight_directory()
+        markers = (
+            tuple(sorted(path.name for path in directory.iterdir())) if directory.is_dir() else ()
+        )
+        if markers or not (self.path / _UNSETTLED_CLEANUP_BASELINE).exists():
+            return markers
+        return None
+
+    def complete_unaccepted_cleanup(self, markers: tuple[str, ...]) -> None:
+        """Record a finished full collection and drop the markers it covered."""
+
+        directory = self._in_flight_directory()
+        for name in markers:
+            (directory / name).unlink(missing_ok=True)
+        if markers:
+            _fsync_directory(directory)
+        baseline = self.path / _UNSETTLED_CLEANUP_BASELINE
+        if not baseline.exists():
+            descriptor = os.open(baseline, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            _fsync_directory(self.path)
 
     def collect_unreachable_generation(self, oid: str) -> tuple[str, ...]:
         """Delete only loose objects proven reachable solely from one losing generation."""
@@ -1769,23 +1905,9 @@ class GitLedger:
 
         Rename detection is disabled: moves are a removal and an insertion.
         Mode changes are included and the blob reader checks successor modes.
+        The delta comes from hash-checked tree objects, as ``changed_entries``.
         """
-        self._validate_oid(before)
-        self._validate_oid(after)
-        raw = self._git(
-            [
-                "diff-tree",
-                "--no-commit-id",
-                "--name-only",
-                "-r",
-                "--no-renames",
-                "-z",
-                before,
-                after,
-                "--",
-            ]
-        )
-        return tuple(path.decode("utf-8") for path in raw.split(b"\0") if path)
+        return tuple(change.path for change in self.changed_entries(before, after))
 
     def read_tree(self, oid: str) -> dict[str, bytes]:
         entries = _proven_blob_entries(self.list_tree(oid))
@@ -1971,58 +2093,88 @@ class GitLedger:
         return changes
 
     def _read_changed_entries(self, base_oid: str, target_oid: str) -> tuple[GitTreeChange, ...]:
-        listing = self._git(
-            [
-                "diff-tree",
-                "-r",
-                "-z",
-                "--no-renames",
-                "--no-abbrev",
-                "--no-commit-id",
-                base_oid,
-                target_oid,
-            ]
-        )
-        fields = [field for field in listing.split(b"\x00") if field]
-        if len(fields) % 2 != 0:
-            raise PlaybillGitError("Git tree diff ended before a changed path")
+        """``diff-tree -r --no-renames`` over hash-checked tree objects.
+
+        Git reads trees without re-hashing them, so a tree object replaced on
+        disk under its ID would change the reported delta. Only subtrees whose
+        IDs differ are read; a path that turns between a file and a directory
+        is a deletion plus additions, exactly as Git reports it.
+        """
+
+        repository = _repository_key(self.path)
         changes: list[GitTreeChange] = []
-        for index in range(0, len(fields), 2):
-            metadata, raw_path = fields[index], fields[index + 1]
-            if not metadata.startswith(b":"):
-                raise PlaybillGitError("Git tree diff contains malformed metadata")
-            try:
-                parts = metadata[1:].decode("ascii").split()
-                path = raw_path.decode("utf-8")
-            except UnicodeDecodeError as exc:
-                raise PlaybillGitError("Git tree diff contains malformed metadata") from exc
-            if len(parts) != 5:
-                raise PlaybillGitError("Git tree diff contains malformed metadata")
-            _source_mode, mode, source_oid, destination_oid, status = parts
-            if status not in {"A", "M", "D", "T"}:
-                raise PlaybillGitError(f"Git tree diff reported an unsupported status: {status}")
-            previous = None
-            if status != "A":
-                self._validate_oid(source_oid)
-                previous = source_oid
-            if status == "D":
-                changes.append(
-                    GitTreeChange(
-                        path=path, status=status, mode=mode, oid=None, previous_oid=previous
+
+        def compare(prefix: str, before: str | None, after: str | None) -> None:
+            old = {} if before is None else self._parsed_tree(repository, before)
+            new = {} if after is None else self._parsed_tree(repository, after)
+            for name in sorted(old.keys() | new.keys(), key=_tree_order_key(old, new)):
+                source, destination = old.get(name), new.get(name)
+                if source == destination:
+                    continue
+                path = _listing_path(prefix, name)
+                source_tree = source is not None and source[0] == _TREE_MODE
+                destination_tree = destination is not None and destination[0] == _TREE_MODE
+                if source_tree and destination_tree:
+                    assert source is not None and destination is not None
+                    compare(path + "/", source[1], destination[1])
+                    continue
+                if (
+                    source is not None
+                    and destination is not None
+                    and not (source_tree or destination_tree)
+                ):
+                    status = "M" if _mode_kind(source[0]) == _mode_kind(destination[0]) else "T"
+                    changes.append(
+                        GitTreeChange(
+                            path=path,
+                            status=status,
+                            mode=_listing_mode(destination[0]),
+                            oid=self._checked_oid(destination[1]),
+                            previous_oid=self._checked_oid(source[1]),
+                        )
                     )
-                )
-                continue
-            self._validate_oid(destination_oid)
-            changes.append(
-                GitTreeChange(
-                    path=path,
-                    status=status,
-                    mode=mode,
-                    oid=destination_oid,
-                    previous_oid=previous,
-                )
-            )
+                    continue
+                if source is not None:
+                    if source_tree:
+                        compare(path + "/", source[1], None)
+                    else:
+                        changes.append(
+                            GitTreeChange(
+                                path=path,
+                                status="D",
+                                mode="000000",
+                                oid=None,
+                                previous_oid=self._checked_oid(source[1]),
+                            )
+                        )
+                if destination is not None:
+                    if destination_tree:
+                        compare(path + "/", None, destination[1])
+                    else:
+                        changes.append(
+                            GitTreeChange(
+                                path=path,
+                                status="A",
+                                mode=_listing_mode(destination[0]),
+                                oid=self._checked_oid(destination[1]),
+                                previous_oid=None,
+                            )
+                        )
+
+        compare("", self._root_tree(base_oid), self._root_tree(target_oid))
+        changes.sort(key=lambda change: change.path.encode("utf-8"))
         return tuple(changes)
+
+    def _root_tree(self, oid: str) -> str:
+        """The tree a commit names, or ``oid`` itself when it is a tree."""
+
+        self._validate_oid(oid)
+        tree = self._commit_tree(oid)
+        return oid if tree is None else tree
+
+    def _checked_oid(self, oid: str) -> str:
+        self._validate_oid(oid)
+        return oid
 
     def list_tree(self, oid: str) -> tuple[GitTreeEntry, ...]:
         """List an exact commit recursively without reading any blob payload.
@@ -2240,42 +2392,87 @@ class GitLedger:
         with_sizes: bool,
         paths: Sequence[str] | None,
     ) -> tuple[GitTreeEntry, ...]:
-        entries: list[GitTreeEntry] = []
-        size_flag = ["-l"] if with_sizes else []
-        expected_fields = 4 if with_sizes else 3
-        # ``:(literal)`` disables pathspec globbing so a path that carries
-        # wildcard bytes names exactly itself.
-        scope = [] if paths is None else ["--", *(f":(literal){item}" for item in paths)]
-        listing = self._git(["ls-tree", "-r", *size_flag, "-z", "--full-tree", oid, *scope])
-        for row in listing.split(b"\x00"):
-            if not row:
-                continue
-            try:
-                metadata, raw_path = row.split(b"\t", 1)
-                fields = metadata.decode("ascii").split()
-                if len(fields) != expected_fields:
-                    raise ValueError("unexpected tree metadata field count")
-                mode, object_type, object_oid = fields[0], fields[1], fields[2]
-                path = raw_path.decode("utf-8")
-            except (UnicodeDecodeError, ValueError) as exc:
-                raise PlaybillGitError("ledger tree contains malformed metadata") from exc
+        """``ls-tree -r [-l] --full-tree`` over hash-checked tree objects.
+
+        Git lists a tree without re-hashing the objects it traverses, so a tree
+        object replaced on disk under its ID would list other members. Every
+        tree here comes through the checked batch reader, from the commit's own
+        bytes down. A literal ``paths`` selects an exact entry, or every entry
+        beneath a directory. Sizes come from object headers; a blob's bytes are
+        checked against its size and ID when they are read.
+        """
+
+        root = self._root_tree(oid)
+        rows: dict[str, tuple[bytes, str]] = {}
+        pending: list[tuple[str, str]] = []
+        if paths is None:
+            pending.append(("", root))
+        else:
+            repository = _repository_key(self.path)
+            for requested in paths:
+                directory, _separator, name = requested.rpartition("/")
+                entries: dict[str, tuple[bytes, str]] | None = self._parsed_tree(repository, root)
+                for part in directory.split("/") if directory else ():
+                    found = entries.get(part) if entries is not None else None
+                    entries = (
+                        self._parsed_tree(repository, found[1])
+                        if found is not None and found[0] == _TREE_MODE
+                        else None
+                    )
+                entry = None if entries is None else entries.get(name)
+                if entry is None:
+                    continue
+                if entry[0] == _TREE_MODE:
+                    pending.append((requested + "/", entry[1]))
+                else:
+                    rows[requested] = entry
+        reader = _batch_reader(self.path)
+        raw_length = 20 if self.object_format() == "sha1" else 32
+        while pending:
+            level = pending
+            pending = []
+            trees = reader.objects(tuple(dict.fromkeys(tree for _prefix, tree in level)))
+            for prefix, tree in level:
+                found_tree = trees[tree]
+                if found_tree is None or found_tree[0] != "tree":
+                    raise PlaybillGitError(f"ledger tree object is unavailable: {tree}")
+                entries = _tree_entries(found_tree[1], raw_length=raw_length)
+                if entries is None:
+                    raise PlaybillGitError(f"ledger tree object is malformed: {tree}")
+                for name, entry in entries.items():
+                    path = _listing_path(prefix, name)
+                    if entry[0] == _TREE_MODE:
+                        pending.append((path + "/", entry[1]))
+                    else:
+                        rows[path] = entry
+        ordered = sorted(rows.items(), key=lambda item: item[0].encode("utf-8"))
+        sizes: dict[str, tuple[str, int] | None] = {}
+        if with_sizes:
+            sizes = self.object_sizes(
+                [entry[1] for _path, entry in ordered if _listing_type(entry[0]) == "blob"]
+            )
+        result: list[GitTreeEntry] = []
+        for path, (raw_mode, object_oid) in ordered:
             self._validate_oid(object_oid)
+            object_type = _listing_type(raw_mode)
             size: int | None = None
-            if with_sizes:
-                try:
-                    size = None if fields[3] == "-" else int(fields[3])
-                except ValueError as exc:
-                    raise PlaybillGitError("ledger tree contains a malformed object size") from exc
-            entries.append(
+            if with_sizes and object_type == "blob":
+                info = sizes.get(object_oid)
+                if info is None or info[0] != "blob":
+                    raise PlaybillGitError(
+                        f"ledger tree names a missing or non-blob object: {path}"
+                    )
+                size = info[1]
+            result.append(
                 GitTreeEntry(
                     path=path,
-                    mode=mode,
+                    mode=_listing_mode(raw_mode),
                     object_type=object_type,
                     oid=object_oid,
                     size=size,
                 )
             )
-        return tuple(entries)
+        return tuple(result)
 
     def read_blob(self, oid: str) -> bytes:
         return self.read_blobs((oid,))[oid]
@@ -2374,35 +2571,34 @@ class GitLedger:
         order -- so the result is a proven linear chain, not just a listing.
         """
 
-        rows = self._git(["rev-list", "--parents", "--reverse", "refs/heads/main"]).decode()
-        history: list[str] = []
-        for row in rows.splitlines():
-            fields = row.split()
-            if len(fields) > 2:
-                raise PlaybillGitError("Playbill refuses merge commits on main")
-            oid = fields[0]
+        # Parents are read from each commit's own hash-checked bytes, never
+        # from Git's unverified traversal, so a commit object replaced on disk
+        # cannot splice another chain in under a known ID.
+        reader = _batch_reader(self.path)
+        newest_first: list[str] = []
+        oid: str | None = self.read_main()
+        while oid is not None:
             self._validate_oid(oid)
-            if not history:
-                if len(fields) != 1:
-                    raise PlaybillGitError(
-                        "Playbill main history is not rooted at a parentless commit"
-                    )
-            else:
-                if len(fields) != 2:
-                    raise PlaybillGitError(
-                        "Playbill main history contains a second parentless commit"
-                    )
-                self._validate_oid(fields[1])
-                if fields[1] != history[-1]:
-                    raise PlaybillGitError("Playbill main history is not a single parent chain")
-            history.append(oid)
-        return tuple(history)
+            found = reader.objects((oid,))[oid]
+            if found is None or found[0] != "commit":
+                raise PlaybillGitError(f"ledger object is not a commit: {oid}")
+            parents = _commit_parents(found[1])
+            if len(parents) > 1:
+                raise PlaybillGitError("Playbill refuses merge commits on main")
+            newest_first.append(oid)
+            if len(newest_first) > _MAIN_HISTORY_LIMIT:
+                raise PlaybillGitError("Playbill main history is not a single parent chain")
+            oid = parents[0] if parents else None
+        return tuple(reversed(newest_first))
 
     def commit_timestamps(self, oid: str) -> tuple[datetime, datetime]:
         """Return one commit's embedded author and committer instants in UTC."""
 
         self._validate_oid(oid)
-        content = self._git(["cat-file", "commit", oid]).decode("utf-8")
+        found = _batch_reader(self.path).objects((oid,))[oid]
+        if found is None or found[0] != "commit":
+            raise PlaybillGitError(f"ledger object is not a commit: {oid}")
+        content = found[1].split(b"\n\n", 1)[0].decode("utf-8")
         timestamps: dict[str, datetime] = {}
         for line in content.splitlines():
             kind = (
@@ -2547,6 +2743,62 @@ def _tree_entries(body: bytes, *, raw_length: int) -> dict[str, tuple[bytes, str
         entries[name] = (mode, body[end + 1 : end + 1 + raw_length].hex())
         position = end + 1 + raw_length
     return entries
+
+
+_TREE_MODE: Final = b"40000"
+# A generous bound on accepted generations, so a parent cycle cannot spin.
+_MAIN_HISTORY_LIMIT: Final = 10_000_000
+
+
+def _commit_parents(body: bytes) -> list[str]:
+    headers = body.split(b"\n\n", 1)[0].split(b"\n")
+    return [
+        line[len(b"parent ") :].decode("ascii") for line in headers if line.startswith(b"parent ")
+    ]
+
+
+def _listing_path(prefix: str, name: str) -> str:
+    """One tree entry's full path; names Git would not list as UTF-8 are refused."""
+
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise PlaybillGitError("ledger tree contains malformed metadata") from exc
+    return prefix + name
+
+
+def _listing_mode(raw_mode: bytes) -> str:
+    """A tree entry's mode as ``ls-tree`` and ``diff-tree`` print it."""
+
+    try:
+        return raw_mode.decode("ascii").rjust(6, "0")
+    except UnicodeDecodeError as exc:
+        raise PlaybillGitError("ledger tree contains malformed metadata") from exc
+
+
+def _listing_type(raw_mode: bytes) -> str:
+    if raw_mode == _TREE_MODE:
+        return "tree"
+    return "commit" if raw_mode == b"160000" else "blob"
+
+
+def _mode_kind(raw_mode: bytes) -> str:
+    """Git's type-change classes: a regular file, a symlink, or a submodule."""
+
+    return {b"120000": "symlink", b"160000": "gitlink"}.get(raw_mode, "file")
+
+
+def _tree_order_key(
+    *trees: Mapping[str, tuple[bytes, str]],
+) -> Callable[[str], bytes]:
+    """Git's tree order: a directory sorts as its name followed by ``/``."""
+
+    def key(name: str) -> bytes:
+        entry = next((tree[name] for tree in trees if name in tree), None)
+        suffix = b"/" if entry is not None and entry[0] == _TREE_MODE else b""
+        return name.encode("utf-8", errors="surrogateescape") + suffix
+
+    return key
 
 
 def _fsync_directory(path: Path) -> None:
@@ -2770,7 +3022,7 @@ class _BatchBlobReader:
                 if header == expression + b" missing\n":
                     return None
                 try:
-                    _object_oid, object_type, raw_size = header[:-1].decode("ascii").split()
+                    object_oid, object_type, raw_size = header[:-1].decode("ascii").split()
                     size = int(raw_size)
                 except (UnicodeDecodeError, ValueError) as exc:
                     raise PlaybillGitError("Git batch output has malformed metadata") from exc
@@ -2779,6 +3031,7 @@ class _BatchBlobReader:
                     raise PlaybillGitError("Git batch output has a truncated payload")
                 if object_type != "blob":
                     raise PlaybillGitError(f"ledger path is not a regular blob: {path}")
+                _require_object_hash(object_oid, object_type, payload[:-1])
                 return payload[:-1]
             except BaseException:
                 self.close()
@@ -2792,23 +3045,18 @@ class _BatchBlobReader:
             process = self._checking()
             assert process.stdin is not None and process.stdout is not None
             try:
-                for expected_oid in oids:
-                    process.stdin.write(expected_oid.encode("ascii") + b"\n")
+                # Requests go in chunks small enough that neither pipe can fill
+                # while the other waits, so a whole listing's sizes cost a few
+                # round trips rather than one per object.
+                ordered = list(oids)
+                for start in range(0, len(ordered), _OBJECT_INFO_CHUNK):
+                    chunk = ordered[start : start + _OBJECT_INFO_CHUNK]
+                    process.stdin.write(b"".join(oid.encode("ascii") + b"\n" for oid in chunk))
                     process.stdin.flush()
-                    header = process.stdout.readline()
-                    if not header.endswith(b"\n"):
-                        raise PlaybillGitError("Git object metadata ended before its header")
-                    if header == expected_oid.encode("ascii") + b" missing\n":
-                        found[expected_oid] = None
-                        continue
-                    try:
-                        actual_oid, object_type, raw_size = header[:-1].decode("ascii").split()
-                        size = int(raw_size)
-                    except (UnicodeDecodeError, ValueError) as exc:
-                        raise PlaybillGitError("Git object metadata is malformed") from exc
-                    if actual_oid != expected_oid or size < 0:
-                        raise PlaybillGitError("Git object metadata differs from its request")
-                    found[expected_oid] = (object_type, size)
+                    for expected_oid in chunk:
+                        found[expected_oid] = _object_info_row(
+                            process.stdout.readline(), expected_oid
+                        )
             except BaseException:
                 self.close()
                 raise
@@ -2845,6 +3093,7 @@ class _BatchBlobReader:
                     payload = process.stdout.read(size + 1)
                     if len(payload) != size + 1 or payload[-1:] != b"\n":
                         raise PlaybillGitError("Git batch blob output has a truncated payload")
+                    _require_object_hash(expected_oid, object_type, payload[:-1])
                     found[expected_oid] = (object_type, payload[:-1])
             except BaseException:
                 self.close()
@@ -2861,6 +3110,50 @@ class _BatchBlobReader:
             blobs[oid] = value[1]
         return blobs
 
+
+_OBJECT_INFO_CHUNK: Final = 256
+
+
+def _object_info_row(header: bytes, expected_oid: str) -> tuple[str, int] | None:
+    if not header.endswith(b"\n"):
+        raise PlaybillGitError("Git object metadata ended before its header")
+    if header == expected_oid.encode("ascii") + b" missing\n":
+        return None
+    try:
+        actual_oid, object_type, raw_size = header[:-1].decode("ascii").split()
+        size = int(raw_size)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise PlaybillGitError("Git object metadata is malformed") from exc
+    if actual_oid != expected_oid or size < 0:
+        raise PlaybillGitError("Git object metadata differs from its request")
+    return (object_type, size)
+
+
+def _require_object_hash(oid: str, object_type: str, body: bytes) -> None:
+    """Refuse object bytes that do not hash to the ID they were read under.
+
+    Git serves a stored object without re-hashing it, so bytes replaced on disk
+    after the ledger was verified would otherwise be returned under the
+    original ID. Every object this reader hands out is checked.
+    """
+
+    algorithm = {40: "sha1", 64: "sha256"}.get(len(oid))
+    if algorithm is None:
+        raise PlaybillGitError(f"ledger object ID has an unknown length: {oid}")
+    digest = hashlib.new(algorithm)
+    digest.update(f"{object_type} {len(body)}".encode("ascii") + b"\x00")
+    digest.update(body)
+    if digest.hexdigest() != oid:
+        raise PlaybillGitError(f"ledger object bytes do not hash to their ID: {oid}")
+
+
+# A generation commit is marked here from before it exists until it is on main
+# or collected; recovery scans for unsettled generations only when one is left.
+_GENERATIONS_IN_FLIGHT = "playbill-generations-in-flight"
+_IN_FLIGHT_LOCK = "playbill-generations-in-flight.lock"
+# The ledgers this thread holds a generation attempt on.
+_ATTEMPTS = threading.local()
+_UNSETTLED_CLEANUP_BASELINE = "playbill-unsettled-cleanup-v1"
 
 _BATCH_READER_CAPACITY = 16
 _BATCH_READERS: OrderedDict[tuple[str, int, int], _BatchBlobReader] = OrderedDict()

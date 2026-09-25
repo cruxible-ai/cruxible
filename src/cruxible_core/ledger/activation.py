@@ -227,8 +227,11 @@ class ActivationPublisher:
             _checkpoint(ORPHAN_CLEANUP, "before", crash_hook)
             remove_exact_projection_build(projection, expected=projection.manifest)
             self.ledger.collect_unreachable_generation(bundle.oid)
+            self.ledger.settle_generation_in_flight(bundle.oid)
             _checkpoint(ORPHAN_CLEANUP, "after", crash_hook)
             return ActivationResult(status="lost_cas", accepted=None, projection=None)
+        # On main: reachable, so nothing is left for recovery to collect.
+        self.ledger.settle_generation_in_flight(bundle.oid)
 
         accepted = verification_coordinate
         _checkpoint(GENERATION_NOTE, "before", crash_hook)
@@ -302,7 +305,7 @@ class ActivationPublisher:
             tree=bundle.tree,
             members=bundle.members,
         )
-        write_checkpoint(self.checkpoint_directory, body)
+        write_checkpoint(self.checkpoint_directory, body, verified=True)
 
 
 __all__ = [

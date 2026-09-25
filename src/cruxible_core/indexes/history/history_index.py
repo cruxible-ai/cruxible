@@ -10,6 +10,10 @@ one SQLite snapshot with an explicit accepted-history cutoff.
 from __future__ import annotations
 
 import functools
+import hashlib
+import json
+import os
+import secrets
 import sqlite3
 import stat
 import threading
@@ -542,6 +546,31 @@ PriorMemberSequences = Callable[[Sequence[str]], dict[str, tuple[int, ...]]]
 EnvelopeLoader = Callable[[int, PriorMemberSequences], Sequence[ArtifactEnvelopeRow]]
 
 
+_HISTORY_CHAIN_SEED = "sha256:" + "0" * 64
+
+
+def _generation_rows_digest(connection: sqlite3.Connection, previous: str, sequence: int) -> str:
+    """Extend the history chain by every row one generation contributed."""
+    digest = hashlib.sha256(previous.encode("ascii"))
+    for sql in (
+        "SELECT * FROM accepted_generations WHERE sequence=?",
+        "SELECT * FROM artifact_versions WHERE occurrence_sequence=? "
+        "ORDER BY identity,artifact_digest",
+        "SELECT * FROM accepted_member_locations WHERE sequence=? ORDER BY member_ordinal",
+    ):
+        for row in connection.execute(sql, (sequence,)):
+            digest.update(json.dumps(list(row), separators=(",", ":")).encode() + b"\n")
+        digest.update(b"\x00")
+    return "sha256:" + digest.hexdigest()
+
+
+def _history_chain(connection: sqlite3.Connection, *, through: int) -> str:
+    digest = _HISTORY_CHAIN_SEED
+    for sequence in range(through + 1):
+        digest = _generation_rows_digest(connection, digest, sequence)
+    return digest
+
+
 def commit_working_write(
     connection: sqlite3.Connection,
     file_stamp: Callable[[], tuple[int, ...] | None],
@@ -647,6 +676,16 @@ class AcceptedHistoryIndex:
         )
         self._ready: tuple[int, str, str, str, int] | None = None
         self._stamp: tuple[int, ...] | None = None
+        # (sequence, chained digest of every history row through it); see
+        # _verified_through. After invalidate() the persisted record is not
+        # consulted until a full reconciliation has succeeded again.
+        self._chain: tuple[int, str] | None = None
+        self._trust_record = True
+        # The persisted record as it stood when this index opened (for the
+        # daemon, at startup), replaced only by records this process writes. A
+        # record swapped in beside changed rows while the daemon runs is never
+        # read.
+        self._record: bytes | None = self._read_record()
         self._writer: sqlite3.Connection | None = None
         self._writer_identity: tuple[int, ...] | None = None
         self._close_writer: Callable[[], None] | None = None
@@ -677,6 +716,78 @@ class AcceptedHistoryIndex:
         """Close the shared working file and preserve a verified graceful-restart checkpoint."""
         self._finalizer()
 
+    def _verification_stamp_path(self) -> Path:
+        return self.path.with_name(self.path.name + ".verified.json")
+
+    def _read_record(self) -> bytes | None:
+        path = self._verification_stamp_path()
+        try:
+            if path.is_symlink() or not path.is_file():
+                return None
+            return path.read_bytes()
+        except OSError:
+            return None
+
+    def _verified_through(
+        self, connection: sqlite3.Connection, recovered: RecoveredInstanceState
+    ) -> tuple[int, str, str, str, int] | None:
+        """The readiness a previous process recorded, if these rows still carry it.
+
+        The record binds a readiness to a digest chained over every history row
+        through its sequence. Recomputing that chain from the rows present now
+        is one pass over the history tables; only a match lets synchronization
+        start after the recorded sequence instead of re-deriving every
+        generation from the ledger.
+        """
+        try:
+            if self._record is None:
+                return None
+            recorded = json.loads(self._record)
+            ready = tuple(recorded["ready"])
+            sequence, root, instance_id, compiler, schema = ready
+            claimed = recorded["chain"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        if (
+            not isinstance(sequence, int)
+            or not 0 <= sequence < len(recovered.history)
+            or recovered.history[sequence].generation_root.tagged != root
+            or instance_id != recovered.coordinate.instance_id
+            or compiler != recovered.coordinate.compiler.rule_digest
+            or schema != recovered.coordinate.compiler.schema_version
+        ):
+            return None
+        chain = _history_chain(connection, through=sequence)
+        if chain != claimed:
+            return None
+        self._chain = (sequence, chain)
+        return (sequence, root, instance_id, compiler, schema)
+
+    def _record_verified_through(
+        self, connection: sqlite3.Connection, ready: tuple[int, str, str, str, int]
+    ) -> None:
+        sequence = ready[0]
+        if self._chain is not None and self._chain[0] == sequence:
+            return
+        if self._chain is not None and self._chain[0] < sequence:
+            digest = self._chain[1]
+            for position in range(self._chain[0] + 1, sequence + 1):
+                digest = _generation_rows_digest(connection, digest, position)
+        else:
+            digest = _history_chain(connection, through=sequence)
+        self._chain = (sequence, digest)
+        body = json.dumps({"ready": list(ready), "chain": digest}, sort_keys=True).encode()
+        path = self._verification_stamp_path()
+        temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(descriptor, body)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, path)
+        self._record = body
+
     def invalidate(self) -> None:
         """Force full source reconciliation on the next read.
 
@@ -687,6 +798,8 @@ class AcceptedHistoryIndex:
         with self._lock:
             self._ready = None
             self._stamp = None
+            self._chain = None
+            self._trust_record = False
 
     def proposal_committed(
         self, before_stamp: tuple[int, ...] | None, after_stamp: tuple[int, ...]
@@ -845,6 +958,8 @@ class AcceptedHistoryIndex:
                     before_commit = self._file_stamp()
                     stamp = self._file_stamp()
                     ready = self._ready if stamp is not None and stamp == self._stamp else None
+                    if ready is None and self._chain is None and self._trust_record:
+                        ready = self._verified_through(writer, recovered)
                     self._sync(writer, recovered, load_envelopes, ready)
                     published_stamp = commit_working_write(writer, self._file_stamp, before_commit)
                     if published_stamp != before_commit and hasattr(self, "_proposals"):
@@ -860,6 +975,8 @@ class AcceptedHistoryIndex:
                     recovered.coordinate.compiler.rule_digest,
                     recovered.coordinate.compiler.schema_version,
                 )
+                self._record_verified_through(writer, self._ready)
+                self._trust_record = True
                 connection = open_working_snapshot(
                     self.path, expected_stamp=published_stamp, file_stamp=self._file_stamp
                 )

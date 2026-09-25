@@ -76,6 +76,7 @@ from cruxible_core.ledger.bootstrap import VerifiedGenesis, generation_root
 from cruxible_core.ledger.checkpoints import (
     ReplayCheckpointBodyV2,
     checkpoint_body,
+    discard_checkpoint,
     load_verified_checkpoint,
     write_checkpoint,
 )
@@ -1009,13 +1010,38 @@ def recover_instance(
         ]
         # Only the head's parsed record stays resident; the ledger holds the rest.
         history[:-1] = [item.released(ledger.record_at) for item in history[:-1]]
-        window = _GenerationWindow(
-            generation=history[-1],
-            tree=seed.tree,
-            state=seed.state,
-        )
+        window = None
+        if len(history_oids) > len(history):
+            # Only a suffix to replay needs the checkpoint coordinate's tree.
+            try:
+                window = _GenerationWindow(
+                    generation=history[-1],
+                    tree=seed.tree,
+                    state=seed.state,
+                )
+            except PlaybillError:
+                # A checkpoint whose tree no longer reproduces is discarded and
+                # the reopen replays from genesis, as for any unusable one.
+                assert checkpoint_directory is not None
+                discard_checkpoint(checkpoint_directory)
+                return recover_instance(
+                    ledger,
+                    genesis=genesis,
+                    instance_id=instance_id,
+                    object_format=object_format,
+                    compiler=compiler,
+                    publication_directory=publication_directory,
+                    bodies=bodies,
+                    witness=witness,
+                    laws=laws,
+                    promotion_verifier=promotion_verifier,
+                    producer_receipt_resolver=producer_receipt_resolver,
+                    query_facts_builder=query_facts_builder,
+                    checkpoint_directory=checkpoint_directory,
+                )
     replayed_from = len(history)
     for oid in history_oids[replayed_from:]:
+        assert window is not None
         query_source = _ReplayQueryFactsSource(
             ledger=ledger,
             history=tuple(history),
@@ -1046,7 +1072,9 @@ def recover_instance(
     head = history[-1]
     compiler = head.compiler
     checkpoint: ReplayCheckpointBodyV2 | None = None
-    if checkpoint_directory is not None and head.sequence > 0:
+    # A checkpoint already at the head is left as it is; only a replayed
+    # suffix (or a genesis walk) produces a new one.
+    if checkpoint_directory is not None and head.sequence > 0 and window is not None:
         checkpoint = checkpoint_body(
             instance_id=instance_id,
             object_format=object_format,
@@ -1063,18 +1091,24 @@ def recover_instance(
     # Release the head tree before projection assembly, the peak-memory phase.
     del window
     recovered_history = tuple(history)
-    _clean_unaccepted_generations(
-        ledger,
-        history=recovered_history,
-        repository_path=repository_path,
-        object_format=object_format,
-        instance_id=instance_id,
-        bodies=bodies,
-        laws=laws,
-        promotion_verifier=promotion_verifier,
-        producer_receipt_resolver=producer_receipt_resolver,
-        query_facts_builder=query_facts_builder,
-    )
+    # The whole-object-store scan runs only when a generation was left in flight
+    # (or has never run on this ledger); a clean stop leaves nothing to collect.
+    # Writers are held off for the scan; while one is in flight it waits.
+    with ledger.unaccepted_cleanup() as markers:
+        if markers is not None:
+            _clean_unaccepted_generations(
+                ledger,
+                history=recovered_history,
+                repository_path=repository_path,
+                object_format=object_format,
+                instance_id=instance_id,
+                bodies=bodies,
+                laws=laws,
+                promotion_verifier=promotion_verifier,
+                producer_receipt_resolver=producer_receipt_resolver,
+                query_facts_builder=query_facts_builder,
+            )
+            ledger.complete_unaccepted_cleanup(markers)
     _clean_unaccepted_publications(
         ledger,
         history=recovered_history,
@@ -1130,7 +1164,7 @@ def recover_instance(
     if checkpoint is not None and checkpoint_directory is not None:
         # Written last, after every repair has succeeded: a checkpoint may only
         # ever summarize a coordinate this process fully brought into service.
-        write_checkpoint(checkpoint_directory, checkpoint)
+        write_checkpoint(checkpoint_directory, checkpoint, verified=True)
     return RecoveredInstanceState(
         genesis=genesis,
         head=head,

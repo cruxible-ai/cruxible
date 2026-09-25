@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Generic, TypeVar
 
+from cruxible_client.contracts.candidates import DependencyProofReferenceV1
 from cruxible_client.contracts.canonical import canonical_bytes, file_digest, is_candidate_card_path
 from cruxible_client.contracts.claims import ClaimStatement
 from cruxible_client.contracts.documents import DocumentArtifactAdapter
@@ -228,7 +229,12 @@ class EvaluationRows:
             self.pin_sources,
             lambda: self.keys("pins", "target_identity", "edge_kind='required_pin'"),
         )
-        if edge_tree is None:
+        if edge_tree is None and not self.changed:
+            # The authenticated projection holds every resolved pin with its
+            # role; joined to the exact target version it pins, each is one
+            # edge, so a cold build of an unedited tree parses no member.
+            edge_tree = build_dependency_edge_tree(self.projected_edges())
+        elif edge_tree is None:
             # A cold proof build already enumerates the graph. Fetch its sources
             # together; incremental overlays keep using selected point reads.
             self.reader.prefetch_members(
@@ -243,6 +249,25 @@ class EvaluationRows:
             )
         return DependencyIndexV1(
             self.states, self.identities, pin_sources, outgoing, incoming, edge_tree
+        )
+
+    def projected_edges(self) -> tuple[DependencyProofReferenceV1, ...]:
+        """Every dependency edge of the projected tree, from its pin rows."""
+        return _sorted_edges(
+            DependencyProofReferenceV1(
+                source_path=row[0],
+                source_artifact_digest=row[1],
+                target_path=row[2],
+                target_artifact_digest=row[3],
+                pin_role=row[4],
+            )
+            for row in self.connection.execute(
+                f"SELECT source.path, source.artifact_digest, target.path, "
+                f"target.artifact_digest, p.pin_role FROM {self.table('pins')} p "
+                f"JOIN {self.table('artifact_lookup')} source ON source.identity=p.source_identity "
+                f"JOIN {self.table('artifact_lookup')} target ON target.identity=p.target_identity "
+                f"AND target.artifact_digest=p.target_digest WHERE p.edge_kind='required_pin'"
+            )
         )
 
     def resolved_edge_paths(self, side: str) -> tuple[str, ...]:

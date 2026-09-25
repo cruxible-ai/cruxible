@@ -71,7 +71,8 @@ from __future__ import annotations
 import os
 import re
 import secrets
-from collections.abc import Mapping
+import threading
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
@@ -248,13 +249,35 @@ class CheckpointGeneration:
     compiler: CompilerCoordinate
 
 
-@dataclass(frozen=True)
 class CheckpointSeed:
-    """A verified prefix summary plus the exact window state the suffix resumes from."""
+    """A verified prefix summary plus the exact window state the suffix resumes from.
 
-    prefix: tuple[CheckpointGeneration, ...]
-    tree: dict[str, bytes]
-    state: EvaluatedTreeState
+    The window is built on first use: a reopen whose checkpoint is already at
+    the head replays nothing and never reads the coordinate tree.
+    """
+
+    def __init__(
+        self,
+        prefix: tuple[CheckpointGeneration, ...],
+        *,
+        window: Callable[[], tuple[dict[str, bytes], EvaluatedTreeState]],
+    ) -> None:
+        self.prefix = prefix
+        self._window = window
+        self._built: tuple[dict[str, bytes], EvaluatedTreeState] | None = None
+
+    def _build(self) -> tuple[dict[str, bytes], EvaluatedTreeState]:
+        if self._built is None:
+            self._built = self._window()
+        return self._built
+
+    @property
+    def tree(self) -> dict[str, bytes]:
+        return self._build()[0]
+
+    @property
+    def state(self) -> EvaluatedTreeState:
+        return self._build()[1]
 
 
 def checkpoint_digest(body: ReplayCheckpointBodyV2) -> ReplayCheckpointDigest:
@@ -328,17 +351,84 @@ def checkpoint_path(directory: Path) -> Path:
     return directory / CHECKPOINT_FILE
 
 
+def _verified_path(directory: Path) -> Path:
+    return directory / (CHECKPOINT_FILE + ".verified")
+
+
+# The verified-checkpoint digests this process trusts, per directory: the one
+# on disk when it first looked, plus those it wrote. A record written beside a
+# checkpoint replaced while the daemon runs is never honored.
+_TRUSTED_CHECKPOINTS: dict[str, set[str]] = {}
+_TRUSTED_CHECKPOINTS_LOCK = threading.Lock()
+
+
+def _recorded_checkpoint_digest(directory: Path) -> str | None:
+    path = _verified_path(directory)
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        return path.read_text().strip()
+    except (OSError, ValueError):
+        return None
+
+
+def _trusted_checkpoints(directory: Path) -> set[str]:
+    key = str(directory)
+    with _TRUSTED_CHECKPOINTS_LOCK:
+        trusted = _TRUSTED_CHECKPOINTS.get(key)
+        if trusted is None:
+            recorded = _recorded_checkpoint_digest(directory)
+            trusted = _TRUSTED_CHECKPOINTS[key] = set() if recorded is None else {recorded}
+        return trusted
+
+
+def _checkpoint_verified(directory: Path, record: ReplayCheckpointFileV2) -> bool:
+    """Whether a process already re-derived this exact checkpoint body.
+
+    The record names the body digest it covers; the checkpoint file itself
+    self-verifies that digest on load, so a changed body never matches. Only
+    the record this process first saw, or one it wrote, is honored.
+    """
+    return _recorded_checkpoint_digest(
+        directory
+    ) == record.checkpoint_digest and record.checkpoint_digest in _trusted_checkpoints(directory)
+
+
+def reset_trusted_checkpoints() -> None:
+    """Forget which verified checkpoints this process trusts (as a new process would)."""
+
+    with _TRUSTED_CHECKPOINTS_LOCK:
+        _TRUSTED_CHECKPOINTS.clear()
+
+
+def _record_checkpoint_verified(directory: Path, digest: str) -> None:
+    _trusted_checkpoints(directory)
+    with _TRUSTED_CHECKPOINTS_LOCK:
+        _TRUSTED_CHECKPOINTS[str(directory)].add(digest)
+    temporary = directory / f".checkpoint-verified-{secrets.token_hex(12)}.tmp"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(descriptor, digest.encode("ascii") + b"\n")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, _verified_path(directory))
+
+
 def write_checkpoint(
     directory: Path,
     body: ReplayCheckpointBodyV2,
     *,
     written_at: str | None = None,
+    verified: bool = False,
 ) -> Path:
     """Publish one checkpoint atomically, replacing any earlier one in place.
 
     `written_at` is operator-facing metadata and sits outside the digest
     preimage, so supplying it never changes what the checkpoint commits to; it
-    exists so a deterministic builder can produce byte-stable files.
+    exists so a deterministic builder can produce byte-stable files. `verified`
+    is passed only by a writer whose body comes from state it verified itself
+    (activation and recovery); it lets the next reopen skip re-deriving it.
     """
 
     written_at = written_at if written_at is not None else format_datetime(utc_now())
@@ -361,6 +451,8 @@ def write_checkpoint(
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
+    if verified:
+        _record_checkpoint_verified(directory, checkpoint_digest(body).tagged)
     directory_descriptor = os.open(directory, os.O_RDONLY)
     try:
         os.fsync(directory_descriptor)
@@ -375,6 +467,7 @@ def discard_checkpoint(directory: Path) -> None:
     target = checkpoint_path(directory)
     if target.is_symlink() or target.is_file():
         target.unlink(missing_ok=True)
+    _verified_path(directory).unlink(missing_ok=True)
 
 
 def _discard_superseded_checkpoints(directory: Path) -> None:
@@ -458,6 +551,21 @@ def _prefix_records(
     return tuple(records)
 
 
+def _prefix_records_at(
+    ledger: GitLedger, *, oid: str, sequence: int
+) -> tuple[ChangeSetRecordAnyVersion, ...]:
+    """`_prefix_records` reading only the coordinate's change-set records."""
+
+    names = ledger.tree_child_names(oid, "changesets") if sequence else ()
+    paths = tuple(f"changesets/cs-{index:020d}.json" for index in range(1, sequence + 1))
+    if sorted(names) != sorted(path.rpartition("/")[2] for path in paths):
+        raise ReplayCheckpointError(
+            "checkpoint coordinate carries change-set records outside its own history"
+        )
+    blobs = ledger.blobs_at(oid, paths)
+    return _prefix_records(blobs, sequence=sequence)
+
+
 def _principals_at(
     ledger: GitLedger,
     *,
@@ -482,7 +590,7 @@ def _rederive_prefix(
     genesis: VerifiedGenesis,
     history: tuple[str, ...],
     records: tuple[ChangeSetRecordAnyVersion, ...],
-    head_tree: Mapping[str, bytes],
+    head_principals: Callable[[str], PrincipalRegistrySnapshot],
     compiler: CompilerCoordinate,
 ) -> tuple[CheckpointGeneration, ...]:
     """Rebuild the whole prefix coordinate chain from the verified genesis forward."""
@@ -550,10 +658,7 @@ def _rederive_prefix(
             )
         )
     head = prefix[-1]
-    head_registry = principal_registry_from_tree(
-        head_tree,
-        semantic_root=head.semantic_root.tagged,
-    )
+    head_registry = head_principals(head.semantic_root.tagged)
     if head_registry != head.principals:
         raise ReplayCheckpointError(
             "re-derived principal registry differs from the checkpoint coordinate tree"
@@ -570,8 +675,15 @@ def verify_checkpoint(
     object_format: GitObjectFormat,
     compiler: CompilerCoordinate,
     genesis_coordinate: GenesisCoordinate,
+    verified: bool = False,
 ) -> CheckpointSeed:
-    """Re-derive the checkpointed prefix from the ledger, or refuse it."""
+    """Re-derive the checkpointed prefix from the ledger, or refuse it.
+
+    `verified` means an earlier process re-derived this exact body from its
+    coordinate tree. The prefix coordinate chain, principals, signature and
+    note are still re-derived here; only the whole-tree manifest check is
+    skipped, and the window state is built from the tree on demand.
+    """
 
     body = record.body
     if body.instance_id != instance_id:
@@ -590,6 +702,52 @@ def verify_checkpoint(
         raise ReplayCheckpointError(
             "checkpoint coordinate is not the accepted generation at its sequence"
         )
+
+    if verified:
+        records = _prefix_records_at(ledger, oid=body.git_oid, sequence=body.sequence)
+        prefix = _rederive_prefix(
+            ledger,
+            genesis=genesis,
+            history=history,
+            records=records,
+            head_principals=lambda root: _principals_at(
+                ledger, oid=body.git_oid, semantic_root=root
+            ),
+            compiler=compiler,
+        )
+        _require_prefix_matches(ledger, body, prefix)
+
+        def window() -> tuple[dict[str, bytes], EvaluatedTreeState]:
+            tree = ledger.read_tree(body.git_oid)
+            projected = semantic_projection(tree)
+            members = manifest_for_tree(projected)
+            manifest_root = manifest_root_from_members(members)
+            if manifest_root.tagged != body.manifest_root or members != body.members:
+                raise ReplayCheckpointError(
+                    "checkpoint member manifest differs from its coordinate tree"
+                )
+            merkle = verify_merkle_tree(
+                members, claimed_root=body.merkle_root, domains=MANIFEST_MERKLE_DOMAINS
+            )
+            head_record = records[-1]
+            accepted_root = (
+                merkle.root.tagged
+                if isinstance(head_record, ChangeSetRecordV3)
+                else manifest_root.tagged
+            )
+            if accepted_root != head_record.candidate.candidate_manifest_root:
+                raise ReplayCheckpointError(
+                    "checkpoint coordinate tree differs from the manifest root its change set "
+                    "accepted"
+                )
+            return tree, EvaluatedTreeState(
+                members=members,
+                merkle=merkle,
+                dependencies=build_dependency_index(projected),
+                claim_subjects=build_claim_subject_index(projected),
+            )
+
+        return CheckpointSeed(prefix, window=window)
 
     tree = ledger.read_tree(body.git_oid)
     projected = semantic_projection(tree)
@@ -625,9 +783,29 @@ def verify_checkpoint(
         genesis=genesis,
         history=history,
         records=records,
-        head_tree=tree,
+        head_principals=lambda root: principal_registry_from_tree(tree, semantic_root=root),
         compiler=compiler,
     )
+    _require_prefix_matches(ledger, body, prefix)
+
+    def verified_window() -> tuple[dict[str, bytes], EvaluatedTreeState]:
+        return tree, EvaluatedTreeState(
+            members=members,
+            merkle=merkle,
+            # Rebuilt from the coordinate's own member bytes. A checkpoint elides
+            # the prefix's law evaluation, never the state the suffix reads.
+            dependencies=build_dependency_index(projected),
+            claim_subjects=build_claim_subject_index(projected),
+        )
+
+    return CheckpointSeed(prefix, window=verified_window)
+
+
+def _require_prefix_matches(
+    ledger: GitLedger,
+    body: ReplayCheckpointBodyV2,
+    prefix: tuple[CheckpointGeneration, ...],
+) -> None:
     head = prefix[-1]
     if body.compiler != head.compiler:
         raise ReplayCheckpointError("checkpoint compiler coordinate differs from accepted history")
@@ -654,18 +832,6 @@ def verify_checkpoint(
             raise ReplayCheckpointError(
                 "ledger generation note differs from the re-derived checkpoint descriptor"
             )
-    return CheckpointSeed(
-        prefix=prefix,
-        tree=tree,
-        state=EvaluatedTreeState(
-            members=members,
-            merkle=merkle,
-            # Rebuilt from the coordinate's own member bytes. A checkpoint elides
-            # the prefix's law evaluation, never the state the suffix reads.
-            dependencies=build_dependency_index(projected),
-            claim_subjects=build_claim_subject_index(projected),
-        ),
-    )
 
 
 def load_verified_checkpoint(
@@ -692,7 +858,8 @@ def load_verified_checkpoint(
         record = load_checkpoint_file(directory)
         if record is None:
             return None
-        return verify_checkpoint(
+        verified = _checkpoint_verified(directory, record)
+        seed = verify_checkpoint(
             ledger,
             record,
             genesis=genesis,
@@ -700,7 +867,11 @@ def load_verified_checkpoint(
             object_format=object_format,
             compiler=compiler,
             genesis_coordinate=genesis_coordinate,
+            verified=verified,
         )
+        if not verified:
+            _record_checkpoint_verified(directory, record.checkpoint_digest)
+        return seed
     except (PlaybillError, OSError, ValueError):
         discard_checkpoint(directory)
         return None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -187,8 +188,8 @@ def test_an_absent_checkpoint_directory_is_legal(tmp_path: Path) -> None:
     fixture = build_fixture(tmp_path, PROFILE)
     expected = _observable(_reopen(fixture))
     directory = _checkpoints(fixture.instance)
-    checkpoint_path(directory).unlink()
-    directory.rmdir()
+    assert checkpoint_path(directory).is_file()
+    shutil.rmtree(directory)  # the checkpoint and its verification record
     assert _observable(_reopen(fixture)) == expected
 
 
@@ -448,3 +449,128 @@ def test_activation_writes_a_checkpoint_on_its_configured_stride(
     monkeypatch.undo()
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate().git_oid == bundle.oid
+
+
+def test_a_verified_checkpoint_at_the_head_reopens_without_reading_its_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.ledger.git import GitLedger
+
+    fixture = build_fixture(tmp_path, PROFILE)
+    expected = _observable(_reopen(fixture))  # leaves a verified checkpoint at the head
+    directory = _checkpoints(fixture.instance)
+    record = load_checkpoint_file(directory)
+    assert record is not None
+    assert (directory / (checkpoint_path(directory).name + ".verified")).read_text().strip() == (
+        record.checkpoint_digest
+    )
+    reads: list[str] = []
+    original = GitLedger.read_tree
+
+    def counted(self, oid, *args, **kwargs):  # type: ignore[no-untyped-def]
+        reads.append(oid)
+        return original(self, oid, *args, **kwargs)
+
+    monkeypatch.setattr(GitLedger, "read_tree", counted)
+    assert _observable(_reopen(fixture)) == expected
+    assert record.body.git_oid not in reads
+
+    # A record naming any other body is not this checkpoint's: full re-derivation.
+    (directory / (checkpoint_path(directory).name + ".verified")).write_text(
+        "sha256:" + "0" * 64 + "\n"
+    )
+    assert _observable(_reopen(fixture)) == expected
+    assert record.body.git_oid in reads
+
+
+def test_a_verified_record_written_while_the_process_runs_is_not_honored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.ledger import checkpoints
+    from cruxible_core.ledger.git import GitLedger
+
+    fixture = build_fixture(tmp_path, PROFILE)
+    expected = _observable(_reopen(fixture))  # leaves a verified checkpoint at the head
+    directory = _checkpoints(fixture.instance)
+    record = load_checkpoint_file(directory)
+    assert record is not None
+    stamp = directory / (checkpoint_path(directory).name + ".verified")
+    genuine = stamp.read_text()
+
+    # The process first sees a record for another body ...
+    stamp.write_text("sha256:" + "0" * 64 + "\n")
+    checkpoints.reset_trusted_checkpoints()
+    assert record.checkpoint_digest not in checkpoints._trusted_checkpoints(directory)
+    # ... then the record naming this body reappears while it runs.
+    stamp.write_text(genuine)
+    reads: list[str] = []
+    original = GitLedger.read_tree
+
+    def counted(self, oid, *args, **kwargs):  # type: ignore[no-untyped-def]
+        reads.append(oid)
+        return original(self, oid, *args, **kwargs)
+
+    monkeypatch.setattr(GitLedger, "read_tree", counted)
+    assert _observable(_reopen(fixture)) == expected
+    assert record.body.git_oid in reads  # the full path re-derived it
+
+
+def test_a_forged_tree_under_a_verified_head_checkpoint_is_never_served(tmp_path: Path) -> None:
+    """The verified reopen skips re-deriving the head tree, so the tree must authenticate itself."""
+
+    import zlib
+
+    from cruxible_client.contracts.errors import PlaybillGitError
+    from cruxible_core.ledger import git as ledger_git
+
+    fixture = build_fixture(tmp_path, PROFILE)
+    _reopen(fixture)  # leaves a verified checkpoint at the head
+    instance = _reopen_instance(fixture)
+    ledger = instance._ledger
+    head = ledger.read_main()
+    instance.coordinate_for_oid(head)  # leaves a verified history index
+    root = ledger._commit_tree(head)
+    assert root is not None
+    # A subtree startup never walks through the checked reader: only a whole-tree
+    # read of the head reaches it.
+    trees = {
+        name: entry[1]
+        for name, entry in ledger._tree_entries_of(root).items()
+        if entry[0] == b"40000"
+    }
+    name = next(item for item in ("documents", "claims", "subjects") if item in trees)
+    subtree = trees[name]
+    entries = ledger._tree_entries_of(subtree)
+    victim = next(iter(entries))
+    forged_blob = (
+        ledger._git(["hash-object", "-w", "--stdin"], input_bytes=b'{"forged": true}\n')
+        .decode()
+        .strip()
+    )
+    body = b"".join(
+        entry_mode
+        + b" "
+        + entry_name.encode()
+        + b"\x00"
+        + bytes.fromhex(forged_blob if entry_name == victim else oid)
+        for entry_name, (entry_mode, oid) in entries.items()
+    )
+    loose = ledger.path / "objects" / subtree[:2] / subtree[2:]
+    assert loose.is_file()
+    loose.chmod(0o644)
+    loose.write_bytes(zlib.compress(b"tree %d\x00" % len(body) + body))
+    for cache in (
+        ledger_git._PARSED_TREES,
+        ledger_git._TREE_LISTINGS,
+        ledger_git._TREE_CHANGES,
+        ledger_git._COMMIT_ROOTS,
+    ):
+        cache.clear()
+
+    try:
+        reopened = _reopen_instance(fixture)
+    except PlaybillGitError as refused:
+        assert "do not hash to their ID" in str(refused)
+        return
+    with pytest.raises(PlaybillGitError, match="do not hash to their ID"):
+        reopened.immutable_tree_at(head)[f"{name}/{victim}"]
