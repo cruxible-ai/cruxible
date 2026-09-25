@@ -41,7 +41,6 @@ SANCTIONED_CARD_CALLERS = {
 _BLOCKS = "packages/cruxible-client/src/cruxible_client/authoring/blocks.py"
 SANCTIONED_CALLERS = {
     "projection_repin": {f"{_BLOCKS}::repin_projection_block"},
-
 }
 SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str, tuple[str, ...]]] = {
     f"{_BLOCKS}::repin_projection_block": (
@@ -49,7 +48,6 @@ SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str, tuple[str, ...]]
         "assert_projection_block_frame",
         ("replace one declared block marker and explicitly supplied authored body",),
     ),
-
 }
 CARD_DERIVATIVE_WRITERS: dict[str, tuple[Callable[..., object], tuple[str, ...]]] = {
     "src/cruxible_core/proposals/candidate_cards.py::derive_candidate_cards": (
