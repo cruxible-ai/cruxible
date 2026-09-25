@@ -218,6 +218,38 @@ def test_bound_old_handle_survives_later_publication_without_mixed_generation(
     assert old_handle.manifest.git_oid != new_handle.manifest.git_oid
 
 
+def test_a_transiently_unopenable_descriptor_alias_is_retried(monkeypatch, tmp_path: Path) -> None:
+    """Darwin's descriptor filesystem can refuse a live alias under cross-process load.
+
+    SQLite lstat()s each component of the alias it opens and reports that
+    transient EBADF as CANTOPEN. An alias to a descriptor that is not open
+    produces the same genuine CANTOPEN; the bind retries instead of calling a
+    valid piece invalid.
+    """
+
+    repository = MemoryLedger(
+        tmp_path / "repository",
+        {"subjects/project.work_item/one.json": subject_bytes("one")},
+    )
+    assembler, result = _publish(tmp_path, repository)
+    connect = sqlite3.connect
+    refused: list[str] = []
+
+    def refuse_first_alias(database, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if "/fd/" in str(database) and not refused:
+            refused.append(str(database))
+            unopened = str(database).rsplit("/", 1)[0] + "/999999?mode=ro&immutable=1"
+            return connect(unopened, *args, **kwargs)
+        return connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", refuse_first_alias)
+    handle = bind_projection(Path(result.manifest_path), expected=assembler.accepted)
+    if not refused:
+        pytest.skip("this platform binds without a descriptor alias")
+    assert handle.typed.envelope("Subject:project.work_item/one") is not None
+    handle.close()
+
+
 def test_bound_handle_keeps_the_verified_inode_if_path_is_replaced(tmp_path: Path) -> None:
     repository = MemoryLedger(
         tmp_path / "repository",

@@ -443,6 +443,10 @@ def _descriptor_digest(descriptor: int) -> str:
     return Sha256Value(digest.hexdigest()).tagged
 
 
+class _DescriptorAliasRefused(Exception):
+    """SQLite could not open a live descriptor alias; the acquisition is retryable."""
+
+
 def _descriptor_uri(descriptor: int) -> str | None:
     """Use a descriptor alias so SQLite opens the verified inode, not its old name."""
     expected = os.fstat(descriptor)
@@ -864,15 +868,26 @@ def bind_projection(
                             "projection piece changed during acquisition"
                         )
                     descriptor_uri = _descriptor_uri(descriptor)
-                    connection = sqlite3.connect(
-                        descriptor_uri or f"{index_path.as_uri()}?mode=ro&immutable=1",
-                        uri=True,
-                    )
+                    try:
+                        connection = sqlite3.connect(
+                            descriptor_uri or f"{index_path.as_uri()}?mode=ro&immutable=1",
+                            uri=True,
+                        )
+                    except sqlite3.OperationalError as exc:
+                        if descriptor_uri is None or exc.sqlite_errorname != "SQLITE_CANTOPEN":
+                            raise
+                        # SQLite lstat()s every component of the alias it opens,
+                        # and Darwin's descriptor filesystem transiently answers
+                        # EBADF for a live descriptor while other processes use
+                        # it. Nothing was acquired; retry like a namespace race.
+                        if attempt == ACQUISITION_ATTEMPTS - 1:
+                            raise
+                        raise _DescriptorAliasRefused from exc
                     # Make SQLite acquire its actual file before ending the
                     # namespace proof. Full cold scans use this connection later.
                     connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
                 break
-            except DatabasePathChangedError:
+            except (DatabasePathChangedError, _DescriptorAliasRefused):
                 if connection is not None:
                     connection.close()
                     connection = None
