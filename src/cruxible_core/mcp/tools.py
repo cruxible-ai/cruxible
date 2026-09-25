@@ -18,6 +18,14 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendResultV1,
     PreparedClaimAttestationRequestV1,
 )
+from cruxible_client.contracts.kits import (
+    PlaybillKitAddRequestV1,
+    PlaybillKitBuildRequestV1,
+    PlaybillKitBuildResultV1,
+    PlaybillKitChangeResultV1,
+    PlaybillKitRemoveRequestV1,
+    PlaybillKitStatusV1,
+)
 from cruxible_client.contracts.provider_installation import (
     PlaybillProviderCatalogV1,
     PlaybillProviderInstallRequestV1,
@@ -80,6 +88,35 @@ def register_tools(
     ) -> PlaybillProviderInstallResultV1:
         """Install a provider package and propose its definitions; requires ADMIN."""
         return handlers.handle_playbill_provider_install(instance_id, request)
+
+    @_tool
+    def cruxible_playbill_kit_build(
+        instance_id: str,
+        request: PlaybillKitBuildRequestV1,
+    ) -> PlaybillKitBuildResultV1:
+        """Export this instance's definitions under the owned prefixes as one kit release."""
+        return handlers.handle_playbill_kit_build(instance_id, request)
+
+    @_tool
+    def cruxible_playbill_kit_status(instance_id: str) -> PlaybillKitStatusV1:
+        """List installed kits and the kit paths edited since install."""
+        return handlers.handle_playbill_kit_status(instance_id)
+
+    @_tool
+    def cruxible_playbill_kit_add(
+        instance_id: str,
+        request: PlaybillKitAddRequestV1,
+    ) -> PlaybillKitChangeResultV1:
+        """Propose installing or upgrading a kit as one change set; activation is separate."""
+        return handlers.handle_playbill_kit_add(instance_id, request)
+
+    @_tool
+    def cruxible_playbill_kit_remove(
+        instance_id: str,
+        request: PlaybillKitRemoveRequestV1,
+    ) -> PlaybillKitChangeResultV1:
+        """Propose retiring every artifact a kit installed; activation is separate."""
+        return handlers.handle_playbill_kit_remove(instance_id, request)
 
     @_tool
     def cruxible_playbill_host_create(

@@ -153,6 +153,16 @@
   "/api/v1/{instance_id}/playbill/instance/decommission": {
     "POST": "PlaybillInstanceDecommissionResultV1"
   },
+  "/api/v1/{instance_id}/playbill/kits": {
+    "GET": "PlaybillKitStatusV1",
+    "POST": "PlaybillKitChangeResultV1"
+  },
+  "/api/v1/{instance_id}/playbill/kits/build": {
+    "POST": "PlaybillKitBuildResultV1"
+  },
+  "/api/v1/{instance_id}/playbill/kits/remove": {
+    "POST": "PlaybillKitChangeResultV1"
+  },
   "/api/v1/{instance_id}/playbill/ledger/mirror": {
     "GET": "PlaybillLedgerMirrorV1",
     "POST": "PlaybillLedgerMirrorV1"

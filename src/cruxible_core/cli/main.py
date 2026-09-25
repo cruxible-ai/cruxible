@@ -41,6 +41,8 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "instance", "decommission"): "active",
     ("playbill", "body", "store"): "active",
     ("playbill", "provider", "seed"): "active",
+    ("playbill", "kit", "add"): "active",
+    ("playbill", "kit", "remove"): "active",
     ("playbill", "ledger", "set-mirror"): "active",
     ("playbill", "ledger", "publish"): "active",
     ("playbill", "document", "propose"): "active",
@@ -435,6 +437,23 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 },
                 module="playbill",
                 attr="provider_group",
+            ),
+            "kit": _group(
+                "Export and import definition kits.",
+                {
+                    "build": _command(
+                        "playbill", "build_kit", "Export owned definitions as a kit release."
+                    ),
+                    "add": _command(
+                        "playbill", "add_kit", "Propose installing or upgrading a kit."
+                    ),
+                    "status": _command("playbill", "kit_status", "List installed kits."),
+                    "remove": _command(
+                        "playbill", "remove_kit", "Propose retiring what a kit installed."
+                    ),
+                },
+                module="playbill",
+                attr="kit_group",
             ),
             "block": _group(
                 "Maintain client-owned declared projection blocks.",

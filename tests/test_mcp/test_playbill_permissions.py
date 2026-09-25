@@ -48,6 +48,8 @@ def test_admin_default_profile_is_exactly_the_writer_path(
 
     assert _tool_names() == {
         "cruxible_version",
+        "cruxible_playbill_kit_status",
+        "cruxible_playbill_kit_add",
         "cruxible_server_info",
         "cruxible_playbill_authoring_create",
         "cruxible_playbill_authoring_example",

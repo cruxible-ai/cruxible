@@ -70,6 +70,12 @@ from cruxible_client.contracts.errors import (
     PlaybillKeyError,
     PlaybillSinceRequestInvalid,
 )
+from cruxible_client.contracts.kits import (
+    PlaybillKitAddRequestV1,
+    PlaybillKitBuildRequestV1,
+    PlaybillKitChangeResultV1,
+    PlaybillKitRemoveRequestV1,
+)
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
@@ -80,6 +86,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.errors import DataValidationError
+from cruxible_client.kits import read_kit_directory, write_kit_directory
 from cruxible_client.provider_installation import install_provider_package
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1, claim_type_input_template
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
@@ -1282,6 +1289,146 @@ def install_provider(
         for operation in result.operations:
             if operation.missing_requirements:
                 click.echo(f"{operation.interface_id}: {', '.join(operation.missing_requirements)}")
+
+
+@playbill_group.group("kit")
+def kit_group() -> None:
+    """Export and import definition kits."""
+
+
+def _echo_kit_change(result: PlaybillKitChangeResultV1) -> None:
+    version = "" if result.version is None else f" {result.version}"
+    click.echo(f"{result.kit_id}{version}: {result.status}")
+    for item in result.plan:
+        if item.action != "unchanged":
+            detail = "" if item.detail is None else f" ({printable(item.detail)})"
+            click.echo(f"  {item.action}: {item.path}{detail}")
+    if result.detail:
+        click.echo(printable(result.detail))
+    if result.missing_interfaces:
+        click.echo(
+            "No installed provider implements: "
+            + ", ".join(result.missing_interfaces)
+            + " (see `cruxible playbill provider install`)"
+        )
+    if result.proposal_id:
+        click.echo(f"Proposal: {result.proposal_id}")
+        if result.approval_required:
+            click.echo(
+                f"Next: cruxible playbill proposal approve {result.proposal_id} "
+                "--signer-id ID --key FILE, then activate it."
+            )
+        else:
+            click.echo(f"Next: cruxible playbill proposal activate {result.proposal_id}")
+
+
+@kit_group.command("build")
+@click.option("--id", "kit_id", required=True, help="Kit id, lowercase with hyphens.")
+@click.option("--version", "version", required=True, help="Release version, MAJOR.MINOR.PATCH.")
+@click.option(
+    "--owns",
+    "owns",
+    multiple=True,
+    required=True,
+    help="Identity prefix the kit defines, ending in '.' (repeatable).",
+)
+@click.option(
+    "--previous",
+    "previous",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="The previous release's kit directory; later releases descend from it.",
+)
+@click.option(
+    "--out", "out", required=True, type=click.Path(path_type=Path), help="New kit directory."
+)
+@json_option
+@handle_errors
+def build_kit(
+    kit_id: str,
+    version: str,
+    owns: tuple[str, ...],
+    previous: Path | None,
+    out: Path,
+    output_json: bool,
+) -> None:
+    """Export this instance's owned definitions as one kit release."""
+    if out.exists():
+        raise click.UsageError(f"{out} already exists")
+    request = PlaybillKitBuildRequestV1(
+        kit_id=kit_id,
+        version=version,
+        owns=tuple(sorted(set(owns))),
+        previous=None if previous is None else read_kit_directory(previous),
+    )
+    bundle = _server_call(
+        lambda client, instance_id: client.build_playbill_kit(instance_id, request),
+        command_name="playbill kit build",
+    ).bundle
+    write_kit_directory(bundle, out)
+    if output_json:
+        _emit_json(bundle.manifest.model_dump(mode="json"))
+    else:
+        click.echo(
+            f"{kit_id} {version}: {len(bundle.artifacts)} artifacts, "
+            f"{bundle.manifest.content_digest}"
+        )
+
+
+@kit_group.command("add")
+@click.argument("kit_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--source", "source", default=None, help="Recorded origin; defaults to the path.")
+@json_option
+@handle_errors
+def add_kit(kit_dir: Path, source: str | None, output_json: bool) -> None:
+    """Propose installing or upgrading the kit in KIT_DIR as one change set."""
+    request = PlaybillKitAddRequestV1(
+        bundle=read_kit_directory(kit_dir), source=source or kit_dir.name
+    )
+    result = _server_call(
+        lambda client, instance_id: client.add_playbill_kit(instance_id, request),
+        command_name="playbill kit add",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_kit_change(result)
+
+
+@kit_group.command("status")
+@json_option
+@handle_errors
+def kit_status(output_json: bool) -> None:
+    """List installed kits and any kit paths edited since install."""
+    result = _server_call(
+        lambda client, instance_id: client.playbill_kit_status(instance_id),
+        command_name="playbill kit status",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    if not result.kits:
+        click.echo("No kits installed.")
+    for kit in result.kits:
+        click.echo(f"{kit.kit_id} {kit.version} {kit.content_digest}")
+        for path in kit.drifted:
+            click.echo(f"  edited locally: {path}")
+
+
+@kit_group.command("remove")
+@click.argument("kit_id")
+@json_option
+@handle_errors
+def remove_kit(kit_id: str, output_json: bool) -> None:
+    """Propose retiring every artifact KIT_ID installed."""
+    request = PlaybillKitRemoveRequestV1(kit_id=kit_id)
+    result = _server_call(
+        lambda client, instance_id: client.remove_playbill_kit(instance_id, request),
+        command_name="playbill kit remove",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_kit_change(result)
 
 
 @playbill_group.group("document")

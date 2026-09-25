@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Kits distribute definitions on demand.** `cruxible playbill kit build`
+  exports the live definitions under owned identity prefixes, plus everything
+  they pin, as one release; a pin into authority, bindings or state refuses the
+  build. The artifacts are the exact bytes a consumer accepts, and their lineage
+  is the kit's own release lineage, so every unmodified consumer holds the same
+  digests. `kit add` proposes one change set that adds, replaces or retires kit
+  paths and records a `kit_receipt` Document; it never activates, so approval
+  and activation stay the ordinary steps. Upgrading is `add` with the next
+  release. Local edits, definitions made outside the kit, skipped releases and
+  overlapping ownership are reported and block the change. `kit status` lists
+  installed kits and edited paths; `kit remove` proposes retiring what a kit
+  installed. The same operations are served over HTTP and MCP, and
+  `cruxible_client.kits` reads and writes kit directories.
+
 - `cruxible mcp` serves the MCP tools over stdio, the same server as
   `cruxible-mcp`, so launchers that run a package by its own name
   (`uvx cruxible mcp`) reach it. The MCP registry listing (`server.json`) now

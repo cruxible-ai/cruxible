@@ -537,6 +537,50 @@ request. MCP: `cruxible_playbill_provider_catalog` and
 `cruxible_playbill_provider_install`. HTTP: `GET /{instance}/playbill/providers`
 and `POST /{instance}/playbill/providers/install`.
 
+## playbill kit
+
+~~~text
+cruxible playbill kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
+  [--previous KIT_DIR] --out KIT_DIR [--json]
+cruxible playbill kit add KIT_DIR [--source TEXT] [--json]
+cruxible playbill kit status [--json]
+cruxible playbill kit remove ID [--json]
+~~~
+
+A kit is one release of definitions: ClaimTypes, CaptureContracts, Procedures,
+QueryDefinitions, ProviderInterfaces and SourceAcquisitionPolicies. It never
+carries authority (governance, principals, mandates), local binding (Providers,
+Lines) or state (Subjects, Claims). A kit directory holds `cruxible-kit.json` and
+the exact artifact bytes under `artifacts/`.
+
+`build` exports every live definition whose identity starts with an `--owns`
+prefix, plus every definition those pin; a pin into anything a kit cannot carry
+refuses the build. The artifacts are the bytes a consumer accepts, so a kit's
+digests are the digests every unmodified consumer holds. Lineage inside them is
+the kit's own: a first release names no predecessors, and a release built with
+`--previous` names that release's digest for each artifact it changes, however
+many times the publisher revised it in between.
+
+`add` proposes one change set that adds, replaces or retires kit paths and
+records a `kit_receipt` Document, `documents/kit-<id>.json`. It only proposes:
+activation, and any approval the instance's policy requires, are the ordinary
+`playbill proposal approve` and `activate` steps. Upgrading is `add` with the
+next release. An upgrade must follow the installed release; a path edited since
+install, or defined outside the kit, is a conflict that blocks the change and is
+listed. Another kit's overlapping `owns` prefix also blocks it. `add` names any
+carried ProviderInterface that no installed Provider implements.
+
+`status` lists installed kits and the kit paths edited locally. `remove`
+proposes retiring what a kit installed; the dependency closure refuses it while
+live Claims depend on those definitions.
+
+MCP: `cruxible_playbill_kit_build`, `cruxible_playbill_kit_status`,
+`cruxible_playbill_kit_add` and `cruxible_playbill_kit_remove`. HTTP:
+`POST /{instance}/playbill/kits/build`, `GET /{instance}/playbill/kits`,
+`POST /{instance}/playbill/kits` and `POST /{instance}/playbill/kits/remove`.
+SDK: `read_kit_directory` and `write_kit_directory` in `cruxible_client.kits`,
+with the matching `CruxibleClient` methods.
+
 ## playbill document
 
 ~~~text

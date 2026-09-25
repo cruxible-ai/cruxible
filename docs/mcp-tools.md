@@ -62,6 +62,20 @@ that starts reaching one more verb moves the pin.
 | `cruxible_playbill_provider_install` | Install exact package bytes and propose its definitions, without execution grants | `ADMIN` |
 | `cruxible_playbill_instance_decommission` | End one instance's governed writes; reads keep serving and nothing is deleted | `ADMIN` |
 
+## Kits
+
+A kit is a release of definitions (ClaimTypes, CaptureContracts, Procedures,
+QueryDefinitions, ProviderInterfaces, SourceAcquisitionPolicies) that installs
+byte-identical through one proposed change set. Adding or removing a kit only
+proposes; activation and any approval stay the ordinary steps.
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_playbill_kit_build` | Export the definitions under owned identity prefixes as one kit release | `READ_ONLY` |
+| `cruxible_playbill_kit_status` | List installed kits and the kit paths edited since install | `READ_ONLY` |
+| `cruxible_playbill_kit_add` | Propose installing or upgrading a kit as one change set | `GOVERNED_WRITE` |
+| `cruxible_playbill_kit_remove` | Propose retiring every artifact a kit installed | `GOVERNED_WRITE` |
+
 ## Documents and proposals
 
 | Tool | Purpose | Permission |

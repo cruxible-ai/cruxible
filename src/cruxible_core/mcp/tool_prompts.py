@@ -17,6 +17,22 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you want to install a provider package and register its definitions. "
         "Requires admin permission; installation grants no execution permissions."
     ),
+    "cruxible_playbill_kit_build": (
+        "Use when you want to export the definitions under owned identity prefixes as a "
+        "kit release another instance can install; pass the previous release to continue "
+        "its lineage."
+    ),
+    "cruxible_playbill_kit_status": (
+        "Use when you need the installed kits and the kit paths edited since install."
+    ),
+    "cruxible_playbill_kit_add": (
+        "Use when you want to install or upgrade a kit. It only proposes one change set; "
+        "approval and activation remain the ordinary steps."
+    ),
+    "cruxible_playbill_kit_remove": (
+        "Use when you want to retire what a kit installed. It only proposes; live Claims "
+        "that depend on those definitions block it."
+    ),
     "cruxible_version": "Use when you need to confirm which cruxible build is running.",
     "cruxible_server_info": (
         "Use when you need live daemon version, state-directory, authentication, "
