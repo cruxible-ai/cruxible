@@ -152,7 +152,8 @@ def _authentication_stamps(directory: Path) -> list[dict[str, object]]:
 
 
 # The records this process trusts, per projection directory: those on disk
-# when it first looked, plus those it wrote itself. A record that appears
+# when it first bound a projection there (for the daemon, during startup
+# recovery), plus those it wrote itself. A record that appears
 # later -- beside a piece replaced while the daemon runs -- is never honored;
 # only a restart takes the persisted records as its starting trust.
 _TRUSTED_STAMPS: dict[str, list[dict[str, object]]] = {}
@@ -160,8 +161,15 @@ _TRUSTED_STAMPS_RETAINED = 64
 _TRUSTED_STAMPS_LOCK = threading.Lock()
 
 
+def _stamp_key(directory: Path) -> str:
+    try:
+        return str(directory.resolve(strict=True))
+    except OSError:
+        return str(directory)
+
+
 def _trusted_stamps(directory: Path) -> list[dict[str, object]]:
-    key = str(directory)
+    key = _stamp_key(directory)
     with _TRUSTED_STAMPS_LOCK:
         trusted = _TRUSTED_STAMPS.get(key)
         if trusted is None:
@@ -172,7 +180,7 @@ def _trusted_stamps(directory: Path) -> list[dict[str, object]]:
 def _trust_stamp(directory: Path, stamp: dict[str, object]) -> None:
     _trusted_stamps(directory)
     with _TRUSTED_STAMPS_LOCK:
-        trusted = _TRUSTED_STAMPS[str(directory)]
+        trusted = _TRUSTED_STAMPS[_stamp_key(directory)]
         if stamp not in trusted:
             trusted.insert(0, stamp)
             del trusted[_TRUSTED_STAMPS_RETAINED:]
@@ -792,6 +800,9 @@ def bind_projection(
 ) -> ProjectionHandle:
     """Verify one complete manifest and return a handle that does no per-read rehash."""
 
+    # The first bind in a process fixes which authentication records it trusts
+    # here, before any later read could be answered from a replaced piece.
+    _trusted_stamps(manifest_path.parent)
     manifest = load_projection_manifest(manifest_path)
     if not _manifest_matches_coordinate(manifest, expected):
         raise ProjectionIntegrityError("projection manifest differs from the accepted coordinate")
