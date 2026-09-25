@@ -1146,34 +1146,33 @@ class _Holds:
         self._claims = live
         self._hold_for: dict[str, timedelta] = {}
         self._seen: dict[tuple[str, tuple[tuple[str, str], ...]], bool] = {}
+
         # The latest examined stance per Claim and principal as of the evaluation
         # time; a later support or contradict by the same principal ends that
         # principal's hold, and one made after the evaluation time does not.
-        latest: dict[
-            tuple[str, str], tuple[tuple[datetime, int, int], ClaimAttestationStatementV2]
-        ] = {}
-
-        def consider(
-            statement: ClaimAttestationStatementV2, order: tuple[datetime, int, int]
-        ) -> None:
+        def eligible(statement: ClaimAttestationStatementV2) -> tuple[str, str] | None:
             identity = statement.claim_identity.qualified
             if (
                 statement.attestation_basis != "examined_existing"
                 or statement.attested_at > evaluation_time
                 or self._current.get(identity) != statement.claim_artifact_digest
             ):
-                return
-            key = (identity, statement.attesting_principal_id)
-            if key not in latest or latest[key][0] < order:
-                latest[key] = (order, statement)
+                return None
+            return identity, statement.attesting_principal_id
 
+        accepted_latest: dict[tuple[str, str], ClaimAttestationStatementV2] = {}
         if self._current:
             with instance.bind_accepted_projection(coordinate) as projection:
                 accepted = projection.typed.claim_attestations(
                     basis="examined_existing", current_claims_only=True
                 )
             for envelope in accepted:
-                consider(envelope.statement, (envelope.statement.attested_at, 0, 0))
+                key = eligible(envelope.statement)
+                if key is not None and (
+                    key not in accepted_latest
+                    or accepted_latest[key].attested_at < envelope.statement.attested_at
+                ):
+                    accepted_latest[key] = envelope.statement
         # The folded door keeps only each principal's latest examined statement.
         # When that one postdates the evaluation time, the statement in force
         # then was superseded out of the fold, so read the whole chain.
@@ -1183,13 +1182,26 @@ class _Holds:
             for _event, payload in door_events
         ):
             door_events = door_history()
+        # Within the door, the latest append wins, exactly as the fold chooses,
+        # so reading the whole chain never picks a different statement than the
+        # fold would have at the same evaluation time.
+        door_latest: dict[tuple[str, str], tuple[int, ClaimAttestationEventPayloadV1]] = {}
         for event, payload in door_events:
-            if payload.current_at_append is False:
-                continue
+            key = eligible(payload.attestation.statement)
+            if key is not None and (key not in door_latest or door_latest[key][0] < event.sequence):
+                door_latest[key] = (event.sequence, payload)
+        latest: dict[tuple[str, str], ClaimAttestationStatementV2] = dict(accepted_latest)
+        for key, (_sequence, payload) in door_latest.items():
             statement = payload.attestation.statement
-            consider(statement, (statement.attested_at, 1, event.sequence))
+            if key in latest and statement.attested_at < latest[key].attested_at:
+                continue
+            if payload.current_at_append is False:
+                # Appended against a stale head: it ends a hold but never makes one.
+                latest.pop(key, None)
+                continue
+            latest[key] = statement
         holds: dict[str, list[_UnsureHold]] = defaultdict(list)
-        for (identity, _principal), (_order, statement) in latest.items():
+        for (identity, _principal), statement in latest.items():
             if statement.stance == "unsure" and (
                 statement.valid_until is None or evaluation_time < statement.valid_until
             ):
