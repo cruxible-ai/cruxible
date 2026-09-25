@@ -470,6 +470,8 @@ class PinRow:
     source_identity: str
     target_identity: str
     target_digest: str
+    # The pin's role, which every dependency edge carries.
+    role: str
 
 
 @dataclass(frozen=True)
@@ -999,6 +1001,7 @@ def parse_projection_tree(
                         source_identity=document.identity,
                         target_identity=pin.target_identity,
                         target_digest=pin.target_digest,
+                        role=pin.role,
                     )
                     for pin in document.pins
                 )
@@ -1110,6 +1113,7 @@ def parse_projection_tree(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
                         target_digest=pin.artifact_digest,
+                        role=pin.role,
                     )
                     for pin in subject_shell.pins
                 )
@@ -1222,6 +1226,7 @@ def parse_projection_tree(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
                         target_digest=pin.artifact_digest,
+                        role=pin.role,
                     )
                     for pin in claim_type.pins
                 )
@@ -1338,6 +1343,7 @@ def parse_projection_tree(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
                         target_digest=pin.artifact_digest,
+                        role=pin.role,
                     )
                     for pin in provider.pins
                 )
@@ -1472,6 +1478,7 @@ def parse_projection_tree(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
                         target_digest=pin.artifact_digest,
+                        role=pin.role,
                     )
                     for pin in registration.pins
                 )
@@ -1556,6 +1563,7 @@ def parse_projection_tree(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
                         target_digest=pin.artifact_digest,
+                        role=pin.role,
                     )
                     for pin in acquisition_policy.pins
                 )
@@ -1627,6 +1635,7 @@ def parse_projection_tree(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
                         target_digest=pin.artifact_digest,
+                        role=pin.role,
                     )
                     for pin in procedure_mandate.pins
                 )
@@ -1746,6 +1755,7 @@ def parse_projection_tree(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
                         target_digest=pin.artifact_digest,
+                        role=pin.role,
                     )
                     for pin in procedure.pins
                 )
@@ -2011,6 +2021,7 @@ def parse_projection_tree(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
                         target_digest=pin.artifact_digest,
+                        role=pin.role,
                     )
                     for pin in line.pins
                 )
@@ -2115,6 +2126,7 @@ def parse_projection_tree(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
                         target_digest=pin.artifact_digest,
+                        role=pin.role,
                     )
                     for pin in query.pins
                 )
@@ -2221,6 +2233,7 @@ def parse_projection_tree(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
                         target_digest=pin.artifact_digest,
+                        role=pin.role,
                     )
                     for pin in promotion.pins
                 )
@@ -2341,6 +2354,7 @@ def parse_projection_tree(
                         source_identity=identity,
                         target_identity=pin.target.qualified,
                         target_digest=pin.artifact_digest,
+                        role=pin.role,
                     )
                     for pin in capture_contract.pins
                 )
@@ -2395,7 +2409,7 @@ def parse_projection_tree(
                 predecessor_digest = claim.lifecycle.predecessor_digest
                 retired = claim.lifecycle.state == "retired"
                 claim_pins = tuple(
-                    (pin.target.qualified, pin.artifact_digest) for pin in claim.pins
+                    (pin.target.qualified, pin.artifact_digest, pin.role) for pin in claim.pins
                 )
                 envelopes.append(
                     ArtifactEnvelopeRow(
@@ -2420,8 +2434,9 @@ def parse_projection_tree(
                         source_identity=identity,
                         target_identity=target,
                         target_digest=digest,
+                        role=role,
                     )
-                    for target, digest in claim_pins
+                    for target, digest, role in claim_pins
                 )
                 static_facts = _claim_static_facts(
                     claim,

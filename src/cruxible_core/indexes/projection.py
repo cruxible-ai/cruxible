@@ -30,7 +30,7 @@ from cruxible_core.compiler.projection_tree import TreeReadLimits
 
 # The typed projection's SQLite storage format. Any schema change moves it, so
 # an existing projection of another version rebuilds from authority once.
-PROJECTION_STORAGE_SCHEMA_VERSION: Final = 8
+PROJECTION_STORAGE_SCHEMA_VERSION: Final = 9
 _PIECE_RE = re.compile(r"^piece-[0-9a-f]{64}-[0-9]{4}\.sqlite$")
 
 
@@ -39,7 +39,7 @@ class AssemblerRequest(_StrictProjectionModel):
 
     tag: Literal["playbill-assembler-request-v3"] = "playbill-assembler-request-v3"
     contract_version: Literal[1] = 1
-    storage_schema_version: Literal[8] = PROJECTION_STORAGE_SCHEMA_VERSION
+    storage_schema_version: Literal[9] = PROJECTION_STORAGE_SCHEMA_VERSION
     instance_id: str = Field(min_length=1, max_length=256)
     repository_path: str
     git_object_format: GitObjectFormat
@@ -114,7 +114,7 @@ class ProjectionManifest(_StrictProjectionModel):
 
     tag: Literal["playbill-projection-manifest-v3"] = "playbill-projection-manifest-v3"
     manifest_version: Literal[1] = 1
-    storage_schema_version: Literal[8] = PROJECTION_STORAGE_SCHEMA_VERSION
+    storage_schema_version: Literal[9] = PROJECTION_STORAGE_SCHEMA_VERSION
     instance_id: str
     git_object_format: GitObjectFormat
     git_oid: str

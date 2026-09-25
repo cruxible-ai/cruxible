@@ -395,7 +395,9 @@ def schema_sql() -> str:
             source_identity TEXT NOT NULL, edge_kind TEXT NOT NULL CHECK(edge_kind IN ('required_pin','consumed_claim_input')),
             ordinal INTEGER NOT NULL CHECK(ordinal>=0), target_identity TEXT, target_digest TEXT NOT NULL,
             resolution_status TEXT NOT NULL CHECK(resolution_status IN ('resolved','unresolved','ambiguous')),
+            pin_role TEXT,
             PRIMARY KEY(source_identity,edge_kind,ordinal),
+            CHECK((edge_kind='required_pin') = (pin_role IS NOT NULL)),
             CHECK((resolution_status='resolved' AND target_identity IS NOT NULL)
                OR (resolution_status IN ('unresolved','ambiguous') AND target_identity IS NULL)),
             CHECK(edge_kind!='required_pin' OR resolution_status='resolved')
@@ -728,7 +730,7 @@ def insert_owners(
     for pin in parsed.pins:
         index = ordinal.get(pin.source_identity, 0)
         connection.execute(
-            "INSERT INTO pins VALUES (?,?,?,?,?,?)",
+            "INSERT INTO pins VALUES (?,?,?,?,?,?,?)",
             (
                 pin.source_identity,
                 "required_pin",
@@ -736,6 +738,7 @@ def insert_owners(
                 pin.target_identity,
                 pin.target_digest,
                 "resolved",
+                pin.role,
             ),
         )
         ordinal[pin.source_identity] = index + 1
@@ -755,8 +758,8 @@ def insert_owners(
             )
             identity = next(iter(identities)) if len(identities) == 1 else None
             connection.execute(
-                "INSERT INTO pins VALUES (?,?,?,?,?,?)",
-                (row.identity, "consumed_claim_input", index, identity, digest, status),
+                "INSERT INTO pins VALUES (?,?,?,?,?,?,?)",
+                (row.identity, "consumed_claim_input", index, identity, digest, status, None),
             )
 
 
