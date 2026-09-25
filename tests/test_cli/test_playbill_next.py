@@ -17,6 +17,7 @@ HEALTHY_STATUS = {
     "ledger_mirror": {"state": "not_configured"},
     "provider_lane": {"state": "available"},
     "procedure_catalog": {"state": "not_observed"},
+    "compiler": {"state": "current"},
 }
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(

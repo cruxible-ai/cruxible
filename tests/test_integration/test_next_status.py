@@ -248,3 +248,48 @@ def test_a_decommissioned_instance_blocks_in_the_status_header(tmp_path: Path) -
     # Terminal: nothing inside the instance clears it.
     with pytest.raises(PlaybillInstanceDecommissioned):
         instance.decommission(reason="a second reason", decommissioned_by="owner")
+
+
+def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER, TRIGGER_CAPTURE_COMPILER
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.test_ledger.test_compiler_upgrade import approve, old_instance, propose
+
+    instance, _owner, reviewer = old_instance(tmp_path, monkeypatch, TRIGGER_CAPTURE_COMPILER)
+    behind = _status(instance, _request(instance))
+    assert behind.compiler.state == "upgrade_available"
+    assert behind.compiler.repair is not None
+    assert behind.compiler.repair.command == (
+        f"cruxible playbill compiler upgrade --to {AUTHORITY_VERBS_COMPILER.rule_digest} "
+        "--name upgrade-to-authority-verbs-settle-mandates-v1"
+    )
+    assert behind.attention() == (("compiler", behind.compiler),)
+
+    proposal = propose(instance, AUTHORITY_VERBS_COMPILER)
+    approve(instance, proposal, reviewer)
+    assert (
+        service_activate_playbill_proposal(
+            instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
+        ).status
+        == "accepted"
+    )
+    upgraded = _status(instance, _request(instance))
+    assert upgraded.compiler.state == "current" and upgraded.attention() == ()
+
+
+def test_a_compiler_with_no_forward_edge_is_reported_without_a_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.compiler.compiler import RESOLUTION_COMPILER
+
+    instance, _owner = initialize_local(tmp_path)
+    # A daemon older than the state it serves has nothing to upgrade to.
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next.current_compiler_coordinate",
+        lambda: RESOLUTION_COMPILER,
+    )
+    status = _status(instance, _request(instance))
+    assert status.compiler.state == "no_upgrade_path"
+    assert status.compiler.repair is None and status.attention() == ()

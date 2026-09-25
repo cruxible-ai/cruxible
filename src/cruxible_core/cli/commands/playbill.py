@@ -4263,6 +4263,7 @@ _NEXT_STATUS_ATTENTION = {
     "ledger_mirror": {"behind", "never_published"},
     "provider_lane": {"unavailable"},
     "procedure_catalog": {"missing"},
+    "compiler": {"upgrade_available"},
 }
 
 

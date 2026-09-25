@@ -77,6 +77,8 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.claims.claim_slots import classify_claim_slot
+from cruxible_core.compiler.compiler import COMPILER_REVISION_LABELS, current_compiler_coordinate
+from cruxible_core.compiler.upgrades import upgrade_law
 from cruxible_core.coverage.contracts import (
     CoverageAccessProfileV1,
     CoverageCommitmentScanProofV1,
@@ -155,6 +157,7 @@ NextRepairOperation = Literal[
     "playbill.block.sync",
     "playbill.document.propose",
     "playbill.proposal.readmit",
+    "playbill.compiler.upgrade",
     "hand_edit",
 ]
 
@@ -594,6 +597,7 @@ _HEALTH_STATES: dict[str, frozenset[str]] = {
     ),
     "provider_lane": frozenset({"not_reported", "available", "unavailable"}),
     "procedure_catalog": frozenset({"not_observed", "not_required", "complete", "missing"}),
+    "compiler": frozenset({"current", "upgrade_available", "no_upgrade_path"}),
 }
 #: Facet states that call for attention; every other state is healthy or unobserved.
 _HEALTH_ATTENTION: dict[str, frozenset[str]] = {
@@ -602,6 +606,7 @@ _HEALTH_ATTENTION: dict[str, frozenset[str]] = {
     "ledger_mirror": frozenset({"behind", "never_published"}),
     "provider_lane": frozenset({"unavailable"}),
     "procedure_catalog": frozenset({"missing"}),
+    "compiler": frozenset({"upgrade_available"}),
 }
 
 
@@ -624,8 +629,9 @@ class PlaybillNextStatusV1(_StrictNextModel):
 
     These are conditions of the instance and its workspace -- a decommissioned
     instance, an unexported floor, a lagging ledger mirror, an unavailable
-    provider lane, an incomplete Procedure catalog -- not work items about
-    accepted state. `blocking` is set only when no write can succeed.
+    provider lane, an incomplete Procedure catalog, a compiler behind the
+    running one -- not work items about accepted state. `blocking` is set only
+    when no write can succeed.
     """
 
     tag: Literal["playbill-next-status-v1"] = "playbill-next-status-v1"
@@ -635,6 +641,7 @@ class PlaybillNextStatusV1(_StrictNextModel):
     ledger_mirror: PlaybillNextHealthV1
     provider_lane: PlaybillNextHealthV1
     procedure_catalog: PlaybillNextHealthV1
+    compiler: PlaybillNextHealthV1
     #: Rows parked by a current ``unsure`` attestation whose basis is unchanged.
     held: int = Field(default=0, ge=0)
 
@@ -741,6 +748,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.block.sync": "playbill block sync",
     "playbill.document.propose": "playbill document propose",
     "playbill.proposal.readmit": "playbill proposal readmit",
+    "playbill.compiler.upgrade": "playbill compiler upgrade",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -831,6 +839,12 @@ def _repair_command(
         example = values.get("example")
         if isinstance(example, str) and example:
             parts.extend(["--example", shlex.quote(example)])
+    elif operation == "playbill.compiler.upgrade":
+        target = values.get("to")
+        name = values.get("name")
+        if not isinstance(target, str) or not isinstance(name, str):
+            return None
+        parts.extend(["--to", shlex.quote(target), "--name", shlex.quote(name)])
     elif operation == "playbill.proposal.readmit":
         proposal_id = values.get("proposal_id")
         if not isinstance(proposal_id, str):
@@ -2747,6 +2761,46 @@ def _ledger_mirror_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
     )
 
 
+def _compiler_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
+    """Whether accepted state runs an older compiler than this process installs.
+
+    Measured at the accepted head, where an upgrade is proposed. Installing a
+    newer compiler never switches accepted state onto it: only an approved
+    upgrade proposal does, and only along an explicit forward edge. A compiler
+    with no edge to the running one -- newer, or retired -- is reported and
+    left alone.
+    """
+
+    accepted = instance.accepted_coordinate().compiler
+    running = current_compiler_coordinate()
+    detail = {
+        "accepted_compiler_digest": accepted.rule_digest,
+        "accepted_compiler_revision": COMPILER_REVISION_LABELS.get(accepted),
+        "running_compiler_digest": running.rule_digest,
+        "running_compiler_revision": COMPILER_REVISION_LABELS.get(running),
+    }
+    if accepted == running:
+        return PlaybillNextHealthV1(state="current", detail=detail)
+    try:
+        upgrade_law(accepted, running)
+    except ValueError:
+        return PlaybillNextHealthV1(state="no_upgrade_path", detail=detail)
+    revision = COMPILER_REVISION_LABELS.get(running) or running.rule_digest.removeprefix("sha256:")
+    upgrade = PlaybillNextRepairV1(
+        operation="playbill.compiler.upgrade",
+        target=instance.descriptor.instance_id,
+        required_change="propose_approve_and_activate_the_compiler_upgrade",
+        arguments={"to": running.rule_digest, "name": f"upgrade-to-{revision[:64]}"},
+    )
+    return PlaybillNextHealthV1(
+        state="upgrade_available",
+        detail=detail,
+        repair=upgrade.model_copy(
+            update={"command": _repair_command(upgrade.operation, arguments=upgrade.arguments)}
+        ),
+    )
+
+
 def _procedure_catalog_health(
     instance: PlaybillInstance,
     *,
@@ -3575,6 +3629,7 @@ def service_playbill_next(
             access_profile=request.access_profile,
             observation=request.workspace_observation,
         ),
+        compiler=_compiler_health(instance),
     )
     values = {
         "coordinate": public_coordinate,
