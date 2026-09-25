@@ -31,7 +31,7 @@ def test_cli_reference_names_the_exact_public_groups_and_all_leaf_commands() -> 
     headings = set(re.findall(r"^## ([a-z]+)(?: .*)?$", text, re.MULTILINE))
     documented_commands = set(re.findall(r"\bcruxible(?: [a-z][a-z-]*)+", text))
 
-    assert set(CLI_COMMANDS) == {"context", "credential", "playbill", "server"}
+    assert set(CLI_COMMANDS) == {"context", "credential", "mcp", "playbill", "server"}
     assert set(CLI_COMMANDS) <= headings
     assert _leaf_cli_commands(cli) <= documented_commands
 

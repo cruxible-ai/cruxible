@@ -31,8 +31,6 @@ if TYPE_CHECKING:
 # Modes:
 # - active: acts on the selected instance.
 # - create: creates/restores an instance and therefore has no instance ID yet.
-# - lock: acts on the selected instance unless --kit-dir names an explicit kit.
-# - kit: writes metadata for the explicitly selected local materialized kit.
 # - manual: the command resolves its target from command-specific inputs and
 #   emits the notice itself immediately before the write.
 MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
@@ -930,6 +928,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         module="server",
         attr="server_group",
     ),
+    "mcp": _command("mcp", "mcp_cmd", "Serve the MCP tools over stdio."),
 }
 
 

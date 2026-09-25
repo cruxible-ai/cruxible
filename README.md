@@ -211,3 +211,5 @@ oracles must not drift.
 - [Authentication and principals](docs/runtime-auth-and-agent-roles.md)
 
 Apache-2.0 licensed.
+
+<!-- mcp-name: io.github.cruxible-ai/cruxible-core -->

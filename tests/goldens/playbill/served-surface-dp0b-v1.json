@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-25:prediction-consumer",
-    "surface_digest": "sha256:f9356d8d90c03f0d28f8d9655ac8983100a9309a98b107e9358307a4080519bf"
+    "register_entry": "2026-09-25:distribution-d0-mcp-entry",
+    "surface_digest": "sha256:ab5d613c8f0cbbf7dadc01ce3d21feb2ee850019257f31f54137eb628dcbe25d"
   },
   "surface": {
     "cli_leaves": [
@@ -68,6 +68,11 @@
         ],
         "command": "credential rotate",
         "delegate": "cruxible_core.cli.commands.credentials.rotate_cmd"
+      },
+      {
+        "client_operations": [],
+        "command": "mcp",
+        "delegate": "cruxible_core.cli.commands.mcp.mcp_cmd"
       },
       {
         "client_operations": [

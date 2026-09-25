@@ -321,7 +321,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
     from cruxible_core.mcp.tools import register_tools
     from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
 
-    assert set(CLI_COMMANDS) == {"context", "credential", "playbill", "server"}
+    assert set(CLI_COMMANDS) == {"context", "credential", "mcp", "playbill", "server"}
     registered_tools = set(register_tools(FastMCP("dp0b-registration-inventory")))
     frozen = json.loads((GOLDENS / "served-surface-dp0b-v1.json").read_text(encoding="utf-8"))
     frozen_tools = {row["name"] for row in frozen["surface"]["mcp_tools"]}

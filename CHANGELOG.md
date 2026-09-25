@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `cruxible mcp` serves the MCP tools over stdio, the same server as
+  `cruxible-mcp`, so launchers that run a package by its own name
+  (`uvx cruxible mcp`) reach it. The MCP registry listing (`server.json`) now
+  launches `cruxible` at the release version instead of the never-published
+  `cruxible-core` 0.2.0, advertises the environment the server actually reads,
+  and is part of the release version lockstep check. The README carries the
+  registry's `mcp-name` ownership marker, and the Context7 rules describe the
+  current authoring flow.
+
 - Closed review branches are removed, while accepted, withdrawn, stale and refused
   proposal commits remain reachable through the single `refs/settled/archive`
   ref. Historical review, readmission and curation retain their exact candidate
@@ -1009,7 +1018,8 @@
   authoring exposes only v2. The Claim-v1 direct write path and parser are
   retired in favor of ClaimInput through the AuthoringIntent coordinator, and
   seed apply is retired while the pure seed planner remains. The parked
-  coverage hook remains non-executable. Claim-v1 compatibility had previously
+  coverage hook stays registered and runnable for compatibility; new harnesses
+  use the coverage middleware. Claim-v1 compatibility had previously
   been announced through 0.5.0; this unreleased lineage removes it early, so
   pre-release fixtures and ledgers carrying `playbill-claim-v1` must be rebuilt
   or migrated before upgrading.

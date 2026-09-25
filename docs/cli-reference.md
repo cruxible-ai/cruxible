@@ -239,6 +239,18 @@ entry count that fits: on the projected count before anything is lowered when
 that already exceeds the bound, and on the exact lowered count -- still before
 the compile -- when it does not.
 
+## mcp
+
+```text
+cruxible mcp
+```
+
+Serves the MCP tools over stdio. It is the same server as the `cruxible-mcp`
+script and reads the same environment (see [MCP tools](mcp-tools.md)); it exists
+so launchers that run a package by its own name, such as `uvx cruxible mcp`,
+reach the server. The root options and remembered CLI context do not configure
+it.
+
 ## playbill host
 
 ~~~text

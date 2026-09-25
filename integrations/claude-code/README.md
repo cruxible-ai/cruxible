@@ -109,7 +109,7 @@ card read as an order. This is a hard line, not a preference.
 
 This integration is written against the Claude Code **2.1.234** hook envelope,
 pinned as `ENVELOPE_VERSION` in
-`cruxible_core/playbill/coverage/claude_code.py`. The relevant facts, which the
+`cruxible_core/coverage/claude_code.py`. The relevant facts, which the
 published documentation did not state consistently:
 
 - stdin carries `tool_response` (not `tool_result`), alongside `tool_name`,
