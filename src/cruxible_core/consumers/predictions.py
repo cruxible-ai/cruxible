@@ -91,6 +91,9 @@ CREATE TABLE IF NOT EXISTS contracts (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS contracts_by_capture
  ON contracts(capture_ordinal) WHERE selector_digest IS NOT NULL;
+CREATE INDEX IF NOT EXISTS contracts_unscanned
+ ON contracts(identity) WHERE selector_digest IS NOT NULL AND capture_generation IS NULL;
+CREATE INDEX IF NOT EXISTS contracts_scanning ON contracts(identity) WHERE scan_cursor IS NOT NULL;
 CREATE TABLE IF NOT EXISTS windows (
  contract_id TEXT PRIMARY KEY, identity TEXT NOT NULL, window TEXT NOT NULL,
  ends_at_us INTEGER NOT NULL,
@@ -281,6 +284,33 @@ def unbindable_anchors(instance: Any) -> tuple[UnbindableAnchor, ...]:
     )
 
 
+def _behind_on_captures(
+    connection: sqlite3.Connection, columns: str, *, head: int, limit: int
+) -> list[Any]:
+    """Event contracts whose capture scan is behind, each reason read by its own index.
+
+    One predicate joining the reasons with OR walks every contract when none is
+    behind; separate seeks cost the same whatever the contract population.
+    """
+
+    found: dict[Any, Any] = {}
+    for index, where, args in (
+        ("contracts_scanning", "scan_cursor IS NOT NULL", ()),
+        (
+            "contracts_unscanned",
+            "selector_digest IS NOT NULL AND capture_generation IS NULL",
+            (),
+        ),
+        ("contracts_by_capture", "selector_digest IS NOT NULL AND capture_ordinal<?", (head,)),
+    ):
+        for row in connection.execute(
+            f"SELECT {columns} FROM contracts INDEXED BY {index} WHERE {where} LIMIT ?",
+            (*args, limit),
+        ).fetchall():
+            found.setdefault(row[0], row)
+    return list(found.values())[:limit]
+
+
 def _journals(instance: Any) -> tuple[Any, Any, Any]:
     """The shared journal backend, its capture stream, and its resolution stream."""
 
@@ -355,6 +385,12 @@ class PredictionSettlementConsumers:
                     if partition.startswith(_PREFIX)
                 ),
             )
+            if known != generation:
+                # Positions from the old index mean nothing in the new one.
+                connection.execute(
+                    "UPDATE contracts SET capture_generation=NULL,capture_ordinal=0,"
+                    "scan_through=NULL,scan_cursor=NULL WHERE selector_digest IS NOT NULL"
+                )
             connection.execute(
                 "UPDATE progress SET generation=?,index_generation=?,capture_head=?,"
                 "resolution_ordinal=?",
@@ -370,21 +406,16 @@ class PredictionSettlementConsumers:
         with _state(instance) as connection:
             assert connection is not None
             progress = connection.execute(
-                "SELECT backfill_after,index_generation,capture_head FROM progress"
+                "SELECT backfill_after,capture_head FROM progress"
             ).fetchone()
             if progress is None:
                 return ()
-            backfill_after, generation, capture_head = progress
+            backfill_after, capture_head = progress
             contracts = (
                 backfill_after is not None
                 or connection.execute("SELECT 1 FROM pending LIMIT 1").fetchone()
             )
-            captures = connection.execute(
-                "SELECT 1 FROM contracts WHERE selector_digest IS NOT NULL AND "
-                "(capture_generation IS NOT ? OR capture_ordinal<? OR scan_cursor IS NOT NULL) "
-                "LIMIT 1",
-                (generation, capture_head),
-            ).fetchone()
+            captures = _behind_on_captures(connection, "identity", head=capture_head, limit=1)
             windows = (
                 connection.execute(
                     "SELECT 1 FROM windows WHERE status='open' AND ends_at_us<=? LIMIT 1",
@@ -552,13 +583,13 @@ class PredictionSettlementConsumers:
             generation, head = connection.execute(
                 "SELECT index_generation,capture_head FROM progress"
             ).fetchone()
-            rows = connection.execute(
-                "SELECT identity,reference,contract,accepted_at,selector_digest,"
-                "capture_generation,capture_ordinal,scan_through,scan_cursor FROM contracts "
-                "WHERE selector_digest IS NOT NULL AND (capture_generation IS NOT ? "
-                "OR capture_ordinal<? OR scan_cursor IS NOT NULL) ORDER BY capture_ordinal LIMIT ?",
-                (generation, head, CONTRACT_BATCH),
-            ).fetchall()
+            rows = _behind_on_captures(
+                connection,
+                "identity,reference,contract,accepted_at,selector_digest,"
+                "capture_generation,capture_ordinal,scan_through,scan_cursor",
+                head=head,
+                limit=CONTRACT_BATCH,
+            )
         journal, stream, _resolutions = _journals(instance)
         for row in rows:
             contract = _contract_row(row[:4])

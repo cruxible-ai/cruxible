@@ -447,3 +447,60 @@ def test_a_pass_costs_the_windows_it_touches_not_every_window_ever_bound() -> No
 
     small, large = steps(1_000), steps(10_000)
     assert large < small * 1.5, (small, large)
+
+
+def _fake_instance(root: Path):  # type: ignore[no-untyped-def]
+    from contextlib import nullcontext
+
+    return SimpleNamespace(
+        root=root,
+        descriptor=SimpleNamespace(storage=SimpleNamespace(exhaust="exhaust")),
+        accepted_history_reader=lambda: nullcontext(SimpleNamespace(sequence=0)),
+    )
+
+
+def _steps(monkeypatch: pytest.MonkeyPatch, call) -> int:  # type: ignore[no-untyped-def]
+    """SQLite VM steps one call takes across every connection it opens."""
+
+    counter = [0]
+    connect = sqlite3.connect
+
+    def counted(*args, **kwargs):  # type: ignore[no-untyped-def]
+        connection = connect(*args, **kwargs)
+
+        def tick() -> int:
+            counter[0] += 1
+            return 0
+
+        connection.set_progress_handler(tick, 1)
+        return connection
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sqlite3, "connect", counted)
+        call()
+    return counter[0]
+
+
+def test_an_idle_readiness_check_costs_the_same_whatever_the_contract_population(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = datetime(2026, 9, 3, tzinfo=UTC)
+
+    def steps(count: int) -> int:
+        instance = _fake_instance(tmp_path / str(count))
+        with predictions._state(instance) as connection:
+            assert connection is not None
+            connection.execute(
+                "INSERT INTO progress(singleton,generation,index_generation,capture_head) "
+                "VALUES (1,0,'g',100)"
+            )
+            connection.executemany(
+                "INSERT INTO contracts(identity,artifact_digest,hypothesis,reference,contract,"
+                "accepted_at,selector_digest,capture_generation,capture_ordinal) "
+                "VALUES (?,'d','h','r','c','a','s','g',100)",
+                ((f"ResolutionContract:c{index:06d}",) for index in range(count)),
+            )
+        return _steps(monkeypatch, lambda: WORKER.due(instance, now=now))
+
+    small, large = steps(1_000), steps(10_000)
+    assert large < small * 1.5, (small, large)
