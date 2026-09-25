@@ -158,7 +158,9 @@ def test_next_workspace_upgrades_v1_archival_presentation_policy(tmp_path: Path)
     assert observation["presentation_policy"] == {
         "tag": "playbill-presentation-policy-v2",
         "archival_source_ids": ["alpha.runbook", "corpus.runbook"],
-        "projection_advisories": {"claim": False, "procedure": True},
+        # A v1 policy never asked for a complete Procedure catalog, and the
+        # advisory is off unless a workspace turns it on.
+        "projection_advisories": {"claim": False, "procedure": False},
     }
     assert observation["presentation_policy_notes"] == []
 
