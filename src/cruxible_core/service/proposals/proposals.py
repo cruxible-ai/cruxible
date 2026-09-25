@@ -165,8 +165,7 @@ def _proposal_entries(
         connection, sequence = bound
         rows = connection.execute(
             "SELECT p.*, CASE WHEN evaluation_status='refused' THEN 'refused' "
-            "WHEN EXISTS (SELECT 1 FROM accepted_generations g "
-            "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?) THEN 'accepted' "
+            "WHEN accepted_sequence<=? THEN 'accepted' "
             "WHEN withdrawal_path IS NOT NULL THEN 'withdrawn' "
             "WHEN candidate_parent_semantic_root=? THEN NULL ELSE 'stale' END AS reason "
             "FROM proposals p "
@@ -239,6 +238,36 @@ def _bound_inventory(
             yield connection, history.sequence
 
 
+def _open_candidates(
+    connection: sqlite3.Connection,
+    sequence: int,
+    *,
+    columns: str,
+    where: str,
+    parameters: tuple[str, ...],
+) -> list[sqlite3.Row]:
+    """Admitted, unwithdrawn candidates that history at `sequence` had not settled.
+
+    Two locators, so settled candidates are never enumerated: the open locator
+    holds candidates no generation has settled, and the acceptance locator adds
+    those settled only after `sequence` -- empty at the head, and bounded by the
+    history after an older coordinate rather than by all of it.
+    """
+
+    open_rows = (
+        f"SELECT {columns} FROM proposals WHERE evaluation_status='candidate' "
+        "AND withdrawal_path IS NULL AND admission_path IS NOT NULL "
+        f"AND {{settled}} AND {where}"
+    )
+    return connection.execute(
+        open_rows.format(settled="accepted_sequence IS NULL")
+        + " UNION ALL "
+        + open_rows.format(settled="accepted_sequence>?")
+        + " ORDER BY admitted_at_us,proposal_id",
+        (*parameters, sequence, *parameters),
+    ).fetchall()
+
+
 @dataclass(frozen=True)
 class StaleProposal:
     """A candidate evaluated against a state accepted head has since moved past."""
@@ -285,17 +314,15 @@ def stale_unreadmitted_proposals(
         if bound is None:
             return ()
         connection, sequence = bound
-        rows = connection.execute(
-            "SELECT proposal_id,actor_id,target_ref,admitted_at_us,"
-            "candidate_parent_semantic_root FROM proposals p "
-            "WHERE evaluation_status='candidate' AND withdrawal_path IS NULL "
-            "AND admission_path IS NOT NULL AND candidate_parent_semantic_root IS NOT NULL "
-            "AND candidate_parent_semantic_root!=? AND NOT EXISTS ("
-            "SELECT 1 FROM accepted_generations g "
-            "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?) "
-            "ORDER BY admitted_at_us,proposal_id",
-            (coordinate.semantic_root, sequence),
-        ).fetchall()
+        rows = _open_candidates(
+            connection,
+            sequence,
+            columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_parent_semantic_root",
+            where=(
+                "candidate_parent_semantic_root IS NOT NULL AND candidate_parent_semantic_root!=?"
+            ),
+            parameters=(coordinate.semantic_root,),
+        )
         stale = []
         for row in rows:
             readmission = _readmission_target_ref(
@@ -356,17 +383,13 @@ def proposals_awaiting_approval(
         if bound is None:
             return ()
         connection, sequence = bound
-        rows = connection.execute(
-            "SELECT proposal_id,actor_id,target_ref,admitted_at_us,candidate_digest "
-            "FROM proposals p "
-            "WHERE candidate_parent_semantic_root=? AND evaluation_status='candidate' "
-            "AND withdrawal_path IS NULL AND admission_path IS NOT NULL "
-            "AND actor_id!=? AND NOT EXISTS ("
-            "SELECT 1 FROM accepted_generations g "
-            "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?) "
-            "ORDER BY admitted_at_us,proposal_id",
-            (coordinate.semantic_root, principal_id, sequence),
-        ).fetchall()
+        rows = _open_candidates(
+            connection,
+            sequence,
+            columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_digest",
+            where="candidate_parent_semantic_root=? AND actor_id!=?",
+            parameters=(coordinate.semantic_root, principal_id),
+        )
     awaiting = []
     for row in rows:
         candidate = evidence.read_candidate(row["candidate_digest"])
