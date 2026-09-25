@@ -140,17 +140,37 @@ def _instant(value: str) -> datetime:
     return parsed
 
 
-def _cited_captures(connection: sqlite3.Connection, *, after: str, limit: int) -> list[str]:
-    return [
-        row[0]
-        for row in connection.execute(
-            "SELECT DISTINCT u.capture_digest FROM citation_uses u "
+def _cited_captures(
+    connection: sqlite3.Connection, *, after: str, limit: int
+) -> tuple[list[str], str | None]:
+    """The next page of Captures live Claims cite, and where the page stopped.
+
+    Each step seeks the next distinct digest through the capture index and
+    asks whether a live Claim cites it, so a page costs its own size, not the
+    citation population. Returns None as the stop position once exhausted.
+    """
+
+    cited: list[str] = []
+    position = after
+    for _step in range(limit * 4):
+        row = connection.execute(
+            "SELECT capture_digest FROM citation_uses INDEXED BY citations_by_capture "
+            "WHERE capture_digest>? ORDER BY capture_digest LIMIT 1",
+            (position,),
+        ).fetchone()
+        if row is None:
+            return cited, None
+        position = row[0]
+        if connection.execute(
+            "SELECT 1 FROM citation_uses u INDEXED BY citations_by_capture "
             "JOIN claims c ON c.identity=u.owner_key "
-            "WHERE u.owner_kind='Claim' AND c.lifecycle='live' AND u.capture_digest>? "
-            "ORDER BY u.capture_digest LIMIT ?",
-            (after, limit),
-        ).fetchall()
-    ]
+            "WHERE u.capture_digest=? AND u.owner_kind='Claim' AND c.lifecycle='live' LIMIT 1",
+            (position,),
+        ).fetchone():
+            cited.append(position)
+            if len(cited) == limit:
+                break
+    return cited, position
 
 
 _BUILT_IN_CONTRACTS = {
@@ -302,19 +322,19 @@ class EvidenceAvailabilityConsumers:
             assert connection is not None
             (after,) = connection.execute("SELECT sweep_after FROM progress").fetchone()
         with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-            digests = _cited_captures(
+            digests, stopped = _cited_captures(
                 projection.typed.connection, after=after or "", limit=CHECK_BATCH
             )
         self._check(instance, digests, now=now)
         with _state(instance) as connection:
             assert connection is not None
-            if len(digests) < CHECK_BATCH:
+            if stopped is None:
                 connection.execute(
                     "UPDATE progress SET sweep_after=NULL,sweep_completed_at=?",
                     (format_datetime(now),),
                 )
             else:
-                connection.execute("UPDATE progress SET sweep_after=?", (digests[-1],))
+                connection.execute("UPDATE progress SET sweep_after=?", (stopped,))
 
     def _check(self, instance: Any, digests: list[str], *, now: datetime) -> None:
         if not digests:

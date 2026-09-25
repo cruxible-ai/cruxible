@@ -167,3 +167,11 @@ def test_availability_rehashes_what_a_remembered_proof_would_trust(tmp_path):
     assert store.availability(digest) == "corrupt"
     path.unlink()
     assert store.availability(digest) == "missing"
+
+
+def test_availability_refuses_a_fifo_without_waiting_for_a_writer(tmp_path):
+    store, digest, path = _store(tmp_path)
+    path.unlink()
+    os.mkfifo(path)
+    # Opening a FIFO for reading blocks until a writer appears; this must not.
+    assert store.availability(digest) == "corrupt"

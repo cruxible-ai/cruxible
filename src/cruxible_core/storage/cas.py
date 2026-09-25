@@ -285,7 +285,11 @@ class ContentAddressedBodyStore:
             return "missing"
         try:
             try:
-                descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+                # Non-blocking, so a FIFO planted in the store is refused below
+                # instead of waiting forever for a writer.
+                descriptor = os.open(
+                    name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+                )
             except FileNotFoundError:
                 return "missing"
             except OSError:

@@ -165,3 +165,43 @@ def test_server_status_lists_open_instances_consumers_including_disabled_workers
     monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "evidence")
     (disabled,) = consumer_statuses(manager)
     assert (disabled.consumer_id, disabled.state) == ("consumer:evidence", "disabled")
+
+
+def _citations(count: int) -> sqlite3.Connection:
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        "CREATE TABLE citation_uses (owner_kind TEXT, owner_key TEXT, use_key TEXT, "
+        "capture_digest TEXT, origin TEXT, role TEXT); "
+        "CREATE INDEX citations_by_owner ON citation_uses(owner_kind,owner_key); "
+        "CREATE INDEX citations_by_capture ON citation_uses"
+        "(capture_digest,owner_kind,owner_key,use_key); "
+        "CREATE TABLE claims (identity TEXT PRIMARY KEY, lifecycle TEXT);"
+    )
+    connection.executemany(
+        "INSERT INTO claims VALUES (?,?)",
+        ((f"Claim:CLM-{index:06d}", "live") for index in range(count)),
+    )
+    connection.executemany(
+        "INSERT INTO citation_uses VALUES ('Claim',?,'u',?,'independent','evidence')",
+        ((f"Claim:CLM-{index:06d}", f"sha256:{index:064x}") for index in range(count)),
+    )
+    connection.execute("ANALYZE")
+    return connection
+
+
+def test_a_sweep_page_costs_its_own_size_not_the_citation_population() -> None:
+    def steps(count: int) -> int:
+        connection = _citations(count)
+        counter = [0]
+
+        def tick() -> int:
+            counter[0] += 1
+            return 0
+
+        connection.set_progress_handler(tick, 1)
+        page, stopped = evidence._cited_captures(connection, after="", limit=256)
+        assert len(page) == 256 and stopped == page[-1]
+        return counter[0]
+
+    small, large = steps(1_000), steps(10_000)
+    assert large < small * 1.5, (small, large)
