@@ -288,7 +288,20 @@ class GitLedger:
             "GIT_COMMITTER_DATE": timestamp,
         }
         # Marked before the commit exists, so a crash at any later point leaves
-        # a marker for recovery's collection of unsettled generations.
+        # a marker for recovery's collection of unsettled generations. The
+        # attempt keeps recovery from treating the marker or commit as residue
+        # while this writer is live; callers that go on to activate hold one
+        # across both.
+        with self.generation_attempt():
+            return self._commit_generation(tree_oid, parent_oid, message, environment)
+
+    def _commit_generation(
+        self,
+        tree_oid: str,
+        parent_oid: str,
+        message: str,
+        environment: Mapping[str, str],
+    ) -> str:
         pending = self._mark_generation_in_flight(f"pending-{secrets.token_hex(8)}")
         oid = (
             self._git(
@@ -1503,9 +1516,66 @@ class GitLedger:
     def _in_flight_directory(self) -> Path:
         return self.path / _GENERATIONS_IN_FLIGHT
 
+    @contextmanager
+    def generation_attempt(self) -> Iterator[None]:
+        """Keep this thread's new generations out of recovery's collection until it ends.
+
+        A writer holds the in-flight lock shared from before its commit exists
+        until the attempt ends, settled or not. Recovery collects unsettled
+        generations only while it holds the lock exclusively, so it never sees
+        a live writer's marker or commit as residue. Nested attempts share the
+        outer one.
+        """
+
+        key = str(self.path)
+        active: set[str] = getattr(_ATTEMPTS, "paths", set())
+        if key in active:
+            yield
+            return
+        descriptor = os.open(self.path / _IN_FLIGHT_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH)
+            _ATTEMPTS.paths = active | {key}
+            try:
+                yield
+            finally:
+                _ATTEMPTS.paths = active
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+    @contextmanager
+    def unaccepted_cleanup(self) -> Iterator[tuple[str, ...] | None]:
+        """Hold off writers and yield the markers a collection must answer for.
+
+        Yields None when no collection is due, or when a writer's attempt is in
+        flight (its markers are not residue yet); the markers then wait for a
+        later recovery.
+        """
+
+        descriptor = os.open(self.path / _IN_FLIGHT_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                yield None
+                return
+            try:
+                yield self.unaccepted_cleanup_due()
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
     def _mark_generation_in_flight(self, name: str) -> Path:
         directory = self._in_flight_directory()
-        directory.mkdir(mode=0o700, exist_ok=True)
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        else:
+            # The directory entry itself must survive a crash with the marker.
+            _fsync_directory(self.path)
         marker = directory / name
         descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
@@ -3078,6 +3148,9 @@ def _require_object_hash(oid: str, object_type: str, body: bytes) -> None:
 # A generation commit is marked here from before it exists until it is on main
 # or collected; recovery scans for unsettled generations only when one is left.
 _GENERATIONS_IN_FLIGHT = "playbill-generations-in-flight"
+_IN_FLIGHT_LOCK = "playbill-generations-in-flight.lock"
+# The ledgers this thread holds a generation attempt on.
+_ATTEMPTS = threading.local()
 _UNSETTLED_CLEANUP_BASELINE = "playbill-unsettled-cleanup-v1"
 
 _BATCH_READER_CAPACITY = 16

@@ -63,3 +63,58 @@ def test_a_won_activation_leaves_nothing_in_flight(tmp_path: Path) -> None:
     result = publisher.activate(bundle, publisher.prebuild(bundle, base=base), base=base)
     assert result.status == "accepted"
     assert instance._ledger.unaccepted_cleanup_due() is None
+
+
+def test_recovery_never_retires_a_live_writers_marker_or_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A writer between its marker and its activation is not residue (Codex F-003)."""
+
+    instance, base, bundle = _prepared(tmp_path)
+    ledger = instance._ledger
+    markers = ledger.path / "playbill-generations-in-flight"
+    scans = _count_scans(monkeypatch)
+    with ledger.generation_attempt():
+        # Recovery in another process while the attempt is live, even before
+        # the commit exists: a pending marker stays, and nothing is scanned.
+        pending = ledger._mark_generation_in_flight("pending-0000000000000000")
+        with ledger.unaccepted_cleanup() as due:
+            assert due is None
+        reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+        assert scans == []
+        assert pending.exists()
+        assert reopened._ledger.object_exists(bundle.oid)
+    # Once the attempt ends unsettled, its markers are residue.
+    with ledger.unaccepted_cleanup() as due:
+        assert due == tuple(sorted((bundle.oid, pending.name)))
+    PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert scans == [1]
+    assert not ledger.object_exists(bundle.oid)
+    assert not any(markers.iterdir())
+    assert instance.accepted_coordinate() == base
+
+
+def test_the_first_marker_directory_is_durably_linked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.ledger import git as ledger_git
+
+    ledger = GitLedger.initialize(
+        tmp_path / "ledger.git",
+        object_format="sha1",
+        signing_key_path=tmp_path / "unused-key",
+        allowed_signers_path=tmp_path / "unused-signers",
+    )
+    synced: list[Path] = []
+    original = ledger_git._fsync_directory
+
+    def recorded(path: Path) -> None:
+        synced.append(Path(path))
+        original(path)
+
+    monkeypatch.setattr(ledger_git, "_fsync_directory", recorded)
+    ledger._mark_generation_in_flight("pending-0000000000000000")
+    assert ledger.path in synced  # the new directory's own entry
+    synced.clear()
+    ledger._mark_generation_in_flight("pending-1111111111111111")
+    assert ledger.path not in synced
