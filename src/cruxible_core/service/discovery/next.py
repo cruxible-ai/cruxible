@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import RLock
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -2816,58 +2816,100 @@ def _workspace_items(
     return tuple(domains), tuple(items)
 
 
-#: How long an armed Line's own due work may wait before automation reads as stalled.
-LINE_STALL_AFTER = timedelta(minutes=15)
-
-
-def _line_stalled_items(
+def _consumer_stalled_items(
     instance: PlaybillInstance,
     *,
     evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1,
 ) -> tuple[PlaybillNextItemV1, ...]:
-    """An armed Line that stopped by itself, or stopped draining what it matched.
+    """A daemon consumer that stopped by itself, or stopped keeping up with its work.
 
-    Arms are operational state, measured now, like mirror health: a stopped arm
-    is invisible anywhere else, and a Line that quietly stopped running is the
-    failure automation otherwise hides. A deliberate disarm is not a finding.
+    Consumers are operational state, measured now, like mirror health: an arm
+    that stopped, or a worker that stopped advancing, is invisible anywhere
+    else, and automation that quietly stops is the failure it otherwise hides.
+    A deliberate disarm is not a finding. Each kind names its own repair.
     """
 
     if not access_profile.permits("instance"):
         return ()
-    from cruxible_core.service.procedures.line_dispatch import stalled_line_arms
+    from cruxible_core.consumers.runner import consumer_health
 
-    items: list[PlaybillNextItemV1] = []
-    for arm in stalled_line_arms(instance, now=evaluation_time, stall_after=LINE_STALL_AFTER):
-        stopped = arm.state == "stopped"
-        items.append(
-            _item(
-                severity="repair",
-                reason="line_stalled",
-                subject_identity=arm.line,
-                detail={
-                    "arm_id": arm.arm_id,
-                    "state": arm.state,
-                    "stop_reason": arm.stop_reason,
-                    "stopped_at": None if arm.stopped_at is None else arm.stopped_at.isoformat(),
-                    "pending_automatic": arm.pending_automatic,
-                    "pending_explicit": arm.pending_explicit,
-                    "detail": arm.detail,
-                },
-                # A stopped arm is resumed by rearming under authority that holds;
-                # a Line that stopped draining shows its refusal when dispatched.
-                repair=PlaybillNextRepairV1(
-                    operation="playbill.line.arm" if stopped else "playbill.line.dispatch",
-                    target=arm.line,
-                    required_change=(
-                        "rearm_the_line_under_a_current_credential_and_version"
-                        if stopped
-                        else "dispatch_the_line_to_read_why_its_work_is_blocked"
-                    ),
-                    arguments={"line": arm.line.removeprefix("Line:")},
-                ),
-            )
+    return tuple(
+        _item(
+            severity="repair",
+            reason="consumer_stalled",
+            subject_identity=health.consumer_id,
+            detail={"kind": health.kind, "state": health.state, **health.detail},
+            repair=PlaybillNextRepairV1(
+                operation=cast(NextRepairOperation, health.repair.operation),
+                target=health.consumer_id,
+                required_change=health.repair.required_change,
+                arguments=health.repair.arguments,
+            ),
         )
+        for health in consumer_health(instance, now=evaluation_time)
+        if health.state in {"stopped", "stalled"} and health.repair is not None
+    )
+
+
+def _evidence_unavailable_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    access_profile: CoverageAccessProfileV1,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Cited Captures the store can no longer produce, as the evidence worker last saw.
+
+    One row per Capture that live Claims still cite at this coordinate: a
+    missing or rotted envelope, a rotted body, or a missing body its contract
+    requires. The worker's findings are read, never recomputed here.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.consumers.evidence import evidence_findings
+
+    findings = evidence_findings(instance)
+    if not findings:
+        return ()
+    items: list[PlaybillNextItemV1] = []
+    with instance.bind_accepted_projection(coordinate) as projection:
+        for finding in findings:
+            claims = tuple(
+                row[0]
+                for row in projection.typed.connection.execute(
+                    "SELECT DISTINCT u.owner_key FROM citation_uses u "
+                    "JOIN claims c ON c.identity=u.owner_key "
+                    "WHERE u.owner_kind='Claim' AND c.lifecycle='live' AND u.capture_digest=? "
+                    "ORDER BY u.owner_key",
+                    (finding.capture_digest,),
+                ).fetchall()
+            )
+            if not claims:
+                continue
+            subject = f"Capture:{finding.capture_digest}"
+            items.append(
+                _item(
+                    severity="repair",
+                    reason="evidence_unavailable",
+                    subject_identity=subject,
+                    related_identities=claims,
+                    detail={
+                        "capture_digest": finding.capture_digest,
+                        "part": finding.part,
+                        "object_digest": finding.object_digest,
+                        "state": finding.state,
+                        "checked_at": format_datetime(finding.checked_at),
+                    },
+                    repair=PlaybillNextRepairV1(
+                        operation="hand_edit",
+                        target=subject,
+                        required_change=(
+                            "restore_the_capture_from_backup_or_recapture_and_recite_its_claims"
+                        ),
+                    ),
+                )
+            )
     return tuple(items)
 
 
@@ -3882,7 +3924,12 @@ def service_playbill_next(
             expiring_within=request.expiring_within,
             access_profile=request.access_profile,
         ),
-        *_line_stalled_items(
+        *_evidence_unavailable_items(
+            instance,
+            coordinate=coordinate,
+            access_profile=request.access_profile,
+        ),
+        *_consumer_stalled_items(
             instance,
             evaluation_time=request.evaluation_time,
             access_profile=request.access_profile,

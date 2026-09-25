@@ -111,11 +111,11 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        manager.line_listener.start()
+        manager.consumer_runner.start()
         try:
             yield
         finally:
-            manager.line_listener.close()
+            manager.consumer_runner.close()
 
     app = FastAPI(title="cruxible", responses=STANDARD_ERROR_RESPONSES, lifespan=lifespan)
     app.middleware("http")(token_auth_middleware)

@@ -447,6 +447,11 @@ def server_status_cmd(output_json: bool) -> None:
         )
         if host.reason is not None:
             click.echo(f"  Reason: {host.reason.code}: {host.reason.detail}")
+    for consumer in result.consumers:
+        click.echo(
+            f"Consumer {consumer.instance_id} {consumer.kind} {consumer.consumer_id}: "
+            f"{consumer.state}"
+        )
     click.echo(f"Auth enabled: {'yes' if result.auth_enabled else 'no'}")
     click.echo(f"Auth required: {'yes' if result.auth_required else 'no'}")
     click.echo(f"Provider lane: {result.provider_lane.state}")

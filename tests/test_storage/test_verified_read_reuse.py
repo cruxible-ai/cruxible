@@ -152,3 +152,26 @@ def test_a_child_forked_while_a_reader_is_busy_reads_without_deadlock(tmp_path):
     assert os.waitstatus_to_exitcode(deadline_status) == 0
     # The parent's reader still answers after the fork.
     assert ledger.read_blobs([oid]) == {oid: b"blob"}
+
+
+def test_availability_rehashes_what_a_remembered_proof_would_trust(tmp_path):
+    store, digest, path = _store(tmp_path)
+    assert store.availability(digest) == "present"
+    path.chmod(0o600)
+    with path.open("r+b") as handle:
+        handle.write(b"rot!")
+    # Rot that kept the file's identity: the remembered proof still vouches.
+    with cas._VERIFIED_LOCK:
+        cas._VERIFIED[store._memo_key(digest)] = cas._file_identity(path.stat())
+    assert store.verify(digest) is True
+    assert store.availability(digest) == "corrupt"
+    path.unlink()
+    assert store.availability(digest) == "missing"
+
+
+def test_availability_refuses_a_fifo_without_waiting_for_a_writer(tmp_path):
+    store, digest, path = _store(tmp_path)
+    path.unlink()
+    os.mkfifo(path)
+    # Opening a FIFO for reading blocks until a writer appears; this must not.
+    assert store.availability(digest) == "corrupt"

@@ -16,9 +16,11 @@ from cruxible_client.contracts.line_dispatch import (
     LineEvaluateRequestV1,
 )
 from cruxible_client.contracts.procedures.line_specs import CaptureLandingTriggerPolicyV2
+from cruxible_core.consumers.lines import LINE_ARMS
+from cruxible_core.consumers.protocol import ConsumerWork
+from cruxible_core.consumers.runner import ConsumerRunner
 from cruxible_core.runtime import line_arms
 from cruxible_core.runtime.line_arms import arm_authority, dispatch_armed_line
-from cruxible_core.runtime.line_listener import LineListener
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.server.credentials import RuntimeCredentialRecord
 from cruxible_core.service.procedures.line_dispatch import (
@@ -111,7 +113,7 @@ def test_an_armed_line_admits_the_occurrence_its_daemon_matched(tmp_path, monkey
 def test_the_daemon_listener_runs_armed_work_on_its_own(tmp_path, monkeypatch):
     instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
     monkeypatch.setattr(
-        "cruxible_core.runtime.line_listener.get_registry",
+        "cruxible_core.consumers.runner.get_registry",
         lambda: SimpleNamespace(
             list_instances=lambda: (
                 SimpleNamespace(
@@ -122,7 +124,7 @@ def test_the_daemon_listener_runs_armed_work_on_its_own(tmp_path, monkeypatch):
             )
         ),
     )
-    listener = LineListener(_manager(instance))
+    listener = ConsumerRunner(_manager(instance))
     listener.start()
     try:
         service_arm_line(
@@ -333,7 +335,7 @@ def test_automatic_and_explicit_dispatch_admit_one_occurrence_once(tmp_path):
 
 
 def test_a_slow_line_never_stalls_another_lines_drain_or_runs_twice(monkeypatch):
-    listener = LineListener(SimpleNamespace(), workers=2)
+    listener = ConsumerRunner(SimpleNamespace())
     listener.start()
     released, slow_entered, fast_done = Event(), Event(), Event()
     calls: list[str] = []
@@ -348,10 +350,11 @@ def test_a_slow_line_never_stalls_another_lines_drain_or_runs_twice(monkeypatch)
 
     monkeypatch.setattr(line_arms, "dispatch_armed_line", drain)
     try:
-        listener._schedule("instance", {"line_id": "slow"})
+        listener._schedule("instance", LINE_ARMS, ConsumerWork("slow", {"line_id": "slow"}))
         assert slow_entered.wait(5)
-        listener._schedule("instance", {"line_id": "slow"})  # still draining: not rescheduled
-        listener._schedule("instance", {"line_id": "fast"})
+        # Still draining: not rescheduled.
+        listener._schedule("instance", LINE_ARMS, ConsumerWork("slow", {"line_id": "slow"}))
+        listener._schedule("instance", LINE_ARMS, ConsumerWork("fast", {"line_id": "fast"}))
         assert fast_done.wait(5), "a slow Line's drain held up another Line"
         assert calls == ["slow", "fast"]
     finally:
@@ -374,14 +377,18 @@ def test_an_automatic_run_acts_as_the_arming_credential(monkeypatch):
 
 
 def _stalled(instance, at):  # type: ignore[no-untyped-def]
-    from cruxible_core.service.discovery.next import LINE_STALL_AFTER
-    from cruxible_core.service.procedures.line_dispatch import stalled_line_arms
+    from cruxible_core.consumers.lines import LINE_STALL_AFTER
+    from cruxible_core.service.procedures.line_dispatch import line_arm_health
 
-    return stalled_line_arms(instance, now=at, stall_after=LINE_STALL_AFTER)
+    return tuple(
+        arm
+        for state, arm in line_arm_health(instance, now=at, stall_after=LINE_STALL_AFTER)
+        if state != "running"
+    )
 
 
 def test_a_deliberate_disarm_is_not_a_stall_but_undrained_armed_work_is(tmp_path):
-    from cruxible_core.service.discovery.next import LINE_STALL_AFTER
+    from cruxible_core.consumers.lines import LINE_STALL_AFTER
 
     instance, line, procedure, start = _armed_world(tmp_path)
     capture(instance, procedure, at=start + timedelta(seconds=1))

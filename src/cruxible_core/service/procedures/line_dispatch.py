@@ -443,20 +443,21 @@ def service_stop_line_arm(
             )
 
 
-def stalled_line_arms(
+def line_arm_health(
     instance: PlaybillInstance, *, now: datetime, stall_after: timedelta
-) -> tuple[LineArmV1, ...]:
-    """Arms whose automation quietly stopped doing its job.
+) -> tuple[tuple[Literal["running", "stalled", "stopped"], LineArmV1], ...]:
+    """Every Line's latest arm segment, and whether its automation is doing its job.
 
-    An arm that stopped for any reason but a deliberate disarm, or an armed
-    Line whose own due work has waited longer than `stall_after`, is reported.
-    A disarmed Line, or one never armed, is not.
+    An arm that stopped for any reason but a deliberate disarm is `stopped`; an
+    armed Line whose own due work has waited longer than `stall_after` is
+    `stalled`; any other armed Line is `running`. A disarmed Line, or one never
+    armed, is not reported.
     """
 
     if not dispatch_root(instance).exists():
         return ()
     store = LineDispatchStore(instance)
-    stalled: list[LineArmV1] = []
+    arms: list[tuple[Literal["running", "stalled", "stopped"], LineArmV1]] = []
     with store.locked() as conn:
         latest = conn.execute(
             "SELECT s.payload FROM sessions s WHERE s.rowid = "
@@ -466,16 +467,16 @@ def stalled_line_arms(
             data = json.loads(payload)
             if data["stops_at"] is not None:
                 if data.get("stop_reason") not in {None, "disarmed"}:
-                    stalled.append(_arm_view(store, conn, data))
+                    arms.append(("stopped", _arm_view(store, conn, data)))
                 continue
             oldest = conn.execute(
                 "SELECT min(eligible_at) FROM pending WHERE session_id=? AND disposition='pending'",
                 (data["session_id"],),
             ).fetchone()[0]
             due = None if oldest is None else parse_datetime(oldest)
-            if due is not None and due <= now - stall_after:
-                stalled.append(_arm_view(store, conn, data))
-    return tuple(sorted(stalled, key=lambda item: item.line.encode("utf-8")))
+            stalled = due is not None and due <= now - stall_after
+            arms.append(("stalled" if stalled else "running", _arm_view(store, conn, data)))
+    return tuple(sorted(arms, key=lambda item: item[1].line.encode("utf-8")))
 
 
 def armed_work(instance: PlaybillInstance, *, now: datetime) -> tuple[dict[str, Any], ...]:

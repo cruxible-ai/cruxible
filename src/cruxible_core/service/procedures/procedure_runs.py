@@ -191,6 +191,7 @@ from cruxible_core.compiler.compiler import (
     SOURCE_CHECKED_COMPILER,
     TRIGGER_CAPTURE_COMPILER,
 )
+from cruxible_core.consumers.clock import cadence_due
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -950,12 +951,15 @@ def _line_occurrence(
     if isinstance(trigger, ManualTriggerPolicyV1):
         occurrence_basis: object = format_datetime(evaluation_time)
     elif isinstance(trigger, CadenceTriggerPolicyV1):
-        if exact_basis is not None:
-            next_due = exact_basis
-        elif last is not None:
-            next_due = last.occurrence_evaluation_time + timedelta(seconds=trigger.interval_seconds)
-        if exact_basis is None and next_due is not None and not_before is not None:
-            next_due = max(next_due, not_before)
+        next_due = (
+            exact_basis
+            if exact_basis is not None
+            else cadence_due(
+                timedelta(seconds=trigger.interval_seconds),
+                last=None if last is None else last.occurrence_evaluation_time,
+                not_before=not_before,
+            )
+        )
         occurrence_basis = format_datetime(next_due or evaluation_time)
     elif isinstance(trigger, (CaptureLandingTriggerPolicyV2, WindowCloseTriggerPolicyV2)):
         if binding is None or binding.kind != trigger.kind:

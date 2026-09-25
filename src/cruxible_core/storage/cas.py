@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import stat
 import threading
 import weakref
 from collections import OrderedDict
 from pathlib import Path
+from typing import Literal
 
 from cruxible_client.contracts.canonical import CasDigest
 from cruxible_client.contracts.cas_contracts import (
@@ -268,6 +270,43 @@ class ContentAddressedBodyStore:
             return False
         self._verified_bytes(digest)
         return True
+
+    def availability(self, digest: str) -> Literal["present", "missing", "corrupt"]:
+        """Re-hash one stored object from disk, streaming, trusting no earlier check.
+
+        `verify` reuses an earlier hash while the file's identity is unchanged;
+        bytes that rot in place keep that identity, so a sweep looking for rot
+        must hash again. Nothing is held beyond one read buffer.
+        """
+
+        shard, name = self._names(digest)
+        directory = self._shard(shard)
+        if directory is None:
+            return "missing"
+        try:
+            try:
+                # Non-blocking, so a FIFO planted in the store is refused below
+                # instead of waiting forever for a writer.
+                descriptor = os.open(
+                    name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+                )
+            except FileNotFoundError:
+                return "missing"
+            except OSError:
+                return "corrupt"
+        finally:
+            os.close(directory)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return "corrupt"
+            hasher = hashlib.sha256()
+            while chunk := os.read(descriptor, 1 << 20):
+                hasher.update(chunk)
+        except OSError:
+            return "corrupt"
+        finally:
+            os.close(descriptor)
+        return "present" if CasDigest(hasher.hexdigest()).tagged == digest else "corrupt"
 
     def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
         if not access.can_read_body:

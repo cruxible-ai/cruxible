@@ -374,6 +374,8 @@ def server_info() -> contracts.ServerInfoResult:
         for record in get_registry().list_governed_instances()
     )
     current = current_compiler_coordinate()
+    from cruxible_core.consumers.runner import consumer_statuses
+
     return contracts.ServerInfoResult(
         server_required=is_server_required(),
         state_root=str(get_server_state_root()),
@@ -392,6 +394,7 @@ def server_info() -> contracts.ServerInfoResult:
         compiler_coordinate=current.rule_digest,
         compiler_revision=COMPILER_REVISION_LABELS[current],
         hosts=hosts,
+        consumers=consumer_statuses(get_playbill_manager()),
     )
 
 

@@ -166,6 +166,13 @@ def volatile_state_path_warnings(
     return warnings
 
 
+def get_disabled_consumers(environ: Mapping[str, str] | None = None) -> frozenset[str]:
+    """Built-in consumer kinds the operator turned off (``CRUXIBLE_DISABLED_CONSUMERS``)."""
+    env = environ or os.environ
+    raw = env.get("CRUXIBLE_DISABLED_CONSUMERS", "")
+    return frozenset(name.strip() for name in raw.split(",") if name.strip())
+
+
 def is_server_auth_enabled(environ: Mapping[str, str] | None = None) -> bool:
     """Return whether bearer-token auth is enabled for the HTTP server."""
     env = environ or os.environ

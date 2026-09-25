@@ -116,7 +116,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "proposal_awaiting_approval",
         "mandate_expiring",
         # An armed Line that stopped by itself, or stopped draining its own work.
-        "line_stalled",
+        "consumer_stalled",
+        "evidence_unavailable",
     }
     assert set(get_args(NextRepairOperation)) == {
         "playbill.authoring.create",

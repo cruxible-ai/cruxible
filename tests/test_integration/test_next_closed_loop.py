@@ -171,7 +171,9 @@ EXPECTED_OPERATIONS = {
     "proposal_awaiting_approval": "playbill.proposal.approve",
     "mandate_expiring": "playbill.authoring.create",
     # A stopped arm is resumed by rearming under authority that still holds.
-    "line_stalled": "playbill.line.arm",
+    "consumer_stalled": "playbill.line.arm",
+    # Restoring a Capture's bytes, or recapturing, is off the daemon's served verbs.
+    "evidence_unavailable": "hand_edit",
 }
 
 
@@ -1449,7 +1451,44 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "mandate_expiring", _request(instance))
 
 
-def _line_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _evidence_unavailable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta
+
+    from tests.test_consumers.test_evidence_availability import _drain, _world
+
+    instance, capture = _world(root)
+    path = instance.body_store()._path(capture)
+    original = path.read_bytes()
+    _drain(instance, now=EVALUATION_TIME)
+    path.unlink()
+    _drain(instance, now=EVALUATION_TIME + timedelta(days=1))
+
+    row = _row(instance, "evidence_unavailable", _request(instance))
+    assert row.subject_identity == f"Capture:{capture}"
+    assert row.detail["part"] == "envelope" and row.detail["state"] == "missing"
+    assert row.related_identities and all(
+        item.startswith("Claim:") for item in row.related_identities
+    )
+    assert row.repair.operation == EXPECTED_OPERATIONS["evidence_unavailable"]
+    hidden = PlaybillNextRequestV1(
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=EVALUATION_TIME,
+        access_profile=CoverageAccessProfileV1(
+            profile_id="next-closed-loop-public", permitted_access_classes=("public",)
+        ),
+    )
+    assert all(
+        item.reason != "evidence_unavailable"
+        for item in service_playbill_next(instance, request=hidden).items
+    )
+
+    # The named repair: restore the bytes; the worker's next sweep clears the row.
+    path.write_bytes(original)
+    _drain(instance, now=EVALUATION_TIME + timedelta(days=2))
+    _assert_gone(instance, "evidence_unavailable", _request(instance))
+
+
+def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
     from cruxible_core.runtime.line_arms import dispatch_armed_line
@@ -1473,7 +1512,7 @@ def _line_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     )
     request = _request(instance)
 
-    row = _row(instance, "line_stalled", request)
+    row = _row(instance, "consumer_stalled", request)
     assert row.subject_identity == line.identity.qualified
     assert row.detail["stop_reason"] == "credential_revoked"
     assert row.repair.command == f"cruxible playbill line arm {line.identity.name}"
@@ -1487,7 +1526,7 @@ def _line_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         now=start + timedelta(seconds=5),
         daemon_id="daemon",
     )
-    _assert_gone(instance, "line_stalled", request)
+    _assert_gone(instance, "consumer_stalled", request)
 
 
 CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
@@ -1533,7 +1572,8 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("proposal_stale", None): _proposal_stale,
     ("proposal_awaiting_approval", None): _proposal_awaiting_approval,
     ("mandate_expiring", None): _mandate_expiring,
-    ("line_stalled", None): _line_stalled,
+    ("consumer_stalled", None): _consumer_stalled,
+    ("evidence_unavailable", None): _evidence_unavailable,
 }
 
 

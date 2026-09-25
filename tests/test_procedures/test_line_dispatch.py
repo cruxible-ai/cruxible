@@ -365,11 +365,11 @@ def test_daemon_listener_matches_without_execution(tmp_path, monkeypatch):
     from datetime import UTC, datetime
     from threading import Event
 
-    from cruxible_core.runtime.line_listener import LineListener
+    from cruxible_core.consumers.runner import ConsumerRunner
 
     instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
     monkeypatch.setattr(
-        "cruxible_core.runtime.line_listener.get_registry",
+        "cruxible_core.consumers.runner.get_registry",
         lambda: SimpleNamespace(
             list_instances=lambda: (
                 SimpleNamespace(
@@ -380,7 +380,7 @@ def test_daemon_listener_matches_without_execution(tmp_path, monkeypatch):
             )
         ),
     )
-    listener = LineListener(SimpleNamespace(get=lambda _id: instance))
+    listener = ConsumerRunner(SimpleNamespace(get=lambda _id: instance))
     finished = Event()
     original = LineDispatchStore.append
 

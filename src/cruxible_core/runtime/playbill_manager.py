@@ -61,9 +61,9 @@ class PlaybillInstanceManager:
         self._instances: dict[str, PlaybillInstance] = {}
         self._provider_runtime_operators: dict[Path, ProviderRuntimeOperator] = {}
         self._lock = threading.RLock()
-        from cruxible_core.runtime.line_listener import LineListener
+        from cruxible_core.consumers.runner import ConsumerRunner
 
-        self.line_listener = LineListener(self)
+        self.consumer_runner = ConsumerRunner(self)
 
     def _paths(self, instance_id: str) -> tuple[Path, Path, tuple[Path, ...]]:
         registry = get_registry()
@@ -234,6 +234,11 @@ class PlaybillInstanceManager:
             self._bind_workspace(instance, _workspaces)
             self._instances[instance_id] = instance
             return instance
+
+    def open_instances(self) -> tuple[tuple[str, PlaybillInstance], ...]:
+        """The instances this daemon already holds open, without opening any more."""
+        with self._lock:
+            return tuple(sorted(self._instances.items()))
 
     def register(self, instance_id: str, instance: PlaybillInstance) -> None:
         """Testing/embedded seam; production instances load through pinned storage."""

@@ -86,7 +86,8 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "environment_divergence": "rematerialize_the_provider_environment_against_its_seal",
     "provider_replay_receipt_required": "record_the_durable_provider_completion_before_replay",
     "state_tap_refused": "restore_the_accepted_state_query_backend",
-    "line_stalled": "rearm_the_line_or_dispatch_its_pending_work",
+    "consumer_stalled": "restart_the_consumer_through_its_named_repair",
+    "evidence_unavailable": "restore_the_capture_from_backup_or_recapture_and_recite_its_claims",
     "block_query_unchecked": "restore_query_evaluation_then_check_the_block",
     "block_frame_invalid": "restore_the_block_marker_frame_the_stamp_declares",
     # The refusal already names its path class and its repair commands. The
