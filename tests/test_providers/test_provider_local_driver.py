@@ -67,6 +67,7 @@ from cruxible_core.providers.provider_runtime_contract import (
 )
 from tests.core_support._p2b1_support import accepted_interface, provider_v2
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
+from tests.support.short_temporary_root import short_temporary_directory
 
 
 def _digest(label: str) -> str:
@@ -81,9 +82,9 @@ def _lease_store(
 
     def create(root: Path) -> ProviderProcessLeaseStore:
         # macOS's default temporary root can exceed the AF_UNIX path budget.
-        control = tempfile.TemporaryDirectory(prefix="provider-control-", dir="/tmp")
-        request.addfinalizer(control.cleanup)
-        return ProviderProcessLeaseStore(root, control_root=Path(control.name))
+        control = short_temporary_directory("provider-control-")
+        request.addfinalizer(lambda: shutil.rmtree(control, ignore_errors=True))
+        return ProviderProcessLeaseStore(root, control_root=control)
 
     return create
 
@@ -1050,7 +1051,7 @@ def test_control_namespaces_are_state_local_and_finalize_without_orphans(
     # the 103-byte AF_UNIX budget or the store takes the ruled per-user fallback and
     # the assertion tests fallback instead of locality. Use a short system temporary
     # root; the budget in provider_process_leases is unchanged.
-    short_root = Path(tempfile.mkdtemp(prefix=".b2-", dir="/tmp"))
+    short_root = short_temporary_directory(".b2-")
     request.addfinalizer(lambda: shutil.rmtree(short_root, ignore_errors=True))
     roots = tuple(tmp_path / f"leases-{index}" for index in range(5))
     stores = [
@@ -1088,7 +1089,7 @@ def test_overlong_control_socket_path_falls_back_to_the_private_runtime_namespac
     so rather than keeping the retracted one.
     """
 
-    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-runtime-", dir="/tmp"))
+    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-runtime-"))
     request.addfinalizer(lambda: shutil.rmtree(runtime_root, ignore_errors=True))
     runtime_root.chmod(0o755)
     monkeypatch.setattr(process_lease_module.platform, "system", lambda: system)
@@ -1123,7 +1124,7 @@ def test_overlong_control_fallback_refuses_symlinked_namespace_component(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-runtime-", dir="/tmp"))
+    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-runtime-"))
     request.addfinalizer(lambda: shutil.rmtree(runtime_root, ignore_errors=True))
     target = runtime_root / "target"
     target.mkdir()

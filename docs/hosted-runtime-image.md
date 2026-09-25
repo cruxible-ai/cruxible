@@ -49,8 +49,7 @@ Expected response:
 
 Do not bake bootstrap secrets or runtime credentials into the image. Provide
 them at container runtime through environment variables or the future deployment
-secret layer. See [Runtime Auth And Agent Roles](runtime-auth-and-agent-roles.md)
-for the bootstrap and credential model.
+secret layer.
 
 ## Publishing the image
 

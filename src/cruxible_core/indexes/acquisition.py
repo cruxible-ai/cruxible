@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,6 +13,21 @@ from cruxible_client.contracts.errors import ProjectionIntegrityError
 
 class DatabasePathChangedError(ProjectionIntegrityError):
     """Acquisition raced with a namespace change; retry without changing source state."""
+
+
+# An unrelated entry change in any ancestor refuses an attempt exactly as a swap
+# does, and a shared system temporary directory changes many times a second. A
+# bounded retry with a short growing pause outlasts that churn instead of
+# spending every attempt inside one burst; a swap repeated on every attempt still
+# exhausts the bound and refuses. The pause is never taken after the last attempt.
+ACQUISITION_ATTEMPTS = 8
+_ACQUISITION_PAUSE_CAP_SECONDS = 0.05
+
+
+def pause_before_acquisition_retry(attempt: int) -> None:
+    """Wait before retrying after `attempt` (zero-based) raised DatabasePathChangedError."""
+
+    time.sleep(min(0.001 * (2**attempt), _ACQUISITION_PAUSE_CAP_SECONDS))
 
 
 def _ancestor_stamp(path: Path) -> tuple[tuple[str, int, int, int], ...]:
@@ -61,7 +77,7 @@ def open_working_snapshot(
 ) -> sqlite3.Connection:
     """Pin a WAL snapshot only while its verified physical proof remains unchanged."""
 
-    for attempt in range(3):
+    for attempt in range(ACQUISITION_ATTEMPTS):
         connection = None
         try:
             with guard_database_path(path):
@@ -83,8 +99,9 @@ def open_working_snapshot(
         except DatabasePathChangedError:
             if connection is not None:
                 connection.close()
-            if attempt == 2:
+            if attempt == ACQUISITION_ATTEMPTS - 1:
                 raise
+            pause_before_acquisition_retry(attempt)
         except BaseException:
             if connection is not None:
                 connection.close()
