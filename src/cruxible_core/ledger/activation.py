@@ -24,6 +24,7 @@ from cruxible_core.indexes.serving import (
 from cruxible_core.indexes.sqlite import bind_projection
 from cruxible_core.ledger.checkpoints import (
     DEFAULT_CHECKPOINT_INTERVAL,
+    ReplayCheckpointBodyV2,
     checkpoint_body,
     write_checkpoint,
 )
@@ -87,6 +88,7 @@ class ActivationPublisher:
         genesis: GenesisCoordinate | None = None,
         member_history: MemberHistory | None = None,
         resolve_claim_digest: Callable[[str], tuple[str, ...]] | None = None,
+        defer_checkpoint: Callable[[Callable[[], None]], None] | None = None,
     ) -> None:
         if checkpoint_interval < 1:
             raise SettlementIntegrityError("checkpoint interval must be at least one generation")
@@ -100,6 +102,7 @@ class ActivationPublisher:
         self.genesis = genesis
         self.member_history = member_history
         self.resolve_claim_digest = resolve_claim_digest
+        self.defer_checkpoint = defer_checkpoint
 
     def prebuild(
         self,
@@ -276,15 +279,21 @@ class ActivationPublisher:
         bounding the suffix a reopen has to replay. The write is the last thing
         activation does and is never load bearing: a torn, stale, or absent
         checkpoint only ever costs replay time.
+
+        Off the stride, a `defer_checkpoint` owner may take a summary of this
+        coordinate to write once writes go quiet, so a restart after a burst of
+        acceptances starts at the head instead of replaying the burst. It
+        writes only while this generation is still main.
         """
 
         if self.checkpoint_directory is None or self.genesis is None:
             return
         sequence = bundle.record.sequence
-        if (
-            sequence % self.checkpoint_interval != 0
-            and compiler_after_record(bundle.record) == base.compiler
-        ):
+        on_stride = (
+            sequence % self.checkpoint_interval == 0
+            or compiler_after_record(bundle.record) != base.compiler
+        )
+        if not on_stride and self.defer_checkpoint is None:
             return
         parent = self.accepted_coordinates_by_sequence.get(sequence - 1)
         if parent is None:
@@ -292,7 +301,43 @@ class ActivationPublisher:
             # chain this summary to, so no checkpoint is written and the next
             # reopen simply replays further.
             return
-        body = checkpoint_body(
+        if on_stride:
+            self._write_replay_checkpoint(bundle, base=base, parent=parent)
+            return
+        assert self.defer_checkpoint is not None
+        directory = self.checkpoint_directory
+
+        def summarize_if_head() -> None:
+            # Built outside the lock from immutable inputs; written under it, so
+            # a later acceptance's summary is never replaced by this older one.
+            body = self._replay_checkpoint_body(bundle, base=base, parent=parent)
+            with self.ledger.activation_lock():
+                if self.ledger.read_main() == bundle.oid:
+                    write_checkpoint(directory, body, verified=True)
+
+        self.defer_checkpoint(summarize_if_head)
+
+    def _write_replay_checkpoint(
+        self,
+        bundle: VerifiedGenerationBundle,
+        *,
+        base: AcceptedProjectionCoordinate,
+        parent: AcceptedCoordinate,
+    ) -> None:
+        assert self.checkpoint_directory is not None
+        body = self._replay_checkpoint_body(bundle, base=base, parent=parent)
+        write_checkpoint(self.checkpoint_directory, body, verified=True)
+
+    def _replay_checkpoint_body(
+        self,
+        bundle: VerifiedGenerationBundle,
+        *,
+        base: AcceptedProjectionCoordinate,
+        parent: AcceptedCoordinate,
+    ) -> ReplayCheckpointBodyV2:
+        assert self.genesis is not None
+        sequence = bundle.record.sequence
+        return checkpoint_body(
             instance_id=base.instance_id,
             object_format=base.git_object_format,
             compiler=compiler_after_record(bundle.record),
@@ -305,7 +350,6 @@ class ActivationPublisher:
             tree=bundle.tree,
             members=bundle.members,
         )
-        write_checkpoint(self.checkpoint_directory, body, verified=True)
 
 
 __all__ = [

@@ -124,6 +124,7 @@ from cruxible_core.ledger.bootstrap import (
 from cruxible_core.ledger.checkpoints import (
     CHECKPOINT_DIRECTORY,
     DEFAULT_CHECKPOINT_INTERVAL,
+    QuietCheckpointWriter,
 )
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.ledger.ledger_mirror import (
@@ -330,6 +331,7 @@ class PlaybillInstance:
         self._receive_limits = ProposalReceiveLimits()
         self._mirror_condition = threading.Condition()
         self._mirror_thread: threading.Thread | None = None
+        self._quiet_checkpoints: QuietCheckpointWriter | None = None
         # Read services keyed by accepted coordinate park their derived
         # history indexes here so activation drops them with one clear().
         # Immutable-coordinate exports survive head movement; keys include their
@@ -2026,7 +2028,23 @@ class PlaybillInstance:
             genesis=self.descriptor.genesis,
             member_history=self.member_record_history,
             resolve_claim_digest=self._claim_identities_for_digest,
+            defer_checkpoint=(
+                None if self._quiet_checkpoints is None else self._quiet_checkpoints.defer
+            ),
         )
+
+    def defer_replay_checkpoints(self, *, quiet_seconds: float) -> None:
+        """Also summarize an off-stride head once acceptances pause for `quiet_seconds`."""
+
+        if self._quiet_checkpoints is None:
+            self._quiet_checkpoints = QuietCheckpointWriter(
+                quiet_seconds=quiet_seconds,
+                name=f"replay-checkpoint-{self.descriptor.instance_id}",
+            )
+
+    def flush_replay_checkpoint(self) -> None:
+        if self._quiet_checkpoints is not None:
+            self._quiet_checkpoints.flush()
 
     def prepare_generation(
         self,

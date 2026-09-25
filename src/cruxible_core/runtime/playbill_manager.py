@@ -61,6 +61,9 @@ class PlaybillInstanceManager:
         self._instances: dict[str, PlaybillInstance] = {}
         self._provider_runtime_operators: dict[Path, ProviderRuntimeOperator] = {}
         self._lock = threading.RLock()
+        # Set by the daemon: summarize the head once acceptances go quiet, so a
+        # restart need not replay them. Embedded managers keep the stride only.
+        self.quiet_checkpoint_seconds: float | None = None
         from cruxible_core.consumers.runner import ConsumerRunner
 
         self.consumer_runner = ConsumerRunner(self)
@@ -209,7 +212,7 @@ class PlaybillInstanceManager:
             os.chmod(trust_path, 0o600)
             _fsync_directory(trust_path.parent)
             self._bind_workspace(instance, workspaces)
-            self._instances[instance_id] = instance
+            self._keep(instance_id, instance)
             return instance
 
     def get(self, instance_id: str) -> PlaybillInstance:
@@ -232,13 +235,26 @@ class PlaybillInstanceManager:
                 load_proposal_receive_config(get_server_state_root()).limits()
             )
             self._bind_workspace(instance, _workspaces)
-            self._instances[instance_id] = instance
+            self._keep(instance_id, instance)
             return instance
 
     def open_instances(self) -> tuple[tuple[str, PlaybillInstance], ...]:
         """The instances this daemon already holds open, without opening any more."""
         with self._lock:
             return tuple(sorted(self._instances.items()))
+
+    def _keep(self, instance_id: str, instance: PlaybillInstance) -> None:
+        if self.quiet_checkpoint_seconds is not None:
+            instance.defer_replay_checkpoints(quiet_seconds=self.quiet_checkpoint_seconds)
+        self._instances[instance_id] = instance
+
+    def flush_replay_checkpoints(self) -> None:
+        """Write every pending head summary now (graceful daemon shutdown)."""
+
+        with self._lock:
+            instances = tuple(self._instances.values())
+        for instance in instances:
+            instance.flush_replay_checkpoint()
 
     def register(self, instance_id: str, instance: PlaybillInstance) -> None:
         """Testing/embedded seam; production instances load through pinned storage."""
