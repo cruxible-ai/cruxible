@@ -152,6 +152,16 @@ def test_batch_errors_preserve_all_marker_findings(read_failure, monkeypatch):
     instance.accepted_history_reader.return_value = nullcontext(
         SimpleNamespace(generation_for_oid=lambda oid: next(g for g in generations if g.oid == oid))
     )
+    # Both Claims are still owned at the checked coordinate; only the second
+    # one's historical lineage is unreadable.
+    present = {c.identity.qualified for c in claims}
+    instance.bind_accepted_projection.return_value = nullcontext(
+        SimpleNamespace(
+            typed=SimpleNamespace(
+                envelope=lambda identity: object() if identity in present else None
+            )
+        )
+    )
     monkeypatch.setattr(
         "cruxible_core.service.authoring.projection_sync.ProjectionCheckContext._claim_status",
         lambda *a: "accepted",

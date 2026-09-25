@@ -403,11 +403,16 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
         assert facts[0].value == projected
         expected_rows = _rows(handle.index_path)
     selected_paths = []
-    original_blob_at = instance._ledger.blob_at
+    original_blobs_at = instance._ledger.blobs_at
+    original_record_at = instance._ledger.record_at
 
-    def selected_blob(oid, path):
+    def selected_blobs(oid, paths):
+        selected_paths.extend(paths)
+        return original_blobs_at(oid, paths)
+
+    def selected_record(oid, path):
         selected_paths.append(path)
-        return original_blob_at(oid, path)
+        return original_record_at(oid, path)
 
     def no_inventory(*args, **kwargs):
         raise AssertionError("floor track records scanned unrelated accepted state")
@@ -416,12 +421,15 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
         patch.setattr(instance, "tree_at", no_inventory)
         patch.setattr(instance, "immutable_tree_at", no_inventory)
         patch.setattr(instance, "accepted_history", no_inventory)
-        patch.setattr(instance._ledger, "blob_at", selected_blob)
+        # blob_at delegates to blobs_at; record_at serves change-set records.
+        patch.setattr(instance._ledger, "blobs_at", selected_blobs)
+        patch.setattr(instance._ledger, "record_at", selected_record)
         records = _procedure_track_records(instance, coordinate=instance.accepted_coordinate())
         historical = _procedure_track_records(instance, coordinate=promotion_coordinate)
     assert records == historical
     assert records[accepted_procedure.procedure.identity.qualified][0].value == projected
-    assert selected_paths
+    # Retained verified change-set records (d6c894080) may serve both reads
+    # with no ledger read at all; any read that does happen stays selected.
     assert all(
         path == exhaust_promotion_path(promotion.identity.name) or path.startswith("changesets/")
         for path in selected_paths

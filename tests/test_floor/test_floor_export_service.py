@@ -311,7 +311,7 @@ def test_procedure_floor_card_keeps_runnability_governance_and_track_record_sepa
     assert card.identity.qualified == "Procedure:triage"
     assert card.binding_state == "binding_required"
     assert card.capabilities.node_kinds == ("project", "state_tap")
-    assert card.capabilities.terminal_capability == 1
+    assert card.capabilities.authority == "observe"
     assert card.governance.lifecycle.state == "live"
     assert card.governance.lifecycle.state == "live"
     assert card.track_record == ()
