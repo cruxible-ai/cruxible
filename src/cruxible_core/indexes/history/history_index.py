@@ -670,6 +670,11 @@ class AcceptedHistoryIndex:
         # consulted until a full reconciliation has succeeded again.
         self._chain: tuple[int, str] | None = None
         self._trust_record = True
+        # The persisted record as it stood when this index opened (for the
+        # daemon, at startup), replaced only by records this process writes. A
+        # record swapped in beside changed rows while the daemon runs is never
+        # read.
+        self._record: bytes | None = self._read_record()
         self._writer: sqlite3.Connection | None = None
         self._writer_identity: tuple[int, ...] | None = None
         self._close_writer: Callable[[], None] | None = None
@@ -703,6 +708,15 @@ class AcceptedHistoryIndex:
     def _verification_stamp_path(self) -> Path:
         return self.path.with_name(self.path.name + ".verified.json")
 
+    def _read_record(self) -> bytes | None:
+        path = self._verification_stamp_path()
+        try:
+            if path.is_symlink() or not path.is_file():
+                return None
+            return path.read_bytes()
+        except OSError:
+            return None
+
     def _verified_through(
         self, connection: sqlite3.Connection, recovered: RecoveredInstanceState
     ) -> tuple[int, str, str, str, int] | None:
@@ -715,7 +729,9 @@ class AcceptedHistoryIndex:
         generation from the ledger.
         """
         try:
-            recorded = json.loads(self._verification_stamp_path().read_bytes())
+            if self._record is None:
+                return None
+            recorded = json.loads(self._record)
             ready = tuple(recorded["ready"])
             sequence, root, instance_id, compiler, schema = ready
             claimed = recorded["chain"]
@@ -759,6 +775,7 @@ class AcceptedHistoryIndex:
         finally:
             os.close(descriptor)
         os.replace(temporary, path)
+        self._record = body
 
     def invalidate(self) -> None:
         """Force full source reconciliation on the next read.

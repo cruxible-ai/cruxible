@@ -51,3 +51,47 @@ def test_a_reopen_trusts_the_stamped_history_and_rederives_a_changed_row(tmp_pat
     assert after == before
     _again, checked = _reopen_and_read(instance)
     assert checked == 0
+
+
+def test_rows_and_record_changed_after_startup_are_rederived(tmp_path: Path) -> None:
+    """Only the record present when the index opened, or one it wrote, is honored."""
+
+    import json
+
+    from cruxible_core.indexes.history import history_index
+
+    instance, _owner = seed_claims(tmp_path)
+    with instance.accepted_history_reader():
+        pass
+    head = instance.accepted_history()[-1].sequence
+    live = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)  # startup
+    index = live._accepted_history_index
+    record_path = index._verification_stamp_path()
+    ready = json.loads(record_path.read_bytes())["ready"]
+
+    # Before the first history read: change a row and re-chain a matching record.
+    connection = sqlite3.connect(index.path)
+    with connection:
+        (before,) = connection.execute(
+            "SELECT artifact_revision FROM artifact_versions WHERE occurrence_sequence=? LIMIT 1",
+            (head,),
+        ).fetchone()
+        connection.execute(
+            "UPDATE artifact_versions SET artifact_revision=artifact_revision+100 "
+            "WHERE occurrence_sequence=?",
+            (head,),
+        )
+        chain = history_index._history_chain(connection, through=head)
+    connection.close()
+    record_path.write_text(json.dumps({"ready": ready, "chain": chain}, sort_keys=True))
+
+    with live.accepted_history_reader():
+        pass
+    assert index.generations_checked == head + 1  # full re-derivation
+    connection = sqlite3.connect(index.path)
+    (after,) = connection.execute(
+        "SELECT artifact_revision FROM artifact_versions WHERE occurrence_sequence=? LIMIT 1",
+        (head,),
+    ).fetchone()
+    connection.close()
+    assert after == before
