@@ -184,7 +184,15 @@ def _open_segment(
 ) -> dict[str, Any]:
     """Start one forward-only matching segment of an arm at `now`."""
 
-    data = dict(
+    data = _segment(arm, instance=instance, now=now, daemon_id=daemon_id)
+    store.append(conn, "session", data, actor=actor, now=now)
+    return data
+
+
+def _segment(
+    arm: dict[str, Any], *, instance: PlaybillInstance, now: datetime, daemon_id: str
+) -> dict[str, Any]:
+    return dict(
         arm,
         session_id=uuid4().hex,
         starts_at=format_datetime(now),
@@ -196,8 +204,36 @@ def _open_segment(
         detail=None,
         scan=None,
     )
-    store.append(conn, "session", data, actor=actor, now=now)
-    return data
+
+
+def _roll_over(
+    store: LineDispatchStore,
+    conn: Any,
+    current: dict[str, Any],
+    *,
+    instance: PlaybillInstance,
+    actor: GovernedActorContext,
+    now: datetime,
+    daemon_id: str,
+) -> dict[str, Any]:
+    """End a segment and open its successor in one transition.
+
+    Two transitions could be interrupted between them, leaving an arm with no
+    active segment that still reports itself armed. One record either lands
+    whole or not at all.
+    """
+
+    stopped = dict(
+        current,
+        stops_at=current["evaluated_until"],
+        stop_reason=None,
+        detail="Daemon restarted; uncovered ranges require explicit evaluation.",
+    )
+    opened = _segment(
+        {key: current[key] for key in _ARM_FIELDS}, instance=instance, now=now, daemon_id=daemon_id
+    )
+    store.append(conn, "rollover", {"stopped": stopped, "opened": opened}, actor=actor, now=now)
+    return opened
 
 
 def _lapse_cadence_backlog(
@@ -499,7 +535,7 @@ def service_match_listening_lines(
             # Line is never adopted implicitly, even within the same epoch.
             stop = ("line_changed", _LINE_CHANGED)
         if stop is not None:
-            with store.locked() as conn:
+            with line_arm_boundary(instance.root, session["line_id"]), store.locked() as conn:
                 current = _active_session(conn, session["line_id"])
                 if current is not None and current["session_id"] == session["session_id"]:
                     _stop(
@@ -513,31 +549,24 @@ def service_match_listening_lines(
             # The arm survives a restart forward-only: a new segment starts now,
             # and what this segment matched stays pending for explicit dispatch
             # (a cadence tick lapses instead; see `_lapse_cadence_backlog`).
-            with store.locked() as conn:
+            with line_arm_boundary(instance.root, session["line_id"]), store.locked() as conn:
                 current = _active_session(conn, session["line_id"])
                 if current is None or current["session_id"] != session["session_id"]:
                     continue
-                _stop(
+                # Lapsing first leaves nothing to recover: interrupted here, the
+                # old segment still stands and the next pass rolls it over.
+                _lapse_cadence_backlog(store, conn, accepted, actor=actor, now=now)
+                _roll_over(
                     store,
                     conn,
                     current,
-                    reason=None,
-                    detail="Daemon restarted; uncovered ranges require explicit evaluation.",
-                    actor=actor,
-                    now=now,
-                )
-                _lapse_cadence_backlog(store, conn, accepted, actor=actor, now=now)
-                _open_segment(
-                    store,
-                    conn,
-                    {key: current[key] for key in _ARM_FIELDS},
                     instance=instance,
                     actor=actor,
                     now=now,
                     daemon_id=daemon_id,
                 )
             continue
-        with store.locked() as conn:
+        with line_arm_boundary(instance.root, session["line_id"]), store.locked() as conn:
             current = conn.execute(
                 "SELECT active,payload FROM sessions WHERE session_id=?", (session["session_id"],)
             ).fetchone()
@@ -810,6 +839,14 @@ def service_dispatch_line(
                                 }:
                                     status = "rejected"
                                 elif refusal.code == "line_binding_superseded":
+                                    status = "superseded"
+                                elif (
+                                    refusal.code == "occurrence_id_mismatch"
+                                    and session_id is not None
+                                ):
+                                    # An intervening admission moved the cadence
+                                    # chain past this tick. It stays retryable;
+                                    # closing it lets the arm match the next one.
                                     status = "superseded"
                             else:
                                 detail = "No durable admission was produced."

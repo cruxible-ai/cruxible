@@ -695,3 +695,121 @@ def test_a_lapsed_tick_is_retried_as_itself_after_a_newer_tick_ran(tmp_path):
         caller_rung=3,
     )
     assert [item.status for item in retried.items] == ["admitted"]
+
+
+def test_a_rollover_waits_for_an_admission_already_inside_the_arm_boundary(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    import cruxible_core.service.procedures.line_dispatch as dispatch_service
+
+    instance, line, procedure, start = _armed_world(tmp_path)
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
+    inside, proceed = Event(), Event()
+    original_gate = dispatch_service._segment_gate
+
+    @contextmanager
+    def paused_gate(*args):  # type: ignore[no-untyped-def]
+        with original_gate(*args):
+            # The segment check passed; the admission is about to be recorded.
+            inside.set()
+            assert proceed.wait(15)
+            yield
+
+    monkeypatch.setattr(dispatch_service, "_segment_gate", paused_gate)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        admitting = pool.submit(
+            dispatch_armed_line,
+            _manager(instance),
+            instance.descriptor.instance_id,
+            arm,
+            now=start + timedelta(seconds=3),
+        )
+        assert inside.wait(15)
+        rolling = pool.submit(_match, instance, start + timedelta(seconds=4), "restarted")
+        try:
+            # The restart cannot end the segment under an admission in flight.
+            with pytest.raises(TimeoutError):
+                rolling.result(timeout=0.5)
+        finally:
+            proceed.set()
+        admitting.result()
+        rolling.result()
+
+    # Admitted under the segment that matched it, then rolled over: nothing is
+    # left behind as explicit work, and nothing ran after the rollover.
+    assert _admissions(instance) == 1
+    status = service_line_arm_status(instance, line.identity.name)
+    assert status.state == "armed" and status.pending_explicit == 0
+
+
+def test_an_interrupted_rollover_leaves_the_arm_whole_and_the_next_pass_completes_it(
+    tmp_path, monkeypatch
+):
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+
+    instance, line, procedure, start = _armed_world(tmp_path)
+    original_append = LineDispatchStore.append
+
+    def interrupted(self, conn, kind, data, **kwargs):  # type: ignore[no-untyped-def]
+        if kind == "rollover":
+            raise OSError("interrupted")
+        return original_append(self, conn, kind, data, **kwargs)
+
+    monkeypatch.setattr(LineDispatchStore, "append", interrupted)
+    with pytest.raises(OSError, match="interrupted"):
+        _match(instance, start + timedelta(seconds=1), daemon_id="restarted")
+    monkeypatch.setattr(LineDispatchStore, "append", original_append)
+
+    # Nothing landed: the old segment still stands, so the arm still matches.
+    assert service_line_arm_status(instance, line.identity.name).state == "armed"
+    _match(instance, start + timedelta(seconds=2), daemon_id="restarted")
+    capture(instance, procedure, at=start + timedelta(seconds=3))
+    _match(instance, start + timedelta(seconds=4), daemon_id="restarted")
+    assert len(armed_work(instance, now=start + timedelta(seconds=4))) == 1
+
+
+def test_a_retried_lapsed_tick_never_blocks_the_arms_own_ticks(tmp_path):
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+
+    instance, line, _procedure = _cadence_world(tmp_path)
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=READ_TIME - timedelta(seconds=1),
+        daemon_id="daemon",
+    )
+    _match(instance, READ_TIME)
+    with LineDispatchStore(instance).locked() as conn:
+        (lapsing,) = conn.execute("SELECT occurrence_id FROM pending").fetchone()
+    _match(instance, READ_TIME + timedelta(seconds=120), daemon_id="restarted")
+    _match(instance, READ_TIME + timedelta(seconds=180), daemon_id="restarted")
+    assert service_line_arm_status(instance, line.identity.name).pending_automatic == 1
+    retried = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequestV1(occurrence_id=lapsing, retry=True),
+        actor=_actor(instance),
+        now=READ_TIME + timedelta(seconds=181),
+        caller_rung=3,
+    )
+    assert [item.status for item in retried.items] == ["admitted"]
+
+    # The retry moved the chain past the arm's queued tick: it closes as
+    # superseded instead of refusing forever, and the arm matches the next one.
+    (arm,) = armed_work(instance, now=READ_TIME + timedelta(seconds=182))
+    stale = dispatch_armed_line(
+        _manager(instance),
+        instance.descriptor.instance_id,
+        arm,
+        now=READ_TIME + timedelta(seconds=182),
+    )
+    assert stale is not None and [item.status for item in stale.items] == ["superseded"]
+    at = READ_TIME + timedelta(seconds=300)
+    _match(instance, at, daemon_id="restarted")
+    (arm,) = armed_work(instance, now=at)
+    ticked = dispatch_armed_line(_manager(instance), instance.descriptor.instance_id, arm, now=at)
+    assert ticked is not None and [item.status for item in ticked.items] == ["admitted"]

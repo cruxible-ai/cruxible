@@ -108,17 +108,18 @@ class LineDispatchStore:
 
     def _apply(self, conn: sqlite3.Connection, event: dict[str, Any], sequence: int) -> None:
         kind, data = event["kind"], event["data"]
-        if kind in {"session", "coverage", "stop"}:
-            conn.execute(
-                "INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?)",
-                (
-                    data["session_id"],
-                    data["line_id"],
-                    data["occurrence_epoch"],
-                    int(data["stops_at"] is None),
-                    json.dumps(data),
-                ),
-            )
+        if kind in {"session", "coverage", "stop", "rollover"}:
+            for segment in (data["stopped"], data["opened"]) if kind == "rollover" else (data,):
+                conn.execute(
+                    "INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?)",
+                    (
+                        segment["session_id"],
+                        segment["line_id"],
+                        segment["occurrence_epoch"],
+                        int(segment["stops_at"] is None),
+                        json.dumps(segment),
+                    ),
+                )
         elif kind == "pending":
             # Re-evaluation and retries cannot replace the exact original binding.
             # The session that matched it, if any: only that armed segment may
