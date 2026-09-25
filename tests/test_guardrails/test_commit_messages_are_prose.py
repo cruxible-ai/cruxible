@@ -41,10 +41,18 @@ MESSAGE_PLACEHOLDERS = (
     "--format=%(describe",
 )
 
-# The one call that reads a raw commit object at all, and the only two line
-# prefixes it is allowed to interpret.
-COMMIT_OBJECT_READER = ("cat-file", "commit")
-IDENTITY_PREFIXES = ("author ", "committer ")
+# Raw commit objects are read only through the ledger's hash-checked batch
+# reader, which answers `(type, bytes)`; a function interprets a commit when it
+# gates on that type being "commit". These are every such function, and the
+# only header lines each may interpret. A direct `cat-file commit` would bypass
+# both the hash check and this inventory.
+DIRECT_COMMIT_OBJECT_READ = ("cat-file", "commit")
+COMMIT_HEADER_READERS = {
+    "parent_of": (b"parent ",),
+    "_commit_tree": (b"tree ",),
+    "main_history": (b"parent ",),
+    "commit_timestamps": ("author ", "committer "),
+}
 
 
 def _source_files() -> tuple[Path, ...]:
@@ -93,45 +101,106 @@ def test_no_source_file_asks_git_for_a_commit_message(path: Path) -> None:
         )
 
 
-def test_only_one_call_reads_a_raw_commit_object_and_it_reads_only_identities() -> None:
-    """`commit_timestamps` is the sole reader, and it never looks past the header.
+def _gates_on_a_commit_object(function: ast.FunctionDef) -> bool:
+    """`found[0] != "commit"`: the batch reader's type slot compared to a commit."""
 
-    Reading the commit object is legitimate -- the author and committer instants
-    are Git's own facts and live nowhere else -- but the same bytes carry the
-    message, so this pins that the parser stops at the two identity lines.
+    return any(
+        isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Subscript)
+        and isinstance(node.left.slice, ast.Constant)
+        and node.left.slice.value == 0
+        and any(
+            isinstance(item, ast.Constant) and item.value == "commit" for item in node.comparators
+        )
+        for node in ast.walk(function)
+    )
+
+
+def _is_header_cut(node: ast.AST) -> bool:
+    """`split(b"\\n\\n", 1)[0]` (the header block) or `split(b"\\n", 1)[0]` (its first line)."""
+
+    return (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.slice, ast.Constant)
+        and node.slice.value == 0
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and node.value.func.attr == "split"
+        and [arg.value for arg in node.value.args if isinstance(arg, ast.Constant)]
+        in ([b"\n\n", 1], [b"\n", 1])
+    )
+
+
+def test_every_raw_commit_read_stops_at_the_header_lines_it_names() -> None:
+    """Only the named header readers interpret a commit, and none looks past the header.
+
+    Reading a commit object is legitimate -- its tree, parents, and author and
+    committer instants are Git's own facts and live nowhere else -- but the same
+    bytes carry the message. Every read goes through the hash-checked batch
+    reader, so this pins each function that interprets a commit it read there:
+    it cuts the bytes at the header before reading them, and matches only the
+    header lines it is named for.
     """
 
-    readers = []
+    direct = []
+    readers: dict[str, tuple[Path, ast.FunctionDef]] = {}
+    helpers: dict[Path, dict[str, ast.FunctionDef]] = {}
     for path in _source_files():
         module = ast.parse(path.read_text(encoding="utf-8"))
-        calls = [
-            node
-            for node in ast.walk(module)
-            if isinstance(node, ast.List)
+        if any(
+            isinstance(node, ast.List)
             and [
                 item.value
                 for item in node.elts
                 if isinstance(item, ast.Constant) and isinstance(item.value, str)
             ][:2]
-            == list(COMMIT_OBJECT_READER)
-        ]
-        if calls:
-            readers.append(path)
-    assert [path.name for path in readers] == ["git.py"]
+            == list(DIRECT_COMMIT_OBJECT_READ)
+            for node in ast.walk(module)
+        ):
+            direct.append(path)
+        helpers[path] = {
+            node.name: node for node in module.body if isinstance(node, ast.FunctionDef)
+        }
+        for node in ast.walk(module):
+            if isinstance(node, ast.FunctionDef) and _gates_on_a_commit_object(node):
+                readers[node.name] = (path, node)
+    assert direct == []
+    assert set(readers) == set(COMMIT_HEADER_READERS)
+    assert {path.name for path, _function in readers.values()} == {"git.py"}
 
-    module = ast.parse(readers[0].read_text(encoding="utf-8"))
-    function = next(
-        node
-        for node in ast.walk(module)
-        if isinstance(node, ast.FunctionDef) and node.name == "commit_timestamps"
-    )
-    literals = {
-        node.value
-        for node in ast.walk(function)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    }
-    assert IDENTITY_PREFIXES[0] in literals and IDENTITY_PREFIXES[1] in literals
-    assert not {value for value in literals if value.startswith("message")}
+    for name, (path, function) in readers.items():
+        # A module-level helper the reader hands the bytes to is part of the read.
+        scope = [function] + [
+            helpers[path][node.func.id]
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in helpers[path]
+        ]
+        nodes = [node for part in scope for node in ast.walk(part)]
+        assert any(_is_header_cut(node) for node in nodes), name
+        prefixes = {
+            node.args[0].value
+            for node in nodes
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "startswith"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        }
+        assert prefixes == set(COMMIT_HEADER_READERS[name]), name
+        literals = {
+            node.value
+            for node in nodes
+            if isinstance(node, ast.Constant) and isinstance(node.value, str | bytes)
+        }
+        assert not {
+            value
+            for value in literals
+            if (value.decode("latin-1") if isinstance(value, bytes) else value).startswith(
+                ("message", "encoding", "gpgsig")
+            )
+        }, name
 
 
 def test_the_ledger_exposes_no_commit_message_reader() -> None:
