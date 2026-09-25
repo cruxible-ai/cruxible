@@ -1224,7 +1224,8 @@ or by hand and it clears.
 
 ~~~text
 cruxible playbill next [--evaluation-time TS] [--access-profile FILE]
-  [--expiring-within P7D] [--workspace-root DIR]
+  [--expiring-within P7D] [--workspace-root DIR] [--delta DIGEST]
+  [--limit N] [--cursor CURSOR] [--brief | --json]
 ~~~
 
 Returns the deterministic repair queue at one accepted coordinate. The client
@@ -1265,6 +1266,28 @@ the rows held. A hold lasts only while its basis is unchanged:
 A revised Claim, a later support or contradict from the same principal, or a
 lapsed validity window ends the hold, and the row returns.
 Empty `items` means only that no work exists in the explicitly observed domains.
+
+Rows are typed: each carries `severity`, `reason`, `subject_identity`,
+`related_identities`, `detail`, a `repair` (with a runnable `command` when the
+operation's arguments name every operand), and any further `findings` about the
+same underlying fact. `--delta DIGEST` returns only the rows added or removed
+since that earlier queue, when the daemon still remembers it; otherwise it
+returns the whole queue.
+
+Results are paged. `--limit` sets the rows per page (default 100, at most 1000),
+and `total_items` counts every row of the answer, so page one already gives the
+queue's size (or, on a delta, the number of changed rows). While more rows
+remain, `next_cursor` is set and the CLI prints `Next: --cursor CURSOR`. A
+cursor carries the evaluation time, coordinate, attestation head and delta base
+of the page that minted it, so later pages read the same queue even as the
+clock moves. `result_digest` names the whole queue on every page. If the queue
+has moved since the cursor's first page, or a delta's base has been forgotten,
+the request is refused with `playbill.next.cursor_mismatch`. The repair is to
+run `cruxible playbill next` again without a cursor.
+
+`--brief` prints one line per row: severity, reason, subject, and the repair
+command if there is one. It also prints the status lines that need attention
+and the next-page cursor, and leaves out repair details and findings.
 Conflicting values in the same claim slot require revisions into distinct
 qualifiers; when a shared value field such as `topic` separates the contenders,
 the repair identifies that field.
