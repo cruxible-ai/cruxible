@@ -6,6 +6,17 @@
         "independent_approval_required"
       ]
     },
+    "LineArmStopReasonV1": {
+      "values": [
+        "disarmed",
+        "line_changed",
+        "epoch_changed",
+        "credential_revoked",
+        "credential_scope_changed",
+        "permission_insufficient",
+        "authentication_changed"
+      ]
+    },
     "PlaybillAuthoringExampleName": {
       "values": [
         "claim-existing-capture",
@@ -75,7 +86,37 @@
         "unregistered_projection_block",
         "projection_marker_invalid",
         "proposal_stale",
-        "mandate_expiring"
+        "mandate_expiring",
+        "line_stalled"
+      ]
+    },
+    "PlaybillNextRefusalCodeV1": {
+      "values": [
+        "playbill.next.cursor_mismatch"
+      ]
+    },
+    "PlaybillNextRepairOperation": {
+      "values": [
+        "playbill.authoring.create",
+        "playbill.authoring.bind",
+        "playbill.claim.retire",
+        "playbill.floor.export",
+        "playbill.block.depublish",
+        "playbill.block.repin",
+        "playbill.block.sync",
+        "playbill.document.propose",
+        "playbill.proposal.readmit",
+        "playbill.compiler.upgrade",
+        "playbill.line.arm",
+        "playbill.line.dispatch",
+        "hand_edit"
+      ]
+    },
+    "PlaybillNextSeverity": {
+      "values": [
+        "blocking",
+        "repair",
+        "warning"
       ]
     },
     "PlaybillPolicyKind": {
@@ -1036,6 +1077,448 @@
       "required_fields": [
         "backend_id",
         "implementation_digest"
+      ]
+    },
+    "LineArmPrincipalV1": {
+      "fields": {
+        "credential_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "credential_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Credential Id"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "runtime_credential",
+              "local_operator"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "label": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "label",
+          "required": true,
+          "schema": {
+            "title": "Label",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Who armed a Line: the credential rechecked before every automatic admission.\n\nOnly the credential's identifier is retained, never a token.",
+        "properties": {
+          "credential_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Credential Id"
+          },
+          "kind": {
+            "enum": [
+              "runtime_credential",
+              "local_operator"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label"
+        ],
+        "title": "LineArmPrincipalV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "kind",
+        "label"
+      ]
+    },
+    "LineArmV1": {
+      "fields": {
+        "arm_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "arm_id",
+          "required": true,
+          "schema": {
+            "title": "Arm Id",
+            "type": "string"
+          }
+        },
+        "armed_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "armed_at",
+          "required": true,
+          "schema": {
+            "description": "Reads VALIDITY WINDOW.",
+            "format": "date-time",
+            "title": "Armed At",
+            "type": "string"
+          }
+        },
+        "armed_by": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "armed_by",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/LineArmPrincipalV1"
+          }
+        },
+        "detail": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "evaluated_until": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluated_until",
+          "required": true,
+          "schema": {
+            "description": "Reads VALIDITY WINDOW.",
+            "format": "date-time",
+            "title": "Evaluated Until",
+            "type": "string"
+          }
+        },
+        "line": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line",
+          "required": true,
+          "schema": {
+            "title": "Line",
+            "type": "string"
+          }
+        },
+        "line_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line_artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Line Artifact Digest",
+            "type": "string"
+          }
+        },
+        "occurrence_epoch": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "occurrence_epoch",
+          "required": true,
+          "schema": {
+            "title": "Occurrence Epoch",
+            "type": "integer"
+          }
+        },
+        "pending_automatic": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pending_automatic",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Pending Automatic",
+            "type": "integer"
+          }
+        },
+        "pending_explicit": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pending_explicit",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Pending Explicit",
+            "type": "integer"
+          }
+        },
+        "state": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state",
+          "required": true,
+          "schema": {
+            "enum": [
+              "armed",
+              "stopped"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "stop_reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "stop_reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "disarmed",
+                  "line_changed",
+                  "epoch_changed",
+                  "credential_revoked",
+                  "credential_scope_changed",
+                  "permission_insufficient",
+                  "authentication_changed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stop Reason"
+          }
+        },
+        "stopped_at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "stopped_at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW.",
+            "title": "Stopped At"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "LineArmPrincipalV1": {
+            "additionalProperties": false,
+            "description": "Who armed a Line: the credential rechecked before every automatic admission.\n\nOnly the credential's identifier is retained, never a token.",
+            "properties": {
+              "credential_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Credential Id"
+              },
+              "kind": {
+                "enum": [
+                  "runtime_credential",
+                  "local_operator"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "label": {
+                "title": "Label",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "title": "LineArmPrincipalV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One Line's automatic dispatch: armed forward-only, or why it stopped.\n\nAn armed Line admits the occurrences its daemon matched since it was armed\nor last restarted, under the pinned Line version and the arming credential.\nOccurrences matched before a restart, or by explicit evaluation, stay\npending for explicit dispatch.",
+        "properties": {
+          "arm_id": {
+            "title": "Arm Id",
+            "type": "string"
+          },
+          "armed_at": {
+            "description": "Reads VALIDITY WINDOW.",
+            "format": "date-time",
+            "title": "Armed At",
+            "type": "string"
+          },
+          "armed_by": {
+            "$ref": "#/$defs/LineArmPrincipalV1"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "evaluated_until": {
+            "description": "Reads VALIDITY WINDOW.",
+            "format": "date-time",
+            "title": "Evaluated Until",
+            "type": "string"
+          },
+          "line": {
+            "title": "Line",
+            "type": "string"
+          },
+          "line_artifact_digest": {
+            "title": "Line Artifact Digest",
+            "type": "string"
+          },
+          "occurrence_epoch": {
+            "title": "Occurrence Epoch",
+            "type": "integer"
+          },
+          "pending_automatic": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Pending Automatic",
+            "type": "integer"
+          },
+          "pending_explicit": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Pending Explicit",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "armed",
+              "stopped"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "disarmed",
+                  "line_changed",
+                  "epoch_changed",
+                  "credential_revoked",
+                  "credential_scope_changed",
+                  "permission_insufficient",
+                  "authentication_changed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stop Reason"
+          },
+          "stopped_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Reads VALIDITY WINDOW.",
+            "title": "Stopped At"
+          }
+        },
+        "required": [
+          "arm_id",
+          "line",
+          "line_artifact_digest",
+          "occurrence_epoch",
+          "state",
+          "armed_at",
+          "armed_by",
+          "evaluated_until"
+        ],
+        "title": "LineArmV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "arm_id",
+        "armed_at",
+        "armed_by",
+        "evaluated_until",
+        "line",
+        "line_artifact_digest",
+        "occurrence_epoch",
+        "state"
       ]
     },
     "LineDispatchItemV1": {
@@ -2324,216 +2807,6 @@
       },
       "required_fields": []
     },
-    "LineListenRequestV1": {
-      "fields": {
-        "action": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "action",
-          "required": true,
-          "schema": {
-            "enum": [
-              "start",
-              "stop"
-            ],
-            "title": "Action",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "additionalProperties": false,
-        "properties": {
-          "action": {
-            "enum": [
-              "start",
-              "stop"
-            ],
-            "title": "Action",
-            "type": "string"
-          }
-        },
-        "required": [
-          "action"
-        ],
-        "title": "LineListenRequestV1",
-        "type": "object"
-      },
-      "required_fields": [
-        "action"
-      ]
-    },
-    "LineListeningSessionV1": {
-      "fields": {
-        "detail": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "detail",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Detail"
-          }
-        },
-        "evaluated_until": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "evaluated_until",
-          "required": true,
-          "schema": {
-            "description": "Reads VALIDITY WINDOW.",
-            "format": "date-time",
-            "title": "Evaluated Until",
-            "type": "string"
-          }
-        },
-        "line": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "line",
-          "required": true,
-          "schema": {
-            "title": "Line",
-            "type": "string"
-          }
-        },
-        "occurrence_epoch": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "occurrence_epoch",
-          "required": true,
-          "schema": {
-            "title": "Occurrence Epoch",
-            "type": "integer"
-          }
-        },
-        "session_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "session_id",
-          "required": true,
-          "schema": {
-            "title": "Session Id",
-            "type": "string"
-          }
-        },
-        "starts_at": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "starts_at",
-          "required": true,
-          "schema": {
-            "description": "Reads VALIDITY WINDOW.",
-            "format": "date-time",
-            "title": "Starts At",
-            "type": "string"
-          }
-        },
-        "stops_at": {
-          "default": null,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "stops_at",
-          "required": false,
-          "schema": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Reads VALIDITY WINDOW.",
-            "title": "Stops At"
-          }
-        }
-      },
-      "json_schema": {
-        "additionalProperties": false,
-        "properties": {
-          "detail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Detail"
-          },
-          "evaluated_until": {
-            "description": "Reads VALIDITY WINDOW.",
-            "format": "date-time",
-            "title": "Evaluated Until",
-            "type": "string"
-          },
-          "line": {
-            "title": "Line",
-            "type": "string"
-          },
-          "occurrence_epoch": {
-            "title": "Occurrence Epoch",
-            "type": "integer"
-          },
-          "session_id": {
-            "title": "Session Id",
-            "type": "string"
-          },
-          "starts_at": {
-            "description": "Reads VALIDITY WINDOW.",
-            "format": "date-time",
-            "title": "Starts At",
-            "type": "string"
-          },
-          "stops_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Reads VALIDITY WINDOW.",
-            "title": "Stops At"
-          }
-        },
-        "required": [
-          "session_id",
-          "line",
-          "occurrence_epoch",
-          "starts_at",
-          "evaluated_until"
-        ],
-        "title": "LineListeningSessionV1",
-        "type": "object"
-      },
-      "required_fields": [
-        "evaluated_until",
-        "line",
-        "occurrence_epoch",
-        "session_id",
-        "starts_at"
-      ]
-    },
     "LineTriggerBindingV1": {
       "fields": {
         "event": {
@@ -3145,7 +3418,8 @@
                       "pending",
                       "admitted",
                       "rejected",
-                      "superseded"
+                      "superseded",
+                      "lapsed"
                     ],
                     "type": "string"
                   },
@@ -3371,7 +3645,8 @@
                   "pending",
                   "admitted",
                   "rejected",
-                  "superseded"
+                  "superseded",
+                  "lapsed"
                 ],
                 "type": "string"
               },
@@ -3562,7 +3837,8 @@
                   "pending",
                   "admitted",
                   "rejected",
-                  "superseded"
+                  "superseded",
+                  "lapsed"
                 ],
                 "type": "string"
               },
@@ -24363,6 +24639,880 @@
         "status"
       ]
     },
+    "PlaybillNextFinding": {
+      "fields": {
+        "detail": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "title": "Detail"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "enum": [
+              "claim_conflicted",
+              "claim_uncovered",
+              "claim_stale_evidence",
+              "citation_drifted",
+              "citation_source_unobserved",
+              "evidence_expiring",
+              "floor_invalid",
+              "projection_dirty",
+              "projection_backing_stale",
+              "claim_dependency_stale",
+              "claim_attestation_threshold_met",
+              "claim_contradicting_evidence_available",
+              "claim_new_evidence_supporting",
+              "claim_new_evidence_unreviewed",
+              "document_modified",
+              "unregistered_projection_block",
+              "projection_marker_invalid",
+              "proposal_stale",
+              "mandate_expiring",
+              "line_stalled"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "related_identities": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "related_identities",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Identities",
+            "type": "array"
+          }
+        },
+        "repair": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "repair",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextRepair"
+          }
+        },
+        "severity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "severity",
+          "required": true,
+          "schema": {
+            "enum": [
+              "blocking",
+              "repair",
+              "warning"
+            ],
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "subject_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_identity",
+          "required": true,
+          "schema": {
+            "title": "Subject Identity",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-next-finding-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-next-finding-v1",
+            "default": "playbill-next-finding-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillNextRepair": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "title": "Arguments"
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Command"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "required_change": {
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "required_change"
+            ],
+            "title": "PlaybillNextRepair",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One more finding about the same underlying fact as the row that carries it.",
+        "properties": {
+          "detail": {
+            "title": "Detail"
+          },
+          "reason": {
+            "enum": [
+              "claim_conflicted",
+              "claim_uncovered",
+              "claim_stale_evidence",
+              "citation_drifted",
+              "citation_source_unobserved",
+              "evidence_expiring",
+              "floor_invalid",
+              "projection_dirty",
+              "projection_backing_stale",
+              "claim_dependency_stale",
+              "claim_attestation_threshold_met",
+              "claim_contradicting_evidence_available",
+              "claim_new_evidence_supporting",
+              "claim_new_evidence_unreviewed",
+              "document_modified",
+              "unregistered_projection_block",
+              "projection_marker_invalid",
+              "proposal_stale",
+              "mandate_expiring",
+              "line_stalled"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "related_identities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Identities",
+            "type": "array"
+          },
+          "repair": {
+            "$ref": "#/$defs/PlaybillNextRepair"
+          },
+          "severity": {
+            "enum": [
+              "blocking",
+              "repair",
+              "warning"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "subject_identity": {
+            "title": "Subject Identity",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-next-finding-v1",
+            "default": "playbill-next-finding-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "reason",
+          "subject_identity",
+          "repair"
+        ],
+        "title": "PlaybillNextFinding",
+        "type": "object"
+      },
+      "required_fields": [
+        "reason",
+        "repair",
+        "severity",
+        "subject_identity"
+      ]
+    },
+    "PlaybillNextHealth": {
+      "fields": {
+        "detail": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "title": "Detail"
+          }
+        },
+        "repair": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "repair",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "state": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state",
+          "required": true,
+          "schema": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-next-health-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-next-health-v1",
+            "default": "playbill-next-health-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillNextRepair": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "title": "Arguments"
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Command"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "required_change": {
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "required_change"
+            ],
+            "title": "PlaybillNextRepair",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One environment facet: its state, what it saw, and the repair if it needs one.",
+        "properties": {
+          "detail": {
+            "title": "Detail"
+          },
+          "repair": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-next-health-v1",
+            "default": "playbill-next-health-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "PlaybillNextHealth",
+        "type": "object"
+      },
+      "required_fields": [
+        "state"
+      ]
+    },
+    "PlaybillNextItem": {
+      "fields": {
+        "detail": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "title": "Detail"
+          }
+        },
+        "findings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "findings",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillNextFinding"
+            },
+            "title": "Findings",
+            "type": "array"
+          }
+        },
+        "item_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "item_id",
+          "required": true,
+          "schema": {
+            "title": "Item Id",
+            "type": "string"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "enum": [
+              "claim_conflicted",
+              "claim_uncovered",
+              "claim_stale_evidence",
+              "citation_drifted",
+              "citation_source_unobserved",
+              "evidence_expiring",
+              "floor_invalid",
+              "projection_dirty",
+              "projection_backing_stale",
+              "claim_dependency_stale",
+              "claim_attestation_threshold_met",
+              "claim_contradicting_evidence_available",
+              "claim_new_evidence_supporting",
+              "claim_new_evidence_unreviewed",
+              "document_modified",
+              "unregistered_projection_block",
+              "projection_marker_invalid",
+              "proposal_stale",
+              "mandate_expiring",
+              "line_stalled"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "related_identities": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "related_identities",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Identities",
+            "type": "array"
+          }
+        },
+        "repair": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "repair",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextRepair"
+          }
+        },
+        "severity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "severity",
+          "required": true,
+          "schema": {
+            "enum": [
+              "blocking",
+              "repair",
+              "warning"
+            ],
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "subject_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_identity",
+          "required": true,
+          "schema": {
+            "title": "Subject Identity",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-next-item-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-next-item-v1",
+            "default": "playbill-next-item-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillNextFinding": {
+            "additionalProperties": false,
+            "description": "One more finding about the same underlying fact as the row that carries it.",
+            "properties": {
+              "detail": {
+                "title": "Detail"
+              },
+              "reason": {
+                "enum": [
+                  "claim_conflicted",
+                  "claim_uncovered",
+                  "claim_stale_evidence",
+                  "citation_drifted",
+                  "citation_source_unobserved",
+                  "evidence_expiring",
+                  "floor_invalid",
+                  "projection_dirty",
+                  "projection_backing_stale",
+                  "claim_dependency_stale",
+                  "claim_attestation_threshold_met",
+                  "claim_contradicting_evidence_available",
+                  "claim_new_evidence_supporting",
+                  "claim_new_evidence_unreviewed",
+                  "document_modified",
+                  "unregistered_projection_block",
+                  "projection_marker_invalid",
+                  "proposal_stale",
+                  "mandate_expiring",
+                  "line_stalled"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "related_identities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Related Identities",
+                "type": "array"
+              },
+              "repair": {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              "severity": {
+                "enum": [
+                  "blocking",
+                  "repair",
+                  "warning"
+                ],
+                "title": "Severity",
+                "type": "string"
+              },
+              "subject_identity": {
+                "title": "Subject Identity",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-next-finding-v1",
+                "default": "playbill-next-finding-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "severity",
+              "reason",
+              "subject_identity",
+              "repair"
+            ],
+            "title": "PlaybillNextFinding",
+            "type": "object"
+          },
+          "PlaybillNextRepair": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "title": "Arguments"
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Command"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "required_change": {
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "required_change"
+            ],
+            "title": "PlaybillNextRepair",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "title": "Detail"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/$defs/PlaybillNextFinding"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "claim_conflicted",
+              "claim_uncovered",
+              "claim_stale_evidence",
+              "citation_drifted",
+              "citation_source_unobserved",
+              "evidence_expiring",
+              "floor_invalid",
+              "projection_dirty",
+              "projection_backing_stale",
+              "claim_dependency_stale",
+              "claim_attestation_threshold_met",
+              "claim_contradicting_evidence_available",
+              "claim_new_evidence_supporting",
+              "claim_new_evidence_unreviewed",
+              "document_modified",
+              "unregistered_projection_block",
+              "projection_marker_invalid",
+              "proposal_stale",
+              "mandate_expiring",
+              "line_stalled"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "related_identities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Identities",
+            "type": "array"
+          },
+          "repair": {
+            "$ref": "#/$defs/PlaybillNextRepair"
+          },
+          "severity": {
+            "enum": [
+              "blocking",
+              "repair",
+              "warning"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "subject_identity": {
+            "title": "Subject Identity",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-next-item-v1",
+            "default": "playbill-next-item-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "severity",
+          "reason",
+          "subject_identity",
+          "repair"
+        ],
+        "title": "PlaybillNextItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "item_id",
+        "reason",
+        "repair",
+        "severity",
+        "subject_identity"
+      ]
+    },
+    "PlaybillNextRepair": {
+      "fields": {
+        "arguments": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "arguments",
+          "required": false,
+          "schema": {
+            "title": "Arguments"
+          }
+        },
+        "command": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "command",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Command"
+          }
+        },
+        "operation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operation",
+          "required": true,
+          "schema": {
+            "enum": [
+              "playbill.authoring.create",
+              "playbill.authoring.bind",
+              "playbill.claim.retire",
+              "playbill.floor.export",
+              "playbill.block.depublish",
+              "playbill.block.repin",
+              "playbill.block.sync",
+              "playbill.document.propose",
+              "playbill.proposal.readmit",
+              "playbill.compiler.upgrade",
+              "playbill.line.arm",
+              "playbill.line.dispatch",
+              "hand_edit"
+            ],
+            "title": "Operation",
+            "type": "string"
+          }
+        },
+        "required_change": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "required_change",
+          "required": true,
+          "schema": {
+            "title": "Required Change",
+            "type": "string"
+          }
+        },
+        "target": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target",
+          "required": true,
+          "schema": {
+            "title": "Target",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments": {
+            "title": "Arguments"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Command"
+          },
+          "operation": {
+            "enum": [
+              "playbill.authoring.create",
+              "playbill.authoring.bind",
+              "playbill.claim.retire",
+              "playbill.floor.export",
+              "playbill.block.depublish",
+              "playbill.block.repin",
+              "playbill.block.sync",
+              "playbill.document.propose",
+              "playbill.proposal.readmit",
+              "playbill.compiler.upgrade",
+              "playbill.line.arm",
+              "playbill.line.dispatch",
+              "hand_edit"
+            ],
+            "title": "Operation",
+            "type": "string"
+          },
+          "required_change": {
+            "title": "Required Change",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation",
+          "target",
+          "required_change"
+        ],
+        "title": "PlaybillNextRepair",
+        "type": "object"
+      },
+      "required_fields": [
+        "operation",
+        "required_change",
+        "target"
+      ]
+    },
     "PlaybillNextResult": {
       "fields": {
         "attestation_head_digest": {
@@ -24431,11 +25581,30 @@
           "required": true,
           "schema": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/PlaybillNextItem"
             },
             "title": "Items",
             "type": "array"
+          }
+        },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
           }
         },
         "observed_domains": {
@@ -24486,9 +25655,7 @@
           "json_name": "status",
           "required": true,
           "schema": {
-            "additionalProperties": true,
-            "title": "Status",
-            "type": "object"
+            "$ref": "#/$defs/PlaybillNextStatus"
           }
         },
         "tag": {
@@ -24506,6 +25673,17 @@
             ],
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "total_items": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total_items",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Total Items",
+            "type": "integer"
           }
         },
         "unobserved_domains": {
@@ -24568,6 +25746,305 @@
             ],
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
+          },
+          "PlaybillNextFinding": {
+            "additionalProperties": false,
+            "description": "One more finding about the same underlying fact as the row that carries it.",
+            "properties": {
+              "detail": {
+                "title": "Detail"
+              },
+              "reason": {
+                "enum": [
+                  "claim_conflicted",
+                  "claim_uncovered",
+                  "claim_stale_evidence",
+                  "citation_drifted",
+                  "citation_source_unobserved",
+                  "evidence_expiring",
+                  "floor_invalid",
+                  "projection_dirty",
+                  "projection_backing_stale",
+                  "claim_dependency_stale",
+                  "claim_attestation_threshold_met",
+                  "claim_contradicting_evidence_available",
+                  "claim_new_evidence_supporting",
+                  "claim_new_evidence_unreviewed",
+                  "document_modified",
+                  "unregistered_projection_block",
+                  "projection_marker_invalid",
+                  "proposal_stale",
+                  "mandate_expiring",
+                  "line_stalled"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "related_identities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Related Identities",
+                "type": "array"
+              },
+              "repair": {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              "severity": {
+                "enum": [
+                  "blocking",
+                  "repair",
+                  "warning"
+                ],
+                "title": "Severity",
+                "type": "string"
+              },
+              "subject_identity": {
+                "title": "Subject Identity",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-next-finding-v1",
+                "default": "playbill-next-finding-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "severity",
+              "reason",
+              "subject_identity",
+              "repair"
+            ],
+            "title": "PlaybillNextFinding",
+            "type": "object"
+          },
+          "PlaybillNextHealth": {
+            "additionalProperties": false,
+            "description": "One environment facet: its state, what it saw, and the repair if it needs one.",
+            "properties": {
+              "detail": {
+                "title": "Detail"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepair"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "state": {
+                "title": "State",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-next-health-v1",
+                "default": "playbill-next-health-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "title": "PlaybillNextHealth",
+            "type": "object"
+          },
+          "PlaybillNextItem": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "title": "Detail"
+              },
+              "findings": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillNextFinding"
+                },
+                "title": "Findings",
+                "type": "array"
+              },
+              "item_id": {
+                "title": "Item Id",
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "claim_conflicted",
+                  "claim_uncovered",
+                  "claim_stale_evidence",
+                  "citation_drifted",
+                  "citation_source_unobserved",
+                  "evidence_expiring",
+                  "floor_invalid",
+                  "projection_dirty",
+                  "projection_backing_stale",
+                  "claim_dependency_stale",
+                  "claim_attestation_threshold_met",
+                  "claim_contradicting_evidence_available",
+                  "claim_new_evidence_supporting",
+                  "claim_new_evidence_unreviewed",
+                  "document_modified",
+                  "unregistered_projection_block",
+                  "projection_marker_invalid",
+                  "proposal_stale",
+                  "mandate_expiring",
+                  "line_stalled"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "related_identities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Related Identities",
+                "type": "array"
+              },
+              "repair": {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              "severity": {
+                "enum": [
+                  "blocking",
+                  "repair",
+                  "warning"
+                ],
+                "title": "Severity",
+                "type": "string"
+              },
+              "subject_identity": {
+                "title": "Subject Identity",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-next-item-v1",
+                "default": "playbill-next-item-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "item_id",
+              "severity",
+              "reason",
+              "subject_identity",
+              "repair"
+            ],
+            "title": "PlaybillNextItem",
+            "type": "object"
+          },
+          "PlaybillNextRepair": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "title": "Arguments"
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Command"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "required_change": {
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "required_change"
+            ],
+            "title": "PlaybillNextRepair",
+            "type": "object"
+          },
+          "PlaybillNextStatus": {
+            "additionalProperties": false,
+            "description": "The environment the queue was read in, beside the work rather than in it.",
+            "properties": {
+              "blocking": {
+                "title": "Blocking",
+                "type": "boolean"
+              },
+              "compiler": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "floor": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "held": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Held",
+                "type": "integer"
+              },
+              "instance": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "ledger_mirror": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "line_dispatch": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "procedure_catalog": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "provider_lane": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "tag": {
+                "const": "playbill-next-status-v1",
+                "default": "playbill-next-status-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "blocking",
+              "instance",
+              "floor",
+              "ledger_mirror",
+              "provider_lane",
+              "procedure_catalog",
+              "compiler",
+              "line_dispatch"
+            ],
+            "title": "PlaybillNextStatus",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -24605,11 +26082,22 @@
           },
           "items": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/PlaybillNextItem"
             },
             "title": "Items",
             "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
           },
           "observed_domains": {
             "items": {
@@ -24636,9 +26124,7 @@
             "type": "string"
           },
           "status": {
-            "additionalProperties": true,
-            "title": "Status",
-            "type": "object"
+            "$ref": "#/$defs/PlaybillNextStatus"
           },
           "tag": {
             "default": "playbill-next-result-v1",
@@ -24648,6 +26134,11 @@
             ],
             "title": "Tag",
             "type": "string"
+          },
+          "total_items": {
+            "minimum": 0,
+            "title": "Total Items",
+            "type": "integer"
           },
           "unobserved_domains": {
             "items": {
@@ -24670,6 +26161,7 @@
           "unobserved_domains",
           "status",
           "items",
+          "total_items",
           "result_digest"
         ],
         "title": "PlaybillNextResult",
@@ -24682,7 +26174,269 @@
         "observed_domains",
         "result_digest",
         "status",
+        "total_items",
         "unobserved_domains"
+      ]
+    },
+    "PlaybillNextStatus": {
+      "fields": {
+        "blocking": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "blocking",
+          "required": true,
+          "schema": {
+            "title": "Blocking",
+            "type": "boolean"
+          }
+        },
+        "compiler": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "compiler",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "floor": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "floor",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "held": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "held",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Held",
+            "type": "integer"
+          }
+        },
+        "instance": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "ledger_mirror": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "ledger_mirror",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "line_dispatch": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line_dispatch",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "procedure_catalog": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure_catalog",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "provider_lane": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider_lane",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "tag": {
+          "default": "playbill-next-status-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-next-status-v1",
+            "default": "playbill-next-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillNextHealth": {
+            "additionalProperties": false,
+            "description": "One environment facet: its state, what it saw, and the repair if it needs one.",
+            "properties": {
+              "detail": {
+                "title": "Detail"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepair"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "state": {
+                "title": "State",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-next-health-v1",
+                "default": "playbill-next-health-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "title": "PlaybillNextHealth",
+            "type": "object"
+          },
+          "PlaybillNextRepair": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "title": "Arguments"
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Command"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "required_change": {
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "required_change"
+            ],
+            "title": "PlaybillNextRepair",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The environment the queue was read in, beside the work rather than in it.",
+        "properties": {
+          "blocking": {
+            "title": "Blocking",
+            "type": "boolean"
+          },
+          "compiler": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "floor": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "held": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Held",
+            "type": "integer"
+          },
+          "instance": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "ledger_mirror": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "line_dispatch": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "procedure_catalog": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "provider_lane": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "tag": {
+            "const": "playbill-next-status-v1",
+            "default": "playbill-next-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "blocking",
+          "instance",
+          "floor",
+          "ledger_mirror",
+          "provider_lane",
+          "procedure_catalog",
+          "compiler",
+          "line_dispatch"
+        ],
+        "title": "PlaybillNextStatus",
+        "type": "object"
+      },
+      "required_fields": [
+        "blocking",
+        "compiler",
+        "floor",
+        "instance",
+        "ledger_mirror",
+        "line_dispatch",
+        "procedure_catalog",
+        "provider_lane"
       ]
     },
     "PlaybillPolicyInForce": {

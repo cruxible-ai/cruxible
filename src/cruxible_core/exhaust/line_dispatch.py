@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.line_dispatch import LineListeningSessionV1
+from cruxible_client.contracts.line_dispatch import LineArmV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.exhaust.backends import LocalJournalBackend
@@ -42,9 +42,12 @@ CREATE INDEX IF NOT EXISTS sessions_active ON sessions(active);
 CREATE TABLE IF NOT EXISTS pending (
  line_id TEXT NOT NULL, epoch INTEGER NOT NULL, occurrence_id TEXT NOT NULL,
  disposition TEXT NOT NULL, eligible_at TEXT NOT NULL, payload TEXT NOT NULL, run_id TEXT,
+ session_id TEXT,
  PRIMARY KEY(line_id,epoch,occurrence_id));
 CREATE INDEX IF NOT EXISTS unresolved
  ON pending(line_id,eligible_at,occurrence_id) WHERE disposition='pending';
+CREATE INDEX IF NOT EXISTS armed_work
+ ON pending(session_id,eligible_at,occurrence_id) WHERE disposition='pending';
 """
 
 
@@ -75,7 +78,7 @@ class LineDispatchStore:
             try:
                 # This is a disposable projection, never a migration of authority.
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(pending)")}
-                if columns and "disposition" not in columns:
+                if columns and not {"disposition", "session_id"} <= columns:
                     conn.executescript(
                         "BEGIN IMMEDIATE; DROP TABLE pending; DROP TABLE sessions; "
                         "DROP TABLE progress;" + _SCHEMA + "COMMIT;"
@@ -105,21 +108,24 @@ class LineDispatchStore:
 
     def _apply(self, conn: sqlite3.Connection, event: dict[str, Any], sequence: int) -> None:
         kind, data = event["kind"], event["data"]
-        if kind in {"session", "coverage", "stop"}:
-            conn.execute(
-                "INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?)",
-                (
-                    data["session_id"],
-                    data["line_id"],
-                    data["occurrence_epoch"],
-                    int(data["stops_at"] is None),
-                    json.dumps(data),
-                ),
-            )
+        if kind in {"session", "coverage", "stop", "rollover"}:
+            for segment in (data["stopped"], data["opened"]) if kind == "rollover" else (data,):
+                conn.execute(
+                    "INSERT OR REPLACE INTO sessions VALUES(?,?,?,?,?)",
+                    (
+                        segment["session_id"],
+                        segment["line_id"],
+                        segment["occurrence_epoch"],
+                        int(segment["stops_at"] is None),
+                        json.dumps(segment),
+                    ),
+                )
         elif kind == "pending":
             # Re-evaluation and retries cannot replace the exact original binding.
+            # The session that matched it, if any: only that armed segment may
+            # dispatch it without an explicit call.
             conn.execute(
-                "INSERT OR IGNORE INTO pending VALUES(?,?,?,?,?,?,NULL)",
+                "INSERT OR IGNORE INTO pending VALUES(?,?,?,?,?,?,NULL,?)",
                 (
                     data["line_identity_digest"],
                     data["occurrence_epoch"],
@@ -127,6 +133,7 @@ class LineDispatchStore:
                     "pending",
                     format_datetime(parse_datetime(data["occurrence"]["eligible_at"])),
                     json.dumps(data),
+                    data.get("session_id"),
                 ),
             )
         elif kind == "admitted":
@@ -136,7 +143,7 @@ class LineDispatchStore:
                 (data["run_id"], data["line_id"], data["epoch"], data["occurrence_id"]),
             )
         elif kind == "closed":
-            if data["status"] not in {"rejected", "superseded"}:
+            if data["status"] not in {"rejected", "superseded", "lapsed"}:
                 raise ValueError("invalid closed occurrence disposition")
             conn.execute(
                 "UPDATE pending SET disposition=? WHERE line_id=? AND epoch=? "
@@ -204,9 +211,24 @@ class LineDispatchStore:
         conn.commit()
 
     @staticmethod
-    def session_view(data: dict[str, Any]) -> LineListeningSessionV1:
-        return LineListeningSessionV1.model_validate(
-            {key: data.get(key) for key in LineListeningSessionV1.model_fields}
+    def arm_view(
+        data: dict[str, Any], *, pending_automatic: int = 0, pending_explicit: int = 0
+    ) -> LineArmV1:
+        stopped = data["stops_at"] is not None and data.get("stop_reason") is not None
+        return LineArmV1(
+            arm_id=data["arm_id"],
+            line=data["line"],
+            line_artifact_digest=data["line_artifact_digest"],
+            occurrence_epoch=data["occurrence_epoch"],
+            state="stopped" if stopped else "armed",
+            armed_at=data["armed_at"],
+            armed_by=data["armed_by"],
+            evaluated_until=data["evaluated_until"],
+            stopped_at=data["stops_at"] if stopped else None,
+            stop_reason=data.get("stop_reason") if stopped else None,
+            detail=data.get("detail"),
+            pending_automatic=pending_automatic,
+            pending_explicit=pending_explicit,
         )
 
     def occurrence_states(

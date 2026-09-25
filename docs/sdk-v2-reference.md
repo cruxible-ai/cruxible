@@ -1508,7 +1508,14 @@ and repair hints. To explicitly retry closed work after repair, use
 successor Line only in the same epoch and never substitutes another event or
 Capture. Historical evaluation alone does not reopen closed work.
 
-Listening matches events without executing Procedures. Admission verifies
+`pb.arm_line(name)` has the daemon admit what the Line matches from now on,
+under this connection's credential (rechecked before each run) and the Line
+version current now. It never catches up: earlier pending work and daemon
+downtime still need `evaluate_line` and `dispatch_line`. `pb.line_arm(name)`
+reports whether the Line is armed, its automatic and explicit pending counts,
+and why an arm stopped; `pb.disarm_line(name)` stops further admissions.
+
+Matching itself never executes a Procedure; admission does. Admission verifies
 the exact retained Capture against its producer coordinate, acquisition policy,
 and byte budget, then retains the input and its material manifest. The bound Source
 uses those bytes without invoking its provider; other Source nodes still acquire

@@ -48,6 +48,7 @@ def service_check_line_trigger(
     after: dict[str, Any] | None = None,
     through: dict[str, Any] | None = None,
     include_future_windows: bool = False,
+    pending_scope: str | None = None,
 ) -> LineTriggerCheckResultV1:
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 
@@ -152,15 +153,24 @@ def service_check_line_trigger(
                 )
         elif isinstance(policy, CadenceTriggerPolicyV1):
             prior = _line_admissions(instance, accepted)
-            _, due = _line_occurrence(accepted, evaluation_time=now, prior=prior)
-            # An already-pending first cadence keeps its original due instant;
-            # checks must not invent a new occurrence on every call.
+            _, due = _line_occurrence(
+                accepted, evaluation_time=now, prior=prior, not_before=request.since
+            )
+            # An already-pending cadence tick keeps its original due instant;
+            # checks must not invent a new occurrence on every call. An armed
+            # segment (`pending_scope`) only ever resumes its own tick.
             if dispatch_root(instance).exists():
                 with LineDispatchStore(instance).locked() as conn:
                     row = conn.execute(
                         "SELECT eligible_at FROM pending WHERE line_id=? AND epoch=? "
-                        "AND disposition='pending' ORDER BY eligible_at,occurrence_id LIMIT 1",
-                        (identity, accepted.line.occurrence_epoch),
+                        "AND disposition='pending'"
+                        + (" AND session_id=?" if pending_scope is not None else "")
+                        + " ORDER BY eligible_at,occurrence_id LIMIT 1",
+                        (
+                            identity,
+                            accepted.line.occurrence_epoch,
+                            *((pending_scope,) if pending_scope is not None else ()),
+                        ),
                     ).fetchone()
                     if row is not None:
                         due = datetime.fromisoformat(row[0])
@@ -183,7 +193,11 @@ def service_check_line_trigger(
             ):
                 continue
             occurrence, _ = _line_occurrence(
-                accepted, evaluation_time=eligible, prior=(), binding=binding
+                accepted,
+                evaluation_time=eligible,
+                prior=(),
+                binding=binding,
+                exact_basis=eligible if binding is None else None,
             )
             admission = next(
                 iter(_line_admissions(instance, accepted, occurrence_id=occurrence)), None

@@ -1479,14 +1479,17 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.LineTriggerCheckResultV1)
 
-    def listen_playbill_line(
-        self, instance_id: str, line: str, *, request: contracts.LineListenRequestV1
-    ) -> contracts.LineListeningSessionV1:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/lines/{line}/listen",
-            json=request.model_dump(mode="json"),
-        )
-        return self._parse_model(response, contracts.LineListeningSessionV1)
+    def arm_playbill_line(self, instance_id: str, line: str) -> contracts.LineArmV1:
+        response = self._client.post(f"/api/v1/{instance_id}/playbill/lines/{line}/arm")
+        return self._parse_model(response, contracts.LineArmV1)
+
+    def disarm_playbill_line(self, instance_id: str, line: str) -> contracts.LineArmV1:
+        response = self._client.post(f"/api/v1/{instance_id}/playbill/lines/{line}/disarm")
+        return self._parse_model(response, contracts.LineArmV1)
+
+    def playbill_line_arm_status(self, instance_id: str, line: str) -> contracts.LineArmV1:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/lines/{line}/arm")
+        return self._parse_model(response, contracts.LineArmV1)
 
     def evaluate_playbill_line(
         self, instance_id: str, line: str, *, request: contracts.LineEvaluateRequestV1
@@ -1548,6 +1551,8 @@ class CruxibleClient:
         workspace_observation: Mapping[str, Any] | None = None,
         since_result_digest: str | None = None,
         at_attestation_head_digest: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
     ) -> contracts.PlaybillNextResult:
         payload: dict[str, Any] = {
             "tag": "playbill-next-request-v2",
@@ -1564,6 +1569,10 @@ class CruxibleClient:
             payload["since_result_digest"] = since_result_digest
         if at_attestation_head_digest is not None:
             payload["at_attestation_head_digest"] = at_attestation_head_digest
+        if limit is not None:
+            payload["limit"] = limit
+        if cursor is not None:
+            payload["cursor"] = cursor
         response = self._client.post(f"/api/v1/{instance_id}/playbill/next", json=payload)
         return self._parse_model(response, contracts.PlaybillNextResult)
 

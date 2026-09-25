@@ -132,6 +132,7 @@ def _result(item_ids: tuple[str, ...], *, digest_hex: str = "9"):  # type: ignor
             line_dispatch=PlaybillNextHealthV1(state="idle"),
         ),
         items=tuple(items),
+        total_items=len(items),
         result_digest="sha256:" + digest_hex * 64,
     )
 

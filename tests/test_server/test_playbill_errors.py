@@ -257,6 +257,30 @@ def test_http_next_maps_raw_source_observation_to_typed_refusal(
     assert response.json()["error_code"] == "playbill.next.workspace_observation_invalid"
 
 
+def test_http_next_refuses_a_foreign_cursor_with_its_declared_repair(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    body = {
+        "tag": "playbill-next-request-v2",
+        "evaluation_time": "2026-08-26T16:00:00+00:00",
+        "access_profile": {
+            "tag": "playbill-coverage-access-profile-v1",
+            "profile_id": "test-next",
+            "permitted_access_classes": ["instance", "public"],
+            "disclose_restricted_existence": True,
+        },
+    }
+
+    refused = client.post(f"/api/v1/{instance_id}/playbill/next", json=body | {"cursor": "e30="})
+    unbounded = client.post(f"/api/v1/{instance_id}/playbill/next", json=body | {"limit": 1001})
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error_code"] == "playbill.next.cursor_mismatch"
+    assert refused.json()["repair"] == {"operation": "playbill.next", "arguments": {}}
+    assert unbounded.status_code == 422, unbounded.text
+
+
 def test_http_discover_refuses_an_empty_request_typed_not_as_a_server_error(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:

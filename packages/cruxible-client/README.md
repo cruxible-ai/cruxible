@@ -6149,6 +6149,8 @@ next_playbill(
     workspace_observation: Mapping[str, Any] | None = None,
     since_result_digest: str | None = None,
     at_attestation_head_digest: str | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
 ) -> contracts.PlaybillNextResult
 ```
 

@@ -86,6 +86,7 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "environment_divergence": "rematerialize_the_provider_environment_against_its_seal",
     "provider_replay_receipt_required": "record_the_durable_provider_completion_before_replay",
     "state_tap_refused": "restore_the_accepted_state_query_backend",
+    "line_stalled": "rearm_the_line_or_dispatch_its_pending_work",
     "block_query_unchecked": "restore_query_evaluation_then_check_the_block",
     "block_frame_invalid": "restore_the_block_marker_frame_the_stamp_declares",
     # The refusal already names its path class and its repair commands. The
@@ -257,6 +258,9 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
     "evaluation_instant_skewed": RepairOperationV1(operation="playbill.line.run"),
     "line_identity_mismatch": RepairOperationV1(operation="playbill.line.run"),
     "document_modified": RepairOperationV1(operation="playbill.document.propose"),
+    # A next page cursor names the whole queue it continues; once that queue
+    # moves, the repair is to read page one again.
+    "playbill.next.cursor_mismatch": RepairOperationV1(operation="playbill.next"),
     "workspace_binding_invalid": RepairOperationV1(
         operation="playbill.host.create",
         arguments={"workspace": ".", "replace": True},

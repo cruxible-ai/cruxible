@@ -253,17 +253,25 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Check a named Line without enqueuing or running it. Incomplete coverage is not absence; "
         "retain the returned checked_until when paging."
     ),
-    "cruxible_playbill_line_listen": (
-        "Maintain pending matches while the daemon listens. "
-        "Downtime is not evaluated automatically."
+    "cruxible_playbill_line_arm": (
+        "Arm a Line so the daemon admits what it matches from now on, under your credential "
+        "and the Line version current now. Never catches up: earlier pending work and daemon "
+        "downtime need evaluate and dispatch."
+    ),
+    "cruxible_playbill_line_disarm": (
+        "Stop a Line admitting work on its own. Runs already admitted keep going."
+    ),
+    "cruxible_playbill_line_arm_status": (
+        "Read whether a Line is armed, its pending work, and why an arm stopped "
+        "(credential revoked, Line changed, disarmed). Rearm to resume."
     ),
     "cruxible_playbill_line_evaluate": (
         "Evaluate an explicit missed range into pending work. "
         "Repeat or page incomplete results; no runs start."
     ),
     "cruxible_playbill_line_dispatch": (
-        "Execute pending occurrences under your current authority; "
-        "installation and listening grant no execution permission."
+        "Execute pending occurrences under your current authority. An armed Line admits only "
+        "what it matched itself; everything else waits for this call."
     ),
     "cruxible_playbill_line_run": (
         "Trigger one due accepted Line occurrence. Reuse a returned occurrence id only as an "

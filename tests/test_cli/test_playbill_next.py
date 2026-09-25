@@ -21,6 +21,12 @@ HEALTHY_STATUS = {
     "line_dispatch": {"state": "idle"},
 }
 
+AUTHOR = {
+    "operation": "playbill.authoring.create",
+    "target": "Claim:c",
+    "required_change": "author_the_claim",
+}
+
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
@@ -72,6 +78,7 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
                 unobserved_domains=["workspace_sources", "workspace_projections"],
                 status=HEALTHY_STATUS,
                 items=[],
+                total_items=0,
                 result_digest="sha256:" + "5" * 64,
             )
 
@@ -138,14 +145,14 @@ def test_cli_next_delta_labels_additions_and_removals(
         "severity": "warning",
         "reason": "claim_conflicted",
         "subject_identity": "Claim:removed",
-        "repair": {"operation": "playbill.authoring.create"},
+        "repair": AUTHOR,
     }
     added = {
         "item_id": "sha256:" + "b" * 64,
         "severity": "repair",
         "reason": "claim_uncovered",
         "subject_identity": "Claim:added",
-        "repair": {"operation": "playbill.authoring.create"},
+        "repair": AUTHOR,
     }
 
     class StubClient:
@@ -169,6 +176,7 @@ def test_cli_next_delta_labels_additions_and_removals(
                 unobserved_domains=[],
                 status=HEALTHY_STATUS,
                 items=[removed, added],
+                total_items=2,
                 result_digest="sha256:" + str(self.calls) * 64,
                 delta_since="sha256:" + "0" * 64,
                 attestation_head_digest="sha256:" + "9" * 64,
@@ -216,7 +224,7 @@ def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(
         "severity": "warning",
         "reason": "claim_conflicted",
         "subject_identity": "Claim:current",
-        "repair": {"operation": "playbill.authoring.create"},
+        "repair": AUTHOR,
     }
 
     class StubClient:
@@ -234,6 +242,7 @@ def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(
                 unobserved_domains=[],
                 status=HEALTHY_STATUS,
                 items=[item],
+                total_items=1,
                 result_digest="sha256:" + "1" * 64,
                 delta_since=None,
             )
@@ -288,8 +297,9 @@ def test_cli_next_prints_status_that_needs_attention_above_the_rows(
             "state": "stale",
             "repair": {
                 "operation": "playbill.floor.export",
+                "target": "inst_next",
+                "required_change": "replace_installed_floor",
                 "command": "cruxible playbill floor export --force --json",
-                "required_change": None,
             },
         },
     }
@@ -303,6 +313,7 @@ def test_cli_next_prints_status_that_needs_attention_above_the_rows(
                 unobserved_domains=["workspace_sources", "workspace_projections"],
                 status=status,
                 items=[],
+                total_items=0,
                 result_digest="sha256:" + "5" * 64,
             )
 
@@ -331,3 +342,162 @@ def test_cli_next_prints_status_that_needs_attention_above_the_rows(
     )
     # A healthy facet stays silent.
     assert "ledger mirror" not in result.output
+
+
+def _rows() -> list[dict[str, object]]:
+    return [
+        {
+            "item_id": "sha256:" + "a" * 64,
+            "severity": "repair",
+            "reason": "projection_dirty",
+            "subject_identity": "Block:docs/runbook.md#b",
+            "detail": {"block_id": "b", "rendered": "a long rendered body"},
+            "repair": {
+                "operation": "playbill.block.sync",
+                "target": "docs/runbook.md",
+                "required_change": "resync_projection",
+                "arguments": {"all": True},
+                "command": "cruxible playbill block sync --all",
+            },
+            "findings": [
+                {
+                    "severity": "warning",
+                    "reason": "projection_backing_stale",
+                    "subject_identity": "Block:docs/runbook.md#b",
+                    "repair": AUTHOR,
+                }
+            ],
+        },
+        {
+            "item_id": "sha256:" + "b" * 64,
+            "severity": "warning",
+            "reason": "claim_conflicted",
+            "subject_identity": "Claim:c",
+            "detail": {"claims": ["Claim:c", "Claim:d"]},
+            "repair": {
+                "operation": "hand_edit",
+                "target": "Claim:c",
+                "required_change": "revise_claims_into_distinct_qualifiers",
+            },
+        },
+    ]
+
+
+def _stub_pages(
+    monkeypatch: pytest.MonkeyPatch, *, total: int, next_cursor: str | None
+) -> list[dict[str, object]]:
+    calls: list[dict[str, object]] = []
+
+    class StubClient:
+        def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
+            calls.append(values)
+            return contracts.PlaybillNextResult(
+                coordinate=COORDINATE,
+                evaluation_time="2026-08-24T18:00:00Z",
+                observed_domains=["accepted_state"],
+                unobserved_domains=[
+                    "workspace_floor",
+                    "workspace_sources",
+                    "workspace_projections",
+                ],
+                status={
+                    **HEALTHY_STATUS,
+                    "ledger_mirror": {
+                        "state": "behind",
+                        "repair": {
+                            "operation": "hand_edit",
+                            "target": "ledger mirror",
+                            "required_change": "push_the_ledger_mirror",
+                        },
+                    },
+                },
+                items=_rows(),
+                total_items=total,
+                next_cursor=next_cursor,
+                result_digest="sha256:" + "5" * 64,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace",
+        lambda _root: {},
+    )
+    return calls
+
+
+def _invoke_next(*arguments: str) -> str:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://next.example.test",
+            "--instance-id",
+            "inst_next",
+            "playbill",
+            "next",
+            "--evaluation-time",
+            "2026-08-24T18:00:00Z",
+            *arguments,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    return result.output
+
+
+def test_cli_next_brief_prints_one_line_per_row_with_its_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_pages(monkeypatch, total=2, next_cursor=None)
+
+    output = _invoke_next("--brief")
+
+    assert output.splitlines() == [
+        "Status: ledger mirror behind  next=push_the_ledger_mirror",
+        "repair  projection_dirty  Block:docs/runbook.md#b  "
+        "next=cruxible playbill block sync --all",
+        "warning  claim_conflicted  Claim:c",
+    ]
+
+
+def test_cli_next_default_names_each_rows_repair_and_findings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_pages(monkeypatch, total=2, next_cursor=None)
+
+    output = _invoke_next()
+
+    assert output.splitlines() == [
+        "Status: ledger mirror behind  next=push_the_ledger_mirror",
+        "repair  projection_dirty  Block:docs/runbook.md#b  next=playbill.block.sync",
+        "  repair: cruxible playbill block sync --all",
+        "  also: warning  projection_backing_stale  Block:docs/runbook.md#b",
+        "warning  claim_conflicted  Claim:c  next=hand_edit",
+        "  repair: hand edit Claim:c: revise_claims_into_distinct_qualifiers",
+        "Unobserved: workspace_floor, workspace_sources, workspace_projections",
+    ]
+    assert "long rendered body" not in output
+
+
+@pytest.mark.parametrize("brief", [False, True])
+def test_cli_next_pages_with_limit_and_cursor(monkeypatch: pytest.MonkeyPatch, brief: bool) -> None:
+    calls = _stub_pages(monkeypatch, total=5, next_cursor="page-two")
+
+    output = _invoke_next("--limit", "2", "--cursor", "page-one", *(("--brief",) if brief else ()))
+
+    assert (calls[0]["limit"], calls[0]["cursor"]) == (2, "page-one")
+    assert output.splitlines()[-1] == "Showing 2 of 5 rows. Next: --cursor page-two"
+
+
+def test_cli_next_defaults_to_the_shared_page_size_and_bounds_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _stub_pages(monkeypatch, total=2, next_cursor=None)
+
+    _invoke_next()
+    refused = CliRunner().invoke(
+        cli, ["playbill", "next", "--limit", str(contracts.PLAYBILL_NEXT_MAX_LIMIT + 1)]
+    )
+
+    assert (calls[0]["limit"], calls[0]["cursor"]) == (contracts.PLAYBILL_NEXT_DEFAULT_LIMIT, None)
+    assert refused.exit_code != 0
+    assert "--limit" in refused.output

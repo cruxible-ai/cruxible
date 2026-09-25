@@ -3989,27 +3989,68 @@ def check_line(
             )
 
 
-@line_group.command("listen")
+def _echo_line_arm(result: Any) -> None:
+    state = "armed" if result.state == "armed" else f"stopped ({result.stop_reason})"
+    click.echo(f"{result.line}: {state}")
+    click.echo(f"Armed by: {result.armed_by.label} at {result.armed_at.isoformat()}")
+    click.echo(f"Matched through: {result.evaluated_until.isoformat()}")
+    click.echo(
+        f"Pending: {result.pending_automatic} automatic, "
+        f"{result.pending_explicit} awaiting explicit dispatch"
+    )
+    if result.detail:
+        click.echo(result.detail)
+
+
+@line_group.command("arm")
 @click.argument("line")
-@click.option("--stop", is_flag=True, help="Stop listening; leave pending work intact.")
 @json_option
 @handle_errors
-def listen_line(line: str, stop: bool, output_json: bool) -> None:
-    from cruxible_client.contracts.line_dispatch import LineListenRequestV1
+def arm_line(line: str, output_json: bool) -> None:
+    """Admit what this Line matches from now on, under your credential."""
 
     result = _server_call(
-        lambda client, instance_id: client.listen_playbill_line(
-            instance_id, line, request=LineListenRequestV1(action="stop" if stop else "start")
-        ),
-        command_name="playbill line listen",
+        lambda client, instance_id: client.arm_playbill_line(instance_id, line),
+        command_name="playbill line arm",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        click.echo(f"{result.line}: {'stopped' if result.stops_at else 'listening'}")
-        click.echo(f"Evaluated through: {result.evaluated_until.isoformat()}")
-        if result.detail:
-            click.echo(result.detail)
+        _echo_line_arm(result)
+
+
+@line_group.command("disarm")
+@click.argument("line")
+@json_option
+@handle_errors
+def disarm_line(line: str, output_json: bool) -> None:
+    """Stop admitting work automatically; admitted runs keep going."""
+
+    result = _server_call(
+        lambda client, instance_id: client.disarm_playbill_line(instance_id, line),
+        command_name="playbill line disarm",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_line_arm(result)
+
+
+@line_group.command("status")
+@click.argument("line")
+@json_option
+@handle_errors
+def line_arm_status(line: str, output_json: bool) -> None:
+    """Show whether the Line is armed and why an arm stopped."""
+
+    result = _server_call(
+        lambda client, instance_id: client.playbill_line_arm_status(instance_id, line),
+        command_name="playbill line status",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        _echo_line_arm(result)
 
 
 @line_group.command("evaluate")
@@ -4177,6 +4218,14 @@ def run_line(
     default=None,
     help="A prior result_digest; return only the rows new since that queue.",
 )
+@click.option(
+    "--limit",
+    default=contracts.PLAYBILL_NEXT_DEFAULT_LIMIT,
+    show_default=True,
+    type=click.IntRange(1, contracts.PLAYBILL_NEXT_MAX_LIMIT),
+    help="Rows per page.",
+)
+@click.option("--cursor", default=None, help="Continue a previous page of the same queue.")
 @brief_option
 @json_option
 @handle_errors
@@ -4186,6 +4235,8 @@ def next_work(
     expiring_within: int,
     workspace_root: str,
     since_result_digest: str | None,
+    limit: int,
+    cursor: str | None,
     output_brief: bool,
     output_json: bool,
 ) -> None:
@@ -4222,6 +4273,8 @@ def next_work(
             expiring_within={"microseconds": expiring_within},
             workspace_observation=observed,
             since_result_digest=since_result_digest,
+            limit=limit,
+            cursor=cursor,
         )
 
     result = _server_call(
@@ -4240,20 +4293,37 @@ def next_work(
         )
     removed_ids = frozenset(result.removed_item_ids)
     for item in result.items:
-        repair = item["repair"]
         change = (
             "removed  "
-            if result.delta_since is not None and item["item_id"] in removed_ids
+            if result.delta_since is not None and item.item_id in removed_ids
             else "added  "
             if result.delta_since is not None
             else ""
         )
-        click.echo(
-            f"{change}{item['severity']}  {item['reason']}  {item['subject_identity']}  "
-            f"next={repair['operation']}"
-        )
-    if result.unobserved_domains:
+        row = f"{change}{item.severity}  {item.reason}  {item.subject_identity}"
+        if output_brief:
+            click.echo(row + (f"  next={item.repair.command}" if item.repair.command else ""))
+            continue
+        click.echo(f"{row}  next={item.repair.operation}")
+        click.echo(f"  repair: {_next_repair_hint(item.repair)}")
+        for finding in item.findings:
+            click.echo(f"  also: {finding.severity}  {finding.reason}  {finding.subject_identity}")
+    if result.unobserved_domains and not output_brief:
         click.echo("Unobserved: " + ", ".join(result.unobserved_domains))
+    if result.next_cursor is not None:
+        click.echo(
+            f"Showing {len(result.items)} of {result.total_items} rows. "
+            f"Next: --cursor {result.next_cursor}"
+        )
+
+
+def _next_repair_hint(repair: contracts.PlaybillNextRepair) -> str:
+    """The runnable command, or else the operation and the change it must make."""
+
+    if repair.command is not None:
+        return repair.command
+    operation = "hand edit" if repair.operation == "hand_edit" else repair.operation
+    return f"{operation} {repair.target}: {repair.required_change}"
 
 
 #: Facet states the status header shows; healthy and unobserved facets stay quiet.
@@ -4268,19 +4338,19 @@ _NEXT_STATUS_ATTENTION = {
 }
 
 
-def _echo_next_status(status: dict[str, Any]) -> None:
+def _echo_next_status(status: contracts.PlaybillNextStatus) -> None:
     """Print the environment facets that need attention above the work rows."""
 
-    if status.get("blocking"):
+    if status.blocking:
         click.echo("BLOCKING: this instance refuses every write.")
     for facet, states in _NEXT_STATUS_ATTENTION.items():
-        health = status.get(facet) or {}
-        if health.get("state") not in states:
+        health: contracts.PlaybillNextHealth = getattr(status, facet)
+        if health.state not in states:
             continue
-        repair = health.get("repair") or {}
-        hint = repair.get("command") or repair.get("required_change")
+        repair = health.repair
+        hint = None if repair is None else repair.command or repair.required_change
         label = facet.replace("_", " ")
-        click.echo(f"Status: {label} {health['state']}" + (f"  next={hint}" if hint else ""))
+        click.echo(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
 
 
 @playbill_group.group("curation")

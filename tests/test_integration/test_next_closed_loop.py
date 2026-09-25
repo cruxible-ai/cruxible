@@ -169,6 +169,8 @@ EXPECTED_OPERATIONS = {
     "unregistered_projection_block": "playbill.block.repin",
     "proposal_stale": "playbill.proposal.readmit",
     "mandate_expiring": "playbill.authoring.create",
+    # A stopped arm is resumed by rearming under authority that still holds.
+    "line_stalled": "playbill.line.arm",
 }
 
 
@@ -1352,6 +1354,47 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "mandate_expiring", _request(instance))
 
 
+def _line_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta
+
+    from cruxible_core.runtime.line_arms import dispatch_armed_line
+    from cruxible_core.service.procedures.line_dispatch import armed_work, service_arm_line
+    from tests.test_procedures import test_line_arming as arming
+
+    instance, line, procedure, start = arming._armed_world(root, principal=arming.CREDENTIAL)
+    instance_id = instance.descriptor.instance_id
+    arming._credential_store(
+        monkeypatch,
+        arming._credential(instance_id=instance_id, revoked_at="2026-09-02T00:00:00Z"),
+    )
+    arming.capture(instance, procedure, at=start + timedelta(seconds=1))
+    arming._match(instance, start + timedelta(seconds=2))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
+    assert (
+        dispatch_armed_line(
+            arming._manager(instance), instance_id, arm, now=start + timedelta(seconds=4)
+        )
+        is None
+    )
+    request = _request(instance)
+
+    row = _row(instance, "line_stalled", request)
+    assert row.subject_identity == line.identity.qualified
+    assert row.detail["stop_reason"] == "credential_revoked"
+    assert row.repair.command == f"cruxible playbill line arm {line.identity.name}"
+
+    # The named repair: rearm under a credential that holds.
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=arming.LOCAL,
+        actor=arming._actor(instance),
+        now=start + timedelta(seconds=5),
+        daemon_id="daemon",
+    )
+    _assert_gone(instance, "line_stalled", request)
+
+
 CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("claim_conflicted", None): _claim_conflicted,
     ("claim_uncovered", None): _claim_uncovered,
@@ -1394,6 +1437,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("unregistered_projection_block", None): _unregistered_projection_block,
     ("proposal_stale", None): _proposal_stale,
     ("mandate_expiring", None): _mandate_expiring,
+    ("line_stalled", None): _line_stalled,
 }
 
 

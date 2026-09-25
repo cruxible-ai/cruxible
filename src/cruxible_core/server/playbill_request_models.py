@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from cruxible_client.contracts import PLAYBILL_NEXT_DEFAULT_LIMIT, PLAYBILL_NEXT_MAX_LIMIT
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
 from cruxible_client.contracts.authoring.models import (
@@ -299,6 +300,8 @@ class PlaybillNextRequest(_StrictPlaybillRequest):
     expiring_within: dict[str, Any] | None = None
     workspace_observation: dict[str, Any] | None = None
     since_result_digest: str | None = None
+    limit: int = Field(default=PLAYBILL_NEXT_DEFAULT_LIMIT, ge=1, le=PLAYBILL_NEXT_MAX_LIMIT)
+    cursor: str | None = Field(default=None, max_length=2048)
 
 
 class PlaybillNextRequestV2(_StrictPlaybillRequest):
@@ -309,6 +312,8 @@ class PlaybillNextRequestV2(_StrictPlaybillRequest):
     expiring_within: dict[str, Any] | None = None
     workspace_observation: dict[str, Any] | None = None
     since_result_digest: str | None = None
+    limit: int = Field(default=PLAYBILL_NEXT_DEFAULT_LIMIT, ge=1, le=PLAYBILL_NEXT_MAX_LIMIT)
+    cursor: str | None = Field(default=None, max_length=2048)
     at_attestation_head_digest: str | None = Field(
         default=None,
         pattern=r"^sha256:[0-9a-f]{64}$",

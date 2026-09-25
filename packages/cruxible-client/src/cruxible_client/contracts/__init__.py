@@ -34,6 +34,15 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
 from cruxible_client.contracts.line_dispatch import (
+    LineArmPrincipalV1 as LineArmPrincipalV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineArmStopReasonV1 as LineArmStopReasonV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineArmV1 as LineArmV1,
+)
+from cruxible_client.contracts.line_dispatch import (
     LineDispatchItemV1 as LineDispatchItemV1,
 )
 from cruxible_client.contracts.line_dispatch import (
@@ -44,12 +53,6 @@ from cruxible_client.contracts.line_dispatch import (
 )
 from cruxible_client.contracts.line_dispatch import (
     LineEvaluateRequestV1 as LineEvaluateRequestV1,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineListeningSessionV1 as LineListeningSessionV1,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineListenRequestV1 as LineListenRequestV1,
 )
 from cruxible_client.contracts.line_dispatch import (
     LineTriggerCheckRequestV1 as LineTriggerCheckRequestV1,
@@ -259,7 +262,31 @@ PlaybillNextReason: TypeAlias = Literal[
     "projection_marker_invalid",
     "proposal_stale",
     "mandate_expiring",
+    "line_stalled",
 ]
+PlaybillNextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
+PlaybillNextRepairOperation: TypeAlias = Literal[
+    "playbill.authoring.create",
+    "playbill.authoring.bind",
+    "playbill.claim.retire",
+    "playbill.floor.export",
+    "playbill.block.depublish",
+    "playbill.block.repin",
+    "playbill.block.sync",
+    "playbill.document.propose",
+    "playbill.proposal.readmit",
+    "playbill.compiler.upgrade",
+    "playbill.line.arm",
+    "playbill.line.dispatch",
+    "hand_edit",
+]
+# The next queue's own refusals that carry a declared repair. A page cursor
+# names the whole queue it continues; once that queue moves, re-reading page
+# one is the repair.
+PlaybillNextRefusalCodeV1: TypeAlias = Literal["playbill.next.cursor_mismatch"]
+#: Rows per next page when the request names none, and the most one page carries.
+PLAYBILL_NEXT_DEFAULT_LIMIT = 100
+PLAYBILL_NEXT_MAX_LIMIT = 1000
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
     "provider_process_lease_invalid",
@@ -1572,6 +1599,83 @@ class PlaybillProcedureRunState(BaseModel):
         return self.bound_coordinate
 
 
+class PlaybillNextRepair(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    operation: PlaybillNextRepairOperation
+    target: str
+    required_change: str
+    arguments: Any = Field(default_factory=dict)
+    # Composed by the daemon from the fields beside it; absent on a hand edit
+    # and on an operation whose arguments do not name every operand.
+    command: str | None = None
+
+
+class PlaybillNextFinding(BaseModel):
+    """One more finding about the same underlying fact as the row that carries it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-next-finding-v1"] = "playbill-next-finding-v1"
+    severity: PlaybillNextSeverity
+    reason: PlaybillNextReason
+    subject_identity: str
+    related_identities: list[str] = Field(default_factory=list)
+    detail: Any = Field(default_factory=dict)
+    repair: PlaybillNextRepair
+
+
+class PlaybillNextItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-next-item-v1"] = "playbill-next-item-v1"
+    item_id: str
+    severity: PlaybillNextSeverity
+    reason: PlaybillNextReason
+    subject_identity: str
+    related_identities: list[str] = Field(default_factory=list)
+    detail: Any = Field(default_factory=dict)
+    repair: PlaybillNextRepair
+    findings: list[PlaybillNextFinding] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
+
+    @field_validator("item_id")
+    @classmethod
+    def _item_id(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+class PlaybillNextHealth(BaseModel):
+    """One environment facet: its state, what it saw, and the repair if it needs one."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-next-health-v1"] = "playbill-next-health-v1"
+    state: str
+    detail: Any = Field(default_factory=dict)
+    repair: PlaybillNextRepair | None = None
+
+
+class PlaybillNextStatus(BaseModel):
+    """The environment the queue was read in, beside the work rather than in it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-next-status-v1"] = "playbill-next-status-v1"
+    blocking: bool
+    instance: PlaybillNextHealth
+    floor: PlaybillNextHealth
+    ledger_mirror: PlaybillNextHealth
+    provider_lane: PlaybillNextHealth
+    procedure_catalog: PlaybillNextHealth
+    compiler: PlaybillNextHealth
+    line_dispatch: PlaybillNextHealth
+    held: int = Field(default=0, ge=0)
+
+
 class PlaybillNextResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1596,8 +1700,13 @@ class PlaybillNextResult(BaseModel):
     ]
     # The environment the queue was read in: instance, floor, ledger mirror,
     # provider lane and Procedure catalog health, beside the work items.
-    status: dict[str, Any]
-    items: list[dict[str, Any]]
+    status: PlaybillNextStatus
+    items: list[PlaybillNextItem]
+    # Every row the whole answer carries -- the queue, or on a delta its
+    # changed rows -- of which `items` is one page. `result_digest` names the
+    # whole queue on every page; `next_cursor` continues this answer.
+    total_items: int = Field(ge=0)
+    next_cursor: str | None = None
     result_digest: str
     # Set only on a delta. Items are the changed rows while result_digest names
     # the complete current queue, so callers may echo it as the next cursor.
@@ -1627,9 +1736,11 @@ class PlaybillNextResult(BaseModel):
             self.tag != "playbill-next-result-v2" or not self.delta_since
         ):
             raise ValueError("removed next item IDs are valid only on a v2 delta")
-        carried_ids = {
-            item.get("item_id") for item in self.items if isinstance(item.get("item_id"), str)
-        }
+        if len(self.items) > self.total_items:
+            raise ValueError("a next page cannot carry more rows than its answer")
+        if self.next_cursor is not None and len(self.items) == self.total_items:
+            raise ValueError("a next answer carried whole has no further page")
+        carried_ids = {item.item_id for item in self.items}
         if not set(self.removed_item_ids).issubset(carried_ids):
             raise ValueError("removed next item IDs must name carried delta rows")
         return self

@@ -492,7 +492,7 @@ class SearchPage:
 class NextPage:
     coordinate: AcceptedCoordinate
     evaluation_time: str
-    items: tuple[dict[str, object], ...]
+    items: tuple[api.PlaybillNextItem, ...]
     result_digest: str
     observed_domains: tuple[str, ...]
     unobserved_domains: tuple[str, ...]
@@ -3000,13 +3000,22 @@ class Playbill:
             request=LineTriggerCheckRequestV1(since=since, until=until, limit=limit, cursor=cursor),
         )
 
-    def listen_line(self, line: str, *, enabled: bool = True) -> api.LineListeningSessionV1:
-        """Start or stop forward listening; no Procedure is executed."""
-        return self._client.listen_playbill_line(
-            self._instance_id,
-            line,
-            request=api.LineListenRequestV1(action="start" if enabled else "stop"),
-        )
+    def arm_line(self, line: str) -> api.LineArmV1:
+        """Arm a Line forward-only: the daemon admits what it matches from now on.
+
+        Runs use this connection's credential, rechecked before each admission,
+        and the Line version current now. Work already pending stays for
+        `dispatch_line`.
+        """
+        return self._client.arm_playbill_line(self._instance_id, line)
+
+    def disarm_line(self, line: str) -> api.LineArmV1:
+        """Stop a Line admitting work on its own; admitted runs are not cancelled."""
+        return self._client.disarm_playbill_line(self._instance_id, line)
+
+    def line_arm(self, line: str) -> api.LineArmV1:
+        """The Line's current arm, or its last one and why it stopped."""
+        return self._client.playbill_line_arm_status(self._instance_id, line)
 
     def evaluate_line(
         self,
@@ -3312,21 +3321,34 @@ class Playbill:
             # binding. Resolve metadata, not a whole-world orientation page.
             resolve_coordinate=lambda: self._client.playbill_whoami(self._instance_id).coordinate,
         )
-        result = self._client.next_playbill(
-            self._instance_id,
-            evaluation_time=self._evaluation_time(),
-            access_profile=access_profile,
-            at=scanned_coordinate or requested_coordinate,
-            expiring_within=expiring_within.model_dump(),
-            workspace_observation=observation,
-        )
+        evaluation_time = self._evaluation_time()
+
+        def page(cursor: str | None) -> api.PlaybillNextResult:
+            return self._client.next_playbill(
+                self._instance_id,
+                evaluation_time=evaluation_time,
+                access_profile=access_profile,
+                at=scanned_coordinate or requested_coordinate,
+                expiring_within=expiring_within.model_dump(),
+                workspace_observation=observation,
+                limit=api.PLAYBILL_NEXT_MAX_LIMIT,
+                cursor=cursor,
+            )
+
+        # A NextPage is the whole queue. Each cursor pins its first page's
+        # instant, coordinate and head, so every later page reads that queue.
+        result = page(None)
+        items = list(result.items)
+        while result.next_cursor is not None:
+            result = page(result.next_cursor)
+            items.extend(result.items)
         self._observe_read(
             _coordinate(result.coordinate), expected=scanned_coordinate or requested_coordinate
         )
         return NextPage(
             coordinate=_coordinate(result.coordinate),
             evaluation_time=result.evaluation_time,
-            items=tuple(cast(dict[str, object], item) for item in result.items),
+            items=tuple(items),
             result_digest=result.result_digest,
             observed_domains=tuple(result.observed_domains),
             unobserved_domains=tuple(result.unobserved_domains),

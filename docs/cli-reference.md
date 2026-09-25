@@ -938,7 +938,9 @@ PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 
 ~~~text
 cruxible playbill line check LINE [--since TS] [--until TS] [--limit 100] [--cursor CURSOR] [--json]
-cruxible playbill line listen LINE [--stop] [--json]
+cruxible playbill line arm LINE [--json]
+cruxible playbill line disarm LINE [--json]
+cruxible playbill line status LINE [--json]
 cruxible playbill line evaluate LINE --since TS --until TS [--limit 100] [--cursor CURSOR] [--json]
 cruxible playbill line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit 1] [--json]
 cruxible playbill line run LINE --evaluation-time TS
@@ -947,10 +949,40 @@ cruxible playbill line run LINE --evaluation-time TS
 
 `check` is read-only: it returns `met`, `not_met`, or `incomplete`, exact
 matching events/windows, and the dispatch status of each occurrence (pending,
-admitted, rejected, or superseded). `listen` enables matching into durable pending work; it never runs a
-Procedure. Idle coverage is checkpointed at one-minute intervals; event progress
-and partial scans are retained immediately. `listen --stop` ends coverage at the
-last durable checkpoint.
+admitted, rejected, or superseded).
+
+`arm` makes the daemon match the Line's trigger forward from now and admit what
+it matches, with no explicit call. Runs use the arming caller's credential,
+which the daemon rechecks before every admission: a revoked credential, one
+moved to another instance, or one no longer permitted to dispatch stops the arm
+with that reason (`credential_revoked`, `credential_scope_changed`,
+`permission_insufficient`). Arming needs the permission `dispatch` needs, and
+keeps only the credential's identifier, never a token. An arm is pinned to the
+Line version current when it was armed: any accepted change to the Line stops
+it (`line_changed`, or `epoch_changed`) until it is rearmed. Because a settle
+mandate, not the caller's tier, authorizes settling, an armed Line whose
+Procedure settles does so on its own under its mandate.
+
+An arm never catches up. It admits only what it matched itself since it was
+armed or since the daemon last restarted; anything pending before that, or
+recorded by `evaluate`, waits for explicit `dispatch`. A cadence tick is the
+exception: it is not an event but "the Line is due", so when a cadence Line is
+armed or its arm resumes, a tick still pending from before closes as `lapsed`
+-- retained, never run implicitly, and still runnable as exactly that tick
+with `dispatch --occurrence-id DIGEST --retry`, even after newer ticks ran --
+and the arm ticks on from its own start rather than catching up on ticks it
+missed. `disarm` stops further
+admissions; a run already admitted keeps going. `status` shows whether the
+Line is armed, how many pending occurrences it will admit on its own
+(`pending_automatic`) and how many await explicit dispatch
+(`pending_explicit`), and why an arm stopped. Idle coverage is checkpointed at
+one-minute intervals; event progress and partial scans are retained
+immediately. Each armed Line is drained by at most one worker at a time, so a
+slow Procedure never delays matching or another Line.
+`playbill next` reports `line_stalled` for an arm that stopped by itself (its
+repair rearms it) or an armed Line whose own due work has waited more than 15
+minutes (its repair dispatches it, which shows the refusal). A deliberate
+disarm is not reported.
 `evaluate` explicitly checks a historical `[since, until)` range and records
 its matches as pending. Follow its cursor to finish a bounded page.
 `dispatch` admits pending occurrences using the caller's current permissions
@@ -969,13 +1001,13 @@ binding the current accepted Line version only within the same occurrence epoch.
 It preserves the exact event/window and rechecks present authority and freshness;
 it cannot substitute a newer Capture. An existing admission is always reused.
 
-Restart resumes pending work and opens a new forward listening range. Time
-not covered by completed listening ranges requires explicit `evaluate`; it is
-never replayed automatically. Rebuilding the disposable event index similarly
-opens a new forward range, while retained pending work survives. A changed
-occurrence epoch needs an explicit new subscription. Rebinding within the same
-epoch preserves listening progress; pending work bound to an older Line version
-is closed as superseded rather than silently rebound. A Line v4 or v5 can bind its
+A restart keeps each arm and opens a new forward range from the restart. Time
+not covered by completed ranges requires explicit `evaluate`; it is never
+replayed automatically, and what the previous range matched but did not admit
+waits for explicit `dispatch`. Rebuilding the disposable event index similarly
+opens a new forward range, while retained pending work survives. Pending work
+bound to an older Line version is closed as superseded rather than silently
+rebound. A Line v4 or v5 can bind its
 trigger Capture to a named Source input. Its `max_age` is checked at admission
 time, not backdated to when the trigger occurred.
 
@@ -1224,7 +1256,8 @@ or by hand and it clears.
 
 ~~~text
 cruxible playbill next [--evaluation-time TS] [--access-profile FILE]
-  [--expiring-within P7D] [--workspace-root DIR]
+  [--expiring-within P7D] [--workspace-root DIR] [--delta DIGEST]
+  [--limit N] [--cursor CURSOR] [--brief | --json]
 ~~~
 
 Returns the deterministic repair queue at one accepted coordinate. The client
@@ -1281,6 +1314,28 @@ the rows held. A hold lasts only while its basis is unchanged:
 A revised Claim, a later support or contradict from the same principal, or a
 lapsed validity window ends the hold, and the row returns.
 Empty `items` means only that no work exists in the explicitly observed domains.
+
+Rows are typed: each carries `severity`, `reason`, `subject_identity`,
+`related_identities`, `detail`, a `repair` (with a runnable `command` when the
+operation's arguments name every operand), and any further `findings` about the
+same underlying fact. `--delta DIGEST` returns only the rows added or removed
+since that earlier queue, when the daemon still remembers it; otherwise it
+returns the whole queue.
+
+Results are paged. `--limit` sets the rows per page (default 100, at most 1000),
+and `total_items` counts every row of the answer, so page one already gives the
+queue's size (or, on a delta, the number of changed rows). While more rows
+remain, `next_cursor` is set and the CLI prints `Next: --cursor CURSOR`. A
+cursor carries the evaluation time, coordinate, attestation head and delta base
+of the page that minted it, so later pages read the same queue even as the
+clock moves. `result_digest` names the whole queue on every page. If the queue
+has moved since the cursor's first page, or a delta's base has been forgotten,
+the request is refused with `playbill.next.cursor_mismatch`. The repair is to
+run `cruxible playbill next` again without a cursor.
+
+`--brief` prints one line per row: severity, reason, subject, and the repair
+command if there is one. It also prints the status lines that need attention
+and the next-page cursor, and leaves out repair details and findings.
 Conflicting values in the same claim slot require revisions into distinct
 qualifiers; when a shared value field such as `topic` separates the contenders,
 the repair identifies that field.

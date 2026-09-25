@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import shlex
 from collections import OrderedDict, defaultdict
-from collections.abc import Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import RLock
@@ -13,7 +15,11 @@ from typing import Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts import (
+    PLAYBILL_NEXT_DEFAULT_LIMIT,
+    PLAYBILL_NEXT_MAX_LIMIT,
     PlaybillNextReason,
+    PlaybillNextRepairOperation,
+    PlaybillNextSeverity,
     ProviderLaneStatusV1,
 )
 from cruxible_client.contracts.accepted_attestations import AcceptedClaimAttestationEvidenceV1
@@ -72,10 +78,11 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1, ProcedureMandateV2
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
-from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.compiler.compiler import COMPILER_REVISION_LABELS, current_compiler_coordinate
 from cruxible_core.compiler.upgrades import upgrade_law
@@ -142,26 +149,13 @@ NextDomain = Literal[
     "workspace_sources",
     "workspace_projections",
 ]
-NextSeverity = Literal["blocking", "repair", "warning"]
+NextSeverity: TypeAlias = PlaybillNextSeverity
 CitationLineageNote = Literal[
     "predecessor_lineage_limit_exceeded",
     "predecessor_unresolved",
 ]
 NextReason: TypeAlias = PlaybillNextReason
-NextRepairOperation = Literal[
-    "playbill.authoring.create",
-    "playbill.authoring.bind",
-    "playbill.claim.retire",
-    "playbill.floor.export",
-    "playbill.block.depublish",
-    "playbill.block.repin",
-    "playbill.block.sync",
-    "playbill.document.propose",
-    "playbill.proposal.readmit",
-    "playbill.compiler.upgrade",
-    "playbill.line.dispatch",
-    "hand_edit",
-]
+NextRepairOperation: TypeAlias = PlaybillNextRepairOperation
 
 # A citation reads unobserved for one of two kinds of reason. Either the
 # citation itself is no longer where the source says it is - a finding about
@@ -230,6 +224,12 @@ class PlaybillNextCoordinateNotAccepted(PlaybillNextError):
 
 class PlaybillNextAcceptedStateInvalid(PlaybillNextError):
     code = "playbill.next.accepted_state_invalid"
+
+
+class PlaybillNextCursorMismatch(PlaybillNextError):
+    """A page cursor that does not continue the queue this request reads."""
+
+    code = "playbill.next.cursor_mismatch"
 
 
 class PlaybillNextDriftObservationV1(_StrictNextModel):
@@ -459,6 +459,12 @@ class PlaybillNextRequestV1(_StrictNextModel):
     # does not -- a restart, an eviction, a digest from elsewhere -- yields the
     # whole queue, which is always a correct answer to "what is outstanding".
     since_result_digest: str | None = None
+    # One page of the answer. A cursor continues the answer its first page
+    # began: it carries that page's evaluation instant, coordinate, attestation
+    # head and delta base, which supersede the request's own, so a caller whose
+    # clock or head has moved still reads the same queue -- or is refused.
+    limit: int = Field(default=PLAYBILL_NEXT_DEFAULT_LIMIT, ge=1, le=PLAYBILL_NEXT_MAX_LIMIT)
+    cursor: str | None = Field(default=None, max_length=2048)
 
     @field_validator("evaluation_time")
     @classmethod
@@ -499,6 +505,8 @@ def validate_playbill_next_request(
             error: type[PlaybillNextError] = PlaybillNextAccessProfileInvalid
         elif "workspace_observation" in roots:
             error = PlaybillNextWorkspaceObservationInvalid
+        elif "cursor" in roots:
+            error = PlaybillNextCursorMismatch
         else:
             error = PlaybillNextAcceptedStateInvalid
         raise error(f"{error.code}: {exc}") from exc
@@ -677,6 +685,12 @@ class PlaybillNextResultV1(_StrictNextModel):
     unobserved_domains: tuple[NextDomain, ...]
     status: PlaybillNextStatusV1
     items: tuple[PlaybillNextItemV1, ...]
+    # Every row the whole answer carries -- the queue, or on a delta its
+    # changed rows -- of which `items` is one page. Neither this count nor the
+    # cursor is in the digest preimage: `result_digest` names the whole queue
+    # on every page, which is what binds a cursor to it.
+    total_items: int = Field(ge=0)
+    next_cursor: str | None = None
     result_digest: str
     # Set only on a delta. The carried items are the deterministic symmetric
     # difference from that earlier queue while `result_digest` remains the
@@ -703,9 +717,19 @@ class PlaybillNextResultV1(_StrictNextModel):
             raise ValueError("next result must account for every observation domain")
         if self.items != tuple(sorted(self.items, key=_item_sort_key)):
             raise ValueError("next items do not follow the deterministic order")
-        if self.delta_since is None and self.result_digest != playbill_next_result_digest(self):
+        if len(self.items) > self.total_items:
+            raise ValueError("a next page cannot carry more rows than its answer")
+        if self.next_cursor is not None and len(self.items) == self.total_items:
+            raise ValueError("a next answer carried whole has no further page")
+        if self.whole_queue and self.result_digest != playbill_next_result_digest(self):
             raise ValueError("next result digest does not reproduce")
         return self
+
+    @property
+    def whole_queue(self) -> bool:
+        """Whether `items` is the entire queue the digest names: no delta, no paging."""
+
+        return self.delta_since is None and len(self.items) == self.total_items
 
 
 class PlaybillNextResultV2(PlaybillNextResultV1):
@@ -738,7 +762,7 @@ class PlaybillNextResultV2(PlaybillNextResultV1):
         carried_ids = frozenset(item.item_id for item in self.items)
         if not set(self.removed_item_ids).issubset(carried_ids):
             raise ValueError("removed next item IDs must name carried delta rows")
-        if self.delta_since is None and self.result_digest != playbill_next_result_digest(self):
+        if self.whole_queue and self.result_digest != playbill_next_result_digest(self):
             raise ValueError("next v2 result digest does not reproduce")
         return self
 
@@ -754,6 +778,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.document.propose": "playbill document propose",
     "playbill.proposal.readmit": "playbill proposal readmit",
     "playbill.compiler.upgrade": "playbill compiler upgrade",
+    "playbill.line.arm": "playbill line arm",
     "playbill.line.dispatch": "playbill line dispatch",
 }
 
@@ -851,13 +876,13 @@ def _repair_command(
         if not isinstance(target, str) or not isinstance(name, str):
             return None
         parts.extend(["--to", shlex.quote(target), "--name", shlex.quote(name)])
-    elif operation == "playbill.line.dispatch":
+    elif operation in {"playbill.line.arm", "playbill.line.dispatch"}:
         line = values.get("line")
         limit = values.get("limit")
-        if not isinstance(line, str):
+        if not isinstance(line, str) or not line:
             return None
         parts.append(shlex.quote(line))
-        if isinstance(limit, int) and limit > 1:
+        if operation == "playbill.line.dispatch" and isinstance(limit, int) and limit > 1:
             parts.extend(["--limit", str(limit)])
     elif operation == "playbill.proposal.readmit":
         proposal_id = values.get("proposal_id")
@@ -1014,6 +1039,26 @@ def _group_items(items: tuple[PlaybillNextItemV1, ...]) -> tuple[PlaybillNextIte
             # The first row the capture would resolve carries it; later ones don't.
             singles.append(_with_findings(item, supporting.pop(item.subject_identity)))
             continue
+        nested = [
+            finding.subject_identity
+            for finding in item.findings
+            if finding.reason in _SUPPORT_RESOLVES and finding.subject_identity in supporting
+        ]
+        if nested:
+            singles.append(
+                _with_findings(
+                    item.model_copy(update={"findings": ()}),
+                    [
+                        *map(_row_of, item.findings),
+                        *(
+                            row
+                            for subject in dict.fromkeys(nested)
+                            for row in supporting.pop(subject)
+                        ),
+                    ],
+                )
+            )
+            continue
         key = _group_key(item, edited_sources=edited_sources)
         if key is None:
             singles.append(item)
@@ -1045,7 +1090,14 @@ def _fold_supporting(
         for item in items
         if item.reason in _EVIDENCE_REASON_ORDER and item.reason != "claim_new_evidence_supporting"
     }
-    resolvable = {item.subject_identity for item in items if item.reason in _SUPPORT_RESOLVES}
+    # A resolvable row may already sit inside another -- a conflict carries its
+    # members' rows -- and still counts as the work the capture resolves.
+    resolvable = {item.subject_identity for item in items if item.reason in _SUPPORT_RESOLVES} | {
+        finding.subject_identity
+        for item in items
+        for finding in item.findings
+        if finding.reason in _SUPPORT_RESOLVES
+    }
     kept: list[PlaybillNextItemV1] = []
     folded: dict[str, list[PlaybillNextItemV1]] = defaultdict(list)
     # Resolvable rows first, in carrier order, so the first one reached carries.
@@ -1145,6 +1197,10 @@ class _Holds:
         coordinate: AcceptedProjectionCoordinate,
         claims: tuple[ClaimArtifactAny, ...],
         door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...],
+        door_history: Callable[
+            [], tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...]
+        ]
+        | None = None,
         evaluation_time: datetime,
     ) -> None:
         self._instance = instance
@@ -1159,43 +1215,64 @@ class _Holds:
         self._claims = live
         self._hold_for: dict[str, timedelta] = {}
         self._seen: dict[tuple[str, tuple[tuple[str, str], ...]], bool] = {}
-        # The latest examined stance per Claim and principal; a later support or
-        # contradict by the same principal ends that principal's hold.
-        latest: dict[
-            tuple[str, str], tuple[tuple[datetime, int, int], ClaimAttestationStatementV2]
-        ] = {}
 
-        def consider(
-            statement: ClaimAttestationStatementV2, order: tuple[datetime, int, int]
-        ) -> None:
+        # The latest examined stance per Claim and principal as of the evaluation
+        # time; a later support or contradict by the same principal ends that
+        # principal's hold, and one made after the evaluation time does not.
+        def eligible(statement: ClaimAttestationStatementV2) -> tuple[str, str] | None:
             identity = statement.claim_identity.qualified
             if (
                 statement.attestation_basis != "examined_existing"
+                or statement.attested_at > evaluation_time
                 or self._current.get(identity) != statement.claim_artifact_digest
             ):
-                return
-            key = (identity, statement.attesting_principal_id)
-            if key not in latest or latest[key][0] < order:
-                latest[key] = (order, statement)
+                return None
+            return identity, statement.attesting_principal_id
 
+        accepted_latest: dict[tuple[str, str], ClaimAttestationStatementV2] = {}
         if self._current:
             with instance.bind_accepted_projection(coordinate) as projection:
                 accepted = projection.typed.claim_attestations(
                     basis="examined_existing", current_claims_only=True
                 )
             for envelope in accepted:
-                consider(envelope.statement, (envelope.statement.attested_at, 0, 0))
+                key = eligible(envelope.statement)
+                if key is not None and (
+                    key not in accepted_latest
+                    or accepted_latest[key].attested_at < envelope.statement.attested_at
+                ):
+                    accepted_latest[key] = envelope.statement
+        # The folded door keeps only each principal's latest examined statement.
+        # When that one postdates the evaluation time, the statement in force
+        # then was superseded out of the fold, so read the whole chain.
+        if door_history is not None and any(
+            payload.attestation.statement.attestation_basis == "examined_existing"
+            and payload.attestation.statement.attested_at > evaluation_time
+            for _event, payload in door_events
+        ):
+            door_events = door_history()
+        # Within the door, the latest append wins, exactly as the fold chooses,
+        # so reading the whole chain never picks a different statement than the
+        # fold would have at the same evaluation time.
+        door_latest: dict[tuple[str, str], tuple[int, ClaimAttestationEventPayloadV1]] = {}
         for event, payload in door_events:
-            if payload.current_at_append is False:
-                continue
+            key = eligible(payload.attestation.statement)
+            if key is not None and (key not in door_latest or door_latest[key][0] < event.sequence):
+                door_latest[key] = (event.sequence, payload)
+        latest: dict[tuple[str, str], ClaimAttestationStatementV2] = dict(accepted_latest)
+        for key, (_sequence, payload) in door_latest.items():
             statement = payload.attestation.statement
-            consider(statement, (statement.attested_at, 1, event.sequence))
+            if key in latest and statement.attested_at < latest[key].attested_at:
+                continue
+            if payload.current_at_append is False:
+                # Appended against a stale head: it ends a hold but never makes one.
+                latest.pop(key, None)
+                continue
+            latest[key] = statement
         holds: dict[str, list[_UnsureHold]] = defaultdict(list)
-        for (identity, _principal), (_order, statement) in latest.items():
-            if (
-                statement.stance == "unsure"
-                and statement.attested_at <= evaluation_time
-                and (statement.valid_until is None or evaluation_time < statement.valid_until)
+        for (identity, _principal), statement in latest.items():
+            if statement.stance == "unsure" and (
+                statement.valid_until is None or evaluation_time < statement.valid_until
             ):
                 holds[identity].append(
                     _UnsureHold(
@@ -1319,8 +1396,10 @@ def _apply_holds(
             held += 1
             kept.extend(_row_of(finding) for finding in remaining)
         elif len(remaining) != len(item.findings):
-            head = item.model_copy(update={"findings": ()})
-            kept.append(_with_findings(head, map(_row_of, remaining)) if remaining else head)
+            # Rebuilt, never copied: the item id digests the findings it carries.
+            kept.append(
+                _with_findings(item.model_copy(update={"findings": ()}), map(_row_of, remaining))
+            )
         else:
             kept.append(item)
     return tuple(kept), held
@@ -1350,6 +1429,8 @@ def playbill_next_result_digest(result: PlaybillNextResultV1 | PlaybillNextResul
     payload = result.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("result_digest")
+    payload.pop("total_items")
+    payload.pop("next_cursor")
     domain = (
         NEXT_RESULT_V2_DIGEST_DOMAIN
         if isinstance(result, PlaybillNextResultV2)
@@ -2723,6 +2804,61 @@ def _workspace_items(
     return tuple(domains), tuple(items)
 
 
+#: How long an armed Line's own due work may wait before automation reads as stalled.
+LINE_STALL_AFTER = timedelta(minutes=15)
+
+
+def _line_stalled_items(
+    instance: PlaybillInstance,
+    *,
+    evaluation_time: datetime,
+    access_profile: CoverageAccessProfileV1,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """An armed Line that stopped by itself, or stopped draining what it matched.
+
+    Arms are operational state, measured now, like mirror health: a stopped arm
+    is invisible anywhere else, and a Line that quietly stopped running is the
+    failure automation otherwise hides. A deliberate disarm is not a finding.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.service.procedures.line_dispatch import stalled_line_arms
+
+    items: list[PlaybillNextItemV1] = []
+    for arm in stalled_line_arms(instance, now=evaluation_time, stall_after=LINE_STALL_AFTER):
+        stopped = arm.state == "stopped"
+        items.append(
+            _item(
+                severity="repair",
+                reason="line_stalled",
+                subject_identity=arm.line,
+                detail={
+                    "arm_id": arm.arm_id,
+                    "state": arm.state,
+                    "stop_reason": arm.stop_reason,
+                    "stopped_at": None if arm.stopped_at is None else arm.stopped_at.isoformat(),
+                    "pending_automatic": arm.pending_automatic,
+                    "pending_explicit": arm.pending_explicit,
+                    "detail": arm.detail,
+                },
+                # A stopped arm is resumed by rearming under authority that holds;
+                # a Line that stopped draining shows its refusal when dispatched.
+                repair=PlaybillNextRepairV1(
+                    operation="playbill.line.arm" if stopped else "playbill.line.dispatch",
+                    target=arm.line,
+                    required_change=(
+                        "rearm_the_line_under_a_current_credential_and_version"
+                        if stopped
+                        else "dispatch_the_line_to_read_why_its_work_is_blocked"
+                    ),
+                    arguments={"line": arm.line.removeprefix("Line:")},
+                ),
+            )
+        )
+    return tuple(items)
+
+
 def _ledger_mirror_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
     """Where this instance's published copy of its ledger stands against the head.
 
@@ -3531,6 +3667,9 @@ def service_playbill_next(
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
     """Fold accepted state and explicit client observations into one repair queue."""
 
+    continuation = None if request.cursor is None else _continuation_of(request.cursor)
+    if continuation is not None:
+        request = _continued(request, continuation)
     coordinate = _resolve_coordinate(instance, request.at)
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
     attestation_head: str | None = None
@@ -3644,6 +3783,11 @@ def service_playbill_next(
             expiring_within=request.expiring_within,
             access_profile=request.access_profile,
         ),
+        *_line_stalled_items(
+            instance,
+            evaluation_time=request.evaluation_time,
+            access_profile=request.access_profile,
+        ),
     )
     held = 0
     if parsed_claims is not None and request.access_profile.permits("instance"):
@@ -3654,6 +3798,13 @@ def service_playbill_next(
                 coordinate=coordinate,
                 claims=parsed_claims,
                 door_events=door_events,
+                door_history=(
+                    None
+                    if attestation_head is None
+                    else lambda: instance.claim_attestation_evidence_store().events(
+                        at_head=attestation_head
+                    )
+                ),
                 evaluation_time=request.evaluation_time,
             ),
         )
@@ -3724,6 +3875,7 @@ def service_playbill_next(
         "unobserved_domains": unobserved,
         "status": status,
         "items": items,
+        "total_items": len(items),
     }
     result_model: type[PlaybillNextResultV1] | type[PlaybillNextResultV2]
     if isinstance(request, PlaybillNextRequestV2):
@@ -3740,9 +3892,12 @@ def service_playbill_next(
     result_digest = playbill_next_result_digest(provisional)
     full = result_model.model_validate({**values, "result_digest": result_digest})
     _remember_queue(result_digest, full.items)
-    if request.since_result_digest is None:
-        return full
-    return _delta_of(full, since=request.since_result_digest)
+    answer = (
+        full
+        if request.since_result_digest is None
+        else _delta_of(full, since=request.since_result_digest)
+    )
+    return _page_of(answer, limit=request.limit, continuation=continuation)
 
 
 # Bounded, per-process memory of which rows each queue digest stood for. A miss
@@ -3789,12 +3944,146 @@ def _delta_of(
     # request idempotent and prevents a subset from overwriting the full queue
     # in the per-process memo (delta_since is intentionally outside v2's
     # accepted-state digest preimage).
-    update: dict[str, object] = {"items": changed, "delta_since": since}
+    update: dict[str, object] = {
+        "items": changed,
+        "total_items": len(changed),
+        "delta_since": since,
+    }
     if isinstance(full, PlaybillNextResultV2):
         update["removed_item_ids"] = tuple(
             sorted(previous_ids - current_ids, key=lambda item: item.encode("ascii"))
         )
     return full.model_copy(update=update)
+
+
+@dataclass(frozen=True)
+class _Continuation:
+    """What a page cursor pins: the answer it continues and where it stopped."""
+
+    result_digest: str
+    evaluation_time: datetime
+    at: AcceptedCoordinate
+    attestation_head_digest: str | None
+    delta_since: str | None
+    offset: int
+
+
+def _cursor_mismatch(detail: str) -> PlaybillNextCursorMismatch:
+    return PlaybillNextCursorMismatch(
+        f"{PlaybillNextCursorMismatch.code}: {detail}; read the queue again without a cursor"
+    )
+
+
+def _cursor(answer: PlaybillNextResultV1 | PlaybillNextResultV2, *, offset: int) -> str:
+    return base64.urlsafe_b64encode(
+        canonical_json(
+            {
+                "result_digest": answer.result_digest,
+                "evaluation_time": format_datetime(answer.evaluation_time),
+                "at": answer.coordinate.model_dump(mode="json"),
+                "attestation_head_digest": (
+                    answer.attestation_head_digest
+                    if isinstance(answer, PlaybillNextResultV2)
+                    else None
+                ),
+                "delta_since": answer.delta_since,
+                "offset": offset,
+            }
+        ).encode()
+    ).decode()
+
+
+def _continuation_of(cursor: str) -> _Continuation:
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")))
+        if not isinstance(payload, dict):
+            raise ValueError("cursor is not an object")
+        result_digest = payload["result_digest"]
+        head = payload["attestation_head_digest"]
+        since = payload["delta_since"]
+        offset = payload["offset"]
+        for digest in (result_digest, head, since):
+            if digest is not None:
+                Sha256Value.from_tagged(digest)
+        evaluation_time = parse_datetime(payload["evaluation_time"])
+        if (
+            result_digest is None
+            or evaluation_time is None
+            or not isinstance(offset, int)
+            or isinstance(offset, bool)
+            or offset < 1
+        ):
+            raise ValueError("cursor continuation is malformed")
+        at = AcceptedCoordinate.model_validate(payload["at"])
+    except (KeyError, TypeError, ValueError, UnicodeError, ValidationError) as exc:
+        raise _cursor_mismatch("the cursor is not a next page cursor") from exc
+    return _Continuation(
+        result_digest=result_digest,
+        evaluation_time=ensure_utc(evaluation_time),
+        at=at,
+        attestation_head_digest=head,
+        delta_since=since,
+        offset=offset,
+    )
+
+
+def _continued(
+    request: PlaybillNextRequestAny,
+    continuation: _Continuation,
+) -> PlaybillNextRequestAny:
+    """Re-read exactly the answer the cursor's first page was answered from."""
+
+    update: dict[str, object] = {
+        "at": continuation.at,
+        "evaluation_time": continuation.evaluation_time,
+        "since_result_digest": continuation.delta_since,
+    }
+    if isinstance(request, PlaybillNextRequestV2):
+        if continuation.attestation_head_digest is None:
+            raise _cursor_mismatch("the cursor continues a v1 queue")
+        update["at_attestation_head_digest"] = continuation.attestation_head_digest
+    elif continuation.attestation_head_digest is not None:
+        raise _cursor_mismatch("the cursor continues a v2 queue")
+    return request.model_copy(update=update)
+
+
+def _page_of(
+    answer: PlaybillNextResultV1 | PlaybillNextResultV2,
+    *,
+    limit: int,
+    continuation: _Continuation | None,
+) -> PlaybillNextResultV1 | PlaybillNextResultV2:
+    """Return one page of the answer, refusing a cursor minted for another one.
+
+    The cursor's pins re-read the same queue unless accepted state, the
+    workspace observation or the environment moved; any move changes the
+    whole-queue digest, and a delta whose base the memo has since forgotten
+    would silently become the whole queue, so both refuse rather than page a
+    different answer at the old offset.
+    """
+
+    offset = 0
+    if continuation is not None:
+        if continuation.result_digest != answer.result_digest:
+            raise _cursor_mismatch("the queue moved since the cursor's first page")
+        if continuation.delta_since != answer.delta_since:
+            raise _cursor_mismatch("the delta base is no longer remembered")
+        if continuation.offset >= len(answer.items):
+            raise _cursor_mismatch("the cursor points past the end of the answer")
+        offset = continuation.offset
+    rows = answer.items[offset : offset + limit]
+    end = offset + len(rows)
+    update: dict[str, object] = {
+        "items": rows,
+        "total_items": len(answer.items),
+        "next_cursor": None if end >= len(answer.items) else _cursor(answer, offset=end),
+    }
+    if isinstance(answer, PlaybillNextResultV2) and answer.removed_item_ids:
+        carried = frozenset(item.item_id for item in rows)
+        update["removed_item_ids"] = tuple(
+            item_id for item_id in answer.removed_item_ids if item_id in carried
+        )
+    return answer.model_copy(update=update)
 
 
 __all__ = [
@@ -3805,6 +4094,7 @@ __all__ = [
     "PlaybillNextAccessProfileInvalid",
     "PlaybillNextAcceptedStateInvalid",
     "PlaybillNextCoordinateNotAccepted",
+    "PlaybillNextCursorMismatch",
     "PlaybillNextDriftObservationV1",
     "PlaybillNextItemV1",
     "PlaybillNextRequestV1",

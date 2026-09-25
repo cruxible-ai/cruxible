@@ -74,9 +74,9 @@ def is_time_bearing_field(name: str, annotation: str) -> bool:
 # `observed_at` the instant the daemon evaluated the source, while an attestation
 # is `observed_at` the time its attestor asserts.
 CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
-    ("LineListeningSessionV1", "starts_at"): "VALIDITY WINDOW",
-    ("LineListeningSessionV1", "stops_at"): "VALIDITY WINDOW",
-    ("LineListeningSessionV1", "evaluated_until"): "VALIDITY WINDOW",
+    ("LineArmV1", "armed_at"): "VALIDITY WINDOW",
+    ("LineArmV1", "evaluated_until"): "VALIDITY WINDOW",
+    ("LineArmV1", "stopped_at"): "VALIDITY WINDOW",
     ("LineTriggerCheckRequestV1", "since"): "VALIDITY WINDOW",
     ("LineTriggerCheckRequestV1", "until"): "VALIDITY WINDOW",
     ("LineTriggerOccurrenceV1", "eligible_at"): "VALIDITY WINDOW",
@@ -147,6 +147,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ClaimAttestationStatement", "valid_until"): "VALIDITY WINDOW",
     ("ClaimAttestationStatementV2", "attested_at"): "ASSERTION TIME",
     ("ClaimAttestationStatementV2", "valid_until"): "VALIDITY WINDOW",
+    ("_UnsureHold", "attested_at"): "ASSERTION TIME",
+    ("_UnsureHold", "valid_until"): "VALIDITY WINDOW",
     ("ClaimAttestationStoreManifestV1", "initialized_at"): "ASSERTION TIME",
     ("ClaimEvidenceFreshnessLineV1", "expires_at"): "VALIDITY WINDOW",
     ("ClaimEvidenceFreshnessLineV1", "observed_at"): "ASSERTION TIME",
