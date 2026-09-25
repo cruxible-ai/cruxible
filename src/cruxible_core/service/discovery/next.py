@@ -2958,6 +2958,7 @@ _LINE_DISPATCH_LIMIT = 100
 def _line_dispatch_health(
     instance: PlaybillInstance,
     *,
+    coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1,
 ) -> PlaybillNextHealthV1:
@@ -2967,7 +2968,9 @@ def _line_dispatch_health(
     time, never at a coordinate: the set is operational, and nothing admits it
     implicitly. An occurrence whose window has not closed is `waiting`; one
     that could be admitted now makes the facet `due`, and the repair names the
-    Line holding the oldest such occurrence.
+    Line holding the oldest such occurrence. Only live Lines count: a retired
+    Line's pending work can never be admitted, so it is neither due nor a
+    repair anyone could run.
     """
 
     if not access_profile.permits("instance"):
@@ -2983,6 +2986,19 @@ def _line_dispatch_health(
             "FROM pending WHERE disposition='pending' GROUP BY line_id ORDER BY line_id",
             (format_datetime(evaluation_time),) * 2,
         ).fetchall()
+    if rows:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            live = {
+                row[0]
+                for row in projection.typed.connection.execute(
+                    "SELECT identity_digest FROM lines "
+                    "WHERE lifecycle='live' AND identity_digest IN ("
+                    + ",".join("?" for _ in rows)
+                    + ")",
+                    tuple(row[0] for row in rows),
+                ).fetchall()
+            }
+        rows = [row for row in rows if row[0] in live]
     if not rows:
         return PlaybillNextHealthV1(state="idle")
     lines = [
@@ -3864,6 +3880,7 @@ def service_playbill_next(
         compiler=_compiler_health(instance),
         line_dispatch=_line_dispatch_health(
             instance,
+            coordinate=coordinate,
             evaluation_time=request.evaluation_time,
             access_profile=request.access_profile,
         ),

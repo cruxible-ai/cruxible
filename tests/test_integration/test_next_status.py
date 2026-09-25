@@ -355,3 +355,50 @@ def test_an_instance_that_never_evaluated_a_line_keeps_no_dispatch_state(tmp_pat
     instance, _owner = initialize_local(tmp_path)
     assert _status(instance, _request(instance)).line_dispatch.state == "idle"
     assert not dispatch_root(instance).exists()
+
+
+def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.line_dispatch import LineEvaluateRequestV1
+    from cruxible_client.contracts.procedures.line_specs import (
+        CaptureLandingTriggerPolicyV2,
+        line_spec_digest,
+        line_spec_path,
+        render_line_spec,
+    )
+    from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
+    from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
+
+    instance, line, procedure, owner = line_world(
+        tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR), with_owner=True
+    )
+    capture(instance, procedure)
+    now = READ_TIME + timedelta(seconds=2)
+    service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequestV1(since=READ_TIME, until=now),
+        actor=_actor(instance),
+        now=now,
+    )
+    assert _status(instance, _request(instance, evaluation_time=now)).line_dispatch.state == "due"
+
+    retired = line.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=line_spec_digest(line).tagged
+            )
+        }
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[line_spec_path(line.identity.name)] = render_line_spec(retired)
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-08-28T15:02:00.000000Z", proposal_name="retire-line"
+    )
+
+    status = _status(instance, _request(instance, evaluation_time=now))
+    assert status.line_dispatch.state == "idle" and status.attention() == ()
