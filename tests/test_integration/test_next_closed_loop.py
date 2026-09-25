@@ -89,6 +89,7 @@ from cruxible_core.service.discovery.next import (
     PlaybillNextWorkspaceObservationV1,
     service_playbill_next,
 )
+from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._adoption_fixture import _Builder
 from tests.core_support._claim_authoring_support import (
@@ -166,6 +167,8 @@ EXPECTED_OPERATIONS = {
     "claim_new_evidence_unreviewed": "playbill.authoring.create",
     "document_modified": "playbill.document.propose",
     "unregistered_projection_block": "playbill.block.repin",
+    "proposal_stale": "playbill.proposal.readmit",
+    "mandate_expiring": "playbill.authoring.create",
     # A stopped arm is resumed by rearming under authority that still holds.
     "line_stalled": "playbill.line.arm",
 }
@@ -1236,6 +1239,121 @@ def _unregistered_projection_block(root: Path, _monkeypatch: pytest.MonkeyPatch)
     publication_v2.test_prepared_publication_can_be_abandoned_without_observing_the_source(root)
 
 
+def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.test_proposals.test_proposal_readmit import _accept, _shell
+
+    instance, owner = initialize_local(root)
+    alpha = instance.store_document_body(b"alpha\n").digest
+    beta = instance.store_document_body(b"beta\n").digest
+    first = service_propose_playbill_document(
+        instance,
+        shell=_shell("alpha", alpha, title="Alpha"),
+        actor_id="owner",
+        proposal_name="closed-loop-first",
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+    overtaken = service_propose_playbill_document(
+        instance,
+        shell=_shell("beta", beta, title="Beta"),
+        actor_id="owner",
+        proposal_name="closed-loop-overtaken",
+        timestamp="2026-08-24T17:00:01.000000Z",
+    )
+    stale_id = overtaken.proposal.admission.proposal_id
+    assert all(
+        item.reason != "proposal_stale"
+        for item in service_playbill_next(instance, request=_request(instance)).items
+    )
+    _accept(instance, owner, first)
+
+    row = _row(instance, "proposal_stale", _request(instance))
+    assert row.subject_identity == stale_id
+    assert row.repair.operation == EXPECTED_OPERATIONS["proposal_stale"]
+    assert row.repair.command == f"cruxible playbill proposal readmit {stale_id}"
+    assert row.detail["actor_id"] == "owner"
+    hidden = PlaybillNextRequestV1(
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=EVALUATION_TIME,
+        access_profile=CoverageAccessProfileV1(
+            profile_id="next-closed-loop-public", permitted_access_classes=("public",)
+        ),
+    )
+    assert all(
+        item.reason != "proposal_stale"
+        for item in service_playbill_next(instance, request=hidden).items
+    )
+
+    readmitted = service_readmit_playbill_proposal(instance, proposal_id=stale_id, actor_id="owner")
+    assert readmitted.proposal.proposal.evaluation.verdict == "candidate"
+    _assert_gone(instance, "proposal_stale", _request(instance))
+
+
+def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from cruxible_client.contracts.procedure_mandates import (
+        procedure_mandate_digest,
+        procedure_mandate_path,
+        render_procedure_mandate,
+    )
+    from cruxible_client.contracts.procedures.artifacts import render_procedure
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_procedures.test_procedure_mandates import _mandate, _procedure
+
+    instance, owner = initialize_local(root)
+    procedure = _procedure()
+    lapsing = _mandate(procedure=procedure).model_copy(
+        update={"expires_at": datetime(2026, 8, 27, tzinfo=UTC)}
+    )
+    _accept_tree(
+        instance,
+        owner,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            procedure.path: render_procedure(procedure.procedure),
+            procedure_mandate_path("triage"): render_procedure_mandate(lapsing),
+        },
+        timestamp="2026-08-24T17:00:00.000000Z",
+        proposal_name="closed-loop-mandate",
+    )
+    # Outside the lead time the lapse is not yet work.
+    _assert_gone(instance, "mandate_expiring", _request(instance, expiring_within=86_400_000_000))
+    row = _row(instance, "mandate_expiring", _request(instance))
+    assert row.subject_identity == "ProcedureMandate:triage"
+    assert row.repair.operation == EXPECTED_OPERATIONS["mandate_expiring"]
+    assert row.repair.command == "cruxible playbill authoring create --example procedure-mandate"
+    assert datetime.fromisoformat(row.detail["expires_at"]) == lapsing.expires_at
+    hidden = PlaybillNextRequestV1(
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=EVALUATION_TIME,
+        access_profile=CoverageAccessProfileV1(
+            profile_id="next-closed-loop-public", permitted_access_classes=("public",)
+        ),
+    )
+    assert all(
+        item.reason != "mandate_expiring"
+        for item in service_playbill_next(instance, request=hidden).items
+    )
+
+    renewed = lapsing.model_copy(
+        update={
+            "expires_at": datetime(2027, 8, 27, tzinfo=UTC),
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=procedure_mandate_digest(lapsing).tagged
+            ),
+        }
+    )
+    _accept_tree(
+        instance,
+        owner,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            procedure_mandate_path("triage"): render_procedure_mandate(renewed),
+        },
+        timestamp="2026-08-24T17:00:01.000000Z",
+        proposal_name="closed-loop-mandate-renewal",
+    )
+    _assert_gone(instance, "mandate_expiring", _request(instance))
+
+
 def _line_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
@@ -1317,6 +1435,8 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ),
     ("document_modified", None): _document_modified,
     ("unregistered_projection_block", None): _unregistered_projection_block,
+    ("proposal_stale", None): _proposal_stale,
+    ("mandate_expiring", None): _mandate_expiring,
     ("line_stalled", None): _line_stalled,
 }
 

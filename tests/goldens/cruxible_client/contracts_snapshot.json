@@ -85,7 +85,38 @@
         "document_modified",
         "unregistered_projection_block",
         "projection_marker_invalid",
+        "proposal_stale",
+        "mandate_expiring",
         "line_stalled"
+      ]
+    },
+    "PlaybillNextRefusalCodeV1": {
+      "values": [
+        "playbill.next.cursor_mismatch"
+      ]
+    },
+    "PlaybillNextRepairOperation": {
+      "values": [
+        "playbill.authoring.create",
+        "playbill.authoring.bind",
+        "playbill.claim.retire",
+        "playbill.floor.export",
+        "playbill.block.depublish",
+        "playbill.block.repin",
+        "playbill.block.sync",
+        "playbill.document.propose",
+        "playbill.proposal.readmit",
+        "playbill.compiler.upgrade",
+        "playbill.line.arm",
+        "playbill.line.dispatch",
+        "hand_edit"
+      ]
+    },
+    "PlaybillNextSeverity": {
+      "values": [
+        "blocking",
+        "repair",
+        "warning"
       ]
     },
     "PlaybillPolicyKind": {
@@ -24608,6 +24639,880 @@
         "status"
       ]
     },
+    "PlaybillNextFinding": {
+      "fields": {
+        "detail": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "title": "Detail"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "enum": [
+              "claim_conflicted",
+              "claim_uncovered",
+              "claim_stale_evidence",
+              "citation_drifted",
+              "citation_source_unobserved",
+              "evidence_expiring",
+              "floor_invalid",
+              "projection_dirty",
+              "projection_backing_stale",
+              "claim_dependency_stale",
+              "claim_attestation_threshold_met",
+              "claim_contradicting_evidence_available",
+              "claim_new_evidence_supporting",
+              "claim_new_evidence_unreviewed",
+              "document_modified",
+              "unregistered_projection_block",
+              "projection_marker_invalid",
+              "proposal_stale",
+              "mandate_expiring",
+              "line_stalled"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "related_identities": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "related_identities",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Identities",
+            "type": "array"
+          }
+        },
+        "repair": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "repair",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextRepair"
+          }
+        },
+        "severity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "severity",
+          "required": true,
+          "schema": {
+            "enum": [
+              "blocking",
+              "repair",
+              "warning"
+            ],
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "subject_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_identity",
+          "required": true,
+          "schema": {
+            "title": "Subject Identity",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-next-finding-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-next-finding-v1",
+            "default": "playbill-next-finding-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillNextRepair": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "title": "Arguments"
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Command"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "required_change": {
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "required_change"
+            ],
+            "title": "PlaybillNextRepair",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One more finding about the same underlying fact as the row that carries it.",
+        "properties": {
+          "detail": {
+            "title": "Detail"
+          },
+          "reason": {
+            "enum": [
+              "claim_conflicted",
+              "claim_uncovered",
+              "claim_stale_evidence",
+              "citation_drifted",
+              "citation_source_unobserved",
+              "evidence_expiring",
+              "floor_invalid",
+              "projection_dirty",
+              "projection_backing_stale",
+              "claim_dependency_stale",
+              "claim_attestation_threshold_met",
+              "claim_contradicting_evidence_available",
+              "claim_new_evidence_supporting",
+              "claim_new_evidence_unreviewed",
+              "document_modified",
+              "unregistered_projection_block",
+              "projection_marker_invalid",
+              "proposal_stale",
+              "mandate_expiring",
+              "line_stalled"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "related_identities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Identities",
+            "type": "array"
+          },
+          "repair": {
+            "$ref": "#/$defs/PlaybillNextRepair"
+          },
+          "severity": {
+            "enum": [
+              "blocking",
+              "repair",
+              "warning"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "subject_identity": {
+            "title": "Subject Identity",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-next-finding-v1",
+            "default": "playbill-next-finding-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "reason",
+          "subject_identity",
+          "repair"
+        ],
+        "title": "PlaybillNextFinding",
+        "type": "object"
+      },
+      "required_fields": [
+        "reason",
+        "repair",
+        "severity",
+        "subject_identity"
+      ]
+    },
+    "PlaybillNextHealth": {
+      "fields": {
+        "detail": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "title": "Detail"
+          }
+        },
+        "repair": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "repair",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "state": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state",
+          "required": true,
+          "schema": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-next-health-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-next-health-v1",
+            "default": "playbill-next-health-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillNextRepair": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "title": "Arguments"
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Command"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "required_change": {
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "required_change"
+            ],
+            "title": "PlaybillNextRepair",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One environment facet: its state, what it saw, and the repair if it needs one.",
+        "properties": {
+          "detail": {
+            "title": "Detail"
+          },
+          "repair": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-next-health-v1",
+            "default": "playbill-next-health-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "PlaybillNextHealth",
+        "type": "object"
+      },
+      "required_fields": [
+        "state"
+      ]
+    },
+    "PlaybillNextItem": {
+      "fields": {
+        "detail": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "title": "Detail"
+          }
+        },
+        "findings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "findings",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillNextFinding"
+            },
+            "title": "Findings",
+            "type": "array"
+          }
+        },
+        "item_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "item_id",
+          "required": true,
+          "schema": {
+            "title": "Item Id",
+            "type": "string"
+          }
+        },
+        "reason": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "reason",
+          "required": true,
+          "schema": {
+            "enum": [
+              "claim_conflicted",
+              "claim_uncovered",
+              "claim_stale_evidence",
+              "citation_drifted",
+              "citation_source_unobserved",
+              "evidence_expiring",
+              "floor_invalid",
+              "projection_dirty",
+              "projection_backing_stale",
+              "claim_dependency_stale",
+              "claim_attestation_threshold_met",
+              "claim_contradicting_evidence_available",
+              "claim_new_evidence_supporting",
+              "claim_new_evidence_unreviewed",
+              "document_modified",
+              "unregistered_projection_block",
+              "projection_marker_invalid",
+              "proposal_stale",
+              "mandate_expiring",
+              "line_stalled"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "related_identities": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "related_identities",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Identities",
+            "type": "array"
+          }
+        },
+        "repair": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "repair",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextRepair"
+          }
+        },
+        "severity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "severity",
+          "required": true,
+          "schema": {
+            "enum": [
+              "blocking",
+              "repair",
+              "warning"
+            ],
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "subject_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_identity",
+          "required": true,
+          "schema": {
+            "title": "Subject Identity",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-next-item-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-next-item-v1",
+            "default": "playbill-next-item-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillNextFinding": {
+            "additionalProperties": false,
+            "description": "One more finding about the same underlying fact as the row that carries it.",
+            "properties": {
+              "detail": {
+                "title": "Detail"
+              },
+              "reason": {
+                "enum": [
+                  "claim_conflicted",
+                  "claim_uncovered",
+                  "claim_stale_evidence",
+                  "citation_drifted",
+                  "citation_source_unobserved",
+                  "evidence_expiring",
+                  "floor_invalid",
+                  "projection_dirty",
+                  "projection_backing_stale",
+                  "claim_dependency_stale",
+                  "claim_attestation_threshold_met",
+                  "claim_contradicting_evidence_available",
+                  "claim_new_evidence_supporting",
+                  "claim_new_evidence_unreviewed",
+                  "document_modified",
+                  "unregistered_projection_block",
+                  "projection_marker_invalid",
+                  "proposal_stale",
+                  "mandate_expiring",
+                  "line_stalled"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "related_identities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Related Identities",
+                "type": "array"
+              },
+              "repair": {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              "severity": {
+                "enum": [
+                  "blocking",
+                  "repair",
+                  "warning"
+                ],
+                "title": "Severity",
+                "type": "string"
+              },
+              "subject_identity": {
+                "title": "Subject Identity",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-next-finding-v1",
+                "default": "playbill-next-finding-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "severity",
+              "reason",
+              "subject_identity",
+              "repair"
+            ],
+            "title": "PlaybillNextFinding",
+            "type": "object"
+          },
+          "PlaybillNextRepair": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "title": "Arguments"
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Command"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "required_change": {
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "required_change"
+            ],
+            "title": "PlaybillNextRepair",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "title": "Detail"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/$defs/PlaybillNextFinding"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "claim_conflicted",
+              "claim_uncovered",
+              "claim_stale_evidence",
+              "citation_drifted",
+              "citation_source_unobserved",
+              "evidence_expiring",
+              "floor_invalid",
+              "projection_dirty",
+              "projection_backing_stale",
+              "claim_dependency_stale",
+              "claim_attestation_threshold_met",
+              "claim_contradicting_evidence_available",
+              "claim_new_evidence_supporting",
+              "claim_new_evidence_unreviewed",
+              "document_modified",
+              "unregistered_projection_block",
+              "projection_marker_invalid",
+              "proposal_stale",
+              "mandate_expiring",
+              "line_stalled"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "related_identities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Identities",
+            "type": "array"
+          },
+          "repair": {
+            "$ref": "#/$defs/PlaybillNextRepair"
+          },
+          "severity": {
+            "enum": [
+              "blocking",
+              "repair",
+              "warning"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "subject_identity": {
+            "title": "Subject Identity",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-next-item-v1",
+            "default": "playbill-next-item-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "severity",
+          "reason",
+          "subject_identity",
+          "repair"
+        ],
+        "title": "PlaybillNextItem",
+        "type": "object"
+      },
+      "required_fields": [
+        "item_id",
+        "reason",
+        "repair",
+        "severity",
+        "subject_identity"
+      ]
+    },
+    "PlaybillNextRepair": {
+      "fields": {
+        "arguments": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "arguments",
+          "required": false,
+          "schema": {
+            "title": "Arguments"
+          }
+        },
+        "command": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "command",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Command"
+          }
+        },
+        "operation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operation",
+          "required": true,
+          "schema": {
+            "enum": [
+              "playbill.authoring.create",
+              "playbill.authoring.bind",
+              "playbill.claim.retire",
+              "playbill.floor.export",
+              "playbill.block.depublish",
+              "playbill.block.repin",
+              "playbill.block.sync",
+              "playbill.document.propose",
+              "playbill.proposal.readmit",
+              "playbill.compiler.upgrade",
+              "playbill.line.arm",
+              "playbill.line.dispatch",
+              "hand_edit"
+            ],
+            "title": "Operation",
+            "type": "string"
+          }
+        },
+        "required_change": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "required_change",
+          "required": true,
+          "schema": {
+            "title": "Required Change",
+            "type": "string"
+          }
+        },
+        "target": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target",
+          "required": true,
+          "schema": {
+            "title": "Target",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments": {
+            "title": "Arguments"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Command"
+          },
+          "operation": {
+            "enum": [
+              "playbill.authoring.create",
+              "playbill.authoring.bind",
+              "playbill.claim.retire",
+              "playbill.floor.export",
+              "playbill.block.depublish",
+              "playbill.block.repin",
+              "playbill.block.sync",
+              "playbill.document.propose",
+              "playbill.proposal.readmit",
+              "playbill.compiler.upgrade",
+              "playbill.line.arm",
+              "playbill.line.dispatch",
+              "hand_edit"
+            ],
+            "title": "Operation",
+            "type": "string"
+          },
+          "required_change": {
+            "title": "Required Change",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation",
+          "target",
+          "required_change"
+        ],
+        "title": "PlaybillNextRepair",
+        "type": "object"
+      },
+      "required_fields": [
+        "operation",
+        "required_change",
+        "target"
+      ]
+    },
     "PlaybillNextResult": {
       "fields": {
         "attestation_head_digest": {
@@ -24676,11 +25581,30 @@
           "required": true,
           "schema": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/PlaybillNextItem"
             },
             "title": "Items",
             "type": "array"
+          }
+        },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
           }
         },
         "observed_domains": {
@@ -24731,9 +25655,7 @@
           "json_name": "status",
           "required": true,
           "schema": {
-            "additionalProperties": true,
-            "title": "Status",
-            "type": "object"
+            "$ref": "#/$defs/PlaybillNextStatus"
           }
         },
         "tag": {
@@ -24751,6 +25673,17 @@
             ],
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "total_items": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total_items",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Total Items",
+            "type": "integer"
           }
         },
         "unobserved_domains": {
@@ -24813,6 +25746,305 @@
             ],
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
+          },
+          "PlaybillNextFinding": {
+            "additionalProperties": false,
+            "description": "One more finding about the same underlying fact as the row that carries it.",
+            "properties": {
+              "detail": {
+                "title": "Detail"
+              },
+              "reason": {
+                "enum": [
+                  "claim_conflicted",
+                  "claim_uncovered",
+                  "claim_stale_evidence",
+                  "citation_drifted",
+                  "citation_source_unobserved",
+                  "evidence_expiring",
+                  "floor_invalid",
+                  "projection_dirty",
+                  "projection_backing_stale",
+                  "claim_dependency_stale",
+                  "claim_attestation_threshold_met",
+                  "claim_contradicting_evidence_available",
+                  "claim_new_evidence_supporting",
+                  "claim_new_evidence_unreviewed",
+                  "document_modified",
+                  "unregistered_projection_block",
+                  "projection_marker_invalid",
+                  "proposal_stale",
+                  "mandate_expiring",
+                  "line_stalled"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "related_identities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Related Identities",
+                "type": "array"
+              },
+              "repair": {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              "severity": {
+                "enum": [
+                  "blocking",
+                  "repair",
+                  "warning"
+                ],
+                "title": "Severity",
+                "type": "string"
+              },
+              "subject_identity": {
+                "title": "Subject Identity",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-next-finding-v1",
+                "default": "playbill-next-finding-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "severity",
+              "reason",
+              "subject_identity",
+              "repair"
+            ],
+            "title": "PlaybillNextFinding",
+            "type": "object"
+          },
+          "PlaybillNextHealth": {
+            "additionalProperties": false,
+            "description": "One environment facet: its state, what it saw, and the repair if it needs one.",
+            "properties": {
+              "detail": {
+                "title": "Detail"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepair"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "state": {
+                "title": "State",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-next-health-v1",
+                "default": "playbill-next-health-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "title": "PlaybillNextHealth",
+            "type": "object"
+          },
+          "PlaybillNextItem": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "title": "Detail"
+              },
+              "findings": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillNextFinding"
+                },
+                "title": "Findings",
+                "type": "array"
+              },
+              "item_id": {
+                "title": "Item Id",
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "claim_conflicted",
+                  "claim_uncovered",
+                  "claim_stale_evidence",
+                  "citation_drifted",
+                  "citation_source_unobserved",
+                  "evidence_expiring",
+                  "floor_invalid",
+                  "projection_dirty",
+                  "projection_backing_stale",
+                  "claim_dependency_stale",
+                  "claim_attestation_threshold_met",
+                  "claim_contradicting_evidence_available",
+                  "claim_new_evidence_supporting",
+                  "claim_new_evidence_unreviewed",
+                  "document_modified",
+                  "unregistered_projection_block",
+                  "projection_marker_invalid",
+                  "proposal_stale",
+                  "mandate_expiring",
+                  "line_stalled"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "related_identities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Related Identities",
+                "type": "array"
+              },
+              "repair": {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              "severity": {
+                "enum": [
+                  "blocking",
+                  "repair",
+                  "warning"
+                ],
+                "title": "Severity",
+                "type": "string"
+              },
+              "subject_identity": {
+                "title": "Subject Identity",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-next-item-v1",
+                "default": "playbill-next-item-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "item_id",
+              "severity",
+              "reason",
+              "subject_identity",
+              "repair"
+            ],
+            "title": "PlaybillNextItem",
+            "type": "object"
+          },
+          "PlaybillNextRepair": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "title": "Arguments"
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Command"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "required_change": {
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "required_change"
+            ],
+            "title": "PlaybillNextRepair",
+            "type": "object"
+          },
+          "PlaybillNextStatus": {
+            "additionalProperties": false,
+            "description": "The environment the queue was read in, beside the work rather than in it.",
+            "properties": {
+              "blocking": {
+                "title": "Blocking",
+                "type": "boolean"
+              },
+              "compiler": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "floor": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "held": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Held",
+                "type": "integer"
+              },
+              "instance": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "ledger_mirror": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "line_dispatch": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "procedure_catalog": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "provider_lane": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "tag": {
+                "const": "playbill-next-status-v1",
+                "default": "playbill-next-status-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "blocking",
+              "instance",
+              "floor",
+              "ledger_mirror",
+              "provider_lane",
+              "procedure_catalog",
+              "compiler",
+              "line_dispatch"
+            ],
+            "title": "PlaybillNextStatus",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -24850,11 +26082,22 @@
           },
           "items": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/PlaybillNextItem"
             },
             "title": "Items",
             "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
           },
           "observed_domains": {
             "items": {
@@ -24881,9 +26124,7 @@
             "type": "string"
           },
           "status": {
-            "additionalProperties": true,
-            "title": "Status",
-            "type": "object"
+            "$ref": "#/$defs/PlaybillNextStatus"
           },
           "tag": {
             "default": "playbill-next-result-v1",
@@ -24893,6 +26134,11 @@
             ],
             "title": "Tag",
             "type": "string"
+          },
+          "total_items": {
+            "minimum": 0,
+            "title": "Total Items",
+            "type": "integer"
           },
           "unobserved_domains": {
             "items": {
@@ -24915,6 +26161,7 @@
           "unobserved_domains",
           "status",
           "items",
+          "total_items",
           "result_digest"
         ],
         "title": "PlaybillNextResult",
@@ -24927,7 +26174,269 @@
         "observed_domains",
         "result_digest",
         "status",
+        "total_items",
         "unobserved_domains"
+      ]
+    },
+    "PlaybillNextStatus": {
+      "fields": {
+        "blocking": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "blocking",
+          "required": true,
+          "schema": {
+            "title": "Blocking",
+            "type": "boolean"
+          }
+        },
+        "compiler": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "compiler",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "floor": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "floor",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "held": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "held",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Held",
+            "type": "integer"
+          }
+        },
+        "instance": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "ledger_mirror": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "ledger_mirror",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "line_dispatch": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "line_dispatch",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "procedure_catalog": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure_catalog",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "provider_lane": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider_lane",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "tag": {
+          "default": "playbill-next-status-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-next-status-v1",
+            "default": "playbill-next-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillNextHealth": {
+            "additionalProperties": false,
+            "description": "One environment facet: its state, what it saw, and the repair if it needs one.",
+            "properties": {
+              "detail": {
+                "title": "Detail"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepair"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "state": {
+                "title": "State",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-next-health-v1",
+                "default": "playbill-next-health-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "title": "PlaybillNextHealth",
+            "type": "object"
+          },
+          "PlaybillNextRepair": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "title": "Arguments"
+              },
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Command"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "required_change": {
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "required_change"
+            ],
+            "title": "PlaybillNextRepair",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The environment the queue was read in, beside the work rather than in it.",
+        "properties": {
+          "blocking": {
+            "title": "Blocking",
+            "type": "boolean"
+          },
+          "compiler": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "floor": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "held": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Held",
+            "type": "integer"
+          },
+          "instance": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "ledger_mirror": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "line_dispatch": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "procedure_catalog": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "provider_lane": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "tag": {
+            "const": "playbill-next-status-v1",
+            "default": "playbill-next-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "blocking",
+          "instance",
+          "floor",
+          "ledger_mirror",
+          "provider_lane",
+          "procedure_catalog",
+          "compiler",
+          "line_dispatch"
+        ],
+        "title": "PlaybillNextStatus",
+        "type": "object"
+      },
+      "required_fields": [
+        "blocking",
+        "compiler",
+        "floor",
+        "instance",
+        "ledger_mirror",
+        "line_dispatch",
+        "procedure_catalog",
+        "provider_lane"
       ]
     },
     "PlaybillPolicyInForce": {

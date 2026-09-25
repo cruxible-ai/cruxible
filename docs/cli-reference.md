@@ -1256,7 +1256,8 @@ or by hand and it clears.
 
 ~~~text
 cruxible playbill next [--evaluation-time TS] [--access-profile FILE]
-  [--expiring-within P7D] [--workspace-root DIR]
+  [--expiring-within P7D] [--workspace-root DIR] [--delta DIGEST]
+  [--limit N] [--cursor CURSOR] [--brief | --json]
 ~~~
 
 Returns the deterministic repair queue at one accepted coordinate. The client
@@ -1280,9 +1281,25 @@ carries their exact hand-edit entry shapes.
 
 The result's `status` reports the environment the queue was read in, beside the
 work rather than as rows: `instance` (active or decommissioned; decommissioned
-sets `blocking`), `floor`, `ledger_mirror`, `provider_lane`, and
-`procedure_catalog`. Each facet carries a `state`, and a `repair` while it needs
-attention. The CLI prints facets that need attention before the rows.
+sets `blocking`), `floor`, `ledger_mirror`, `provider_lane`,
+`procedure_catalog`, `compiler`, and `line_dispatch`. Each facet carries a
+`state`, and a `repair` while it needs attention. The CLI prints facets that
+need attention before the rows.
+
+`compiler` compares the accepted head's compiler with the one the daemon runs.
+`upgrade_available` means an explicit forward edge exists, and its repair is
+`cruxible playbill compiler upgrade --to DIGEST --name NAME`, which only
+proposes the upgrade: an admin still approves and activates it.
+`no_upgrade_path` means the accepted compiler has no edge to the running one,
+for example a daemon older than the state it serves; nothing is proposed.
+
+`line_dispatch` counts the Line occurrences that `line evaluate` or a listening
+daemon queued for dispatch and nothing has admitted yet, per Line. It is
+`waiting` while every queued occurrence's window is still open and `due` once
+one could be admitted at the evaluation time; the repair is
+`cruxible playbill line dispatch LINE_DIGEST [--limit N]` for the Line with the
+oldest due occurrence. Nothing dispatches implicitly. A caller whose access
+profile excludes instance material reads `not_observed`.
 
 A current `unsure` examined attestation holds a row, and `status.held` counts
 the rows held. A hold lasts only while its basis is unchanged:
@@ -1297,9 +1314,46 @@ the rows held. A hold lasts only while its basis is unchanged:
 A revised Claim, a later support or contradict from the same principal, or a
 lapsed validity window ends the hold, and the row returns.
 Empty `items` means only that no work exists in the explicitly observed domains.
+
+Rows are typed: each carries `severity`, `reason`, `subject_identity`,
+`related_identities`, `detail`, a `repair` (with a runnable `command` when the
+operation's arguments name every operand), and any further `findings` about the
+same underlying fact. `--delta DIGEST` returns only the rows added or removed
+since that earlier queue, when the daemon still remembers it; otherwise it
+returns the whole queue.
+
+Results are paged. `--limit` sets the rows per page (default 100, at most 1000),
+and `total_items` counts every row of the answer, so page one already gives the
+queue's size (or, on a delta, the number of changed rows). While more rows
+remain, `next_cursor` is set and the CLI prints `Next: --cursor CURSOR`. A
+cursor carries the evaluation time, coordinate, attestation head and delta base
+of the page that minted it, so later pages read the same queue even as the
+clock moves. `result_digest` names the whole queue on every page. If the queue
+has moved since the cursor's first page, or a delta's base has been forgotten,
+the request is refused with `playbill.next.cursor_mismatch`. The repair is to
+run `cruxible playbill next` again without a cursor.
+
+`--brief` prints one line per row: severity, reason, subject, and the repair
+command if there is one. It also prints the status lines that need attention
+and the next-page cursor, and leaves out repair details and findings.
 Conflicting values in the same claim slot require revisions into distinct
 qualifiers; when a shared value field such as `topic` separates the contenders,
 the repair identifies that field.
+
+A `proposal_stale` row is exactly a `proposal list` entry whose terminal reason
+is `stale`: a candidate neither accepted, refused nor withdrawn whose parent is
+no longer the coordinate's semantic root, so it cannot activate. The row names
+the proposal's author in `detail.actor_id`; its repair is
+`cruxible playbill proposal readmit PROPOSAL_ID`, which only that author may
+run, and `proposal withdraw` is the alternative when the change is no longer
+wanted. A readmission at the same coordinate, or a withdrawal, closes the row.
+
+A `mandate_expiring` row is a live, unsuspended ProcedureMandate whose
+`expires_at` falls after the evaluation time and within `--expiring-within`.
+Nothing renews a mandate, so its repair starts a successor from
+`cruxible playbill authoring create --example procedure-mandate`; a successor
+whose window reaches past the lead time, or the mandate's retirement, closes
+the row.
 
 ## playbill curation
 

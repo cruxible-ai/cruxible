@@ -116,7 +116,7 @@ def run(
     pb.audit()  # Free deterministic audit worklist.
     source.write_text("Patch within forty-nine hours.\n", encoding="utf-8")
     drift = pb.next(expiring_within=Duration.days(count=7))
-    assert any(row["reason"] == "citation_drifted" for row in drift.items)
+    assert any(row.reason == "citation_drifted" for row in drift.items)
     repaired = settle(
         pb.claim(
             subject=SUBJECT,
@@ -131,7 +131,7 @@ def run(
     )
     assert repaired.claim_id == first.claim_id and repaired.value == 49
     after = pb.next(expiring_within=Duration.days(count=7))
-    assert not any(row["reason"] == "citation_drifted" for row in after.items)
+    assert not any(row.reason == "citation_drifted" for row in after.items)
     return {
         "claim_id": repaired.claim_id,
         "value": repaired.value,

@@ -248,3 +248,157 @@ def test_a_decommissioned_instance_blocks_in_the_status_header(tmp_path: Path) -
     # Terminal: nothing inside the instance clears it.
     with pytest.raises(PlaybillInstanceDecommissioned):
         instance.decommission(reason="a second reason", decommissioned_by="owner")
+
+
+def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER, TRIGGER_CAPTURE_COMPILER
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.test_ledger.test_compiler_upgrade import approve, old_instance, propose
+
+    instance, _owner, reviewer = old_instance(tmp_path, monkeypatch, TRIGGER_CAPTURE_COMPILER)
+    behind = _status(instance, _request(instance))
+    assert behind.compiler.state == "upgrade_available"
+    assert behind.compiler.repair is not None
+    assert behind.compiler.repair.command == (
+        f"cruxible playbill compiler upgrade --to {AUTHORITY_VERBS_COMPILER.rule_digest} "
+        "--name upgrade-to-authority-verbs-settle-mandates-v1"
+    )
+    assert behind.attention() == (("compiler", behind.compiler),)
+
+    proposal = propose(instance, AUTHORITY_VERBS_COMPILER)
+    approve(instance, proposal, reviewer)
+    assert (
+        service_activate_playbill_proposal(
+            instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
+        ).status
+        == "accepted"
+    )
+    upgraded = _status(instance, _request(instance))
+    assert upgraded.compiler.state == "current" and upgraded.attention() == ()
+
+
+def test_a_compiler_with_no_forward_edge_is_reported_without_a_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.compiler.compiler import RESOLUTION_COMPILER
+
+    instance, _owner = initialize_local(tmp_path)
+    # A daemon older than the state it serves has nothing to upgrade to.
+    monkeypatch.setattr(
+        "cruxible_core.service.discovery.next.current_compiler_coordinate",
+        lambda: RESOLUTION_COMPILER,
+    )
+    status = _status(instance, _request(instance))
+    assert status.compiler.state == "no_upgrade_path"
+    assert status.compiler.repair is None and status.attention() == ()
+
+
+def test_due_line_occurrences_name_their_dispatch_until_it_admits_them(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.contracts.line_dispatch import LineDispatchRequestV1
+    from cruxible_client.contracts.procedures.line_specs import line_identity_digest
+    from cruxible_core.service.procedures.line_dispatch import service_dispatch_line
+    from tests.test_procedures.test_line_dispatch import queued_world
+    from tests.test_procedures.test_procedure_run_surface import _actor
+
+    instance, line, _procedure, occurrence, now = queued_world(tmp_path)
+    identity = line_identity_digest(line.identity)
+
+    waiting = _status(
+        instance,
+        _request(instance, evaluation_time=occurrence.eligible_at - timedelta(microseconds=1)),
+    ).line_dispatch
+    assert waiting.state == "waiting" and waiting.repair is None
+    assert waiting.detail == {
+        "due": 0,
+        "waiting": 1,
+        "lines": [
+            {
+                "line_identity_digest": identity,
+                "due": 0,
+                "waiting": 1,
+                "oldest_eligible_at": occurrence.eligible_at.isoformat(),
+            }
+        ],
+    }
+
+    due = _status(instance, _request(instance, evaluation_time=now))
+    assert due.line_dispatch.state == "due"
+    assert due.line_dispatch.repair is not None
+    assert due.line_dispatch.repair.command == f"cruxible playbill line dispatch {identity}"
+    assert due.attention() == (("line_dispatch", due.line_dispatch),)
+    hidden = PlaybillNextRequestV1(
+        evaluation_time=now,
+        access_profile=_access().model_copy(update={"permitted_access_classes": ("public",)}),
+    )
+    assert _status(instance, hidden).line_dispatch.state == "not_observed"
+
+    dispatched = service_dispatch_line(
+        instance,
+        identity,
+        LineDispatchRequestV1(),
+        actor=_actor(instance),
+        now=now,
+        caller_rung=3,
+    )
+    assert dispatched.items[0].status == "admitted", dispatched
+    drained = _status(instance, _request(instance, evaluation_time=now))
+    assert drained.line_dispatch.state == "idle" and drained.attention() == ()
+
+
+def test_an_instance_that_never_evaluated_a_line_keeps_no_dispatch_state(tmp_path: Path) -> None:
+    from cruxible_core.exhaust.line_dispatch import dispatch_root
+
+    instance, _owner = initialize_local(tmp_path)
+    assert _status(instance, _request(instance)).line_dispatch.state == "idle"
+    assert not dispatch_root(instance).exists()
+
+
+def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.line_dispatch import LineEvaluateRequestV1
+    from cruxible_client.contracts.procedures.line_specs import (
+        CaptureLandingTriggerPolicyV2,
+        line_spec_digest,
+        line_spec_path,
+        render_line_spec,
+    )
+    from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
+    from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
+
+    instance, line, procedure, owner = line_world(
+        tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR), with_owner=True
+    )
+    capture(instance, procedure)
+    now = READ_TIME + timedelta(seconds=2)
+    service_evaluate_line(
+        instance,
+        line.identity.name,
+        LineEvaluateRequestV1(since=READ_TIME, until=now),
+        actor=_actor(instance),
+        now=now,
+    )
+    assert _status(instance, _request(instance, evaluation_time=now)).line_dispatch.state == "due"
+
+    retired = line.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired", predecessor_digest=line_spec_digest(line).tagged
+            )
+        }
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[line_spec_path(line.identity.name)] = render_line_spec(retired)
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-08-28T15:02:00.000000Z", proposal_name="retire-line"
+    )
+
+    status = _status(instance, _request(instance, evaluation_time=now))
+    assert status.line_dispatch.state == "idle" and status.attention() == ()

@@ -170,6 +170,9 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "procedure_mandate_not_applicable": "use_the_declared_terminal_authority",
     "procedure_authority_admission_invalid": "rebuild_the_terminal_from_the_exact_admitted_run",
     "procedure_authority_admission_mismatch": "rebuild_the_terminal_from_the_exact_admitted_run",
+    # Only the proposal's author may readmit it and either the author or a
+    # daemon-wide operator may withdraw it; which one is the author's call.
+    "proposal_stale": "readmit_as_its_author_or_withdraw_the_stale_proposal",
 }
 
 
@@ -182,6 +185,11 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
 RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
     "binding_required": RepairOperationV1(operation="playbill.procedure.bind"),
     "line_mandate_required": RepairOperationV1(
+        operation="playbill.authoring.create",
+        arguments={"example": "procedure-mandate"},
+    ),
+    # Nothing renews a mandate: its successor, or its retirement, is authored.
+    "mandate_expiring": RepairOperationV1(
         operation="playbill.authoring.create",
         arguments={"example": "procedure-mandate"},
     ),
@@ -250,6 +258,9 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
     "evaluation_instant_skewed": RepairOperationV1(operation="playbill.line.run"),
     "line_identity_mismatch": RepairOperationV1(operation="playbill.line.run"),
     "document_modified": RepairOperationV1(operation="playbill.document.propose"),
+    # A next page cursor names the whole queue it continues; once that queue
+    # moves, the repair is to read page one again.
+    "playbill.next.cursor_mismatch": RepairOperationV1(operation="playbill.next"),
     "workspace_binding_invalid": RepairOperationV1(
         operation="playbill.host.create",
         arguments={"workspace": ".", "replace": True},
