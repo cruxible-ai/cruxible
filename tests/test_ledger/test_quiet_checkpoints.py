@@ -133,3 +133,25 @@ def test_only_a_daemon_manager_defers_checkpoints() -> None:
     manager.quiet_checkpoint_seconds = 5.0
     manager._keep("inst_daemon", instance)  # type: ignore[arg-type]
     assert enabled == [5.0]
+
+
+def test_flush_waits_for_a_summary_the_worker_already_started() -> None:
+    writer = QuietCheckpointWriter(quiet_seconds=0.01, name="quiet-test")
+    started, release = threading.Event(), threading.Event()
+    finished: list[str] = []
+
+    def slow() -> None:
+        started.set()
+        release.wait(5)
+        finished.append("written")
+
+    writer.defer(slow)
+    assert started.wait(5)
+    flushed = threading.Event()
+    flusher = threading.Thread(target=lambda: (writer.flush(), flushed.set()))
+    flusher.start()
+    assert not flushed.wait(0.2)  # still writing: flush has not returned
+    release.set()
+    assert flushed.wait(5)
+    assert finished == ["written"]
+    flusher.join()

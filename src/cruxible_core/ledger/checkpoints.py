@@ -288,8 +288,9 @@ class QuietCheckpointWriter:
 
     Only the latest summary matters: each acceptance replaces the pending one,
     and it runs `quiet_seconds` after the last acceptance, on a daemon thread,
-    so it never delays a write. `flush` runs it now (graceful shutdown). A
-    failure is dropped, because a missing checkpoint only costs replay time.
+    so it never delays a write. `flush` runs it now and waits for one already
+    running (graceful shutdown). A failure is dropped, because a missing
+    checkpoint only costs replay time.
     """
 
     def __init__(self, *, quiet_seconds: float, name: str) -> None:
@@ -299,6 +300,7 @@ class QuietCheckpointWriter:
         self._pending: Callable[[], None] | None = None
         self._deferred_at = 0.0
         self._thread: threading.Thread | None = None
+        self._active = False
 
     def defer(self, write: Callable[[], None]) -> None:
         with self._condition:
@@ -313,11 +315,14 @@ class QuietCheckpointWriter:
                 self._thread = thread
             self._condition.notify_all()
 
-    def flush(self) -> None:
+    def flush(self, *, timeout: float = 60.0) -> None:
         with self._condition:
             write, self._pending = self._pending, None
             self._condition.notify_all()
         self._write(write)
+        # A summary the worker already took is still the head's, or a no-op.
+        with self._condition:
+            self._condition.wait_for(lambda: not self._active, timeout=timeout)
 
     def _run(self) -> None:
         while True:
@@ -331,7 +336,13 @@ class QuietCheckpointWriter:
                 if write is None:
                     self._thread = None
                     return
-            self._write(write)
+                self._active = True
+            try:
+                self._write(write)
+            finally:
+                with self._condition:
+                    self._active = False
+                    self._condition.notify_all()
 
     @staticmethod
     def _write(write: Callable[[], None] | None) -> None:
