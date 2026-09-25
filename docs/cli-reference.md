@@ -1348,6 +1348,20 @@ the proposal's author in `detail.actor_id`; its repair is
 run, and `proposal withdraw` is the alternative when the change is no longer
 wanted. A readmission at the same coordinate, or a withdrawal, closes the row.
 
+A `proposal_awaiting_approval` row is an open candidate whose parent is the
+coordinate's semantic root and whose approval requirement is not yet met, and
+which you could approve. "You" is the daemon's authenticated caller: the
+principal `whoami` reports. It must be active and `ordinary` in the accepted
+registry, must not be the candidate's author, and must not have approved it
+already. The caller is never a request field, so a queue read in library mode,
+or by a caller who is not a registered principal (an auth-off daemon's local
+`operator`, say), has no such rows. The repair is
+`cruxible playbill proposal approve PROPOSAL_ID --signer-id PRINCIPAL`. Add
+`--key` with the path to your signing key: it stays in your own custody and the
+daemon never learns where. Your approval closes the row. So does another
+signer's approval that meets the requirement first, because the candidate then
+needs activation, not more approval.
+
 A `mandate_expiring` row is a live, unsuspended ProcedureMandate whose
 `expires_at` falls after the evaluation time and within `--expiring-within`.
 Nothing renews a mandate, so its repair starts a successor from

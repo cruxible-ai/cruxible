@@ -130,7 +130,10 @@ from cruxible_core.service.evidence.evidence import (
     accepted_claim_attestations,
     service_evaluate_playbill_claim_verdict,
 )
-from cruxible_core.service.proposals.proposals import stale_unreadmitted_proposals
+from cruxible_core.service.proposals.proposals import (
+    proposals_awaiting_approval,
+    stale_unreadmitted_proposals,
+)
 from cruxible_core.service.proposals.publications import (
     ProjectionBlockRegistration,
     registered_projection_blocks,
@@ -777,6 +780,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.block.sync": "playbill block sync",
     "playbill.document.propose": "playbill document propose",
     "playbill.proposal.readmit": "playbill proposal readmit",
+    "playbill.proposal.approve": "playbill proposal approve",
     "playbill.compiler.upgrade": "playbill compiler upgrade",
     "playbill.line.arm": "playbill line arm",
     "playbill.line.dispatch": "playbill line dispatch",
@@ -889,6 +893,14 @@ def _repair_command(
         if not isinstance(proposal_id, str):
             return None
         parts.append(shlex.quote(proposal_id))
+    elif operation == "playbill.proposal.approve":
+        # The signing key stays in the signer's client custody; the daemon
+        # never learns its path, so `--key` is the one operand left to add.
+        proposal_id = values.get("proposal_id")
+        signer_id = values.get("signer_id")
+        if not isinstance(proposal_id, str) or not isinstance(signer_id, str):
+            return None
+        parts.extend([shlex.quote(proposal_id), "--signer-id", shlex.quote(signer_id)])
     elif operation == "playbill.claim.retire":
         claim_id = values.get("claim_id")
         if isinstance(claim_id, str):
@@ -3242,6 +3254,66 @@ def _proposal_items(
     )
 
 
+def _approval_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    caller_principal_id: str | None,
+    access_profile: CoverageAccessProfileV1,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Open proposals waiting on an approval the calling principal may give.
+
+    The principal is the daemon's authenticated caller, never a request field,
+    and must be active and ordinary in the coordinate's registry: only such a
+    signer's approval counts toward a candidate's requirement. A queue read
+    without one -- library mode, or an unattributed request -- has no rows
+    here. Approving closes the row; so does another signer meeting the
+    requirement first, since the candidate then waits on activation instead.
+    """
+
+    if caller_principal_id is None or not access_profile.permits("instance"):
+        return ()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        ordinary = frozenset(
+            row[0]
+            for row in projection.typed.connection.execute(
+                "SELECT principal_id FROM principals WHERE status='active' AND kind='ordinary'"
+            )
+        )
+    return tuple(
+        _item(
+            severity="repair",
+            reason="proposal_awaiting_approval",
+            subject_identity=proposal.proposal_id,
+            related_identities=(proposal.target_ref,),
+            detail={
+                "actor_id": proposal.actor_id,
+                "admitted_at": proposal.admitted_at,
+                "candidate_digest": proposal.candidate_digest,
+                "signer_id": caller_principal_id,
+                "eligible_approvals": proposal.eligible_approvals,
+                "minimum_distinct_signers": proposal.minimum_distinct_signers,
+                "target_ref": proposal.target_ref,
+            },
+            repair=PlaybillNextRepairV1(
+                operation="playbill.proposal.approve",
+                target=proposal.proposal_id,
+                required_change="review_and_approve_the_candidate_with_your_signing_key",
+                arguments={
+                    "proposal_id": proposal.proposal_id,
+                    "signer_id": caller_principal_id,
+                },
+            ),
+        )
+        for proposal in proposals_awaiting_approval(
+            instance,
+            PlaybillAcceptedCoordinate.from_internal(coordinate),
+            principal_id=caller_principal_id,
+            ordinary_principal_ids=ordinary,
+        )
+    )
+
+
 def _mandate_items(
     instance: PlaybillInstance,
     *,
@@ -3680,8 +3752,13 @@ def service_playbill_next(
     *,
     request: PlaybillNextRequestAny,
     provider_lane: ProviderLaneStatusV1 | None = None,
+    caller_principal_id: str | None = None,
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
-    """Fold accepted state and explicit client observations into one repair queue."""
+    """Fold accepted state and explicit client observations into one repair queue.
+
+    `caller_principal_id` is the daemon's authenticated caller, passed beside
+    the request rather than inside it so no request can name someone else.
+    """
 
     continuation = None if request.cursor is None else _continuation_of(request.cursor)
     if continuation is not None:
@@ -3790,6 +3867,12 @@ def service_playbill_next(
         *_proposal_items(
             instance,
             coordinate=public_coordinate,
+            access_profile=request.access_profile,
+        ),
+        *_approval_items(
+            instance,
+            coordinate=coordinate,
+            caller_principal_id=caller_principal_id,
             access_profile=request.access_profile,
         ),
         *_mandate_items(
@@ -3908,7 +3991,7 @@ def service_playbill_next(
     )
     result_digest = playbill_next_result_digest(provisional)
     full = result_model.model_validate({**values, "result_digest": result_digest})
-    scope = _queue_scope(instance, request)
+    scope = _queue_scope(instance, request, caller_principal_id=caller_principal_id)
     _remember_queue(result_digest, full.items, scope=scope)
     answer = (
         full
@@ -3923,19 +4006,26 @@ def service_playbill_next(
 # the whole queue, which answers the caller's question either way. Entries are
 # scoped to the instance and access profile that produced them: a delta names
 # removed rows, so diffing against a queue read with wider access would hand
-# this caller rows its own read withholds.
+# this caller rows its own read withholds. The caller's principal is in the
+# scope too, since approval rows are that principal's alone.
 _QUEUE_MEMO: OrderedDict[tuple[str, str], tuple[PlaybillNextItemV1, ...]] = OrderedDict()
 _QUEUE_MEMO_LIMIT = 32
 _QUEUE_MEMO_LOCK = RLock()
 
 
-def _queue_scope(instance: PlaybillInstance, request: PlaybillNextRequestAny) -> str:
+def _queue_scope(
+    instance: PlaybillInstance,
+    request: PlaybillNextRequestAny,
+    *,
+    caller_principal_id: str | None,
+) -> str:
     return typed_digest(
         Sha256Value,
         "playbill-next-queue-scope-v1",
         {
             "instance_id": instance.descriptor.instance_id,
             "access_profile": request.access_profile.model_dump(mode="json"),
+            "caller_principal_id": caller_principal_id,
         },
     ).tagged
 

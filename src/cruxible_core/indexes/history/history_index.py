@@ -1028,6 +1028,11 @@ class AcceptedHistoryIndex:
                 connection.executemany(
                     "INSERT INTO accepted_member_locations VALUES (?,?,?,?,?,?,?)", members
                 )
+        from cruxible_core.indexes.proposals.proposal_index import refresh_acceptance
+
+        # The proposal component's acceptance marker is derived from the
+        # generations just written, so it moves in this same transaction.
+        refresh_acceptance(connection, from_sequence=start)
         progress = (
             recovered.coordinate.instance_id,
             history[0].generation_root.tagged,

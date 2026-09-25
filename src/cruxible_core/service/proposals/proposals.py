@@ -165,8 +165,7 @@ def _proposal_entries(
         connection, sequence = bound
         rows = connection.execute(
             "SELECT p.*, CASE WHEN evaluation_status='refused' THEN 'refused' "
-            "WHEN EXISTS (SELECT 1 FROM accepted_generations g "
-            "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?) THEN 'accepted' "
+            "WHEN accepted_sequence<=? THEN 'accepted' "
             "WHEN withdrawal_path IS NOT NULL THEN 'withdrawn' "
             "WHEN candidate_parent_semantic_root=? THEN NULL ELSE 'stale' END AS reason "
             "FROM proposals p "
@@ -239,6 +238,36 @@ def _bound_inventory(
             yield connection, history.sequence
 
 
+def _open_candidates(
+    connection: sqlite3.Connection,
+    sequence: int,
+    *,
+    columns: str,
+    where: str,
+    parameters: tuple[str, ...],
+) -> list[sqlite3.Row]:
+    """Admitted, unwithdrawn candidates that history at `sequence` had not settled.
+
+    Two locators, so settled candidates are never enumerated: the open locator
+    holds candidates no generation has settled, and the acceptance locator adds
+    those settled only after `sequence` -- empty at the head, and bounded by the
+    history after an older coordinate rather than by all of it.
+    """
+
+    open_rows = (
+        f"SELECT {columns} FROM proposals WHERE evaluation_status='candidate' "
+        "AND withdrawal_path IS NULL AND admission_path IS NOT NULL "
+        f"AND {{settled}} AND {where}"
+    )
+    return connection.execute(
+        open_rows.format(settled="accepted_sequence IS NULL")
+        + " UNION ALL "
+        + open_rows.format(settled="accepted_sequence>?")
+        + " ORDER BY admitted_at_us,proposal_id",
+        (*parameters, sequence, *parameters),
+    ).fetchall()
+
+
 @dataclass(frozen=True)
 class StaleProposal:
     """A candidate evaluated against a state accepted head has since moved past."""
@@ -285,17 +314,15 @@ def stale_unreadmitted_proposals(
         if bound is None:
             return ()
         connection, sequence = bound
-        rows = connection.execute(
-            "SELECT proposal_id,actor_id,target_ref,admitted_at_us,"
-            "candidate_parent_semantic_root FROM proposals p "
-            "WHERE evaluation_status='candidate' AND withdrawal_path IS NULL "
-            "AND admission_path IS NOT NULL AND candidate_parent_semantic_root IS NOT NULL "
-            "AND candidate_parent_semantic_root!=? AND NOT EXISTS ("
-            "SELECT 1 FROM accepted_generations g "
-            "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?) "
-            "ORDER BY admitted_at_us,proposal_id",
-            (coordinate.semantic_root, sequence),
-        ).fetchall()
+        rows = _open_candidates(
+            connection,
+            sequence,
+            columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_parent_semantic_root",
+            where=(
+                "candidate_parent_semantic_root IS NOT NULL AND candidate_parent_semantic_root!=?"
+            ),
+            parameters=(coordinate.semantic_root,),
+        )
         stale = []
         for row in rows:
             readmission = _readmission_target_ref(
@@ -316,6 +343,80 @@ def stale_unreadmitted_proposals(
                 )
             )
     return tuple(stale)
+
+
+@dataclass(frozen=True)
+class ProposalAwaitingApproval:
+    """An open candidate one more eligible signer's approval would advance."""
+
+    proposal_id: str
+    actor_id: str
+    target_ref: str
+    admitted_at: str
+    candidate_digest: str
+    minimum_distinct_signers: int
+    eligible_approvals: int
+
+
+def proposals_awaiting_approval(
+    instance: PlaybillInstance,
+    coordinate: PlaybillAcceptedCoordinate,
+    *,
+    principal_id: str,
+    ordinary_principal_ids: frozenset[str],
+) -> tuple[ProposalAwaitingApproval, ...]:
+    """Open candidates at `coordinate` whose approval `principal_id` could supply.
+
+    Read through the open-parent locator: candidates neither refused, accepted
+    nor withdrawn whose parent is the coordinate's semantic root, so approval
+    is what stands between them and activation. A candidate qualifies while its
+    approval requirement is unmet -- counted exactly as activation counts it,
+    over distinct active ordinary signers other than its creator -- and this
+    principal is such a signer who has not signed it yet.
+    `ordinary_principal_ids` is the coordinate's active ordinary registry.
+    """
+
+    if principal_id not in ordinary_principal_ids:
+        return ()
+    evidence = instance.proposal_evidence()
+    with _bound_inventory(instance, coordinate) as bound:
+        if bound is None:
+            return ()
+        connection, sequence = bound
+        rows = _open_candidates(
+            connection,
+            sequence,
+            columns="proposal_id,actor_id,target_ref,admitted_at_us,candidate_digest",
+            where="candidate_parent_semantic_root=? AND actor_id!=?",
+            parameters=(coordinate.semantic_root, principal_id),
+        )
+    awaiting = []
+    for row in rows:
+        candidate = evidence.read_candidate(row["candidate_digest"])
+        if not candidate.approval_requirements:
+            continue
+        signers = {
+            submission.attestation.signer_id
+            for submission in evidence.read_approvals(row["candidate_digest"])
+        }
+        if principal_id in signers:
+            continue
+        eligible = len((signers - {row["actor_id"]}) & ordinary_principal_ids)
+        minimum = candidate.approval_requirements[0].minimum_distinct_signers
+        if eligible >= minimum:
+            continue
+        awaiting.append(
+            ProposalAwaitingApproval(
+                proposal_id=row["proposal_id"],
+                actor_id=row["actor_id"],
+                target_ref=row["target_ref"],
+                admitted_at=timestamp(row["admitted_at_us"]),
+                candidate_digest=row["candidate_digest"],
+                minimum_distinct_signers=minimum,
+                eligible_approvals=eligible,
+            )
+        )
+    return tuple(awaiting)
 
 
 def service_resolve_playbill_proposal_selector(
@@ -570,10 +671,12 @@ __all__ = [
     "PlaybillWhoAmIV1",
     "CredentialPermissionMode",
     "PrincipalRegistrationStatus",
+    "ProposalAwaitingApproval",
     "ProposalInventoryStatus",
     "ProposalTerminalReason",
     "StaleProposal",
     "WhoAmIActorIdSource",
+    "proposals_awaiting_approval",
     "readmission_operation_digest",
     "service_list_playbill_proposals",
     "service_readmit_playbill_proposal",

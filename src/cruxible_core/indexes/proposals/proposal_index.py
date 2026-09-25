@@ -35,13 +35,14 @@ from cruxible_core.proposals.proposal_notes import admission_bytes
 if TYPE_CHECKING:
     from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
 
-_SCHEMA = """
+_PROGRESS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS proposal_progress (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  source_epoch TEXT NOT NULL, verified_sequence INTEGER NOT NULL CHECK(verified_sequence>=0),
  source_root TEXT NOT NULL
 ) STRICT;
-CREATE TABLE IF NOT EXISTS proposals (
+"""
+_PROPOSALS_COLUMNS = """
  proposal_id TEXT PRIMARY KEY, actor_id TEXT, target_ref TEXT,
  admission_path TEXT, admission_digest TEXT,
  evaluation_path TEXT, evaluation_digest TEXT, withdrawal_path TEXT, withdrawal_digest TEXT,
@@ -51,7 +52,8 @@ CREATE TABLE IF NOT EXISTS proposals (
  candidate_tree_oid TEXT, evaluated_base_oid TEXT, evaluated_tree_oid TEXT,
  candidate_digest TEXT, candidate_parent_semantic_root TEXT,
  rebased INTEGER CHECK(rebased IN (0,1)), admitted_at_us INTEGER, evaluated_at_us INTEGER,
- source_epoch TEXT NOT NULL, verified_sequence INTEGER NOT NULL CHECK(verified_sequence>=0),
+ source_epoch TEXT NOT NULL, verified_sequence INTEGER NOT NULL CHECK(verified_sequence>=0),"""
+_PROPOSALS_CHECKS = """
  CHECK(admission_path IS NOT NULL OR evaluation_path IS NOT NULL OR withdrawal_path IS NOT NULL),
  CHECK((admission_path IS NULL)=(admission_digest IS NULL)),
  CHECK(admission_path IS NULL OR (actor_id IS NOT NULL AND target_ref IS NOT NULL
@@ -64,11 +66,8 @@ CREATE TABLE IF NOT EXISTS proposals (
  CHECK((evaluation_status='candidate')=(candidate_digest IS NOT NULL)),
  CHECK(evaluation_status='missing' OR (evaluated_base_oid IS NOT NULL AND rebased IS NOT NULL
        AND evaluated_at_us IS NOT NULL)),
- CHECK(evaluation_status!='candidate' OR evaluated_tree_oid IS NOT NULL)
-) STRICT;
-CREATE INDEX IF NOT EXISTS proposals_by_open_parent
- ON proposals(candidate_parent_semantic_root,proposal_id)
- WHERE evaluation_status='candidate' AND withdrawal_path IS NULL;
+ CHECK(evaluation_status!='candidate' OR evaluated_tree_oid IS NOT NULL)"""
+_PROPOSALS_LOCATORS = """
 CREATE INDEX IF NOT EXISTS proposals_by_target ON proposals(target_ref,proposal_id);
 CREATE INDEX IF NOT EXISTS proposals_by_candidate ON proposals(candidate_digest,proposal_id)
  WHERE candidate_digest IS NOT NULL;
@@ -77,6 +76,43 @@ CREATE INDEX IF NOT EXISTS proposals_by_submitted_commit
 CREATE INDEX IF NOT EXISTS proposals_by_review_commit ON proposals(review_commit_oid,proposal_id)
  WHERE review_commit_oid IS NOT NULL;
 """
+# `accepted_sequence` is the first accepted generation whose change set settled
+# the row's candidate, NULL while none has. It is a function of the shared
+# file's `accepted_generations`, kept current by both writers: a proposal row
+# computes it when written, and a history sync recomputes every row whose
+# acceptance it changed. The open locator then excludes settled candidates
+# before enumeration instead of probing history once per accepted proposal.
+_SCHEMA = (
+    _PROGRESS_SCHEMA
+    + "CREATE TABLE IF NOT EXISTS proposals ("
+    + _PROPOSALS_COLUMNS
+    + """
+ accepted_sequence INTEGER CHECK(accepted_sequence IS NULL OR accepted_sequence>0),"""
+    + _PROPOSALS_CHECKS
+    + """,
+ CHECK(accepted_sequence IS NULL OR candidate_digest IS NOT NULL)
+) STRICT;
+CREATE INDEX IF NOT EXISTS proposals_by_open_parent
+ ON proposals(candidate_parent_semantic_root,proposal_id)
+ WHERE evaluation_status='candidate' AND withdrawal_path IS NULL AND accepted_sequence IS NULL;
+CREATE INDEX IF NOT EXISTS proposals_by_acceptance ON proposals(accepted_sequence,proposal_id)
+ WHERE accepted_sequence IS NOT NULL;"""
+    + _PROPOSALS_LOCATORS
+)
+# The schema before acceptance was carried. Its rows are derived, so a working
+# file still holding it drops the table and reconstructs from evidence.
+_PRE_ACCEPTANCE_SCHEMA_SQL = (
+    _PROGRESS_SCHEMA
+    + "CREATE TABLE IF NOT EXISTS proposals ("
+    + _PROPOSALS_COLUMNS
+    + _PROPOSALS_CHECKS
+    + """
+) STRICT;
+CREATE INDEX IF NOT EXISTS proposals_by_open_parent
+ ON proposals(candidate_parent_semantic_root,proposal_id)
+ WHERE evaluation_status='candidate' AND withdrawal_path IS NULL;"""
+    + _PROPOSALS_LOCATORS
+)
 
 
 def _schema_rows(connection: sqlite3.Connection) -> list[tuple[Any, ...]]:
@@ -86,9 +122,14 @@ def _schema_rows(connection: sqlite3.Connection) -> list[tuple[Any, ...]]:
     ).fetchall()
 
 
-with sqlite3.connect(":memory:") as _reference:
-    _reference.executescript(_SCHEMA)
-    _EXPECTED_SCHEMA = _schema_rows(_reference)
+def _expected_schema(schema: str) -> list[tuple[Any, ...]]:
+    with sqlite3.connect(":memory:") as reference:
+        reference.executescript(schema)
+        return _schema_rows(reference)
+
+
+_EXPECTED_SCHEMA = _expected_schema(_SCHEMA)
+_PRE_ACCEPTANCE_SCHEMA = _expected_schema(_PRE_ACCEPTANCE_SCHEMA_SQL)
 
 
 def file_digest(raw: bytes) -> str:
@@ -152,10 +193,16 @@ class ProposalIndex:
             self._connections.append(self._connection)
             self._connection.execute("PRAGMA foreign_keys=ON")
             self._connection.execute("PRAGMA journal_mode=WAL")
-            if not _schema_rows(self._connection):
+            schema = _schema_rows(self._connection)
+            if not schema or schema == _PRE_ACCEPTANCE_SCHEMA:
                 self._connection.execute("BEGIN IMMEDIATE")
                 before = self._file_stamp()
                 try:
+                    if schema:
+                        # Clearing progress as well leaves no checkpoint the
+                        # emptied table could satisfy: the next read rebuilds.
+                        self._connection.execute("DROP TABLE proposals")
+                        self._connection.execute("DELETE FROM proposal_progress")
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             self._connection.execute(statement)
@@ -369,6 +416,7 @@ class ProposalIndex:
         )
 
     def _put(self, connection: sqlite3.Connection, row: dict[str, Any]) -> None:
+        row = dict(row, accepted_sequence=_accepted_sequence(connection, row["candidate_digest"]))
         names = ",".join(row)
         connection.execute(
             f"INSERT OR REPLACE INTO proposals ({names}) VALUES ({','.join('?' for _ in row)})",
@@ -483,7 +531,12 @@ class ProposalIndex:
             self.path, expected_stamp=stamp, file_stamp=self._file_stamp
         )
         try:
-            if _schema_rows(connection) != _EXPECTED_SCHEMA:
+            schema = _schema_rows(connection)
+            if schema == _PRE_ACCEPTANCE_SCHEMA:
+                # The writer migrates it; a snapshot cannot.
+                connection.close()
+                return None
+            if schema != _EXPECTED_SCHEMA:
                 raise ProposalIntegrityError("proposal index schema differs; rebuild required")
             progress = connection.execute(
                 "SELECT source_epoch,verified_sequence,source_root FROM proposal_progress"
@@ -644,6 +697,51 @@ class ProposalIndex:
         if not rows:
             raise ProposalIntegrityError("proposal admission evidence is missing")
         return rows[0]
+
+
+def _accepted_sequence(connection: sqlite3.Connection, candidate_digest: str | None) -> int | None:
+    if candidate_digest is None or not _has_history(connection):
+        return None
+    row = connection.execute(
+        "SELECT min(sequence) FROM accepted_generations WHERE candidate_digest=?",
+        (candidate_digest,),
+    ).fetchone()
+    return None if row is None else row[0]
+
+
+def _has_history(connection: sqlite3.Connection) -> bool:
+    return (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='accepted_generations'"
+        ).fetchone()
+        is not None
+    )
+
+
+def refresh_acceptance(connection: sqlite3.Connection, *, from_sequence: int) -> None:
+    """Recompute acceptance for rows a history sync from `from_sequence` changed.
+
+    Runs inside the history writer's transaction, after it has rewritten every
+    generation at or past `from_sequence` and dropped any past its head: rows
+    whose candidate one of those generations settled, and rows that named one of
+    them, are the only ones whose acceptance can differ. Only a changed value
+    is written, so a sync that settled nothing leaves the file untouched. A
+    table not yet on the current schema is skipped; it rebuilds before any use.
+    """
+
+    if _schema_rows(connection) != _EXPECTED_SCHEMA:
+        return
+    acceptance = (
+        "(SELECT min(g.sequence) FROM accepted_generations g "
+        "WHERE g.candidate_digest=proposals.candidate_digest)"
+    )
+    connection.execute(
+        f"UPDATE proposals SET accepted_sequence={acceptance} "
+        "WHERE (candidate_digest IN (SELECT candidate_digest FROM accepted_generations "
+        "WHERE sequence>=? AND candidate_digest IS NOT NULL) OR accepted_sequence>=?) "
+        f"AND accepted_sequence IS NOT {acceptance}",
+        (from_sequence, from_sequence),
+    )
 
 
 def close_working_database(

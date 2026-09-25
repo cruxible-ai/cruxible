@@ -168,6 +168,7 @@ EXPECTED_OPERATIONS = {
     "document_modified": "playbill.document.propose",
     "unregistered_projection_block": "playbill.block.repin",
     "proposal_stale": "playbill.proposal.readmit",
+    "proposal_awaiting_approval": "playbill.proposal.approve",
     "mandate_expiring": "playbill.authoring.create",
     # A stopped arm is resumed by rearming under authority that still holds.
     "line_stalled": "playbill.line.arm",
@@ -1288,6 +1289,100 @@ def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "proposal_stale", _request(instance))
 
 
+def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from cruxible_client.contracts.approval_policy import (
+        APPROVAL_POLICY_PATH,
+        ApprovalPolicyV1,
+        render_approval_policy,
+    )
+    from tests.test_proposals.test_approval_policy import _activate as _activate_policy
+    from tests.test_proposals.test_approval_policy import _submit_tree
+    from tests.test_proposals.test_proposals import DOCUMENT_PATH, _shell
+
+    instance, _owner = initialize_local(root)
+    tightening = _submit_tree(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            APPROVAL_POLICY_PATH: render_approval_policy(
+                ApprovalPolicyV1(mode="independent_approval_required")
+            ),
+        },
+        name="closed-loop-tighten",
+    )
+    assert _activate_policy(instance, tightening, tmp_path=root).status == "accepted"
+    body = instance.store_document_body(b"# Independent review\n")
+    governed = _submit_tree(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            DOCUMENT_PATH: render_document(_shell(body.digest)),
+        },
+        name="closed-loop-governed",
+    )
+    assert governed.candidate is not None
+    proposal_id = governed.admission.proposal_id
+
+    def rows(caller: str | None, request: PlaybillNextRequestV1) -> list[object]:
+        return [
+            item
+            for item in service_playbill_next(
+                instance, request=request, caller_principal_id=caller
+            ).items
+            if item.reason == "proposal_awaiting_approval"
+        ]
+
+    (row,) = rows("reviewer", _request(instance))
+    assert row.subject_identity == proposal_id
+    assert row.repair.operation == EXPECTED_OPERATIONS["proposal_awaiting_approval"]
+    assert row.repair.command == (
+        f"cruxible playbill proposal approve {proposal_id} --signer-id reviewer"
+    )
+    assert row.detail["actor_id"] == "owner"
+    assert row.detail["minimum_distinct_signers"] == 1
+    # The creator cannot approve its own candidate, an unregistered caller has
+    # no approval to give, and library mode names no caller at all.
+    assert rows("owner", _request(instance)) == []
+    assert rows("stranger", _request(instance)) == []
+    assert rows(None, _request(instance)) == []
+    hidden = PlaybillNextRequestV1(
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=EVALUATION_TIME,
+        access_profile=CoverageAccessProfileV1(
+            profile_id="next-closed-loop-public", permitted_access_classes=("public",)
+        ),
+    )
+    assert rows("reviewer", hidden) == []
+    # A delta is scoped to its caller: another principal diffing against the
+    # reviewer's queue gets its own whole queue, never the reviewer's row back
+    # as a removal.
+    reviewer_queue = service_playbill_next(
+        instance, request=_request(instance), caller_principal_id="reviewer"
+    )
+    other = service_playbill_next(
+        instance,
+        request=_request(instance).model_copy(
+            update={"since_result_digest": reviewer_queue.result_digest}
+        ),
+        caller_principal_id="owner",
+    )
+    assert other.delta_since is None
+    assert all(item.reason != "proposal_awaiting_approval" for item in other.items)
+
+    signed = _sign(
+        client_material(root, instance),
+        governed.candidate.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal_id,
+        attestation=signed.attestation,
+        authenticated_submitter="reviewer",
+    )
+    assert rows("reviewer", _request(instance)) == []
+
+
 def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_digest,
@@ -1436,6 +1531,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("document_modified", None): _document_modified,
     ("unregistered_projection_block", None): _unregistered_projection_block,
     ("proposal_stale", None): _proposal_stale,
+    ("proposal_awaiting_approval", None): _proposal_awaiting_approval,
     ("mandate_expiring", None): _mandate_expiring,
     ("line_stalled", None): _line_stalled,
 }

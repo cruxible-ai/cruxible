@@ -595,3 +595,119 @@ def test_cold_admission_reader_rejects_valid_record_under_another_id(tmp_path):
     path.write_bytes(admission_bytes(first.admission))
     with pytest.raises(ProposalIntegrityError, match="another admission"):
         store.read_admission(second.admission.proposal_id)
+
+
+def _accept_document(instance, owner, name: str, second: int):
+    from cruxible_core.service.authoring.documents import service_propose_playbill_document
+    from tests.test_proposals.test_proposal_readmit import _accept, _shell
+
+    body = instance.store_document_body(f"{name}\n".encode())
+    proposal = service_propose_playbill_document(
+        instance,
+        shell=_shell(name, body.digest, title=name.title()),
+        actor_id="owner",
+        proposal_name=f"settled-{name}",
+        timestamp=f"2026-08-24T17:00:{second:02d}.000000Z",
+    )
+    _accept(instance, owner, proposal)
+    return proposal
+
+
+def test_open_candidate_enumeration_does_not_grow_with_accepted_history(tmp_path, monkeypatch):
+    import cruxible_core.service.proposals.proposals as proposals_module
+    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+
+    instance, owner = initialize_local(tmp_path)
+    steps: list[int] = []
+    enumerate_open = proposals_module._open_candidates
+
+    def counted(connection, *args, **kwargs):  # type: ignore[no-untyped-def]
+        executed = [0]
+
+        def tick() -> int:
+            executed[0] += 1
+            return 0
+
+        connection.set_progress_handler(tick, 1)
+        try:
+            return enumerate_open(connection, *args, **kwargs)
+        finally:
+            connection.set_progress_handler(None, 0)
+            steps.append(executed[0])
+
+    monkeypatch.setattr(proposals_module, "_open_candidates", counted)
+    stale = _submit(instance, "left-behind")
+    measured = []
+    settled = 0
+    for amount in (1, 6):
+        while settled < amount:
+            _accept_document(instance, owner, f"doc-{settled}", settled)
+            settled += 1
+        head = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        (found,) = proposals_module.stale_unreadmitted_proposals(instance, head)
+        assert found.proposal_id == stale.admission.proposal_id
+        measured.append(steps[-1])
+    # Settled candidates leave the open locator: five more accepted proposals
+    # add no SQLite work to enumerating the one still open.
+    assert measured[0] == measured[1]
+
+
+def test_an_older_coordinate_counts_candidates_settled_after_it(tmp_path):
+    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.proposals.proposals import stale_unreadmitted_proposals
+
+    instance, owner = initialize_local(tmp_path)
+    _accept_document(instance, owner, "first", 0)
+    older = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    _accept_document(instance, owner, "second", 1)
+    third = _accept_document(instance, owner, "third", 2)
+    head = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    assert stale_unreadmitted_proposals(instance, head) == ()
+    # A bound read synchronized history, and each settled candidate with it.
+    index = instance.proposal_evidence().index
+    assert index is not None
+    rows = sorted(index.rows(instance.proposal_evidence()), key=lambda row: row["admitted_at_us"])
+    assert [row["accepted_sequence"] for row in rows] == [1, 2, 3]
+    # At the older coordinate the third candidate was not yet settled, and its
+    # parent is not that coordinate's root: it reads exactly as history then did.
+    assert [item.proposal_id for item in stale_unreadmitted_proposals(instance, older)] == [
+        third.proposal.admission.proposal_id
+    ]
+
+
+def test_a_pre_acceptance_index_is_reconstructed_on_the_current_schema(tmp_path):
+    import json
+
+    from cruxible_core.indexes.history.history_index import (
+        AcceptedHistoryIndex,
+        working_file_stamp,
+    )
+    from cruxible_core.indexes.proposals import proposal_index
+
+    instance, owner = initialize_local(tmp_path)
+    settled = _accept_document(instance, owner, "settled", 0)
+    evidence = instance.proposal_evidence()
+    assert evidence.index is not None
+    index_path = evidence.index.path
+    with instance.accepted_history_reader():
+        pass
+    instance._accepted_history_index.close()
+    with sqlite3.connect(index_path) as connection:
+        connection.execute("DROP TABLE proposals")
+        connection.executescript(proposal_index._PRE_ACCEPTANCE_SCHEMA_SQL)
+    # A checkpoint that still certifies the file: only the schema is behind.
+    marker_path = evidence.root / ".proposal-source.json"
+    marker = json.loads(marker_path.read_bytes())
+    marker["database_stamp"] = list(working_file_stamp(index_path))
+    marker_path.write_text(json.dumps(marker))
+
+    owner_index = AcceptedHistoryIndex(index_path)
+    reopened = ProposalEvidenceStore(evidence.root, index=owner_index.proposals)
+    proposal_id = settled.proposal.admission.proposal_id
+    assert reopened.read_admission(proposal_id).proposal_id == proposal_id
+    with sqlite3.connect(index_path) as connection:
+        assert proposal_index._schema_rows(connection) == proposal_index._EXPECTED_SCHEMA
+        assert connection.execute(
+            "SELECT accepted_sequence FROM proposals WHERE proposal_id=?", (proposal_id,)
+        ).fetchone() == (1,)
+    owner_index.close()

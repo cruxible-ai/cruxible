@@ -173,6 +173,9 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     # Only the proposal's author may readmit it and either the author or a
     # daemon-wide operator may withdraw it; which one is the author's call.
     "proposal_stale": "readmit_as_its_author_or_withdraw_the_stale_proposal",
+    # The row names the approve command for the calling principal; only the
+    # signer holds the key it signs with, so the review and the key are theirs.
+    "proposal_awaiting_approval": "review_and_approve_the_candidate_with_your_signing_key",
 }
 
 
