@@ -241,7 +241,18 @@ def test_converged_writes_and_policy_read_are_real_http_behaviors(
         (
             f"/api/v1/{instance_id}/playbill/queries/proposals",
             {
-                "query": query_claims_by_type_example().query_definition.model_dump(mode="json"),
+                # A well-formed accepted-query body: the route refuses it as a
+                # retired write surface, whatever it would have pinned.
+                "query": {
+                    **query_claims_by_type_example().query_definition.model_dump(mode="json"),
+                    "pins": [
+                        {
+                            "role": "claim-type",
+                            "target": {"kind": "ClaimType", "name": "project.work_item.status"},
+                            "artifact_digest": "sha256:" + "0" * 64,
+                        }
+                    ],
+                },
                 "proposal_name": "removed-query-writer",
             },
             "payload kind 'query_definition'",

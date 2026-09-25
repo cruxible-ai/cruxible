@@ -461,7 +461,15 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
             bind_accepted_projection=lambda _coordinate: nullcontext(
                 SimpleNamespace(
                     typed=SimpleNamespace(
-                        source=lambda _identity: seeded_procedure_runtime_policy()
+                        # The fixture admission fixes its own provider output cap;
+                        # the policy in force must be the one it was planned under.
+                        source=lambda _identity: seeded_procedure_runtime_policy().model_copy(
+                            update={
+                                "provider_output_bytes_cap": (
+                                    prepared.admission.provider_output_bytes_cap
+                                )
+                            }
+                        )
                     )
                 )
             ),
