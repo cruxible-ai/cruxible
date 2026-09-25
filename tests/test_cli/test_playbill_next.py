@@ -19,6 +19,12 @@ HEALTHY_STATUS = {
     "procedure_catalog": {"state": "not_observed"},
 }
 
+AUTHOR = {
+    "operation": "playbill.authoring.create",
+    "target": "Claim:c",
+    "required_change": "author_the_claim",
+}
+
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
@@ -136,14 +142,14 @@ def test_cli_next_delta_labels_additions_and_removals(
         "severity": "warning",
         "reason": "claim_conflicted",
         "subject_identity": "Claim:removed",
-        "repair": {"operation": "playbill.authoring.create"},
+        "repair": AUTHOR,
     }
     added = {
         "item_id": "sha256:" + "b" * 64,
         "severity": "repair",
         "reason": "claim_uncovered",
         "subject_identity": "Claim:added",
-        "repair": {"operation": "playbill.authoring.create"},
+        "repair": AUTHOR,
     }
 
     class StubClient:
@@ -214,7 +220,7 @@ def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(
         "severity": "warning",
         "reason": "claim_conflicted",
         "subject_identity": "Claim:current",
-        "repair": {"operation": "playbill.authoring.create"},
+        "repair": AUTHOR,
     }
 
     class StubClient:
@@ -286,8 +292,9 @@ def test_cli_next_prints_status_that_needs_attention_above_the_rows(
             "state": "stale",
             "repair": {
                 "operation": "playbill.floor.export",
+                "target": "inst_next",
+                "required_change": "replace_installed_floor",
                 "command": "cruxible playbill floor export --force --json",
-                "required_change": None,
             },
         },
     }

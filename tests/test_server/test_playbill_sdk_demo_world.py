@@ -560,31 +560,31 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
 
     current = pb.next(expiring_within=Duration.days(count=7))
     assert "workspace_sources" in current.observed_domains
-    assert not any(item["reason"] == "citation_drifted" for item in current.items)
+    assert not any(item.reason == "citation_drifted" for item in current.items)
     runbook = workspace / "corpus" / "vuln-response-runbook.md"
     original_runbook = runbook.read_text(encoding="utf-8")
     runbook.write_text(original_runbook + "\nAn ungoverned source edit.\n", encoding="utf-8")
     unrelated = pb.next(expiring_within=Duration.days(count=7))
-    assert not any(item["reason"] == "citation_drifted" for item in unrelated.items)
+    assert not any(item.reason == "citation_drifted" for item in unrelated.items)
     runbook.write_text(
         original_runbook.replace("forty-eight hours", "forty-nine hours"),
         encoding="utf-8",
     )
     drifted = pb.next(expiring_within=Duration.days(count=7))
-    drift = next(item for item in drifted.items if item["reason"] == "citation_drifted")
-    assert drift["subject_identity"] == f"Claim:{claim_id}"
-    assert drift["detail"]["drift_state"] == "changed"
-    assert drift["detail"]["logical_source"] == {
+    drift = next(item for item in drifted.items if item.reason == "citation_drifted")
+    assert drift.subject_identity == f"Claim:{claim_id}"
+    assert drift.detail["drift_state"] == "changed"
+    assert drift.detail["logical_source"] == {
         "tag": "playbill-logical-source-identity-v1",
         "plane": "external",
         "identity": "corpus.vuln-response-runbook",
     }
-    assert drift["repair"]["operation"] == "playbill.authoring.bind"
-    assert drift["repair"]["required_change"] == "adjudicate_citation_drift"
-    assert drift["repair"]["arguments"]["source_id"] == "corpus.vuln-response-runbook"
+    assert drift.repair.operation == "playbill.authoring.bind"
+    assert drift.repair.required_change == "adjudicate_citation_drift"
+    assert drift.repair.arguments["source_id"] == "corpus.vuln-response-runbook"
     runbook.write_text(original_runbook, encoding="utf-8")
     reverted = pb.next(expiring_within=Duration.days(count=7))
-    assert not any(item["reason"] == "citation_drifted" for item in reverted.items)
+    assert not any(item.reason == "citation_drifted" for item in reverted.items)
 
     catalog = workspace / ".playbill" / "sources.yaml"
     original_catalog = catalog.read_text(encoding="utf-8")
@@ -593,18 +593,18 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         encoding="utf-8",
     )
     missing = pb.next(expiring_within=Duration.days(count=7))
-    note = next(item for item in missing.items if item["reason"] == "citation_source_unobserved")
-    assert note["subject_identity"] == f"Claim:{claim_id}"
-    assert note["detail"]["source_id"] == "corpus.vuln-response-runbook"
-    assert note["repair"]["required_change"] == "observe_cited_source"
+    note = next(item for item in missing.items if item.reason == "citation_source_unobserved")
+    assert note.subject_identity == f"Claim:{claim_id}"
+    assert note.detail["source_id"] == "corpus.vuln-response-runbook"
+    assert note.repair.required_change == "observe_cited_source"
     catalog.write_text(original_catalog, encoding="utf-8")
 
     runbook.rename(workspace / "temporarily-unavailable-runbook.md")
     unavailable = pb.next(expiring_within=Duration.days(count=7))
     unavailable_note = next(
-        item for item in unavailable.items if item["reason"] == "citation_source_unobserved"
+        item for item in unavailable.items if item.reason == "citation_source_unobserved"
     )
-    assert unavailable_note["detail"]["source_id"] == "corpus.vuln-response-runbook"
+    assert unavailable_note.detail["source_id"] == "corpus.vuln-response-runbook"
     (workspace / "temporarily-unavailable-runbook.md").rename(runbook)
 
     incomplete = pb.claim(
@@ -682,7 +682,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         encoding="utf-8",
     )
     after_successor = pb.next(expiring_within=Duration.days(count=7))
-    assert all(item["reason"] != "citation_drifted" for item in after_successor.items)
+    assert all(item.reason != "citation_drifted" for item in after_successor.items)
 
 
 def test_sdk_retirement_replay_survives_a_fresh_http_client_process_boundary(

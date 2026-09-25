@@ -4240,17 +4240,16 @@ def next_work(
         )
     removed_ids = frozenset(result.removed_item_ids)
     for item in result.items:
-        repair = item["repair"]
         change = (
             "removed  "
-            if result.delta_since is not None and item["item_id"] in removed_ids
+            if result.delta_since is not None and item.item_id in removed_ids
             else "added  "
             if result.delta_since is not None
             else ""
         )
         click.echo(
-            f"{change}{item['severity']}  {item['reason']}  {item['subject_identity']}  "
-            f"next={repair['operation']}"
+            f"{change}{item.severity}  {item.reason}  {item.subject_identity}  "
+            f"next={item.repair.operation}"
         )
     if result.unobserved_domains:
         click.echo("Unobserved: " + ", ".join(result.unobserved_domains))
@@ -4266,19 +4265,19 @@ _NEXT_STATUS_ATTENTION = {
 }
 
 
-def _echo_next_status(status: dict[str, Any]) -> None:
+def _echo_next_status(status: contracts.PlaybillNextStatus) -> None:
     """Print the environment facets that need attention above the work rows."""
 
-    if status.get("blocking"):
+    if status.blocking:
         click.echo("BLOCKING: this instance refuses every write.")
     for facet, states in _NEXT_STATUS_ATTENTION.items():
-        health = status.get(facet) or {}
-        if health.get("state") not in states:
+        health: contracts.PlaybillNextHealth = getattr(status, facet)
+        if health.state not in states:
             continue
-        repair = health.get("repair") or {}
-        hint = repair.get("command") or repair.get("required_change")
+        repair = health.repair
+        hint = None if repair is None else repair.command or repair.required_change
         label = facet.replace("_", " ")
-        click.echo(f"Status: {label} {health['state']}" + (f"  next={hint}" if hint else ""))
+        click.echo(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
 
 
 @playbill_group.group("curation")

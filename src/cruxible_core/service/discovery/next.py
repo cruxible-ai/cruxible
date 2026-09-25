@@ -14,6 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from cruxible_client.contracts import (
     PlaybillNextReason,
+    PlaybillNextRepairOperation,
+    PlaybillNextSeverity,
     ProviderLaneStatusV1,
 )
 from cruxible_client.contracts.accepted_attestations import AcceptedClaimAttestationEvidenceV1
@@ -136,23 +138,13 @@ NextDomain = Literal[
     "workspace_sources",
     "workspace_projections",
 ]
-NextSeverity = Literal["blocking", "repair", "warning"]
+NextSeverity: TypeAlias = PlaybillNextSeverity
 CitationLineageNote = Literal[
     "predecessor_lineage_limit_exceeded",
     "predecessor_unresolved",
 ]
 NextReason: TypeAlias = PlaybillNextReason
-NextRepairOperation = Literal[
-    "playbill.authoring.create",
-    "playbill.authoring.bind",
-    "playbill.claim.retire",
-    "playbill.floor.export",
-    "playbill.block.depublish",
-    "playbill.block.repin",
-    "playbill.block.sync",
-    "playbill.document.propose",
-    "hand_edit",
-]
+NextRepairOperation: TypeAlias = PlaybillNextRepairOperation
 
 # A citation reads unobserved for one of two kinds of reason. Either the
 # citation itself is no longer where the source says it is - a finding about

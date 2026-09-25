@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-24:explain-accepted-state-only",
-    "surface_digest": "sha256:0fe497e92cd1a9186b5506fec06ad30721f671e73c3c28d1e796d625036c1870"
+    "register_entry": "2026-09-25:next-typed-pages",
+    "surface_digest": "sha256:7ddaa261058fea7b697a7d8b86fdda946f4725536e05a9bc032342efe5341afe"
   },
   "surface": {
     "cli_leaves": [
@@ -1596,7 +1596,7 @@
         "request_model": "types.UnionType[cruxible_core.server.playbill_request_models.PlaybillNextRequest,cruxible_core.server.playbill_request_models.PlaybillNextRequestV2]",
         "request_schema_digest": "sha256:bd121911f60929cce375a4d30de07bc199093b924cfcffd20bc021040801f6b3",
         "response_model": "cruxible_client.contracts.PlaybillNextResult",
-        "response_schema_digest": "sha256:f3612e06494a819c7feb593534242ca5f1e83568bb39256d3379f017d967435b"
+        "response_schema_digest": "sha256:aba22848d9f00d84ae81db3923b962e687b1ae23483b195cae537bb59eddcc9c"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.list_policies_in_force",

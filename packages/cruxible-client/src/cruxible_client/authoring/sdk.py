@@ -492,7 +492,7 @@ class SearchPage:
 class NextPage:
     coordinate: AcceptedCoordinate
     evaluation_time: str
-    items: tuple[dict[str, object], ...]
+    items: tuple[api.PlaybillNextItem, ...]
     result_digest: str
     observed_domains: tuple[str, ...]
     unobserved_domains: tuple[str, ...]
@@ -3326,7 +3326,7 @@ class Playbill:
         return NextPage(
             coordinate=_coordinate(result.coordinate),
             evaluation_time=result.evaluation_time,
-            items=tuple(cast(dict[str, object], item) for item in result.items),
+            items=tuple(result.items),
             result_digest=result.result_digest,
             observed_domains=tuple(result.observed_domains),
             unobserved_domains=tuple(result.unobserved_domains),
