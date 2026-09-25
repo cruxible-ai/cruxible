@@ -271,3 +271,26 @@ def test_a_later_statement_never_changes_which_one_held_at_an_earlier_time(
     _attest(instance, owner, claim, tmp_path, stance="support", at=base + timedelta(minutes=30))
     after = _next(instance, at=read_at)
     assert _rows(after, "claim_uncovered", subject) and after.status.held == 0
+
+
+def test_a_delta_never_names_rows_the_callers_own_access_withholds(tmp_path: Path) -> None:
+    from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+
+    instance, _owner, *_rest = _foreign_world(tmp_path, bind=False)
+    wide = _next(instance)
+    assert _rows(wide, "claim_uncovered")
+
+    public = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV2(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=EVALUATION_TIME,
+            access_profile=CoverageAccessProfileV1(
+                profile_id="public-only", permitted_access_classes=("public",)
+            ),
+            since_result_digest=wide.result_digest,
+        ),
+    )
+    # The wider queue is not this caller's base: no removed Claim rows leak.
+    assert not [item for item in public.items if item.subject_identity.startswith("Claim:")]
+    assert public.delta_since is None

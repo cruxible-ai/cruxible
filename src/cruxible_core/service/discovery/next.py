@@ -2970,6 +2970,7 @@ _LINE_DISPATCH_LIMIT = 100
 def _line_dispatch_health(
     instance: PlaybillInstance,
     *,
+    coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1,
 ) -> PlaybillNextHealthV1:
@@ -2979,7 +2980,9 @@ def _line_dispatch_health(
     time, never at a coordinate: the set is operational, and nothing admits it
     implicitly. An occurrence whose window has not closed is `waiting`; one
     that could be admitted now makes the facet `due`, and the repair names the
-    Line holding the oldest such occurrence.
+    Line holding the oldest such occurrence. Only live Lines count: a retired
+    Line's pending work can never be admitted, so it is neither due nor a
+    repair anyone could run.
     """
 
     if not access_profile.permits("instance"):
@@ -2995,6 +2998,19 @@ def _line_dispatch_health(
             "FROM pending WHERE disposition='pending' GROUP BY line_id ORDER BY line_id",
             (format_datetime(evaluation_time),) * 2,
         ).fetchall()
+    if rows:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            live = {
+                row[0]
+                for row in projection.typed.connection.execute(
+                    "SELECT identity_digest FROM lines "
+                    "WHERE lifecycle='live' AND identity_digest IN ("
+                    + ",".join("?" for _ in rows)
+                    + ")",
+                    tuple(row[0] for row in rows),
+                ).fetchall()
+            }
+        rows = [row for row in rows if row[0] in live]
     if not rows:
         return PlaybillNextHealthV1(state="idle")
     lines = [
@@ -3947,6 +3963,7 @@ def service_playbill_next(
         compiler=_compiler_health(instance),
         line_dispatch=_line_dispatch_health(
             instance,
+            coordinate=coordinate,
             evaluation_time=request.evaluation_time,
             access_profile=request.access_profile,
         ),
@@ -3974,27 +3991,44 @@ def service_playbill_next(
     )
     result_digest = playbill_next_result_digest(provisional)
     full = result_model.model_validate({**values, "result_digest": result_digest})
-    _remember_queue(result_digest, full.items)
+    scope = _queue_scope(instance, request)
+    _remember_queue(result_digest, full.items, scope=scope)
     answer = (
         full
         if request.since_result_digest is None
-        else _delta_of(full, since=request.since_result_digest)
+        else _delta_of(full, since=request.since_result_digest, scope=scope)
     )
     return _page_of(answer, limit=request.limit, continuation=continuation)
 
 
 # Bounded, per-process memory of which rows each queue digest stood for. A miss
 # -- restart, eviction, a digest minted elsewhere -- is not an error: it yields
-# the whole queue, which answers the caller's question either way.
-_QUEUE_MEMO: OrderedDict[str, tuple[PlaybillNextItemV1, ...]] = OrderedDict()
+# the whole queue, which answers the caller's question either way. Entries are
+# scoped to the instance and access profile that produced them: a delta names
+# removed rows, so diffing against a queue read with wider access would hand
+# this caller rows its own read withholds.
+_QUEUE_MEMO: OrderedDict[tuple[str, str], tuple[PlaybillNextItemV1, ...]] = OrderedDict()
 _QUEUE_MEMO_LIMIT = 32
 _QUEUE_MEMO_LOCK = RLock()
 
 
-def _remember_queue(result_digest: str, items: tuple[PlaybillNextItemV1, ...]) -> None:
+def _queue_scope(instance: PlaybillInstance, request: PlaybillNextRequestAny) -> str:
+    return typed_digest(
+        Sha256Value,
+        "playbill-next-queue-scope-v1",
+        {
+            "instance_id": instance.descriptor.instance_id,
+            "access_profile": request.access_profile.model_dump(mode="json"),
+        },
+    ).tagged
+
+
+def _remember_queue(
+    result_digest: str, items: tuple[PlaybillNextItemV1, ...], *, scope: str
+) -> None:
     with _QUEUE_MEMO_LOCK:
-        _QUEUE_MEMO.pop(result_digest, None)
-        _QUEUE_MEMO[result_digest] = items
+        _QUEUE_MEMO.pop((scope, result_digest), None)
+        _QUEUE_MEMO[(scope, result_digest)] = items
         while len(_QUEUE_MEMO) > _QUEUE_MEMO_LIMIT:
             _QUEUE_MEMO.popitem(last=False)
 
@@ -4003,11 +4037,12 @@ def _delta_of(
     full: PlaybillNextResultV1 | PlaybillNextResultV2,
     *,
     since: str,
+    scope: str,
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
     """Return the reproducible symmetric difference from a remembered queue."""
 
     with _QUEUE_MEMO_LOCK:
-        previous = _QUEUE_MEMO.get(since)
+        previous = _QUEUE_MEMO.get((scope, since))
     if previous is None:
         return full
     previous_by_id = {item.item_id: item for item in previous}
@@ -4085,13 +4120,18 @@ def _continuation_of(cursor: str) -> _Continuation:
         head = payload["attestation_head_digest"]
         since = payload["delta_since"]
         offset = payload["offset"]
+        raw_time = payload["evaluation_time"]
+        # A decoded cursor is caller input: every field is typed before use.
+        if not isinstance(result_digest, str) or not isinstance(raw_time, str):
+            raise ValueError("cursor fields are malformed")
         for digest in (result_digest, head, since):
             if digest is not None:
+                if not isinstance(digest, str):
+                    raise ValueError("cursor digest is malformed")
                 Sha256Value.from_tagged(digest)
-        evaluation_time = parse_datetime(payload["evaluation_time"])
+        evaluation_time = parse_datetime(raw_time)
         if (
-            result_digest is None
-            or evaluation_time is None
+            evaluation_time is None
             or not isinstance(offset, int)
             or isinstance(offset, bool)
             or offset < 1
