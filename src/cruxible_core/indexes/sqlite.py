@@ -29,7 +29,12 @@ from cruxible_core.documents.projection_documents import (
     DocumentProjectionView,
     document_projection_view,
 )
-from cruxible_core.indexes.acquisition import DatabasePathChangedError, guard_database_path
+from cruxible_core.indexes.acquisition import (
+    ACQUISITION_ATTEMPTS,
+    DatabasePathChangedError,
+    guard_database_path,
+    pause_before_acquisition_retry,
+)
 from cruxible_core.indexes.claims.projection_claims import (
     ClaimProjectionView,
     claim_projection_view,
@@ -840,7 +845,7 @@ def bind_projection(
     connection: sqlite3.Connection | None = None
     descriptor: int | None = None
     try:
-        for attempt in range(3):
+        for attempt in range(ACQUISITION_ATTEMPTS):
             try:
                 # Some SQLite VFS implementations resolve descriptor aliases
                 # back to pathnames. Guard that short acquisition too, including
@@ -874,8 +879,9 @@ def bind_projection(
                 if descriptor is not None:
                     os.close(descriptor)
                     descriptor = None
-                if attempt == 2:
+                if attempt == ACQUISITION_ATTEMPTS - 1:
                     raise
+                pause_before_acquisition_retry(attempt)
         assert descriptor is not None and connection is not None
         if (
             not already_verified

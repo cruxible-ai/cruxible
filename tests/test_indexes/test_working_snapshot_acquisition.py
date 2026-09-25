@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from cruxible_core.indexes.acquisition import DatabasePathChangedError
+from cruxible_core.indexes.acquisition import ACQUISITION_ATTEMPTS, DatabasePathChangedError
 from tests.core_support._knowledge_loop_support import seed_claims
 
 
@@ -77,7 +77,7 @@ def test_restored_directory_swap_never_serves_forged_snapshot(
         if repeat_attack:
             with pytest.raises(DatabasePathChangedError, match="namespace changed"):
                 read_identity()
-            assert attempts == 3
+            assert attempts == ACQUISITION_ATTEMPTS
         else:
             assert read_identity() == expected
             assert attempts >= 2
