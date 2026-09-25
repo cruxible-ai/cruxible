@@ -8,8 +8,8 @@ from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.line_dispatch import (
+    LineArmPrincipalV1,
     LineDispatchRequestV1,
-    LineListenRequestV1,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     CaptureLandingTriggerPolicyV2,
@@ -22,8 +22,8 @@ from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.procedures.execution import parse_admission_payload
 from cruxible_core.service.procedures.line_dispatch import (
+    service_arm_line,
     service_dispatch_line,
-    service_listen_line,
     service_match_listening_lines,
 )
 from cruxible_core.service.procedures.procedure_runs import (
@@ -46,6 +46,8 @@ from tests.test_procedures.test_procedure_source_runs import (
     _world,
     capture_contract,
 )
+
+LOCAL_OPERATOR = LineArmPrincipalV1(kind="local_operator", label="local-operator")
 
 
 def world(tmp_path, *, window=False, line_budget=None, with_owner=False, **kwargs):
@@ -216,10 +218,10 @@ def test_pending_dispatch_and_restart_keep_the_same_capture_binding(tmp_path):
 
     instance, root, line = world(tmp_path)
     actor = _actor(instance)
-    service_listen_line(
+    service_arm_line(
         instance,
         line.identity.name,
-        LineListenRequestV1(action="start"),
+        principal=LOCAL_OPERATOR,
         actor=actor,
         now=NOW - timedelta(seconds=1),
         daemon_id="test",

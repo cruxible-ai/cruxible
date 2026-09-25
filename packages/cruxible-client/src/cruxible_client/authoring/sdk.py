@@ -3000,13 +3000,22 @@ class Playbill:
             request=LineTriggerCheckRequestV1(since=since, until=until, limit=limit, cursor=cursor),
         )
 
-    def listen_line(self, line: str, *, enabled: bool = True) -> api.LineListeningSessionV1:
-        """Start or stop forward listening; no Procedure is executed."""
-        return self._client.listen_playbill_line(
-            self._instance_id,
-            line,
-            request=api.LineListenRequestV1(action="start" if enabled else "stop"),
-        )
+    def arm_line(self, line: str) -> api.LineArmV1:
+        """Arm a Line forward-only: the daemon admits what it matches from now on.
+
+        Runs use this connection's credential, rechecked before each admission,
+        and the Line version current now. Work already pending stays for
+        `dispatch_line`.
+        """
+        return self._client.arm_playbill_line(self._instance_id, line)
+
+    def disarm_line(self, line: str) -> api.LineArmV1:
+        """Stop a Line admitting work on its own; admitted runs are not cancelled."""
+        return self._client.disarm_playbill_line(self._instance_id, line)
+
+    def line_arm(self, line: str) -> api.LineArmV1:
+        """The Line's current arm, or its last one and why it stopped."""
+        return self._client.playbill_line_arm_status(self._instance_id, line)
 
     def evaluate_line(
         self,

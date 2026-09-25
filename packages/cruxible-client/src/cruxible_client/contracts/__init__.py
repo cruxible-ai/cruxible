@@ -34,6 +34,15 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
 from cruxible_client.contracts.line_dispatch import (
+    LineArmPrincipalV1 as LineArmPrincipalV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineArmStopReasonV1 as LineArmStopReasonV1,
+)
+from cruxible_client.contracts.line_dispatch import (
+    LineArmV1 as LineArmV1,
+)
+from cruxible_client.contracts.line_dispatch import (
     LineDispatchItemV1 as LineDispatchItemV1,
 )
 from cruxible_client.contracts.line_dispatch import (
@@ -44,12 +53,6 @@ from cruxible_client.contracts.line_dispatch import (
 )
 from cruxible_client.contracts.line_dispatch import (
     LineEvaluateRequestV1 as LineEvaluateRequestV1,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineListeningSessionV1 as LineListeningSessionV1,
-)
-from cruxible_client.contracts.line_dispatch import (
-    LineListenRequestV1 as LineListenRequestV1,
 )
 from cruxible_client.contracts.line_dispatch import (
     LineTriggerCheckRequestV1 as LineTriggerCheckRequestV1,
@@ -265,6 +268,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "procedure_projection_missing",
     "instance_decommissioned",
     "ledger_mirror_behind",
+    "line_stalled",
 ]
 PlaybillHandEditNextReason: TypeAlias = Literal[
     "procedure_projection_missing",

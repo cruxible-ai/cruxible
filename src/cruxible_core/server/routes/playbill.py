@@ -1314,15 +1314,19 @@ def check_line_trigger(
     )
 
 
-@router.post(
-    "/{instance_id}/playbill/lines/{line}/listen", response_model=contracts.LineListeningSessionV1
-)
-def listen_line(
-    instance_id: str, line: str, req: contracts.LineListenRequestV1
-) -> contracts.LineListeningSessionV1:
-    return playbill_api.playbill_line_listen(
-        resolve_server_instance_id(instance_id), line, request=req
-    )
+@router.post("/{instance_id}/playbill/lines/{line}/arm", response_model=contracts.LineArmV1)
+def arm_line(instance_id: str, line: str) -> contracts.LineArmV1:
+    return playbill_api.playbill_line_arm(resolve_server_instance_id(instance_id), line)
+
+
+@router.post("/{instance_id}/playbill/lines/{line}/disarm", response_model=contracts.LineArmV1)
+def disarm_line(instance_id: str, line: str) -> contracts.LineArmV1:
+    return playbill_api.playbill_line_disarm(resolve_server_instance_id(instance_id), line)
+
+
+@router.get("/{instance_id}/playbill/lines/{line}/arm", response_model=contracts.LineArmV1)
+def line_arm_status(instance_id: str, line: str) -> contracts.LineArmV1:
+    return playbill_api.playbill_line_arm_status(resolve_server_instance_id(instance_id), line)
 
 
 @router.post(
