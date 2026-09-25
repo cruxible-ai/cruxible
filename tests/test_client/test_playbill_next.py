@@ -74,6 +74,7 @@ def test_client_sends_explicit_time_access_and_workspace_observation() -> None:
                 "unobserved_domains": ["workspace_sources", "workspace_projections"],
                 "status": HEALTHY_STATUS,
                 "items": [],
+                "total_items": 0,
                 "result_digest": "sha256:" + "5" * 64,
             },
         )
@@ -122,6 +123,7 @@ def test_client_parses_v2_delta_removal_classification() -> None:
                 "unobserved_domains": ["workspace_sources", "workspace_projections"],
                 "status": HEALTHY_STATUS,
                 "items": [_item(removed_id)],
+                "total_items": 1,
                 "result_digest": "sha256:" + "7" * 64,
                 "delta_since": "sha256:" + "5" * 64,
                 "attestation_head_digest": "sha256:" + "8" * 64,
@@ -198,6 +200,7 @@ def test_client_parses_typed_rows_findings_and_status() -> None:
                 ],
             )
         ],
+        "total_items": 1,
         "result_digest": "sha256:" + "7" * 64,
         "attestation_head_digest": "sha256:" + "8" * 64,
     }
@@ -258,3 +261,63 @@ def test_client_status_requires_every_facet() -> None:
     status.pop("procedure_catalog")
     with pytest.raises(ValidationError):
         contracts.PlaybillNextStatus.model_validate(status)
+
+
+def test_client_sends_a_page_size_and_cursor_and_reads_the_page() -> None:
+    captured: list[dict[str, Any]] = []
+    item_id = "sha256:" + "6" * 64
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "tag": "playbill-next-result-v1",
+                "coordinate": COORDINATE,
+                "evaluation_time": "2026-08-24T18:00:00.000000Z",
+                "observed_domains": ["accepted_state"],
+                "unobserved_domains": [
+                    "workspace_floor",
+                    "workspace_sources",
+                    "workspace_projections",
+                ],
+                "status": HEALTHY_STATUS,
+                "items": [_item(item_id)],
+                "total_items": 3,
+                "next_cursor": "page-three",
+                "result_digest": "sha256:" + "5" * 64,
+            },
+        )
+
+    result = _client(handler).next_playbill(
+        "inst",
+        evaluation_time="2026-08-24T18:00:00Z",
+        access_profile={
+            "tag": "playbill-coverage-access-profile-v1",
+            "profile_id": "client-next",
+            "permitted_access_classes": ["instance", "public"],
+            "disclose_restricted_existence": True,
+        },
+        limit=1,
+        cursor="page-two",
+    )
+
+    assert (captured[0]["limit"], captured[0]["cursor"]) == (1, "page-two")
+    assert (result.total_items, result.next_cursor) == (3, "page-three")
+    assert [item.item_id for item in result.items] == [item_id]
+
+
+def test_client_refuses_an_incoherent_page() -> None:
+    body = {
+        "coordinate": COORDINATE,
+        "evaluation_time": "2026-08-24T18:00:00.000000Z",
+        "observed_domains": ["accepted_state"],
+        "unobserved_domains": ["workspace_floor", "workspace_sources", "workspace_projections"],
+        "status": HEALTHY_STATUS,
+        "items": [_item("sha256:" + "6" * 64)],
+        "result_digest": "sha256:" + "5" * 64,
+    }
+    with pytest.raises(ValidationError, match="more rows than its answer"):
+        contracts.PlaybillNextResult.model_validate(body | {"total_items": 0})
+    with pytest.raises(ValidationError, match="no further page"):
+        contracts.PlaybillNextResult.model_validate(body | {"total_items": 1, "next_cursor": "x"})

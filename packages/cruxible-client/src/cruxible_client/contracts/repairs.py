@@ -249,6 +249,9 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
     "evaluation_instant_skewed": RepairOperationV1(operation="playbill.line.run"),
     "line_identity_mismatch": RepairOperationV1(operation="playbill.line.run"),
     "document_modified": RepairOperationV1(operation="playbill.document.propose"),
+    # A next page cursor names the whole queue it continues; once that queue
+    # moves, the repair is to read page one again.
+    "playbill.next.cursor_mismatch": RepairOperationV1(operation="playbill.next"),
     "workspace_binding_invalid": RepairOperationV1(
         operation="playbill.host.create",
         arguments={"workspace": ".", "replace": True},

@@ -76,6 +76,11 @@
         "projection_marker_invalid"
       ]
     },
+    "PlaybillNextRefusalCodeV1": {
+      "values": [
+        "playbill.next.cursor_mismatch"
+      ]
+    },
     "PlaybillNextRepairOperation": {
       "values": [
         "playbill.authoring.create",
@@ -25294,6 +25299,26 @@
             "type": "array"
           }
         },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          }
+        },
         "observed_domains": {
           "has_default": false,
           "has_default_factory": false,
@@ -25360,6 +25385,17 @@
             ],
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "total_items": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "total_items",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Total Items",
+            "type": "integer"
           }
         },
         "unobserved_domains": {
@@ -25745,6 +25781,18 @@
             "title": "Items",
             "type": "array"
           },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          },
           "observed_domains": {
             "items": {
               "enum": [
@@ -25781,6 +25829,11 @@
             "title": "Tag",
             "type": "string"
           },
+          "total_items": {
+            "minimum": 0,
+            "title": "Total Items",
+            "type": "integer"
+          },
           "unobserved_domains": {
             "items": {
               "enum": [
@@ -25802,6 +25855,7 @@
           "unobserved_domains",
           "status",
           "items",
+          "total_items",
           "result_digest"
         ],
         "title": "PlaybillNextResult",
@@ -25814,6 +25868,7 @@
         "observed_domains",
         "result_digest",
         "status",
+        "total_items",
         "unobserved_domains"
       ]
     },

@@ -76,6 +76,7 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
                 unobserved_domains=["workspace_sources", "workspace_projections"],
                 status=HEALTHY_STATUS,
                 items=[],
+                total_items=0,
                 result_digest="sha256:" + "5" * 64,
             )
 
@@ -173,6 +174,7 @@ def test_cli_next_delta_labels_additions_and_removals(
                 unobserved_domains=[],
                 status=HEALTHY_STATUS,
                 items=[removed, added],
+                total_items=2,
                 result_digest="sha256:" + str(self.calls) * 64,
                 delta_since="sha256:" + "0" * 64,
                 attestation_head_digest="sha256:" + "9" * 64,
@@ -238,6 +240,7 @@ def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(
                 unobserved_domains=[],
                 status=HEALTHY_STATUS,
                 items=[item],
+                total_items=1,
                 result_digest="sha256:" + "1" * 64,
                 delta_since=None,
             )
@@ -308,6 +311,7 @@ def test_cli_next_prints_status_that_needs_attention_above_the_rows(
                 unobserved_domains=["workspace_sources", "workspace_projections"],
                 status=status,
                 items=[],
+                total_items=0,
                 result_digest="sha256:" + "5" * 64,
             )
 

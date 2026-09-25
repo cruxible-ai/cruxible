@@ -270,6 +270,13 @@ PlaybillNextRepairOperation: TypeAlias = Literal[
     "playbill.document.propose",
     "hand_edit",
 ]
+# The next queue's own refusals that carry a declared repair. A page cursor
+# names the whole queue it continues; once that queue moves, re-reading page
+# one is the repair.
+PlaybillNextRefusalCodeV1: TypeAlias = Literal["playbill.next.cursor_mismatch"]
+#: Rows per next page when the request names none, and the most one page carries.
+PLAYBILL_NEXT_DEFAULT_LIMIT = 100
+PLAYBILL_NEXT_MAX_LIMIT = 1000
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
     "provider_process_lease_invalid",
@@ -1683,6 +1690,11 @@ class PlaybillNextResult(BaseModel):
     # provider lane and Procedure catalog health, beside the work items.
     status: PlaybillNextStatus
     items: list[PlaybillNextItem]
+    # Every row the whole answer carries -- the queue, or on a delta its
+    # changed rows -- of which `items` is one page. `result_digest` names the
+    # whole queue on every page; `next_cursor` continues this answer.
+    total_items: int = Field(ge=0)
+    next_cursor: str | None = None
     result_digest: str
     # Set only on a delta. Items are the changed rows while result_digest names
     # the complete current queue, so callers may echo it as the next cursor.
@@ -1712,6 +1724,10 @@ class PlaybillNextResult(BaseModel):
             self.tag != "playbill-next-result-v2" or not self.delta_since
         ):
             raise ValueError("removed next item IDs are valid only on a v2 delta")
+        if len(self.items) > self.total_items:
+            raise ValueError("a next page cannot carry more rows than its answer")
+        if self.next_cursor is not None and len(self.items) == self.total_items:
+            raise ValueError("a next answer carried whole has no further page")
         carried_ids = {item.item_id for item in self.items}
         if not set(self.removed_item_ids).issubset(carried_ids):
             raise ValueError("removed next item IDs must name carried delta rows")

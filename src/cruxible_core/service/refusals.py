@@ -6,6 +6,7 @@ from typing import get_args
 
 from cruxible_client.contracts import (
     PlaybillNextReason,
+    PlaybillNextRefusalCodeV1,
     ProviderLaneUnavailableCodeV1,
 )
 from cruxible_client.contracts.authoring.models import (
@@ -31,6 +32,7 @@ from cruxible_client.contracts.workspace_advertisement import WorkspaceAdvertise
 
 CLOSED_SERVED_REFUSAL_VOCABULARIES: dict[str, frozenset[str]] = {
     "playbill_next_reason": frozenset(get_args(PlaybillNextReason)),
+    "playbill_next_refusal": frozenset(get_args(PlaybillNextRefusalCodeV1)),
     "provider_lane_unavailable": frozenset(get_args(ProviderLaneUnavailableCodeV1)),
     "workspace_advertisement_failure": frozenset(get_args(WorkspaceAdvertisementFailureCode)),
     "block_sync_read_reason": frozenset(get_args(PlaybillBlockSyncReadReason)),

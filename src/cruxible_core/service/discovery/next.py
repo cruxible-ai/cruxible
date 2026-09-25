@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import shlex
 from collections import OrderedDict, defaultdict
 from collections.abc import Iterable, Mapping, MutableMapping
@@ -13,6 +15,8 @@ from typing import Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts import (
+    PLAYBILL_NEXT_DEFAULT_LIMIT,
+    PLAYBILL_NEXT_MAX_LIMIT,
     PlaybillNextReason,
     PlaybillNextRepairOperation,
     PlaybillNextSeverity,
@@ -74,9 +78,10 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
-from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.coverage.contracts import (
     CoverageAccessProfileV1,
@@ -213,6 +218,12 @@ class PlaybillNextCoordinateNotAccepted(PlaybillNextError):
 
 class PlaybillNextAcceptedStateInvalid(PlaybillNextError):
     code = "playbill.next.accepted_state_invalid"
+
+
+class PlaybillNextCursorMismatch(PlaybillNextError):
+    """A page cursor that does not continue the queue this request reads."""
+
+    code = "playbill.next.cursor_mismatch"
 
 
 class PlaybillNextDriftObservationV1(_StrictNextModel):
@@ -442,6 +453,12 @@ class PlaybillNextRequestV1(_StrictNextModel):
     # does not -- a restart, an eviction, a digest from elsewhere -- yields the
     # whole queue, which is always a correct answer to "what is outstanding".
     since_result_digest: str | None = None
+    # One page of the answer. A cursor continues the answer its first page
+    # began: it carries that page's evaluation instant, coordinate, attestation
+    # head and delta base, which supersede the request's own, so a caller whose
+    # clock or head has moved still reads the same queue -- or is refused.
+    limit: int = Field(default=PLAYBILL_NEXT_DEFAULT_LIMIT, ge=1, le=PLAYBILL_NEXT_MAX_LIMIT)
+    cursor: str | None = Field(default=None, max_length=2048)
 
     @field_validator("evaluation_time")
     @classmethod
@@ -482,6 +499,8 @@ def validate_playbill_next_request(
             error: type[PlaybillNextError] = PlaybillNextAccessProfileInvalid
         elif "workspace_observation" in roots:
             error = PlaybillNextWorkspaceObservationInvalid
+        elif "cursor" in roots:
+            error = PlaybillNextCursorMismatch
         else:
             error = PlaybillNextAcceptedStateInvalid
         raise error(f"{error.code}: {exc}") from exc
@@ -653,6 +672,12 @@ class PlaybillNextResultV1(_StrictNextModel):
     unobserved_domains: tuple[NextDomain, ...]
     status: PlaybillNextStatusV1
     items: tuple[PlaybillNextItemV1, ...]
+    # Every row the whole answer carries -- the queue, or on a delta its
+    # changed rows -- of which `items` is one page. Neither this count nor the
+    # cursor is in the digest preimage: `result_digest` names the whole queue
+    # on every page, which is what binds a cursor to it.
+    total_items: int = Field(ge=0)
+    next_cursor: str | None = None
     result_digest: str
     # Set only on a delta. The carried items are the deterministic symmetric
     # difference from that earlier queue while `result_digest` remains the
@@ -679,9 +704,19 @@ class PlaybillNextResultV1(_StrictNextModel):
             raise ValueError("next result must account for every observation domain")
         if self.items != tuple(sorted(self.items, key=_item_sort_key)):
             raise ValueError("next items do not follow the deterministic order")
-        if self.delta_since is None and self.result_digest != playbill_next_result_digest(self):
+        if len(self.items) > self.total_items:
+            raise ValueError("a next page cannot carry more rows than its answer")
+        if self.next_cursor is not None and len(self.items) == self.total_items:
+            raise ValueError("a next answer carried whole has no further page")
+        if self.whole_queue and self.result_digest != playbill_next_result_digest(self):
             raise ValueError("next result digest does not reproduce")
         return self
+
+    @property
+    def whole_queue(self) -> bool:
+        """Whether `items` is the entire queue the digest names: no delta, no paging."""
+
+        return self.delta_since is None and len(self.items) == self.total_items
 
 
 class PlaybillNextResultV2(PlaybillNextResultV1):
@@ -714,7 +749,7 @@ class PlaybillNextResultV2(PlaybillNextResultV1):
         carried_ids = frozenset(item.item_id for item in self.items)
         if not set(self.removed_item_ids).issubset(carried_ids):
             raise ValueError("removed next item IDs must name carried delta rows")
-        if self.delta_since is None and self.result_digest != playbill_next_result_digest(self):
+        if self.whole_queue and self.result_digest != playbill_next_result_digest(self):
             raise ValueError("next v2 result digest does not reproduce")
         return self
 
@@ -1298,6 +1333,8 @@ def playbill_next_result_digest(result: PlaybillNextResultV1 | PlaybillNextResul
     payload = result.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("result_digest")
+    payload.pop("total_items")
+    payload.pop("next_cursor")
     domain = (
         NEXT_RESULT_V2_DIGEST_DOMAIN
         if isinstance(result, PlaybillNextResultV2)
@@ -3267,6 +3304,9 @@ def service_playbill_next(
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
     """Fold accepted state and explicit client observations into one repair queue."""
 
+    continuation = None if request.cursor is None else _continuation_of(request.cursor)
+    if continuation is not None:
+        request = _continued(request, continuation)
     coordinate = _resolve_coordinate(instance, request.at)
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
     attestation_head: str | None = None
@@ -3442,6 +3482,7 @@ def service_playbill_next(
         "unobserved_domains": unobserved,
         "status": status,
         "items": items,
+        "total_items": len(items),
     }
     result_model: type[PlaybillNextResultV1] | type[PlaybillNextResultV2]
     if isinstance(request, PlaybillNextRequestV2):
@@ -3458,9 +3499,12 @@ def service_playbill_next(
     result_digest = playbill_next_result_digest(provisional)
     full = result_model.model_validate({**values, "result_digest": result_digest})
     _remember_queue(result_digest, full.items)
-    if request.since_result_digest is None:
-        return full
-    return _delta_of(full, since=request.since_result_digest)
+    answer = (
+        full
+        if request.since_result_digest is None
+        else _delta_of(full, since=request.since_result_digest)
+    )
+    return _page_of(answer, limit=request.limit, continuation=continuation)
 
 
 # Bounded, per-process memory of which rows each queue digest stood for. A miss
@@ -3507,12 +3551,146 @@ def _delta_of(
     # request idempotent and prevents a subset from overwriting the full queue
     # in the per-process memo (delta_since is intentionally outside v2's
     # accepted-state digest preimage).
-    update: dict[str, object] = {"items": changed, "delta_since": since}
+    update: dict[str, object] = {
+        "items": changed,
+        "total_items": len(changed),
+        "delta_since": since,
+    }
     if isinstance(full, PlaybillNextResultV2):
         update["removed_item_ids"] = tuple(
             sorted(previous_ids - current_ids, key=lambda item: item.encode("ascii"))
         )
     return full.model_copy(update=update)
+
+
+@dataclass(frozen=True)
+class _Continuation:
+    """What a page cursor pins: the answer it continues and where it stopped."""
+
+    result_digest: str
+    evaluation_time: datetime
+    at: AcceptedCoordinate
+    attestation_head_digest: str | None
+    delta_since: str | None
+    offset: int
+
+
+def _cursor_mismatch(detail: str) -> PlaybillNextCursorMismatch:
+    return PlaybillNextCursorMismatch(
+        f"{PlaybillNextCursorMismatch.code}: {detail}; read the queue again without a cursor"
+    )
+
+
+def _cursor(answer: PlaybillNextResultV1 | PlaybillNextResultV2, *, offset: int) -> str:
+    return base64.urlsafe_b64encode(
+        canonical_json(
+            {
+                "result_digest": answer.result_digest,
+                "evaluation_time": format_datetime(answer.evaluation_time),
+                "at": answer.coordinate.model_dump(mode="json"),
+                "attestation_head_digest": (
+                    answer.attestation_head_digest
+                    if isinstance(answer, PlaybillNextResultV2)
+                    else None
+                ),
+                "delta_since": answer.delta_since,
+                "offset": offset,
+            }
+        ).encode()
+    ).decode()
+
+
+def _continuation_of(cursor: str) -> _Continuation:
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")))
+        if not isinstance(payload, dict):
+            raise ValueError("cursor is not an object")
+        result_digest = payload["result_digest"]
+        head = payload["attestation_head_digest"]
+        since = payload["delta_since"]
+        offset = payload["offset"]
+        for digest in (result_digest, head, since):
+            if digest is not None:
+                Sha256Value.from_tagged(digest)
+        evaluation_time = parse_datetime(payload["evaluation_time"])
+        if (
+            result_digest is None
+            or evaluation_time is None
+            or not isinstance(offset, int)
+            or isinstance(offset, bool)
+            or offset < 1
+        ):
+            raise ValueError("cursor continuation is malformed")
+        at = AcceptedCoordinate.model_validate(payload["at"])
+    except (KeyError, TypeError, ValueError, UnicodeError, ValidationError) as exc:
+        raise _cursor_mismatch("the cursor is not a next page cursor") from exc
+    return _Continuation(
+        result_digest=result_digest,
+        evaluation_time=ensure_utc(evaluation_time),
+        at=at,
+        attestation_head_digest=head,
+        delta_since=since,
+        offset=offset,
+    )
+
+
+def _continued(
+    request: PlaybillNextRequestAny,
+    continuation: _Continuation,
+) -> PlaybillNextRequestAny:
+    """Re-read exactly the answer the cursor's first page was answered from."""
+
+    update: dict[str, object] = {
+        "at": continuation.at,
+        "evaluation_time": continuation.evaluation_time,
+        "since_result_digest": continuation.delta_since,
+    }
+    if isinstance(request, PlaybillNextRequestV2):
+        if continuation.attestation_head_digest is None:
+            raise _cursor_mismatch("the cursor continues a v1 queue")
+        update["at_attestation_head_digest"] = continuation.attestation_head_digest
+    elif continuation.attestation_head_digest is not None:
+        raise _cursor_mismatch("the cursor continues a v2 queue")
+    return request.model_copy(update=update)
+
+
+def _page_of(
+    answer: PlaybillNextResultV1 | PlaybillNextResultV2,
+    *,
+    limit: int,
+    continuation: _Continuation | None,
+) -> PlaybillNextResultV1 | PlaybillNextResultV2:
+    """Return one page of the answer, refusing a cursor minted for another one.
+
+    The cursor's pins re-read the same queue unless accepted state, the
+    workspace observation or the environment moved; any move changes the
+    whole-queue digest, and a delta whose base the memo has since forgotten
+    would silently become the whole queue, so both refuse rather than page a
+    different answer at the old offset.
+    """
+
+    offset = 0
+    if continuation is not None:
+        if continuation.result_digest != answer.result_digest:
+            raise _cursor_mismatch("the queue moved since the cursor's first page")
+        if continuation.delta_since != answer.delta_since:
+            raise _cursor_mismatch("the delta base is no longer remembered")
+        if continuation.offset >= len(answer.items):
+            raise _cursor_mismatch("the cursor points past the end of the answer")
+        offset = continuation.offset
+    rows = answer.items[offset : offset + limit]
+    end = offset + len(rows)
+    update: dict[str, object] = {
+        "items": rows,
+        "total_items": len(answer.items),
+        "next_cursor": None if end >= len(answer.items) else _cursor(answer, offset=end),
+    }
+    if isinstance(answer, PlaybillNextResultV2) and answer.removed_item_ids:
+        carried = frozenset(item.item_id for item in rows)
+        update["removed_item_ids"] = tuple(
+            item_id for item_id in answer.removed_item_ids if item_id in carried
+        )
+    return answer.model_copy(update=update)
 
 
 __all__ = [
@@ -3523,6 +3701,7 @@ __all__ = [
     "PlaybillNextAccessProfileInvalid",
     "PlaybillNextAcceptedStateInvalid",
     "PlaybillNextCoordinateNotAccepted",
+    "PlaybillNextCursorMismatch",
     "PlaybillNextDriftObservationV1",
     "PlaybillNextItemV1",
     "PlaybillNextRequestV1",
