@@ -22,7 +22,7 @@ from cruxible_core.indexes.serving import (
     load_serving_manifest,
     render_serving_manifest,
 )
-from cruxible_core.indexes.sqlite import detect_projection_orphans
+from cruxible_core.indexes.sqlite import detect_projection_orphans, load_projection_manifest
 from cruxible_core.ledger.activation import (
     GENERATION_NOTE,
     MAIN_CAS,
@@ -71,6 +71,14 @@ def _prepared(tmp_path: Path):
     return instance, base, bundle
 
 
+def _serves_only_the_base(publication: Path, candidate_oid: str) -> None:
+    # Current compilers serve the genesis projection too; what must never be
+    # served is the candidate that did not win the CAS.
+    if (publication / SERVING_MANIFEST_FILE).exists():
+        name = load_serving_manifest(publication).projection_manifest_name
+        assert load_projection_manifest(publication / name).git_oid != candidate_oid
+
+
 @pytest.mark.parametrize(
     ("checkpoint", "phase"),
     [
@@ -111,7 +119,7 @@ def test_restart_recovers_every_activation_boundary(
         assert reopened.accepted_coordinate() == base
         assert not Path(projection.manifest_path).exists()
         assert not instance._ledger.object_exists(bundle.oid)
-        assert not (publication / SERVING_MANIFEST_FILE).exists()
+        _serves_only_the_base(publication, bundle.oid)
         assert witness.records == []
         return
 
@@ -120,10 +128,8 @@ def test_restart_recovers_every_activation_boundary(
     assert reopened.accepted_coordinate().generation_root == bundle.generation_root.tagged
     assert reopened._ledger.read_generation_note(bundle.oid) is not None
     assert [record.head_oid for record in witness.records] == [bundle.oid]
-    with bind_current_projection(
-        publication,
-        expected=reopened.accepted_coordinate(),
-    ) as handle:
+    # The instance binds with its body-metadata resolver attached.
+    with reopened.bind_accepted_projection(reopened.accepted_coordinate()) as handle:
         assert (
             handle.document(
                 "document:design",
@@ -213,7 +219,7 @@ def test_restart_cleans_every_candidate_prebuild_boundary(
     assert reopened.accepted_coordinate() == base
     assert not reopened._ledger.object_exists(bundle.oid)
     assert detect_projection_orphans(publication) == ()
-    assert not (publication / SERVING_MANIFEST_FILE).exists()
+    _serves_only_the_base(publication, bundle.oid)
 
 
 @pytest.mark.parametrize("phase", ["before", "after"])
