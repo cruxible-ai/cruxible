@@ -1353,6 +1353,21 @@ def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
         ),
     )
     assert rows("reviewer", hidden) == []
+    # A delta is scoped to its caller: another principal diffing against the
+    # reviewer's queue gets its own whole queue, never the reviewer's row back
+    # as a removal.
+    reviewer_queue = service_playbill_next(
+        instance, request=_request(instance), caller_principal_id="reviewer"
+    )
+    other = service_playbill_next(
+        instance,
+        request=_request(instance).model_copy(
+            update={"since_result_digest": reviewer_queue.result_digest}
+        ),
+        caller_principal_id="owner",
+    )
+    assert other.delta_since is None
+    assert all(item.reason != "proposal_awaiting_approval" for item in other.items)
 
     signed = _sign(
         client_material(root, instance),

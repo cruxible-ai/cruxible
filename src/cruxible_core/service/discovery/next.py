@@ -3991,7 +3991,7 @@ def service_playbill_next(
     )
     result_digest = playbill_next_result_digest(provisional)
     full = result_model.model_validate({**values, "result_digest": result_digest})
-    scope = _queue_scope(instance, request)
+    scope = _queue_scope(instance, request, caller_principal_id=caller_principal_id)
     _remember_queue(result_digest, full.items, scope=scope)
     answer = (
         full
@@ -4006,19 +4006,26 @@ def service_playbill_next(
 # the whole queue, which answers the caller's question either way. Entries are
 # scoped to the instance and access profile that produced them: a delta names
 # removed rows, so diffing against a queue read with wider access would hand
-# this caller rows its own read withholds.
+# this caller rows its own read withholds. The caller's principal is in the
+# scope too, since approval rows are that principal's alone.
 _QUEUE_MEMO: OrderedDict[tuple[str, str], tuple[PlaybillNextItemV1, ...]] = OrderedDict()
 _QUEUE_MEMO_LIMIT = 32
 _QUEUE_MEMO_LOCK = RLock()
 
 
-def _queue_scope(instance: PlaybillInstance, request: PlaybillNextRequestAny) -> str:
+def _queue_scope(
+    instance: PlaybillInstance,
+    request: PlaybillNextRequestAny,
+    *,
+    caller_principal_id: str | None,
+) -> str:
     return typed_digest(
         Sha256Value,
         "playbill-next-queue-scope-v1",
         {
             "instance_id": instance.descriptor.instance_id,
             "access_profile": request.access_profile.model_dump(mode="json"),
+            "caller_principal_id": caller_principal_id,
         },
     ).tagged
 
