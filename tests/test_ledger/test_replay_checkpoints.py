@@ -481,3 +481,64 @@ def test_a_verified_checkpoint_at_the_head_reopens_without_reading_its_tree(
     )
     assert _observable(_reopen(fixture)) == expected
     assert record.body.git_oid in reads
+
+
+def test_a_forged_tree_under_a_verified_head_checkpoint_is_never_served(tmp_path: Path) -> None:
+    """The verified reopen skips re-deriving the head tree, so the tree must authenticate itself."""
+
+    import zlib
+
+    from cruxible_client.contracts.errors import PlaybillGitError
+    from cruxible_core.ledger import git as ledger_git
+
+    fixture = build_fixture(tmp_path, PROFILE)
+    _reopen(fixture)  # leaves a verified checkpoint at the head
+    instance = _reopen_instance(fixture)
+    ledger = instance._ledger
+    head = ledger.read_main()
+    instance.coordinate_for_oid(head)  # leaves a verified history index
+    root = ledger._commit_tree(head)
+    assert root is not None
+    # A subtree startup never walks through the checked reader: only a whole-tree
+    # read of the head reaches it.
+    trees = {
+        name: entry[1]
+        for name, entry in ledger._tree_entries_of(root).items()
+        if entry[0] == b"40000"
+    }
+    name = next(item for item in ("documents", "claims", "subjects") if item in trees)
+    subtree = trees[name]
+    entries = ledger._tree_entries_of(subtree)
+    victim = next(iter(entries))
+    forged_blob = (
+        ledger._git(["hash-object", "-w", "--stdin"], input_bytes=b'{"forged": true}\n')
+        .decode()
+        .strip()
+    )
+    body = b"".join(
+        entry_mode
+        + b" "
+        + entry_name.encode()
+        + b"\x00"
+        + bytes.fromhex(forged_blob if entry_name == victim else oid)
+        for entry_name, (entry_mode, oid) in entries.items()
+    )
+    loose = ledger.path / "objects" / subtree[:2] / subtree[2:]
+    assert loose.is_file()
+    loose.chmod(0o644)
+    loose.write_bytes(zlib.compress(b"tree %d\x00" % len(body) + body))
+    for cache in (
+        ledger_git._PARSED_TREES,
+        ledger_git._TREE_LISTINGS,
+        ledger_git._TREE_CHANGES,
+        ledger_git._COMMIT_ROOTS,
+    ):
+        cache.clear()
+
+    try:
+        reopened = _reopen_instance(fixture)
+    except PlaybillGitError as refused:
+        assert "do not hash to their ID" in str(refused)
+        return
+    with pytest.raises(PlaybillGitError, match="do not hash to their ID"):
+        reopened.immutable_tree_at(head)[f"{name}/{victim}"]

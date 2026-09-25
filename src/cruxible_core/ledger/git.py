@@ -2034,58 +2034,88 @@ class GitLedger:
         return changes
 
     def _read_changed_entries(self, base_oid: str, target_oid: str) -> tuple[GitTreeChange, ...]:
-        listing = self._git(
-            [
-                "diff-tree",
-                "-r",
-                "-z",
-                "--no-renames",
-                "--no-abbrev",
-                "--no-commit-id",
-                base_oid,
-                target_oid,
-            ]
-        )
-        fields = [field for field in listing.split(b"\x00") if field]
-        if len(fields) % 2 != 0:
-            raise PlaybillGitError("Git tree diff ended before a changed path")
+        """``diff-tree -r --no-renames`` over hash-checked tree objects.
+
+        Git reads trees without re-hashing them, so a tree object replaced on
+        disk under its ID would change the reported delta. Only subtrees whose
+        IDs differ are read; a path that turns between a file and a directory
+        is a deletion plus additions, exactly as Git reports it.
+        """
+
+        repository = _repository_key(self.path)
         changes: list[GitTreeChange] = []
-        for index in range(0, len(fields), 2):
-            metadata, raw_path = fields[index], fields[index + 1]
-            if not metadata.startswith(b":"):
-                raise PlaybillGitError("Git tree diff contains malformed metadata")
-            try:
-                parts = metadata[1:].decode("ascii").split()
-                path = raw_path.decode("utf-8")
-            except UnicodeDecodeError as exc:
-                raise PlaybillGitError("Git tree diff contains malformed metadata") from exc
-            if len(parts) != 5:
-                raise PlaybillGitError("Git tree diff contains malformed metadata")
-            _source_mode, mode, source_oid, destination_oid, status = parts
-            if status not in {"A", "M", "D", "T"}:
-                raise PlaybillGitError(f"Git tree diff reported an unsupported status: {status}")
-            previous = None
-            if status != "A":
-                self._validate_oid(source_oid)
-                previous = source_oid
-            if status == "D":
-                changes.append(
-                    GitTreeChange(
-                        path=path, status=status, mode=mode, oid=None, previous_oid=previous
+
+        def compare(prefix: str, before: str | None, after: str | None) -> None:
+            old = {} if before is None else self._parsed_tree(repository, before)
+            new = {} if after is None else self._parsed_tree(repository, after)
+            for name in sorted(old.keys() | new.keys(), key=_tree_order_key(old, new)):
+                source, destination = old.get(name), new.get(name)
+                if source == destination:
+                    continue
+                path = _listing_path(prefix, name)
+                source_tree = source is not None and source[0] == _TREE_MODE
+                destination_tree = destination is not None and destination[0] == _TREE_MODE
+                if source_tree and destination_tree:
+                    assert source is not None and destination is not None
+                    compare(path + "/", source[1], destination[1])
+                    continue
+                if (
+                    source is not None
+                    and destination is not None
+                    and not (source_tree or destination_tree)
+                ):
+                    status = "M" if _mode_kind(source[0]) == _mode_kind(destination[0]) else "T"
+                    changes.append(
+                        GitTreeChange(
+                            path=path,
+                            status=status,
+                            mode=_listing_mode(destination[0]),
+                            oid=self._checked_oid(destination[1]),
+                            previous_oid=self._checked_oid(source[1]),
+                        )
                     )
-                )
-                continue
-            self._validate_oid(destination_oid)
-            changes.append(
-                GitTreeChange(
-                    path=path,
-                    status=status,
-                    mode=mode,
-                    oid=destination_oid,
-                    previous_oid=previous,
-                )
-            )
+                    continue
+                if source is not None:
+                    if source_tree:
+                        compare(path + "/", source[1], None)
+                    else:
+                        changes.append(
+                            GitTreeChange(
+                                path=path,
+                                status="D",
+                                mode="000000",
+                                oid=None,
+                                previous_oid=self._checked_oid(source[1]),
+                            )
+                        )
+                if destination is not None:
+                    if destination_tree:
+                        compare(path + "/", None, destination[1])
+                    else:
+                        changes.append(
+                            GitTreeChange(
+                                path=path,
+                                status="A",
+                                mode=_listing_mode(destination[0]),
+                                oid=self._checked_oid(destination[1]),
+                                previous_oid=None,
+                            )
+                        )
+
+        compare("", self._root_tree(base_oid), self._root_tree(target_oid))
+        changes.sort(key=lambda change: change.path.encode("utf-8"))
         return tuple(changes)
+
+    def _root_tree(self, oid: str) -> str:
+        """The tree a commit names, or ``oid`` itself when it is a tree."""
+
+        self._validate_oid(oid)
+        tree = self._commit_tree(oid)
+        return oid if tree is None else tree
+
+    def _checked_oid(self, oid: str) -> str:
+        self._validate_oid(oid)
+        return oid
 
     def list_tree(self, oid: str) -> tuple[GitTreeEntry, ...]:
         """List an exact commit recursively without reading any blob payload.
@@ -2303,42 +2333,87 @@ class GitLedger:
         with_sizes: bool,
         paths: Sequence[str] | None,
     ) -> tuple[GitTreeEntry, ...]:
-        entries: list[GitTreeEntry] = []
-        size_flag = ["-l"] if with_sizes else []
-        expected_fields = 4 if with_sizes else 3
-        # ``:(literal)`` disables pathspec globbing so a path that carries
-        # wildcard bytes names exactly itself.
-        scope = [] if paths is None else ["--", *(f":(literal){item}" for item in paths)]
-        listing = self._git(["ls-tree", "-r", *size_flag, "-z", "--full-tree", oid, *scope])
-        for row in listing.split(b"\x00"):
-            if not row:
-                continue
-            try:
-                metadata, raw_path = row.split(b"\t", 1)
-                fields = metadata.decode("ascii").split()
-                if len(fields) != expected_fields:
-                    raise ValueError("unexpected tree metadata field count")
-                mode, object_type, object_oid = fields[0], fields[1], fields[2]
-                path = raw_path.decode("utf-8")
-            except (UnicodeDecodeError, ValueError) as exc:
-                raise PlaybillGitError("ledger tree contains malformed metadata") from exc
+        """``ls-tree -r [-l] --full-tree`` over hash-checked tree objects.
+
+        Git lists a tree without re-hashing the objects it traverses, so a tree
+        object replaced on disk under its ID would list other members. Every
+        tree here comes through the checked batch reader, from the commit's own
+        bytes down. A literal ``paths`` selects an exact entry, or every entry
+        beneath a directory. Sizes come from object headers; a blob's bytes are
+        checked against its size and ID when they are read.
+        """
+
+        root = self._root_tree(oid)
+        rows: dict[str, tuple[bytes, str]] = {}
+        pending: list[tuple[str, str]] = []
+        if paths is None:
+            pending.append(("", root))
+        else:
+            repository = _repository_key(self.path)
+            for requested in paths:
+                directory, _separator, name = requested.rpartition("/")
+                entries: dict[str, tuple[bytes, str]] | None = self._parsed_tree(repository, root)
+                for part in directory.split("/") if directory else ():
+                    found = entries.get(part) if entries is not None else None
+                    entries = (
+                        self._parsed_tree(repository, found[1])
+                        if found is not None and found[0] == _TREE_MODE
+                        else None
+                    )
+                entry = None if entries is None else entries.get(name)
+                if entry is None:
+                    continue
+                if entry[0] == _TREE_MODE:
+                    pending.append((requested + "/", entry[1]))
+                else:
+                    rows[requested] = entry
+        reader = _batch_reader(self.path)
+        raw_length = 20 if self.object_format() == "sha1" else 32
+        while pending:
+            level = pending
+            pending = []
+            trees = reader.objects(tuple(dict.fromkeys(tree for _prefix, tree in level)))
+            for prefix, tree in level:
+                found_tree = trees[tree]
+                if found_tree is None or found_tree[0] != "tree":
+                    raise PlaybillGitError(f"ledger tree object is unavailable: {tree}")
+                entries = _tree_entries(found_tree[1], raw_length=raw_length)
+                if entries is None:
+                    raise PlaybillGitError(f"ledger tree object is malformed: {tree}")
+                for name, entry in entries.items():
+                    path = _listing_path(prefix, name)
+                    if entry[0] == _TREE_MODE:
+                        pending.append((path + "/", entry[1]))
+                    else:
+                        rows[path] = entry
+        ordered = sorted(rows.items(), key=lambda item: item[0].encode("utf-8"))
+        sizes: dict[str, tuple[str, int] | None] = {}
+        if with_sizes:
+            sizes = self.object_sizes(
+                [entry[1] for _path, entry in ordered if _listing_type(entry[0]) == "blob"]
+            )
+        result: list[GitTreeEntry] = []
+        for path, (raw_mode, object_oid) in ordered:
             self._validate_oid(object_oid)
+            object_type = _listing_type(raw_mode)
             size: int | None = None
-            if with_sizes:
-                try:
-                    size = None if fields[3] == "-" else int(fields[3])
-                except ValueError as exc:
-                    raise PlaybillGitError("ledger tree contains a malformed object size") from exc
-            entries.append(
+            if with_sizes and object_type == "blob":
+                info = sizes.get(object_oid)
+                if info is None or info[0] != "blob":
+                    raise PlaybillGitError(
+                        f"ledger tree names a missing or non-blob object: {path}"
+                    )
+                size = info[1]
+            result.append(
                 GitTreeEntry(
                     path=path,
-                    mode=mode,
+                    mode=_listing_mode(raw_mode),
                     object_type=object_type,
                     oid=object_oid,
                     size=size,
                 )
             )
-        return tuple(entries)
+        return tuple(result)
 
     def read_blob(self, oid: str) -> bytes:
         return self.read_blobs((oid,))[oid]
@@ -2437,35 +2512,34 @@ class GitLedger:
         order -- so the result is a proven linear chain, not just a listing.
         """
 
-        rows = self._git(["rev-list", "--parents", "--reverse", "refs/heads/main"]).decode()
-        history: list[str] = []
-        for row in rows.splitlines():
-            fields = row.split()
-            if len(fields) > 2:
-                raise PlaybillGitError("Playbill refuses merge commits on main")
-            oid = fields[0]
+        # Parents are read from each commit's own hash-checked bytes, never
+        # from Git's unverified traversal, so a commit object replaced on disk
+        # cannot splice another chain in under a known ID.
+        reader = _batch_reader(self.path)
+        newest_first: list[str] = []
+        oid: str | None = self.read_main()
+        while oid is not None:
             self._validate_oid(oid)
-            if not history:
-                if len(fields) != 1:
-                    raise PlaybillGitError(
-                        "Playbill main history is not rooted at a parentless commit"
-                    )
-            else:
-                if len(fields) != 2:
-                    raise PlaybillGitError(
-                        "Playbill main history contains a second parentless commit"
-                    )
-                self._validate_oid(fields[1])
-                if fields[1] != history[-1]:
-                    raise PlaybillGitError("Playbill main history is not a single parent chain")
-            history.append(oid)
-        return tuple(history)
+            found = reader.objects((oid,))[oid]
+            if found is None or found[0] != "commit":
+                raise PlaybillGitError(f"ledger object is not a commit: {oid}")
+            parents = _commit_parents(found[1])
+            if len(parents) > 1:
+                raise PlaybillGitError("Playbill refuses merge commits on main")
+            newest_first.append(oid)
+            if len(newest_first) > _MAIN_HISTORY_LIMIT:
+                raise PlaybillGitError("Playbill main history is not a single parent chain")
+            oid = parents[0] if parents else None
+        return tuple(reversed(newest_first))
 
     def commit_timestamps(self, oid: str) -> tuple[datetime, datetime]:
         """Return one commit's embedded author and committer instants in UTC."""
 
         self._validate_oid(oid)
-        content = self._git(["cat-file", "commit", oid]).decode("utf-8")
+        found = _batch_reader(self.path).objects((oid,))[oid]
+        if found is None or found[0] != "commit":
+            raise PlaybillGitError(f"ledger object is not a commit: {oid}")
+        content = found[1].split(b"\n\n", 1)[0].decode("utf-8")
         timestamps: dict[str, datetime] = {}
         for line in content.splitlines():
             kind = (
@@ -2610,6 +2684,62 @@ def _tree_entries(body: bytes, *, raw_length: int) -> dict[str, tuple[bytes, str
         entries[name] = (mode, body[end + 1 : end + 1 + raw_length].hex())
         position = end + 1 + raw_length
     return entries
+
+
+_TREE_MODE: Final = b"40000"
+# A generous bound on accepted generations, so a parent cycle cannot spin.
+_MAIN_HISTORY_LIMIT: Final = 10_000_000
+
+
+def _commit_parents(body: bytes) -> list[str]:
+    headers = body.split(b"\n\n", 1)[0].split(b"\n")
+    return [
+        line[len(b"parent ") :].decode("ascii") for line in headers if line.startswith(b"parent ")
+    ]
+
+
+def _listing_path(prefix: str, name: str) -> str:
+    """One tree entry's full path; names Git would not list as UTF-8 are refused."""
+
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise PlaybillGitError("ledger tree contains malformed metadata") from exc
+    return prefix + name
+
+
+def _listing_mode(raw_mode: bytes) -> str:
+    """A tree entry's mode as ``ls-tree`` and ``diff-tree`` print it."""
+
+    try:
+        return raw_mode.decode("ascii").rjust(6, "0")
+    except UnicodeDecodeError as exc:
+        raise PlaybillGitError("ledger tree contains malformed metadata") from exc
+
+
+def _listing_type(raw_mode: bytes) -> str:
+    if raw_mode == _TREE_MODE:
+        return "tree"
+    return "commit" if raw_mode == b"160000" else "blob"
+
+
+def _mode_kind(raw_mode: bytes) -> str:
+    """Git's type-change classes: a regular file, a symlink, or a submodule."""
+
+    return {b"120000": "symlink", b"160000": "gitlink"}.get(raw_mode, "file")
+
+
+def _tree_order_key(
+    *trees: Mapping[str, tuple[bytes, str]],
+) -> Callable[[str], bytes]:
+    """Git's tree order: a directory sorts as its name followed by ``/``."""
+
+    def key(name: str) -> bytes:
+        entry = next((tree[name] for tree in trees if name in tree), None)
+        suffix = b"/" if entry is not None and entry[0] == _TREE_MODE else b""
+        return name.encode("utf-8", errors="surrogateescape") + suffix
+
+    return key
 
 
 def _fsync_directory(path: Path) -> None:
