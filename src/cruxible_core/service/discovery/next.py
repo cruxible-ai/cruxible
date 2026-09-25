@@ -2852,6 +2852,67 @@ def _consumer_stalled_items(
     )
 
 
+def _evidence_unavailable_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    access_profile: CoverageAccessProfileV1,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Cited Captures the store can no longer produce, as the evidence worker last saw.
+
+    One row per Capture that live Claims still cite at this coordinate: a
+    missing or rotted envelope, a rotted body, or a missing body its contract
+    requires. The worker's findings are read, never recomputed here.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.consumers.evidence import evidence_findings
+
+    findings = evidence_findings(instance)
+    if not findings:
+        return ()
+    items: list[PlaybillNextItemV1] = []
+    with instance.bind_accepted_projection(coordinate) as projection:
+        for finding in findings:
+            claims = tuple(
+                row[0]
+                for row in projection.typed.connection.execute(
+                    "SELECT DISTINCT u.owner_key FROM citation_uses u "
+                    "JOIN claims c ON c.identity=u.owner_key "
+                    "WHERE u.owner_kind='Claim' AND c.lifecycle='live' AND u.capture_digest=? "
+                    "ORDER BY u.owner_key",
+                    (finding.capture_digest,),
+                ).fetchall()
+            )
+            if not claims:
+                continue
+            subject = f"Capture:{finding.capture_digest}"
+            items.append(
+                _item(
+                    severity="repair",
+                    reason="evidence_unavailable",
+                    subject_identity=subject,
+                    related_identities=claims,
+                    detail={
+                        "capture_digest": finding.capture_digest,
+                        "part": finding.part,
+                        "object_digest": finding.object_digest,
+                        "state": finding.state,
+                        "checked_at": format_datetime(finding.checked_at),
+                    },
+                    repair=PlaybillNextRepairV1(
+                        operation="hand_edit",
+                        target=subject,
+                        required_change=(
+                            "restore_the_capture_from_backup_or_recapture_and_recite_its_claims"
+                        ),
+                    ),
+                )
+            )
+    return tuple(items)
+
+
 def _ledger_mirror_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
     """Where this instance's published copy of its ledger stands against the head.
 
@@ -3861,6 +3922,11 @@ def service_playbill_next(
             coordinate=coordinate,
             evaluation_time=request.evaluation_time,
             expiring_within=request.expiring_within,
+            access_profile=request.access_profile,
+        ),
+        *_evidence_unavailable_items(
+            instance,
+            coordinate=coordinate,
             access_profile=request.access_profile,
         ),
         *_consumer_stalled_items(

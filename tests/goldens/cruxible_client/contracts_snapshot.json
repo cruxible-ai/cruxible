@@ -88,7 +88,8 @@
         "proposal_stale",
         "proposal_awaiting_approval",
         "mandate_expiring",
-        "consumer_stalled"
+        "consumer_stalled",
+        "evidence_unavailable"
       ]
     },
     "PlaybillNextRefusalCodeV1": {
@@ -681,6 +682,134 @@
         "coordinate",
         "identity",
         "statement_digest"
+      ]
+    },
+    "ConsumerStatusV1": {
+      "fields": {
+        "consumer_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "consumer_id",
+          "required": true,
+          "schema": {
+            "title": "Consumer Id",
+            "type": "string"
+          }
+        },
+        "detail": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "detail",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "state": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state",
+          "required": true,
+          "schema": {
+            "enum": [
+              "running",
+              "stopped",
+              "stalled",
+              "disabled"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-consumer-status-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-consumer-status-v1",
+            "default": "playbill-consumer-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One daemon consumer on one instance: an armed Line, or a built-in worker.",
+        "properties": {
+          "consumer_id": {
+            "title": "Consumer Id",
+            "type": "string"
+          },
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "stopped",
+              "stalled",
+              "disabled"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-consumer-status-v1",
+            "default": "playbill-consumer-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "kind",
+          "consumer_id",
+          "state"
+        ],
+        "title": "ConsumerStatusV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "consumer_id",
+        "instance_id",
+        "kind",
+        "state"
       ]
     },
     "GitWorkspaceNoteV1": {
@@ -24679,7 +24808,8 @@
               "proposal_stale",
               "proposal_awaiting_approval",
               "mandate_expiring",
-              "consumer_stalled"
+              "consumer_stalled",
+              "evidence_unavailable"
             ],
             "title": "Reason",
             "type": "string"
@@ -24833,7 +24963,8 @@
               "proposal_stale",
               "proposal_awaiting_approval",
               "mandate_expiring",
-              "consumer_stalled"
+              "consumer_stalled",
+              "evidence_unavailable"
             ],
             "title": "Reason",
             "type": "string"
@@ -25096,7 +25227,8 @@
               "proposal_stale",
               "proposal_awaiting_approval",
               "mandate_expiring",
-              "consumer_stalled"
+              "consumer_stalled",
+              "evidence_unavailable"
             ],
             "title": "Reason",
             "type": "string"
@@ -25195,7 +25327,8 @@
                   "proposal_stale",
                   "proposal_awaiting_approval",
                   "mandate_expiring",
-                  "consumer_stalled"
+                  "consumer_stalled",
+                  "evidence_unavailable"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -25333,7 +25466,8 @@
               "proposal_stale",
               "proposal_awaiting_approval",
               "mandate_expiring",
-              "consumer_stalled"
+              "consumer_stalled",
+              "evidence_unavailable"
             ],
             "title": "Reason",
             "type": "string"
@@ -25788,7 +25922,8 @@
                   "proposal_stale",
                   "proposal_awaiting_approval",
                   "mandate_expiring",
-                  "consumer_stalled"
+                  "consumer_stalled",
+                  "evidence_unavailable"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -25906,7 +26041,8 @@
                   "proposal_stale",
                   "proposal_awaiting_approval",
                   "mandate_expiring",
-                  "consumer_stalled"
+                  "consumer_stalled",
+                  "evidence_unavailable"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -81196,6 +81332,22 @@
             "title": "Compiler Revision"
           }
         },
+        "consumers": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "consumers",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ConsumerStatusV1"
+            },
+            "title": "Consumers",
+            "type": "array"
+          }
+        },
         "hosts": {
           "default": [],
           "default_json_serializable": true,
@@ -81264,6 +81416,53 @@
       },
       "json_schema": {
         "$defs": {
+          "ConsumerStatusV1": {
+            "additionalProperties": false,
+            "description": "One daemon consumer on one instance: an armed Line, or a built-in worker.",
+            "properties": {
+              "consumer_id": {
+                "title": "Consumer Id",
+                "type": "string"
+              },
+              "detail": {
+                "additionalProperties": true,
+                "title": "Detail",
+                "type": "object"
+              },
+              "instance_id": {
+                "title": "Instance Id",
+                "type": "string"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "running",
+                  "stopped",
+                  "stalled",
+                  "disabled"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-consumer-status-v1",
+                "default": "playbill-consumer-status-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "instance_id",
+              "kind",
+              "consumer_id",
+              "state"
+            ],
+            "title": "ConsumerStatusV1",
+            "type": "object"
+          },
           "PlaybillHostCompatibilityReasonV1": {
             "additionalProperties": false,
             "properties": {
@@ -81492,6 +81691,14 @@
             ],
             "default": null,
             "title": "Compiler Revision"
+          },
+          "consumers": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ConsumerStatusV1"
+            },
+            "title": "Consumers",
+            "type": "array"
           },
           "hosts": {
             "default": [],

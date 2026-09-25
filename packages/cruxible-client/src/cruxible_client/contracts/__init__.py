@@ -264,6 +264,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "proposal_awaiting_approval",
     "mandate_expiring",
     "consumer_stalled",
+    "evidence_unavailable",
 ]
 PlaybillNextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
 PlaybillNextRepairOperation: TypeAlias = Literal[
@@ -438,6 +439,19 @@ class ProviderLaneStatusV1(BaseModel):
         return self
 
 
+class ConsumerStatusV1(BaseModel):
+    """One daemon consumer on one instance: an armed Line, or a built-in worker."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-consumer-status-v1"] = "playbill-consumer-status-v1"
+    instance_id: str
+    kind: str
+    consumer_id: str
+    state: Literal["running", "stopped", "stalled", "disabled"]
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
 class ServerInfoResult(BaseModel):
     server_required: bool
     state_root: str
@@ -449,6 +463,7 @@ class ServerInfoResult(BaseModel):
     compiler_coordinate: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     compiler_revision: str | None = None
     hosts: tuple[PlaybillHostInspectionV1, ...] = ()
+    consumers: tuple[ConsumerStatusV1, ...] = ()
 
 
 class ServerRestartResult(BaseModel):

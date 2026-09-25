@@ -125,6 +125,15 @@ durable runtime credential first.
 governed host as `uninitialized`, `writable`, or `reseed_required`, retaining a
 typed reason for malformed or retired state. Its `Instances` count is the number
 of governed daemon hosts shown, excluding unrelated local registry entries.
+`server status` also lists the daemon's consumers on every instance it holds
+open: each armed Line and each built-in worker, as `running`, `stalled`,
+`stopped`, or `disabled`. The built-in evidence worker runs on every instance
+by default. It re-hashes the Captures live Claims cite whenever a generation
+cites one, and sweeps them all daily. A missing or corrupt Capture envelope, a
+corrupt body, or a missing body its contract still requires to be retained is a
+finding. A body whose contract lets it go (`optional` or `never_materialize`
+retention, or a `required_for_duration` window that has passed) is not.
+`CRUXIBLE_DISABLED_CONSUMERS=evidence` turns it off.
 `server status` and `server info`
 also render `Provider lane:` and, when degraded,
 `Provider lane reason:`. Provider-lane degradation never prevents the daemon's
@@ -1301,6 +1310,15 @@ one could be admitted at the evaluation time; the repair is
 `cruxible playbill line dispatch LINE_DIGEST [--limit N]` for the Line with the
 oldest due occurrence. Nothing dispatches implicitly. A caller whose access
 profile excludes instance material reads `not_observed`.
+
+Two rows come from the daemon's consumers rather than from a computation at
+read time:
+- `evidence_unavailable` names a Capture the evidence worker found missing or
+  corrupt, with the live Claims that cite it. Restore its bytes, or recapture
+  and re-cite; the worker's next check clears the row. Findings are what the
+  worker last observed, so the row reflects its last check.
+- `consumer_stalled` names a consumer that stopped by itself or stopped
+  keeping up, with its kind in `detail.kind` and the kind's own repair.
 
 A current `unsure` examined attestation holds a row, and `status.held` counts
 the rows held. A hold lasts only while its basis is unchanged:

@@ -26,9 +26,10 @@ _log = structlog.get_logger(__name__)
 
 
 def consumer_kinds() -> tuple[ConsumerKind, ...]:
+    from cruxible_core.consumers.evidence import EVIDENCE_AVAILABILITY
     from cruxible_core.consumers.lines import LINE_ARMS
 
-    return (LINE_ARMS,)
+    return (LINE_ARMS, EVIDENCE_AVAILABILITY)
 
 
 def consumer_health(instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
@@ -40,6 +41,48 @@ def consumer_health(instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ..
         if kind.active(instance)
         for health in kind.health(instance, now=now)
     )
+
+
+def consumer_statuses(manager: Any) -> tuple[Any, ...]:
+    """Every consumer on every instance the daemon already has open, for server status.
+
+    Only open instances are read, so status never opens one; the runner holds
+    every governed instance open, so on a running daemon that is all of them.
+    """
+
+    from cruxible_client import contracts
+
+    now = datetime.now(UTC)
+    statuses: list[contracts.ConsumerStatusV1] = []
+    for instance_id, instance in manager.open_instances():
+        for kind in consumer_kinds():
+            if not kind.active(instance):
+                if kind.effect_class == "findings":
+                    statuses.append(
+                        contracts.ConsumerStatusV1(
+                            instance_id=instance_id,
+                            kind=kind.name,
+                            consumer_id=f"consumer:{kind.name}",
+                            state="disabled",
+                        )
+                    )
+                continue
+            try:
+                healths = kind.health(instance, now=now)
+            except Exception:
+                _log.exception("consumer_health_unavailable", instance_id=instance_id)
+                continue
+            statuses.extend(
+                contracts.ConsumerStatusV1(
+                    instance_id=instance_id,
+                    kind=health.kind,
+                    consumer_id=health.consumer_id,
+                    state=health.state,
+                    detail=health.detail,
+                )
+                for health in healths
+            )
+    return tuple(statuses)
 
 
 class ConsumerRunner:

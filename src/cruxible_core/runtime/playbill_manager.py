@@ -235,6 +235,11 @@ class PlaybillInstanceManager:
             self._instances[instance_id] = instance
             return instance
 
+    def open_instances(self) -> tuple[tuple[str, PlaybillInstance], ...]:
+        """The instances this daemon already holds open, without opening any more."""
+        with self._lock:
+            return tuple(sorted(self._instances.items()))
+
     def register(self, instance_id: str, instance: PlaybillInstance) -> None:
         """Testing/embedded seam; production instances load through pinned storage."""
 

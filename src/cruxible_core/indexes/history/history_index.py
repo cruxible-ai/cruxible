@@ -506,6 +506,17 @@ class HistoryReader:
         ).fetchone()
         return None if row is None else ArtifactVersionLocation(*row)
 
+    def versions_at(self, sequence: int) -> tuple[ArtifactVersionLocation, ...]:
+        """The exact artifact versions one generation introduced, by its sequence index."""
+        if sequence < 0 or sequence > self.sequence:
+            raise PlaybillFormatError("generation is outside requested accepted history")
+        rows = self._connection.execute(
+            "SELECT * FROM artifact_versions WHERE occurrence_sequence=? "
+            "ORDER BY identity,artifact_digest",
+            (sequence,),
+        ).fetchall()
+        return tuple(ArtifactVersionLocation(*row) for row in rows)
+
     def occurrences(self, identity: str) -> tuple[ArtifactVersionLocation, ...]:
         rows = self._connection.execute(
             "SELECT * FROM artifact_versions WHERE identity=? AND occurrence_sequence<=? "
