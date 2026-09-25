@@ -101,14 +101,19 @@ def test_multi_claim_preflight_derives_accepted_referents_once_per_evaluation(
         payload=_change_set(*(claim_payload(qualifier=f"sample-{index}") for index in range(4))),
         canonical_timestamp=TIMESTAMP,
     ).intent
-    original = proposals.accepted_referent_coordinates_from_tree
+    # The instance derives referents from its accepted history index.
+    original = instance.accepted_referent_coordinates
     calls = []
 
-    def counted(tree, *, current):
+    def counted(current):
         calls.append(current)
-        return original(tree, current=current)
+        return original(current)
 
-    monkeypatch.setattr(proposals, "accepted_referent_coordinates_from_tree", counted)
+    def unexpected(*args, **kwargs):
+        pytest.fail("instance evaluations derive referents from the history index")
+
+    monkeypatch.setattr(instance, "accepted_referent_coordinates", counted)
+    monkeypatch.setattr(proposals, "accepted_referent_coordinates_from_tree", unexpected)
     first = compute_preflight(instance, intent=intent, actor=actor)
     assert first.result.verdict == "passed"
     assert len(calls) == 1
