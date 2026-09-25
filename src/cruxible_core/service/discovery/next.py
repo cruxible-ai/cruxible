@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shlex
 from collections import OrderedDict, defaultdict
-from collections.abc import Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import RLock
@@ -970,6 +970,26 @@ def _group_items(items: tuple[PlaybillNextItemV1, ...]) -> tuple[PlaybillNextIte
             # The first row the capture would resolve carries it; later ones don't.
             singles.append(_with_findings(item, supporting.pop(item.subject_identity)))
             continue
+        nested = [
+            finding.subject_identity
+            for finding in item.findings
+            if finding.reason in _SUPPORT_RESOLVES and finding.subject_identity in supporting
+        ]
+        if nested:
+            singles.append(
+                _with_findings(
+                    item.model_copy(update={"findings": ()}),
+                    [
+                        *map(_row_of, item.findings),
+                        *(
+                            row
+                            for subject in dict.fromkeys(nested)
+                            for row in supporting.pop(subject)
+                        ),
+                    ],
+                )
+            )
+            continue
         key = _group_key(item, edited_sources=edited_sources)
         if key is None:
             singles.append(item)
@@ -1001,7 +1021,14 @@ def _fold_supporting(
         for item in items
         if item.reason in _EVIDENCE_REASON_ORDER and item.reason != "claim_new_evidence_supporting"
     }
-    resolvable = {item.subject_identity for item in items if item.reason in _SUPPORT_RESOLVES}
+    # A resolvable row may already sit inside another -- a conflict carries its
+    # members' rows -- and still counts as the work the capture resolves.
+    resolvable = {item.subject_identity for item in items if item.reason in _SUPPORT_RESOLVES} | {
+        finding.subject_identity
+        for item in items
+        for finding in item.findings
+        if finding.reason in _SUPPORT_RESOLVES
+    }
     kept: list[PlaybillNextItemV1] = []
     folded: dict[str, list[PlaybillNextItemV1]] = defaultdict(list)
     # Resolvable rows first, in carrier order, so the first one reached carries.
@@ -1101,6 +1128,10 @@ class _Holds:
         coordinate: AcceptedProjectionCoordinate,
         claims: tuple[ClaimArtifactAny, ...],
         door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...],
+        door_history: Callable[
+            [], tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...]
+        ]
+        | None = None,
         evaluation_time: datetime,
     ) -> None:
         self._instance = instance
@@ -1115,8 +1146,9 @@ class _Holds:
         self._claims = live
         self._hold_for: dict[str, timedelta] = {}
         self._seen: dict[tuple[str, tuple[tuple[str, str], ...]], bool] = {}
-        # The latest examined stance per Claim and principal; a later support or
-        # contradict by the same principal ends that principal's hold.
+        # The latest examined stance per Claim and principal as of the evaluation
+        # time; a later support or contradict by the same principal ends that
+        # principal's hold, and one made after the evaluation time does not.
         latest: dict[
             tuple[str, str], tuple[tuple[datetime, int, int], ClaimAttestationStatementV2]
         ] = {}
@@ -1127,6 +1159,7 @@ class _Holds:
             identity = statement.claim_identity.qualified
             if (
                 statement.attestation_basis != "examined_existing"
+                or statement.attested_at > evaluation_time
                 or self._current.get(identity) != statement.claim_artifact_digest
             ):
                 return
@@ -1141,6 +1174,15 @@ class _Holds:
                 )
             for envelope in accepted:
                 consider(envelope.statement, (envelope.statement.attested_at, 0, 0))
+        # The folded door keeps only each principal's latest examined statement.
+        # When that one postdates the evaluation time, the statement in force
+        # then was superseded out of the fold, so read the whole chain.
+        if door_history is not None and any(
+            payload.attestation.statement.attestation_basis == "examined_existing"
+            and payload.attestation.statement.attested_at > evaluation_time
+            for _event, payload in door_events
+        ):
+            door_events = door_history()
         for event, payload in door_events:
             if payload.current_at_append is False:
                 continue
@@ -1148,10 +1190,8 @@ class _Holds:
             consider(statement, (statement.attested_at, 1, event.sequence))
         holds: dict[str, list[_UnsureHold]] = defaultdict(list)
         for (identity, _principal), (_order, statement) in latest.items():
-            if (
-                statement.stance == "unsure"
-                and statement.attested_at <= evaluation_time
-                and (statement.valid_until is None or evaluation_time < statement.valid_until)
+            if statement.stance == "unsure" and (
+                statement.valid_until is None or evaluation_time < statement.valid_until
             ):
                 holds[identity].append(
                     _UnsureHold(
@@ -1275,8 +1315,10 @@ def _apply_holds(
             held += 1
             kept.extend(_row_of(finding) for finding in remaining)
         elif len(remaining) != len(item.findings):
-            head = item.model_copy(update={"findings": ()})
-            kept.append(_with_findings(head, map(_row_of, remaining)) if remaining else head)
+            # Rebuilt, never copied: the item id digests the findings it carries.
+            kept.append(
+                _with_findings(item.model_copy(update={"findings": ()}), map(_row_of, remaining))
+            )
         else:
             kept.append(item)
     return tuple(kept), held
@@ -3386,6 +3428,13 @@ def service_playbill_next(
                 coordinate=coordinate,
                 claims=parsed_claims,
                 door_events=door_events,
+                door_history=(
+                    None
+                    if attestation_head is None
+                    else lambda: instance.claim_attestation_evidence_store().events(
+                        at_head=attestation_head
+                    )
+                ),
                 evaluation_time=request.evaluation_time,
             ),
         )
