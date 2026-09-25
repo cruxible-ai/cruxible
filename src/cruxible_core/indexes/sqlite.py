@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
+import secrets
 import sqlite3
 import stat
 import sys
@@ -16,6 +18,7 @@ from typing import Any
 from cruxible_client.contracts.canonical import (
     LogicalDigest,
     Sha256Value,
+    canonical_bytes,
 )
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -99,6 +102,74 @@ def _record_verified_piece(
     memo_put(_VERIFIED_PIECES, identity, value, capacity=_VERIFIED_PIECE_CAPACITY)
 
 
+# Source authentication re-derives every typed row from accepted sources. A
+# piece that passed it -- or that the assembler built from verified sources --
+# is recorded here by its physical digest and coordinate, so a later process
+# that has re-hashed the piece against its manifest need not re-derive it.
+SOURCE_AUTHENTICATION_STAMPS = "source-authenticated.json"
+_SOURCE_AUTHENTICATOR = "playbill-typed-source-authentication-v1"
+_SOURCE_AUTHENTICATION_STAMPS_RETAINED = 8
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _authentication_stamp(accepted: Any, manifest: ProjectionManifest) -> dict[str, object]:
+    return {
+        "authenticator": _SOURCE_AUTHENTICATOR,
+        "storage_schema_version": PROJECTION_STORAGE_SCHEMA_VERSION,
+        "physical_digest": manifest.pieces[0].physical_digest,
+        "logical_digest": manifest.logical_digest,
+        # The coordinate fields a piece's verification identity binds, which
+        # the assembler's and a reader's coordinate both carry.
+        "coordinate": [
+            accepted.instance_id,
+            accepted.git_object_format,
+            accepted.git_oid,
+            accepted.semantic_root,
+            accepted.generation_root,
+            accepted.compiler.rule_digest,
+            accepted.compiler.schema_version,
+        ],
+    }
+
+
+def _authentication_stamps(directory: Path) -> list[dict[str, object]]:
+    path = directory / SOURCE_AUTHENTICATION_STAMPS
+    try:
+        if path.is_symlink() or not path.is_file():
+            return []
+        loaded = json.loads(path.read_bytes())
+    except (OSError, ValueError):
+        return []
+    return [item for item in loaded if isinstance(item, dict)] if isinstance(loaded, list) else []
+
+
+def _record_authentication_stamp(
+    directory: Path, accepted: Any, manifest: ProjectionManifest
+) -> None:
+    stamp = _authentication_stamp(accepted, manifest)
+    retained = [stamp] + [item for item in _authentication_stamps(directory) if item != stamp]
+    body = canonical_bytes(retained[:_SOURCE_AUTHENTICATION_STAMPS_RETAINED]) + b"\n"
+    temporary = directory / f".{SOURCE_AUTHENTICATION_STAMPS}.{secrets.token_hex(8)}.tmp"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        view = memoryview(body)
+        while view:
+            written = os.write(descriptor, view)
+            view = view[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, directory / SOURCE_AUTHENTICATION_STAMPS)
+    _fsync_directory(directory)
+
+
 def record_source_built_piece(path: Path, *, accepted: Any, manifest: ProjectionManifest) -> None:
     """Mark only the assembler's completed exact source-derived output ready."""
     before = path.stat()
@@ -112,6 +183,7 @@ def record_source_built_piece(path: Path, *, accepted: Any, manifest: Projection
         path, after, expected=accepted, manifest=manifest, physical_digest=digest
     )
     _record_verified_piece(identity, source_authenticated=True)
+    _record_authentication_stamp(path.parent, accepted, manifest)
 
 
 def reset_projection_verification_memo() -> None:
@@ -465,10 +537,19 @@ class ProjectionHandle:
             raise ProjectionIntegrityError("bound typed projection file identity changed")
         if memo_get(_VERIFIED_PIECES, self._verification_identity) == "source-authenticated":
             return
+        # Binding re-hashed this piece against its manifest in this process;
+        # a stamp for that digest and coordinate says its rows were already
+        # derived from source.
+        if _authentication_stamp(self.accepted, self.manifest) in _authentication_stamps(
+            self.index_path.parent
+        ):
+            _record_verified_piece(self._verification_identity, source_authenticated=True)
+            return
         from cruxible_core.indexes.typed_sqlite import authenticate_source_rows
 
         authenticate_source_rows(self, repository=repository or self.typed.repository)
         _record_verified_piece(self._verification_identity, source_authenticated=True)
+        _record_authentication_stamp(self.index_path.parent, self.accepted, self.manifest)
 
     @property
     def citations(self) -> Any:
