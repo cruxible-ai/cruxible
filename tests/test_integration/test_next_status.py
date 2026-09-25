@@ -441,3 +441,27 @@ def test_worker_findings_report_how_current_they_are(
         access_profile=_access().model_copy(update={"permitted_access_classes": ("public",)}),
     )
     assert _status(instance, hidden, consumers_running=True).consumers.state == "not_observed"
+
+
+def test_one_next_request_reads_each_workers_health_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime
+
+    from cruxible_core.consumers.evidence import EVIDENCE_AVAILABILITY
+    from tests.test_consumers.test_evidence_availability import _drain, _world
+
+    instance, _capture = _world(tmp_path)
+    swept = datetime(2026, 9, 1, tzinfo=UTC)
+    _drain(instance, now=swept)
+    health = EVIDENCE_AVAILABILITY.health
+    calls: list[datetime] = []
+
+    def counted(target, *, now):  # type: ignore[no-untyped-def]
+        calls.append(now)
+        return health(target, now=now)
+
+    monkeypatch.setattr(EVIDENCE_AVAILABILITY, "health", counted)
+    _status(instance, _request(instance, evaluation_time=swept), consumers_running=True)
+
+    assert calls == [swept]

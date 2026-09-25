@@ -86,6 +86,7 @@ from cruxible_client.contracts.temporal import ensure_utc, format_datetime, pars
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.compiler.compiler import COMPILER_REVISION_LABELS, current_compiler_coordinate
 from cruxible_core.compiler.upgrades import upgrade_law
+from cruxible_core.consumers.protocol import ConsumerHealth
 from cruxible_core.coverage.contracts import (
     CoverageAccessProfileV1,
     CoverageCommitmentScanProofV1,
@@ -2833,12 +2834,22 @@ def _workspace_items(
     return tuple(domains), tuple(items)
 
 
-def _consumer_stalled_items(
+def _consumer_healths(
     instance: PlaybillInstance,
     *,
     evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1,
-) -> tuple[PlaybillNextItemV1, ...]:
+) -> tuple[ConsumerHealth, ...]:
+    """Every active consumer's health, read once per request for its rows and its facet."""
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.consumers.runner import consumer_health
+
+    return consumer_health(instance, now=evaluation_time)
+
+
+def _consumer_stalled_items(healths: tuple[ConsumerHealth, ...]) -> tuple[PlaybillNextItemV1, ...]:
     """A daemon consumer that stopped by itself, or stopped keeping up with its work.
 
     Consumers are operational state, measured now, like mirror health: an arm
@@ -2846,10 +2857,6 @@ def _consumer_stalled_items(
     else, and automation that quietly stops is the failure it otherwise hides.
     A deliberate disarm is not a finding. Each kind names its own repair.
     """
-
-    if not access_profile.permits("instance"):
-        return ()
-    from cruxible_core.consumers.runner import consumer_health
 
     return tuple(
         _item(
@@ -2864,7 +2871,7 @@ def _consumer_stalled_items(
                 arguments=health.repair.arguments,
             ),
         )
-        for health in consumer_health(instance, now=evaluation_time)
+        for health in healths
         if health.state in {"stopped", "stalled"} and health.repair is not None
     )
 
@@ -3180,8 +3187,8 @@ def _line_dispatch_health(
 
 def _consumers_health(
     instance: PlaybillInstance,
+    healths: tuple[ConsumerHealth, ...],
     *,
-    evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1,
     running: bool,
 ) -> PlaybillNextHealthV1:
@@ -3206,7 +3213,8 @@ def _consumers_health(
             continue
         workers.extend(
             {"kind": health.kind, "state": health.state, **health.detail}
-            for health in kind.health(instance, now=evaluation_time)
+            for health in healths
+            if health.kind == kind.name
         )
     states = {str(worker["state"]) for worker in workers}
     state = (
@@ -3997,6 +4005,9 @@ def service_playbill_next(
         if domain == "accepted_state" or domain in workspace_domains
     )
     unobserved = tuple(domain for domain in _ALL_DOMAINS if domain not in observed)
+    consumer_healths = _consumer_healths(
+        instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile
+    )
     found = (
         *_claim_items(
             instance,
@@ -4064,11 +4075,7 @@ def service_playbill_next(
             access_profile=request.access_profile,
         ),
         *_prediction_items(instance, access_profile=request.access_profile),
-        *_consumer_stalled_items(
-            instance,
-            evaluation_time=request.evaluation_time,
-            access_profile=request.access_profile,
-        ),
+        *_consumer_stalled_items(consumer_healths),
     )
     held = 0
     if parsed_claims is not None and request.access_profile.permits("instance"):
@@ -4151,7 +4158,7 @@ def service_playbill_next(
         ),
         consumers=_consumers_health(
             instance,
-            evaluation_time=request.evaluation_time,
+            consumer_healths,
             access_profile=request.access_profile,
             running=consumers_running,
         ),

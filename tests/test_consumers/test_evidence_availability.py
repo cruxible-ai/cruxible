@@ -206,3 +206,25 @@ def test_a_sweep_page_costs_its_own_size_not_the_citation_population() -> None:
 
     small, large = steps(1_000), steps(10_000)
     assert large < small * 1.5, (small, large)
+
+
+def test_health_costs_the_same_whatever_the_pending_backlog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_consumers.test_prediction_settlement import _fake_instance, _steps
+
+    def steps(count: int) -> int:
+        instance = _fake_instance(tmp_path / str(count))
+        with evidence._state(instance) as connection:
+            assert connection is not None
+            connection.execute("INSERT INTO progress(singleton,generation) VALUES (1,0)")
+            connection.executemany(
+                "INSERT INTO pending VALUES (?)",
+                ((f"sha256:{index:064x}",) for index in range(count)),
+            )
+        (health,) = WORKER.health(instance, now=NOW)
+        assert health.detail["pending_checks"] == count
+        return _steps(monkeypatch, lambda: WORKER.health(instance, now=NOW))
+
+    small, large = steps(1_000), steps(10_000)
+    assert large < small * 1.5, (small, large)

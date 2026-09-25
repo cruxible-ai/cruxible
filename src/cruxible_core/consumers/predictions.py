@@ -109,6 +109,30 @@ CREATE TABLE IF NOT EXISTS unbindable (
  PRIMARY KEY(identity, record_digest)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS unbindable_by_check ON unbindable(checked_at_us);
+CREATE TABLE IF NOT EXISTS tally (name TEXT PRIMARY KEY, value INTEGER NOT NULL) STRICT;
+INSERT OR IGNORE INTO tally VALUES
+ ('pending',0),('contracts',0),('unbindable',0),('open',0),('settleable',0),('resolved',0);
+CREATE TRIGGER IF NOT EXISTS pending_added AFTER INSERT ON pending
+ BEGIN UPDATE tally SET value=value+1 WHERE name='pending'; END;
+CREATE TRIGGER IF NOT EXISTS pending_removed AFTER DELETE ON pending
+ BEGIN UPDATE tally SET value=value-1 WHERE name='pending'; END;
+CREATE TRIGGER IF NOT EXISTS contract_added AFTER INSERT ON contracts
+ BEGIN UPDATE tally SET value=value+1 WHERE name='contracts'; END;
+CREATE TRIGGER IF NOT EXISTS contract_removed AFTER DELETE ON contracts
+ BEGIN UPDATE tally SET value=value-1 WHERE name='contracts'; END;
+CREATE TRIGGER IF NOT EXISTS anchor_added AFTER INSERT ON unbindable
+ BEGIN UPDATE tally SET value=value+1 WHERE name='unbindable'; END;
+CREATE TRIGGER IF NOT EXISTS anchor_removed AFTER DELETE ON unbindable
+ BEGIN UPDATE tally SET value=value-1 WHERE name='unbindable'; END;
+CREATE TRIGGER IF NOT EXISTS window_added AFTER INSERT ON windows
+ BEGIN UPDATE tally SET value=value+1 WHERE name=NEW.status; END;
+CREATE TRIGGER IF NOT EXISTS window_removed AFTER DELETE ON windows
+ BEGIN UPDATE tally SET value=value-1 WHERE name=OLD.status; END;
+CREATE TRIGGER IF NOT EXISTS window_moved AFTER UPDATE OF status ON windows
+ WHEN OLD.status<>NEW.status BEGIN
+ UPDATE tally SET value=value-1 WHERE name=OLD.status;
+ UPDATE tally SET value=value+1 WHERE name=NEW.status;
+ END;
 """
 
 
@@ -676,7 +700,10 @@ class PredictionSettlementConsumers:
             ((identity, digest) for digest in bound),
         )
         connection.executemany(
-            "INSERT OR REPLACE INTO unbindable VALUES (?,?,?,?,?,?)",
+            # An upsert, not a replace: a replace deletes without firing the tally.
+            "INSERT INTO unbindable VALUES (?,?,?,?,?,?) ON CONFLICT(identity,record_digest) "
+            "DO UPDATE SET event=excluded.event,code=excluded.code,"
+            "checked_at=excluded.checked_at,checked_at_us=excluded.checked_at_us",
             (
                 (
                     identity,
@@ -779,20 +806,8 @@ class PredictionSettlementConsumers:
             ).fetchone()
             if row is None:
                 return ()
-            counts = {
-                name: connection.execute(sql, args).fetchone()[0]
-                for name, sql, args in (
-                    ("pending_contracts", "SELECT count(*) FROM pending", ()),
-                    ("contracts", "SELECT count(*) FROM contracts", ()),
-                    ("open_windows", "SELECT count(*) FROM windows WHERE status=?", ("open",)),
-                    (
-                        "settleable_windows",
-                        "SELECT count(*) FROM windows WHERE status=?",
-                        ("settleable",),
-                    ),
-                    ("unbindable_anchors", "SELECT count(*) FROM unbindable", ()),
-                )
-            }
+            # Kept by triggers as rows change, so health reads no row population.
+            tally = dict(connection.execute("SELECT name,value FROM tally").fetchall())
         generation, backfill_after, capture_head, resolution_ordinal, error, error_at = row
         failing = error is not None
         with instance.accepted_history_reader() as history:
@@ -811,7 +826,11 @@ class PredictionSettlementConsumers:
                     "contract_backfill_in_progress": backfill_after is not None,
                     "capture_position": capture_head,
                     "resolution_position": resolution_ordinal,
-                    **counts,
+                    "pending_contracts": tally["pending"],
+                    "contracts": tally["contracts"],
+                    "open_windows": tally["open"],
+                    "settleable_windows": tally["settleable"],
+                    "unbindable_anchors": tally["unbindable"],
                     "last_error": error,
                     "last_error_at": error_at,
                 },

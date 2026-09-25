@@ -69,6 +69,11 @@ CREATE TABLE IF NOT EXISTS progress (
  last_error TEXT, last_error_at TEXT
 ) STRICT;
 CREATE TABLE IF NOT EXISTS pending (capture_digest TEXT PRIMARY KEY) STRICT;
+CREATE TABLE IF NOT EXISTS tally (name TEXT PRIMARY KEY, value INTEGER NOT NULL) STRICT;
+CREATE TRIGGER IF NOT EXISTS pending_added AFTER INSERT ON pending
+ BEGIN UPDATE tally SET value=value+1 WHERE name='pending'; END;
+CREATE TRIGGER IF NOT EXISTS pending_removed AFTER DELETE ON pending
+ BEGIN UPDATE tally SET value=value-1 WHERE name='pending'; END;
 CREATE TABLE IF NOT EXISTS findings (
  capture_digest TEXT NOT NULL, part TEXT NOT NULL CHECK(part IN ('envelope','body')),
  object_digest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('missing','corrupt')),
@@ -106,6 +111,9 @@ def _state(instance: Any, *, create: bool = True) -> Iterator[sqlite3.Connection
         connection = sqlite3.connect(path, timeout=30)
         try:
             connection.executescript(_SCHEMA)
+            if connection.execute("SELECT 1 FROM tally WHERE name='pending'").fetchone() is None:
+                # The tally starts from the backlog already queued, once.
+                connection.execute("INSERT INTO tally SELECT 'pending',count(*) FROM pending")
             yield connection
             connection.commit()
         finally:
@@ -388,7 +396,10 @@ class EvidenceAvailabilityConsumers:
                 "SELECT generation,sweep_after,sweep_completed_at,last_error,last_error_at "
                 "FROM progress"
             ).fetchone()
-            pending = connection.execute("SELECT count(*) FROM pending").fetchone()[0]
+            # Kept by triggers as checks queue and drain, so health reads no backlog.
+            pending = connection.execute("SELECT value FROM tally WHERE name='pending'").fetchone()[
+                0
+            ]
         if row is None:
             return ()
         generation, sweep_after, completed, error, error_at = row

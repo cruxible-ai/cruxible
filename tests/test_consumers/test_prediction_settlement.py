@@ -504,3 +504,30 @@ def test_an_idle_readiness_check_costs_the_same_whatever_the_contract_population
 
     small, large = steps(1_000), steps(10_000)
     assert large < small * 1.5, (small, large)
+
+
+def test_health_costs_the_same_whatever_the_window_population(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = datetime(2026, 9, 3, tzinfo=UTC)
+
+    def steps(count: int) -> int:
+        instance = _fake_instance(tmp_path / str(count))
+        with predictions._state(instance) as connection:
+            assert connection is not None
+            connection.execute("INSERT INTO progress(singleton,generation) VALUES (1,0)")
+            connection.executemany(
+                "INSERT INTO windows(contract_id,identity,window,ends_at_us,status) "
+                "VALUES (?,'ResolutionContract:x','{}',?,?)",
+                (
+                    (f"RSC-{index:032d}", index, ("open", "settleable", "resolved")[index % 3])
+                    for index in range(count)
+                ),
+            )
+        (health,) = WORKER.health(instance, now=now)
+        assert health.detail["open_windows"] == len(range(0, count, 3))
+        assert health.detail["settleable_windows"] == len(range(1, count, 3))
+        return _steps(monkeypatch, lambda: WORKER.health(instance, now=now))
+
+    small, large = steps(1_000), steps(10_000)
+    assert large < small * 1.5, (small, large)
