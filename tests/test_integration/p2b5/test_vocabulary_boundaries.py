@@ -226,15 +226,15 @@ def test_provider_replay_requires_every_durable_completion_via_public_executor(
     assert first.status == "succeeded"
 
     class _CompletionOmittingJournal:
-        def all_records(self, stream, partition_id):  # type: ignore[no-untyped-def]
+        def select_records(self, stream, **filters):  # type: ignore[no-untyped-def]
             return tuple(
                 item
-                for item in fixture.journal.all_records(stream, partition_id)
+                for item in fixture.journal.select_records(stream, **filters)
                 if item.record.event_kind != "provider_invocation_completed"
             )
 
     class _CompletedIndex:
-        def rebuild(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+        def rebuild_run(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
             return None
 
         def get(self, _run_id):  # type: ignore[no-untyped-def]
