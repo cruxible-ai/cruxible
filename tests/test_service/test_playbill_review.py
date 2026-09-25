@@ -260,10 +260,22 @@ def test_candidate_projection_advisory_counts_generated_successors_and_excludes_
             dependency_proof_refs=(),
         )
 
-    observation = PlaybillReviewWorkspaceObservationV1(
+    # The Procedure catalog advisory is off by default; a kit or workspace
+    # opts in.
+    default_policy = PlaybillReviewWorkspaceObservationV1(
         presentation_policy=PlaybillPresentationPolicyV2(),
         projection_coverage=coverage,
     )
+    assert (
+        _projection_advisory(
+            members=(member("generated_successor"),),
+            candidate_tree={procedure.path: render_procedure(procedure.procedure)},
+            settlement_base=settlement,
+            workspace_observation=default_policy,
+        )
+        is None
+    )
+    observation = default_policy.model_copy(update={"presentation_policy": CLAIM_PROJECTION_POLICY})
     advisory = _projection_advisory(
         members=(member("generated_successor"),),
         candidate_tree={procedure.path: render_procedure(procedure.procedure)},
