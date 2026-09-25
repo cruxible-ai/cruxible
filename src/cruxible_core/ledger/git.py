@@ -3045,23 +3045,18 @@ class _BatchBlobReader:
             process = self._checking()
             assert process.stdin is not None and process.stdout is not None
             try:
-                for expected_oid in oids:
-                    process.stdin.write(expected_oid.encode("ascii") + b"\n")
+                # Requests go in chunks small enough that neither pipe can fill
+                # while the other waits, so a whole listing's sizes cost a few
+                # round trips rather than one per object.
+                ordered = list(oids)
+                for start in range(0, len(ordered), _OBJECT_INFO_CHUNK):
+                    chunk = ordered[start : start + _OBJECT_INFO_CHUNK]
+                    process.stdin.write(b"".join(oid.encode("ascii") + b"\n" for oid in chunk))
                     process.stdin.flush()
-                    header = process.stdout.readline()
-                    if not header.endswith(b"\n"):
-                        raise PlaybillGitError("Git object metadata ended before its header")
-                    if header == expected_oid.encode("ascii") + b" missing\n":
-                        found[expected_oid] = None
-                        continue
-                    try:
-                        actual_oid, object_type, raw_size = header[:-1].decode("ascii").split()
-                        size = int(raw_size)
-                    except (UnicodeDecodeError, ValueError) as exc:
-                        raise PlaybillGitError("Git object metadata is malformed") from exc
-                    if actual_oid != expected_oid or size < 0:
-                        raise PlaybillGitError("Git object metadata differs from its request")
-                    found[expected_oid] = (object_type, size)
+                    for expected_oid in chunk:
+                        found[expected_oid] = _object_info_row(
+                            process.stdout.readline(), expected_oid
+                        )
             except BaseException:
                 self.close()
                 raise
@@ -3114,6 +3109,24 @@ class _BatchBlobReader:
                 raise PlaybillGitError("Git batch blob output differs from the requested blob")
             blobs[oid] = value[1]
         return blobs
+
+
+_OBJECT_INFO_CHUNK: Final = 256
+
+
+def _object_info_row(header: bytes, expected_oid: str) -> tuple[str, int] | None:
+    if not header.endswith(b"\n"):
+        raise PlaybillGitError("Git object metadata ended before its header")
+    if header == expected_oid.encode("ascii") + b" missing\n":
+        return None
+    try:
+        actual_oid, object_type, raw_size = header[:-1].decode("ascii").split()
+        size = int(raw_size)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise PlaybillGitError("Git object metadata is malformed") from exc
+    if actual_oid != expected_oid or size < 0:
+        raise PlaybillGitError("Git object metadata differs from its request")
+    return (object_type, size)
 
 
 def _require_object_hash(oid: str, object_type: str, body: bytes) -> None:
