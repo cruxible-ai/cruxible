@@ -2770,7 +2770,7 @@ class _BatchBlobReader:
                 if header == expression + b" missing\n":
                     return None
                 try:
-                    _object_oid, object_type, raw_size = header[:-1].decode("ascii").split()
+                    object_oid, object_type, raw_size = header[:-1].decode("ascii").split()
                     size = int(raw_size)
                 except (UnicodeDecodeError, ValueError) as exc:
                     raise PlaybillGitError("Git batch output has malformed metadata") from exc
@@ -2779,6 +2779,7 @@ class _BatchBlobReader:
                     raise PlaybillGitError("Git batch output has a truncated payload")
                 if object_type != "blob":
                     raise PlaybillGitError(f"ledger path is not a regular blob: {path}")
+                _require_object_hash(object_oid, object_type, payload[:-1])
                 return payload[:-1]
             except BaseException:
                 self.close()
@@ -2845,6 +2846,7 @@ class _BatchBlobReader:
                     payload = process.stdout.read(size + 1)
                     if len(payload) != size + 1 or payload[-1:] != b"\n":
                         raise PlaybillGitError("Git batch blob output has a truncated payload")
+                    _require_object_hash(expected_oid, object_type, payload[:-1])
                     found[expected_oid] = (object_type, payload[:-1])
             except BaseException:
                 self.close()
@@ -2860,6 +2862,24 @@ class _BatchBlobReader:
                 raise PlaybillGitError("Git batch blob output differs from the requested blob")
             blobs[oid] = value[1]
         return blobs
+
+
+def _require_object_hash(oid: str, object_type: str, body: bytes) -> None:
+    """Refuse object bytes that do not hash to the ID they were read under.
+
+    Git serves a stored object without re-hashing it, so bytes replaced on disk
+    after the ledger was verified would otherwise be returned under the
+    original ID. Every object this reader hands out is checked.
+    """
+
+    algorithm = {40: "sha1", 64: "sha256"}.get(len(oid))
+    if algorithm is None:
+        raise PlaybillGitError(f"ledger object ID has an unknown length: {oid}")
+    digest = hashlib.new(algorithm)
+    digest.update(f"{object_type} {len(body)}".encode("ascii") + b"\x00")
+    digest.update(body)
+    if digest.hexdigest() != oid:
+        raise PlaybillGitError(f"ledger object bytes do not hash to their ID: {oid}")
 
 
 _BATCH_READER_CAPACITY = 16

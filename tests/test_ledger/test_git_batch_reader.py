@@ -240,3 +240,31 @@ def test_a_remembered_selection_does_not_grow_with_unrelated_entries():
         assert [entry.path for entry in selected] == ["claims/x.json", "claims/y/z.json"]
         work[count] = _CountingPath.checks
     assert work[10] == work[10000]
+
+
+@pytest.mark.parametrize("object_format", ["sha1", "sha256"])
+def test_bytes_replaced_on_disk_are_refused_under_their_original_id(tmp_path, object_format):
+    import zlib
+
+    from cruxible_core.derived.derived_state import _BLOB_CACHE, BlobRef, SnapshotTree
+
+    ledger = GitLedger.initialize(
+        tmp_path / "ledger.git",
+        object_format=object_format,
+        signing_key_path=tmp_path / "unused-key",
+        allowed_signers_path=tmp_path / "unused-signers",
+    )
+    original = b"accepted value\n"
+    oid = ledger._git(["hash-object", "-w", "--stdin"], input_bytes=original).decode().strip()
+    assert ledger.read_blobs([oid]) == {oid: original}
+    loose = ledger.path / "objects" / oid[:2] / oid[2:]
+    loose.chmod(0o644)
+    forged = b"forged!! value\n"  # same length: size checks alone cannot see it
+    loose.write_bytes(zlib.compress(b"blob %d\x00" % len(forged) + forged))
+    _BLOB_CACHE.clear()
+    with pytest.raises(PlaybillGitError, match="do not hash to their ID"):
+        ledger.read_blobs([oid])
+    # A lazily held accepted tree re-reads through the same checked reader.
+    tree = SnapshotTree({"claims/x.json": BlobRef(oid, len(original), ledger.read_blobs)})
+    with pytest.raises(PlaybillGitError, match="do not hash to their ID"):
+        tree["claims/x.json"]
