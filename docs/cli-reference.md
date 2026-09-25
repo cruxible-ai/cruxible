@@ -1277,6 +1277,13 @@ the proposal's author in `detail.actor_id`; its repair is
 run, and `proposal withdraw` is the alternative when the change is no longer
 wanted. A readmission at the same coordinate, or a withdrawal, closes the row.
 
+A `mandate_expiring` row is a live, unsuspended ProcedureMandate whose
+`expires_at` falls after the evaluation time and within `--expiring-within`.
+Nothing renews a mandate, so its repair starts a successor from
+`cruxible playbill authoring create --example procedure-mandate`; a successor
+whose window reaches past the lead time, or the mandate's retirement, closes
+the row.
+
 ## playbill curation
 
 ~~~text

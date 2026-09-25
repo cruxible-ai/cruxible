@@ -187,6 +187,11 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
         operation="playbill.authoring.create",
         arguments={"example": "procedure-mandate"},
     ),
+    # Nothing renews a mandate: its successor, or its retirement, is authored.
+    "mandate_expiring": RepairOperationV1(
+        operation="playbill.authoring.create",
+        arguments={"example": "procedure-mandate"},
+    ),
     # Nothing renders a block, so no sync converges one; what `block sync --all`
     # does is FIND every block whose held list has moved and name the repin that
     # answers each. A producer that knows the source and block names the repin

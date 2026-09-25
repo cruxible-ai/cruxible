@@ -72,6 +72,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
+from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1, ProcedureMandateV2
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
@@ -86,6 +87,7 @@ from cruxible_core.coverage.indexes import (
     WorkingOccurrenceV1,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.typed_state import utc_microseconds
 from cruxible_core.query.backends import claim_row_visibility
 from cruxible_core.query.impact import (
     SOURCE_CONTRADICTED,
@@ -823,6 +825,12 @@ def _repair_command(
             parts.append("--all")
         else:
             return None
+    elif operation == "playbill.authoring.create" and not values.get("payload_file"):
+        # With no payload in hand the runnable step is the template that
+        # starts one; a bare `authoring create` refuses as a usage error.
+        example = values.get("example")
+        if isinstance(example, str) and example:
+            parts.extend(["--example", shlex.quote(example)])
     elif operation == "playbill.proposal.readmit":
         proposal_id = values.get("proposal_id")
         if not isinstance(proposal_id, str):
@@ -2947,6 +2955,71 @@ def _proposal_items(
     )
 
 
+def _mandate_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    expiring_within: CanonicalDurationV1,
+    access_profile: CoverageAccessProfileV1,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Live ProcedureMandates whose validity window closes within the lead time.
+
+    A mandate is the standing authority a Procedure's terminals run under, and
+    nothing renews it: once `expires_at` passes every run it covers refuses as
+    `procedure_mandate_expired`. A suspended mandate authorizes nothing already,
+    so its lapse changes nothing and is not reported.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    start = utc_microseconds(evaluation_time)
+    assert start is not None
+    items: list[PlaybillNextItemV1] = []
+    with instance.bind_accepted_projection(coordinate) as projection:
+        rows = projection.typed.connection.execute(
+            "SELECT identity,artifact_digest,procedure_identity FROM procedure_mandates "
+            "WHERE lifecycle='live' AND expires_at_us>? AND expires_at_us<=? ORDER BY identity",
+            (start, start + expiring_within.microseconds),
+        ).fetchall()
+        for identity, digest, procedure_identity in rows:
+            mandate = projection.typed.source(identity)
+            if not isinstance(mandate, ProcedureMandateV1 | ProcedureMandateV2):
+                raise PlaybillNextAcceptedStateInvalid(
+                    f"{PlaybillNextAcceptedStateInvalid.code}: accepted ProcedureMandate "
+                    f"{identity} has no valid source"
+                )
+            if isinstance(mandate, ProcedureMandateV2) and mandate.suspended:
+                continue
+            items.append(
+                _item(
+                    severity="warning",
+                    reason="mandate_expiring",
+                    subject_identity=identity,
+                    related_identities=(procedure_identity,),
+                    detail={
+                        "mandate_digest": digest,
+                        "procedure_identity": procedure_identity,
+                        "grants": (
+                            mandate.grants if isinstance(mandate, ProcedureMandateV2) else None
+                        ),
+                        "valid_from": format_datetime(mandate.valid_from),
+                        "expires_at": format_datetime(mandate.expires_at),
+                    },
+                    repair=PlaybillNextRepairV1(
+                        operation="playbill.authoring.create",
+                        target=identity,
+                        required_change="author_a_successor_mandate_or_retire_it",
+                        arguments={
+                            "example": "procedure-mandate",
+                            "mandate_name": mandate.identity.name,
+                        },
+                    ),
+                )
+            )
+    return tuple(items)
+
+
 def _registered_publication_blocks(
     instance: PlaybillInstance,
 ) -> dict[tuple[str, str], ProjectionBlockRegistration] | None:
@@ -3427,6 +3500,13 @@ def service_playbill_next(
         *_proposal_items(
             instance,
             coordinate=public_coordinate,
+            access_profile=request.access_profile,
+        ),
+        *_mandate_items(
+            instance,
+            coordinate=coordinate,
+            evaluation_time=request.evaluation_time,
+            expiring_within=request.expiring_within,
             access_profile=request.access_profile,
         ),
     )

@@ -74,7 +74,8 @@
         "document_modified",
         "unregistered_projection_block",
         "projection_marker_invalid",
-        "proposal_stale"
+        "proposal_stale",
+        "mandate_expiring"
       ]
     },
     "PlaybillPolicyKind": {

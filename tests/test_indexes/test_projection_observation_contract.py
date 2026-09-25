@@ -112,6 +112,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "document_modified",
         "unregistered_projection_block",
         "proposal_stale",
+        "mandate_expiring",
     }
     assert set(get_args(NextRepairOperation)) == {
         "playbill.authoring.create",
