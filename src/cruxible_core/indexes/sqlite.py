@@ -10,6 +10,7 @@ import secrets
 import sqlite3
 import stat
 import sys
+import threading
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -150,10 +151,38 @@ def _authentication_stamps(directory: Path) -> list[dict[str, object]]:
     return [item for item in loaded if isinstance(item, dict)] if isinstance(loaded, list) else []
 
 
+# The records this process trusts, per projection directory: those on disk
+# when it first looked, plus those it wrote itself. A record that appears
+# later -- beside a piece replaced while the daemon runs -- is never honored;
+# only a restart takes the persisted records as its starting trust.
+_TRUSTED_STAMPS: dict[str, list[dict[str, object]]] = {}
+_TRUSTED_STAMPS_RETAINED = 64
+_TRUSTED_STAMPS_LOCK = threading.Lock()
+
+
+def _trusted_stamps(directory: Path) -> list[dict[str, object]]:
+    key = str(directory)
+    with _TRUSTED_STAMPS_LOCK:
+        trusted = _TRUSTED_STAMPS.get(key)
+        if trusted is None:
+            trusted = _TRUSTED_STAMPS[key] = _authentication_stamps(directory)
+        return list(trusted)
+
+
+def _trust_stamp(directory: Path, stamp: dict[str, object]) -> None:
+    _trusted_stamps(directory)
+    with _TRUSTED_STAMPS_LOCK:
+        trusted = _TRUSTED_STAMPS[str(directory)]
+        if stamp not in trusted:
+            trusted.insert(0, stamp)
+            del trusted[_TRUSTED_STAMPS_RETAINED:]
+
+
 def _record_authentication_stamp(
     directory: Path, accepted: Any, manifest: ProjectionManifest
 ) -> None:
     stamp = _authentication_stamp(accepted, manifest)
+    _trust_stamp(directory, stamp)
     retained = [stamp] + [item for item in _authentication_stamps(directory) if item != stamp]
     body = canonical_bytes(retained[:_SOURCE_AUTHENTICATION_STAMPS_RETAINED]) + b"\n"
     temporary = directory / f".{SOURCE_AUTHENTICATION_STAMPS}.{secrets.token_hex(8)}.tmp"
@@ -195,6 +224,8 @@ def reset_projection_verification_memo() -> None:
     """
 
     _VERIFIED_PIECES.clear()
+    with _TRUSTED_STAMPS_LOCK:
+        _TRUSTED_STAMPS.clear()
 
 
 _PIECE_RE = re.compile(r"^piece-[0-9a-f]{64}-[0-9]{4}\.sqlite$")
@@ -538,9 +569,9 @@ class ProjectionHandle:
         if memo_get(_VERIFIED_PIECES, self._verification_identity) == "source-authenticated":
             return
         # Binding re-hashed this piece against its manifest in this process;
-        # a stamp for that digest and coordinate says its rows were already
-        # derived from source.
-        if _authentication_stamp(self.accepted, self.manifest) in _authentication_stamps(
+        # a trusted stamp for that digest and coordinate says its rows were
+        # already derived from source.
+        if _authentication_stamp(self.accepted, self.manifest) in _trusted_stamps(
             self.index_path.parent
         ):
             _record_verified_piece(self._verification_identity, source_authenticated=True)

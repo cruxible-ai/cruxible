@@ -66,3 +66,27 @@ def test_a_stamp_never_admits_a_changed_piece(tmp_path: Path) -> None:
     with pytest.raises(ProjectionIntegrityError):
         with instance.bind_accepted_projection(coordinate):
             pass
+
+
+def test_a_record_that_appears_while_the_process_runs_is_not_honored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Persisted records are starting trust only; a later one never admits a piece."""
+
+    instance, _owner = seed_claims(tmp_path)
+    coordinate = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(coordinate) as handle:
+        stamps = handle.index_path.parent / playbill_projection.SOURCE_AUTHENTICATION_STAMPS
+    recorded = stamps.read_bytes()
+
+    # A process that first looks while no record exists ...
+    stamps.unlink()
+    playbill_projection.reset_projection_verification_memo()
+    assert playbill_projection._trusted_stamps(stamps.parent) == []
+    # ... is later handed one, as a replacement written beside the piece would be.
+    stamps.write_bytes(recorded)
+    calls = _count_authentications(monkeypatch)
+    playbill_projection._VERIFIED_PIECES.clear()
+    with instance.bind_accepted_projection(coordinate):
+        pass
+    assert calls == [1]

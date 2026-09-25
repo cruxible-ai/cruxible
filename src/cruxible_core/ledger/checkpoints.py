@@ -71,6 +71,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -354,22 +355,56 @@ def _verified_path(directory: Path) -> Path:
     return directory / (CHECKPOINT_FILE + ".verified")
 
 
+# The verified-checkpoint digests this process trusts, per directory: the one
+# on disk when it first looked, plus those it wrote. A record written beside a
+# checkpoint replaced while the daemon runs is never honored.
+_TRUSTED_CHECKPOINTS: dict[str, set[str]] = {}
+_TRUSTED_CHECKPOINTS_LOCK = threading.Lock()
+
+
+def _recorded_checkpoint_digest(directory: Path) -> str | None:
+    path = _verified_path(directory)
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        return path.read_text().strip()
+    except (OSError, ValueError):
+        return None
+
+
+def _trusted_checkpoints(directory: Path) -> set[str]:
+    key = str(directory)
+    with _TRUSTED_CHECKPOINTS_LOCK:
+        trusted = _TRUSTED_CHECKPOINTS.get(key)
+        if trusted is None:
+            recorded = _recorded_checkpoint_digest(directory)
+            trusted = _TRUSTED_CHECKPOINTS[key] = set() if recorded is None else {recorded}
+        return trusted
+
+
 def _checkpoint_verified(directory: Path, record: ReplayCheckpointFileV2) -> bool:
     """Whether a process already re-derived this exact checkpoint body.
 
     The record names the body digest it covers; the checkpoint file itself
-    self-verifies that digest on load, so a changed body never matches.
+    self-verifies that digest on load, so a changed body never matches. Only
+    the record this process first saw, or one it wrote, is honored.
     """
-    path = _verified_path(directory)
-    try:
-        if path.is_symlink() or not path.is_file():
-            return False
-        return path.read_text().strip() == record.checkpoint_digest
-    except (OSError, ValueError):
-        return False
+    return _recorded_checkpoint_digest(
+        directory
+    ) == record.checkpoint_digest and record.checkpoint_digest in _trusted_checkpoints(directory)
+
+
+def reset_trusted_checkpoints() -> None:
+    """Forget which verified checkpoints this process trusts (as a new process would)."""
+
+    with _TRUSTED_CHECKPOINTS_LOCK:
+        _TRUSTED_CHECKPOINTS.clear()
 
 
 def _record_checkpoint_verified(directory: Path, digest: str) -> None:
+    _trusted_checkpoints(directory)
+    with _TRUSTED_CHECKPOINTS_LOCK:
+        _TRUSTED_CHECKPOINTS[str(directory)].add(digest)
     temporary = directory / f".checkpoint-verified-{secrets.token_hex(12)}.tmp"
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:

@@ -483,6 +483,38 @@ def test_a_verified_checkpoint_at_the_head_reopens_without_reading_its_tree(
     assert record.body.git_oid in reads
 
 
+def test_a_verified_record_written_while_the_process_runs_is_not_honored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.ledger import checkpoints
+    from cruxible_core.ledger.git import GitLedger
+
+    fixture = build_fixture(tmp_path, PROFILE)
+    expected = _observable(_reopen(fixture))  # leaves a verified checkpoint at the head
+    directory = _checkpoints(fixture.instance)
+    record = load_checkpoint_file(directory)
+    assert record is not None
+    stamp = directory / (checkpoint_path(directory).name + ".verified")
+    genuine = stamp.read_text()
+
+    # The process first sees a record for another body ...
+    stamp.write_text("sha256:" + "0" * 64 + "\n")
+    checkpoints.reset_trusted_checkpoints()
+    assert record.checkpoint_digest not in checkpoints._trusted_checkpoints(directory)
+    # ... then the record naming this body reappears while it runs.
+    stamp.write_text(genuine)
+    reads: list[str] = []
+    original = GitLedger.read_tree
+
+    def counted(self, oid, *args, **kwargs):  # type: ignore[no-untyped-def]
+        reads.append(oid)
+        return original(self, oid, *args, **kwargs)
+
+    monkeypatch.setattr(GitLedger, "read_tree", counted)
+    assert _observable(_reopen(fixture)) == expected
+    assert record.body.git_oid in reads  # the full path re-derived it
+
+
 def test_a_forged_tree_under_a_verified_head_checkpoint_is_never_served(tmp_path: Path) -> None:
     """The verified reopen skips re-deriving the head tree, so the tree must authenticate itself."""
 
