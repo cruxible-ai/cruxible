@@ -209,7 +209,8 @@ def test_a_delta_cursor_refuses_once_its_base_is_forgotten(queue: tuple[Any, _Qu
     assert first.next_cursor is not None
 
     with next_module._QUEUE_MEMO_LOCK:
-        next_module._QUEUE_MEMO.pop(before.result_digest)
+        for key in [key for key in next_module._QUEUE_MEMO if key[1] == before.result_digest]:
+            next_module._QUEUE_MEMO.pop(key)
     # Without its base the delta would silently become the whole queue; paging
     # that at the delta's offset would skip rows, so the cursor refuses instead.
     with pytest.raises(PlaybillNextCursorMismatch, match="delta base"):

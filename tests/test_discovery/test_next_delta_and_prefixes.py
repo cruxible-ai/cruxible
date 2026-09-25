@@ -165,7 +165,7 @@ def test_a_delta_against_an_unknown_digest_returns_the_whole_queue() -> None:
 
     full = _result(("one", "two"))
 
-    delta = _delta_of(full, since="sha256:" + "0" * 64)
+    delta = _delta_of(full, since="sha256:" + "0" * 64, scope="test")
 
     assert delta is full
     assert len(delta.items) == 2
@@ -179,22 +179,22 @@ def test_a_delta_against_a_known_digest_carries_additions_and_removals() -> None
     )
 
     first = _result(("one", "removed"), digest_hex="8")
-    _remember_queue(first.result_digest, first.items)
+    _remember_queue(first.result_digest, first.items, scope="test")
     second = _result(("one", "two"), digest_hex="9")
 
-    delta = _delta_of(second, since=first.result_digest)
+    delta = _delta_of(second, since=first.result_digest, scope="test")
 
     assert {item.subject_identity for item in delta.items} == {"Claim:removed", "Claim:two"}
     assert delta.delta_since == first.result_digest
     assert delta.result_digest == second.result_digest
 
-    _remember_queue(second.result_digest, second.items)
-    unchanged = _delta_of(second, since=delta.result_digest)
+    _remember_queue(second.result_digest, second.items, scope="test")
+    unchanged = _delta_of(second, since=delta.result_digest, scope="test")
     assert unchanged.items == ()
     assert unchanged.result_digest == second.result_digest
     assert unchanged.delta_since == second.result_digest
 
-    repeated = _delta_of(second, since=first.result_digest)
+    repeated = _delta_of(second, since=first.result_digest, scope="test")
     assert repeated.model_dump_json() == delta.model_dump_json()
 
 
@@ -208,12 +208,12 @@ def test_v2_delta_reuses_the_real_whole_queue_cursor_without_memo_collision() ->
     first = _v2_result(("one", "removed"))
     second = _v2_result(("one", "two"))
     assert first.result_digest != second.result_digest
-    _remember_queue(first.result_digest, first.items)
-    _remember_queue(second.result_digest, second.items)
+    _remember_queue(first.result_digest, first.items, scope="test")
+    _remember_queue(second.result_digest, second.items, scope="test")
 
-    first_delta = _delta_of(second, since=first.result_digest)
-    repeated_delta = _delta_of(second, since=first.result_digest)
-    unchanged = _delta_of(second, since=second.result_digest)
+    first_delta = _delta_of(second, since=first.result_digest, scope="test")
+    repeated_delta = _delta_of(second, since=first.result_digest, scope="test")
+    unchanged = _delta_of(second, since=second.result_digest, scope="test")
 
     assert first_delta.model_dump_json() == repeated_delta.model_dump_json()
     assert first_delta.result_digest == second.result_digest
@@ -232,9 +232,9 @@ def test_v2_delta_reports_every_removal_in_ascii_order() -> None:
 
     first = _v2_result(("kept", "removed-z", "removed-a", "removed-m"))
     second = _v2_result(("kept",))
-    _remember_queue(first.result_digest, first.items)
+    _remember_queue(first.result_digest, first.items, scope="test")
 
-    delta = _delta_of(second, since=first.result_digest)
+    delta = _delta_of(second, since=first.result_digest, scope="test")
     expected = tuple(
         sorted(
             (item.item_id for item in first.items if item.subject_identity != "Claim:kept"),
