@@ -133,6 +133,9 @@ def test_document_compiler_emits_reproducible_facts_and_protected_exact_span(
     )
 
     with bind_projection(Path(result.manifest_path), expected=accepted) as handle:
+        # Typed publications compile Document facts from exact ledger members and
+        # managed body metadata; a standalone reader attaches both explicitly.
+        handle.attach_sources(repository, bodies=bodies, history=None)
         denied = handle.document(
             "document:playbill-design",
             access=BodyAccessContext(principal_id="reader"),
