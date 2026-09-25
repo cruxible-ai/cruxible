@@ -134,6 +134,15 @@ corrupt body, or a missing body its contract still requires to be retained is a
 finding. A body whose contract lets it go (`optional` or `never_materialize`
 retention, or a `required_for_duration` window that has passed) is not.
 `CRUXIBLE_DISABLED_CONSUMERS=evidence` turns it off.
+The built-in prediction worker also runs on every instance by default. It binds
+each accepted ResolutionContract's observation window: a fixed window when the
+contract is accepted, and an event window once per landed Capture its selector
+matches, each its own contract instance. On first start it reads every live
+contract and every retained matching Capture. When a bound window closes, it
+reads that window's own resolution journal, and it reads it again whenever a
+settlement or overturn lands there. A retired or revised contract withdraws its
+windows. `CRUXIBLE_DISABLED_CONSUMERS=prediction` turns it off; list both names,
+comma-separated, to turn off both workers.
 `server status` and `server info`
 also render `Provider lane:` and, when degraded,
 `Provider lane reason:`. Provider-lane degradation never prevents the daemon's
@@ -1107,6 +1116,7 @@ under a new operation key.
 cruxible playbill resolution-contracts REQUEST_FILE [--json]
 cruxible playbill predict REQUEST_FILE [--json]
 cruxible playbill settle PREDICTION_ID REQUEST_FILE [--json]
+cruxible playbill settle --example PREDICTION_ID [--contract JSON] [--trigger-event JSON]
 ~~~
 
 `predict` submits a governed ResolutionContract for an already accepted, exact
@@ -1123,6 +1133,12 @@ the activation and resolution in operational exhaust; it does not create or
 mutate Claims. A failed attempt or an unevaluable
 observation does not settle the hypothesis as false. Effectful terminal nodes
 remain disabled in the public Procedure runner.
+
+`settle --example` prints a settlement request without contacting the daemon.
+`--contract` and `--trigger-event` fill in the exact accepted contract reference
+and, for an event window, the anchor event its window is bound to. The
+`prediction_settleable` row in `playbill next` renders this command with both
+filled in, so only the evidence Claim reference is left to replace.
 
 ## playbill block
 
@@ -1311,12 +1327,24 @@ one could be admitted at the evaluation time; the repair is
 oldest due occurrence. Nothing dispatches implicitly. A caller whose access
 profile excludes instance material reads `not_observed`.
 
-Two rows come from the daemon's consumers rather than from a computation at
-read time:
+These rows come from the daemon's consumers rather than from a computation at
+read time. Findings are what a worker last observed, so each row reflects its
+last check:
 - `evidence_unavailable` names a Capture the evidence worker found missing or
   corrupt, with the live Claims that cite it. Restore its bytes, or recapture
-  and re-cite; the worker's next check clears the row. Findings are what the
-  worker last observed, so the row reflects its last check.
+  and re-cite; the worker's next check clears the row.
+- `prediction_settleable` names a ResolutionContract with a closed bound window
+  whose resolution journal holds no current answer, with its hypothesis Claim.
+  `detail` carries the window, its `anchor_event` (null for a fixed window), the
+  `bound_contract_id`, and `evaluated_at`. An event window has one row per
+  anchor. The repair is `cruxible playbill settle --example` with the contract
+  and window filled in; settle from an accepted observation inside the window.
+  The worker clears the row when the settlement lands, and restores it if that
+  answer is overturned.
+- `prediction_window_unbindable` names a ResolutionContract with a matching
+  anchor Capture whose retained material no longer binds a window, with the
+  refusal `code`. Restore the material, and the worker binds the window on its
+  hourly retry; or retire the contract.
 - `consumer_stalled` names a consumer that stopped by itself or stopped
   keeping up, with its kind in `detail.kind` and the kind's own repair.
 

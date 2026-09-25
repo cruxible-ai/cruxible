@@ -784,6 +784,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.compiler.upgrade": "playbill compiler upgrade",
     "playbill.line.arm": "playbill line arm",
     "playbill.line.dispatch": "playbill line dispatch",
+    "playbill.settle": "playbill settle",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -888,6 +889,17 @@ def _repair_command(
         parts.append(shlex.quote(line))
         if operation == "playbill.line.dispatch" and isinstance(limit, int) and limit > 1:
             parts.extend(["--limit", str(limit)])
+    elif operation == "playbill.settle":
+        # The request's evidence is the settler's to choose, so the runnable
+        # step is the template with the exact contract and window filled in.
+        prediction_id = values.get("prediction_id")
+        if not isinstance(prediction_id, str) or not prediction_id:
+            return None
+        parts.extend(["--example", shlex.quote(prediction_id)])
+        for flag, key in (("--contract", "contract"), ("--trigger-event", "trigger_event")):
+            value = values.get(key)
+            if isinstance(value, Mapping):
+                parts.extend([flag, shlex.quote(canonical_bytes(value).decode())])
     elif operation == "playbill.proposal.readmit":
         proposal_id = values.get("proposal_id")
         if not isinstance(proposal_id, str):
@@ -2913,6 +2925,79 @@ def _evidence_unavailable_items(
     return tuple(items)
 
 
+def _prediction_items(
+    instance: PlaybillInstance,
+    *,
+    access_profile: CoverageAccessProfileV1,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Predictions the settlement worker found owed, or unable to bind, at its last look.
+
+    One row per closed bound window whose own resolution journal holds no
+    current answer, and one per anchor Capture whose material no longer binds
+    the window its contract asks for. The worker's findings are read, never
+    recomputed here.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.consumers.predictions import settleable_windows, unbindable_anchors
+
+    items: list[PlaybillNextItemV1] = []
+    for owed in settleable_windows(instance):
+        subject = owed.contract.identity.qualified
+        event = None if owed.window.event is None else owed.window.event.model_dump(mode="json")
+        items.append(
+            _item(
+                severity="repair",
+                reason="prediction_settleable",
+                subject_identity=subject,
+                related_identities=(owed.hypothesis,),
+                detail={
+                    "bound_contract_id": owed.bound_contract_id,
+                    "window": {
+                        "starts_at": format_datetime(owed.window.starts_at),
+                        "ends_at": format_datetime(owed.window.ends_at),
+                    },
+                    "anchor_event": event,
+                    "evaluated_at": format_datetime(owed.checked_at),
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="playbill.settle",
+                    target=subject,
+                    required_change=(
+                        "settle_the_prediction_from_an_accepted_observation_in_its_window"
+                    ),
+                    arguments={
+                        "prediction_id": owed.contract.identity.name,
+                        "contract": owed.contract.model_dump(mode="json"),
+                        "trigger_event": event,
+                    },
+                ),
+            )
+        )
+    for anchor in unbindable_anchors(instance):
+        subject = anchor.contract.identity.qualified
+        items.append(
+            _item(
+                severity="repair",
+                reason="prediction_window_unbindable",
+                subject_identity=subject,
+                related_identities=(anchor.hypothesis,),
+                detail={
+                    "anchor_event": anchor.event.model_dump(mode="json"),
+                    "code": anchor.code,
+                    "evaluated_at": format_datetime(anchor.checked_at),
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="hand_edit",
+                    target=subject,
+                    required_change="restore_the_anchor_capture_material_or_retire_the_contract",
+                ),
+            )
+        )
+    return tuple(items)
+
+
 def _ledger_mirror_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
     """Where this instance's published copy of its ledger stands against the head.
 
@@ -3929,6 +4014,7 @@ def service_playbill_next(
             coordinate=coordinate,
             access_profile=request.access_profile,
         ),
+        *_prediction_items(instance, access_profile=request.access_profile),
         *_consumer_stalled_items(
             instance,
             evaluation_time=request.evaluation_time,

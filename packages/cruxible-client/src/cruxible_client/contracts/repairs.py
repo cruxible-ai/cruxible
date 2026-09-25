@@ -88,6 +88,10 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "state_tap_refused": "restore_the_accepted_state_query_backend",
     "consumer_stalled": "restart_the_consumer_through_its_named_repair",
     "evidence_unavailable": "restore_the_capture_from_backup_or_recapture_and_recite_its_claims",
+    # The row names `settle --example` with the exact contract and bound window
+    # filled in; which accepted observation settles it is the settler's call.
+    "prediction_settleable": "settle_the_prediction_from_an_accepted_observation_in_its_window",
+    "prediction_window_unbindable": "restore_the_anchor_capture_material_or_retire_the_contract",
     "block_query_unchecked": "restore_query_evaluation_then_check_the_block",
     "block_frame_invalid": "restore_the_block_marker_frame_the_stamp_declares",
     # The refusal already names its path class and its repair commands. The

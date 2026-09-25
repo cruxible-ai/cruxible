@@ -279,7 +279,12 @@ def test_a_new_worker_catches_up_on_contracts_and_landings_it_never_saw(
     assert [item.window.event for item in settleable_windows(instance)] == [first, second]
 
 
-def test_an_anchor_whose_material_is_gone_is_a_finding_until_restored(tmp_path: Path) -> None:
+def unbindable_world(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """An event contract whose one matching landing lost its payload after it was indexed.
+
+    Returns the instance, the anchor event, and a callable that restores the payload.
+    """
+
     from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 
     instance, owner, capture = served._world(tmp_path)
@@ -288,7 +293,6 @@ def test_an_anchor_whose_material_is_gone_is_a_finding_until_restored(tmp_path: 
     (stored,) = journal.select_records(
         _stream(instance), partition_id=event.partition_id, first_sequence=event.sequence
     )
-    # The landing is indexed while its payload is still there, then the payload goes.
     journal.index.captures(
         _stream(instance),
         bodies=instance.body_store(),
@@ -301,14 +305,18 @@ def test_an_anchor_whose_material_is_gone_is_a_finding_until_restored(tmp_path: 
     original = payload.read_bytes()
     payload.unlink()
     accept_event_contract(instance, owner, capture)
+    return instance, event, lambda: payload.write_bytes(original)
 
+
+def test_an_anchor_whose_material_is_gone_is_a_finding_until_restored(tmp_path: Path) -> None:
+    instance, event, restore = unbindable_world(tmp_path)
     now = served.PREDICTED_AT + timedelta(minutes=5)
     drain(instance, now=now)
     (anchor,) = unbindable_anchors(instance)
     assert anchor.event == event and anchor.code == "trigger_capture_unavailable"
     assert _windows(instance) == {}
 
-    payload.write_bytes(original)
+    restore()
     drain(instance, now=now + UNBINDABLE_RETRY)
     assert unbindable_anchors(instance) == ()
     assert len(_windows(instance)) == 1

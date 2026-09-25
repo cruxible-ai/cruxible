@@ -265,6 +265,8 @@ PlaybillNextReason: TypeAlias = Literal[
     "mandate_expiring",
     "consumer_stalled",
     "evidence_unavailable",
+    "prediction_settleable",
+    "prediction_window_unbindable",
 ]
 PlaybillNextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
 PlaybillNextRepairOperation: TypeAlias = Literal[
@@ -281,6 +283,7 @@ PlaybillNextRepairOperation: TypeAlias = Literal[
     "playbill.compiler.upgrade",
     "playbill.line.arm",
     "playbill.line.dispatch",
+    "playbill.settle",
     "hand_edit",
 ]
 # The next queue's own refusals that carry a declared repair. A page cursor

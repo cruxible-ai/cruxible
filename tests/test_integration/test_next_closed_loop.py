@@ -174,6 +174,9 @@ EXPECTED_OPERATIONS = {
     "consumer_stalled": "playbill.line.arm",
     # Restoring a Capture's bytes, or recapturing, is off the daemon's served verbs.
     "evidence_unavailable": "hand_edit",
+    "prediction_settleable": "playbill.settle",
+    # Restoring an anchor's material is off the served verbs, like a Capture's.
+    "prediction_window_unbindable": "hand_edit",
 }
 
 
@@ -1529,6 +1532,92 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "consumer_stalled", request)
 
 
+def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+    import shlex
+    from datetime import timedelta
+
+    from click.testing import CliRunner
+
+    from cruxible_client.contracts.predictions import (
+        ObservationSettlementEvidenceV2,
+        PlaybillSettleRequestV2,
+    )
+    from cruxible_core.cli.main import cli
+    from tests.test_consumers import test_prediction_settlement as worker
+
+    instance, owner, capture, contract = worker.fixed_world(root)
+    worker.drain(instance, now=worker.FIXED_CLOSES)
+
+    row = _row(instance, "prediction_settleable", _request(instance))
+    assert row.subject_identity == contract.identity.qualified
+    assert row.related_identities and row.related_identities[0].startswith("Claim:")
+    assert row.detail["anchor_event"] is None and row.detail["bound_contract_id"]
+    assert row.repair.operation == EXPECTED_OPERATIONS["prediction_settleable"]
+    hidden = PlaybillNextRequestV1(
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=EVALUATION_TIME,
+        access_profile=CoverageAccessProfileV1(
+            profile_id="next-closed-loop-public", permitted_access_classes=("public",)
+        ),
+    )
+    assert all(
+        item.reason != "prediction_settleable"
+        for item in service_playbill_next(instance, request=hidden).items
+    )
+
+    # The named repair: the row's command prints the request with the exact
+    # contract and window; the settler supplies only the observation.
+    assert row.repair.command is not None
+    printed = CliRunner().invoke(cli, shlex.split(row.repair.command)[1:])
+    assert printed.exit_code == 0, printed.output
+    template = PlaybillSettleRequestV2.model_validate(json.loads(printed.output))
+    observation = worker.observe(instance, owner, capture, at="2026-09-02T12:02:00.000000Z")
+    worker.served.service_settle_playbill_prediction(
+        instance,
+        prediction_id=row.repair.arguments["prediction_id"],
+        request=template.model_copy(
+            update={"evidence": ObservationSettlementEvidenceV2(claim=observation)}
+        ),
+        actor_context=worker.served._actor(),
+        recorded_at=worker.FIXED_CLOSES + timedelta(minutes=1),
+    )
+    worker.drain(instance, now=worker.FIXED_CLOSES + timedelta(minutes=1))
+    _assert_gone(instance, "prediction_settleable", _request(instance))
+
+
+def _prediction_window_unbindable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta
+
+    from tests.test_consumers import test_prediction_settlement as worker
+
+    instance, event, restore = worker.unbindable_world(root)
+    now = worker.served.PREDICTED_AT + timedelta(minutes=5)
+    worker.drain(instance, now=now)
+
+    row = _row(instance, "prediction_window_unbindable", _request(instance))
+    assert row.subject_identity == "ResolutionContract:event-test"
+    assert row.detail["anchor_event"] == event.model_dump(mode="json")
+    assert row.detail["code"] == "trigger_capture_unavailable"
+    assert row.repair.operation == EXPECTED_OPERATIONS["prediction_window_unbindable"]
+    hidden = PlaybillNextRequestV1(
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=EVALUATION_TIME,
+        access_profile=CoverageAccessProfileV1(
+            profile_id="next-closed-loop-public", permitted_access_classes=("public",)
+        ),
+    )
+    assert all(
+        item.reason != "prediction_window_unbindable"
+        for item in service_playbill_next(instance, request=hidden).items
+    )
+
+    # The named repair: restore the anchor's material; the worker's retry binds it.
+    restore()
+    worker.drain(instance, now=now + worker.UNBINDABLE_RETRY)
+    _assert_gone(instance, "prediction_window_unbindable", _request(instance))
+
+
 CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("claim_conflicted", None): _claim_conflicted,
     ("claim_uncovered", None): _claim_uncovered,
@@ -1574,6 +1663,8 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("mandate_expiring", None): _mandate_expiring,
     ("consumer_stalled", None): _consumer_stalled,
     ("evidence_unavailable", None): _evidence_unavailable,
+    ("prediction_settleable", None): _prediction_settleable,
+    ("prediction_window_unbindable", None): _prediction_window_unbindable,
 }
 
 
