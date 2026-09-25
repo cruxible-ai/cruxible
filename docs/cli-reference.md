@@ -1249,9 +1249,9 @@ carries their exact hand-edit entry shapes.
 The result's `status` reports the environment the queue was read in, beside the
 work rather than as rows: `instance` (active or decommissioned; decommissioned
 sets `blocking`), `floor`, `ledger_mirror`, `provider_lane`,
-`procedure_catalog`, and `compiler`. Each facet carries a `state`, and a
-`repair` while it needs attention. The CLI prints facets that need attention
-before the rows.
+`procedure_catalog`, `compiler`, and `line_dispatch`. Each facet carries a
+`state`, and a `repair` while it needs attention. The CLI prints facets that
+need attention before the rows.
 
 `compiler` compares the accepted head's compiler with the one the daemon runs.
 `upgrade_available` means an explicit forward edge exists, and its repair is
@@ -1259,6 +1259,14 @@ before the rows.
 proposes the upgrade: an admin still approves and activates it.
 `no_upgrade_path` means the accepted compiler has no edge to the running one,
 for example a daemon older than the state it serves; nothing is proposed.
+
+`line_dispatch` counts the Line occurrences that `line evaluate` or a listening
+daemon queued for dispatch and nothing has admitted yet, per Line. It is
+`waiting` while every queued occurrence's window is still open and `due` once
+one could be admitted at the evaluation time; the repair is
+`cruxible playbill line dispatch LINE_DIGEST [--limit N]` for the Line with the
+oldest due occurrence. Nothing dispatches implicitly. A caller whose access
+profile excludes instance material reads `not_observed`.
 
 A current `unsure` examined attestation holds a row, and `status.held` counts
 the rows held. A hold lasts only while its basis is unchanged:

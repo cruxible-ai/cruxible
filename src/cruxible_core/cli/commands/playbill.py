@@ -4264,6 +4264,7 @@ _NEXT_STATUS_ATTENTION = {
     "provider_lane": {"unavailable"},
     "procedure_catalog": {"missing"},
     "compiler": {"upgrade_available"},
+    "line_dispatch": {"due"},
 }
 
 

@@ -18,6 +18,7 @@ HEALTHY_STATUS = {
     "provider_lane": {"state": "available"},
     "procedure_catalog": {"state": "not_observed"},
     "compiler": {"state": "current"},
+    "line_dispatch": {"state": "idle"},
 }
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(

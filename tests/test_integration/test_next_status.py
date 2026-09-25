@@ -293,3 +293,65 @@ def test_a_compiler_with_no_forward_edge_is_reported_without_a_repair(
     status = _status(instance, _request(instance))
     assert status.compiler.state == "no_upgrade_path"
     assert status.compiler.repair is None and status.attention() == ()
+
+
+def test_due_line_occurrences_name_their_dispatch_until_it_admits_them(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.contracts.line_dispatch import LineDispatchRequestV1
+    from cruxible_client.contracts.procedures.line_specs import line_identity_digest
+    from cruxible_core.service.procedures.line_dispatch import service_dispatch_line
+    from tests.test_procedures.test_line_dispatch import queued_world
+    from tests.test_procedures.test_procedure_run_surface import _actor
+
+    instance, line, _procedure, occurrence, now = queued_world(tmp_path)
+    identity = line_identity_digest(line.identity)
+
+    waiting = _status(
+        instance,
+        _request(instance, evaluation_time=occurrence.eligible_at - timedelta(microseconds=1)),
+    ).line_dispatch
+    assert waiting.state == "waiting" and waiting.repair is None
+    assert waiting.detail == {
+        "due": 0,
+        "waiting": 1,
+        "lines": [
+            {
+                "line_identity_digest": identity,
+                "due": 0,
+                "waiting": 1,
+                "oldest_eligible_at": occurrence.eligible_at.isoformat(),
+            }
+        ],
+    }
+
+    due = _status(instance, _request(instance, evaluation_time=now))
+    assert due.line_dispatch.state == "due"
+    assert due.line_dispatch.repair is not None
+    assert due.line_dispatch.repair.command == f"cruxible playbill line dispatch {identity}"
+    assert due.attention() == (("line_dispatch", due.line_dispatch),)
+    hidden = PlaybillNextRequestV1(
+        evaluation_time=now,
+        access_profile=_access().model_copy(update={"permitted_access_classes": ("public",)}),
+    )
+    assert _status(instance, hidden).line_dispatch.state == "not_observed"
+
+    dispatched = service_dispatch_line(
+        instance,
+        identity,
+        LineDispatchRequestV1(),
+        actor=_actor(instance),
+        now=now,
+        caller_rung=3,
+    )
+    assert dispatched.items[0].status == "admitted", dispatched
+    drained = _status(instance, _request(instance, evaluation_time=now))
+    assert drained.line_dispatch.state == "idle" and drained.attention() == ()
+
+
+def test_an_instance_that_never_evaluated_a_line_keeps_no_dispatch_state(tmp_path: Path) -> None:
+    from cruxible_core.exhaust.line_dispatch import dispatch_root
+
+    instance, _owner = initialize_local(tmp_path)
+    assert _status(instance, _request(instance)).line_dispatch.state == "idle"
+    assert not dispatch_root(instance).exists()

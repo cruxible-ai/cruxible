@@ -88,6 +88,7 @@ from cruxible_core.coverage.contracts import (
 from cruxible_core.coverage.indexes import (
     WorkingOccurrenceV1,
 )
+from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.indexes.typed_state import utc_microseconds
 from cruxible_core.query.backends import claim_row_visibility
@@ -158,6 +159,7 @@ NextRepairOperation = Literal[
     "playbill.document.propose",
     "playbill.proposal.readmit",
     "playbill.compiler.upgrade",
+    "playbill.line.dispatch",
     "hand_edit",
 ]
 
@@ -598,6 +600,7 @@ _HEALTH_STATES: dict[str, frozenset[str]] = {
     "provider_lane": frozenset({"not_reported", "available", "unavailable"}),
     "procedure_catalog": frozenset({"not_observed", "not_required", "complete", "missing"}),
     "compiler": frozenset({"current", "upgrade_available", "no_upgrade_path"}),
+    "line_dispatch": frozenset({"not_observed", "idle", "waiting", "due"}),
 }
 #: Facet states that call for attention; every other state is healthy or unobserved.
 _HEALTH_ATTENTION: dict[str, frozenset[str]] = {
@@ -607,6 +610,7 @@ _HEALTH_ATTENTION: dict[str, frozenset[str]] = {
     "provider_lane": frozenset({"unavailable"}),
     "procedure_catalog": frozenset({"missing"}),
     "compiler": frozenset({"upgrade_available"}),
+    "line_dispatch": frozenset({"due"}),
 }
 
 
@@ -630,8 +634,8 @@ class PlaybillNextStatusV1(_StrictNextModel):
     These are conditions of the instance and its workspace -- a decommissioned
     instance, an unexported floor, a lagging ledger mirror, an unavailable
     provider lane, an incomplete Procedure catalog, a compiler behind the
-    running one -- not work items about accepted state. `blocking` is set only
-    when no write can succeed.
+    running one, Line occurrences waiting on dispatch -- not work items about
+    accepted state. `blocking` is set only when no write can succeed.
     """
 
     tag: Literal["playbill-next-status-v1"] = "playbill-next-status-v1"
@@ -642,6 +646,7 @@ class PlaybillNextStatusV1(_StrictNextModel):
     provider_lane: PlaybillNextHealthV1
     procedure_catalog: PlaybillNextHealthV1
     compiler: PlaybillNextHealthV1
+    line_dispatch: PlaybillNextHealthV1
     #: Rows parked by a current ``unsure`` attestation whose basis is unchanged.
     held: int = Field(default=0, ge=0)
 
@@ -749,6 +754,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.document.propose": "playbill document propose",
     "playbill.proposal.readmit": "playbill proposal readmit",
     "playbill.compiler.upgrade": "playbill compiler upgrade",
+    "playbill.line.dispatch": "playbill line dispatch",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -845,6 +851,14 @@ def _repair_command(
         if not isinstance(target, str) or not isinstance(name, str):
             return None
         parts.extend(["--to", shlex.quote(target), "--name", shlex.quote(name)])
+    elif operation == "playbill.line.dispatch":
+        line = values.get("line")
+        limit = values.get("limit")
+        if not isinstance(line, str):
+            return None
+        parts.append(shlex.quote(line))
+        if isinstance(limit, int) and limit > 1:
+            parts.extend(["--limit", str(limit)])
     elif operation == "playbill.proposal.readmit":
         proposal_id = values.get("proposal_id")
         if not isinstance(proposal_id, str):
@@ -2801,6 +2815,73 @@ def _compiler_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
     )
 
 
+#: One `line dispatch` admits at most this many occurrences.
+_LINE_DISPATCH_LIMIT = 100
+
+
+def _line_dispatch_health(
+    instance: PlaybillInstance,
+    *,
+    evaluation_time: datetime,
+    access_profile: CoverageAccessProfileV1,
+) -> PlaybillNextHealthV1:
+    """Line occurrences evaluated into the dispatch set and not yet admitted.
+
+    Read from the dispatch projection's unresolved index at the evaluation
+    time, never at a coordinate: the set is operational, and nothing admits it
+    implicitly. An occurrence whose window has not closed is `waiting`; one
+    that could be admitted now makes the facet `due`, and the repair names the
+    Line holding the oldest such occurrence.
+    """
+
+    if not access_profile.permits("instance"):
+        return PlaybillNextHealthV1(state="not_observed")
+    # Opening the store creates its directory; an instance that never evaluated
+    # a Line has nothing pending and keeps no dispatch state.
+    if not dispatch_root(instance).exists():
+        return PlaybillNextHealthV1(state="idle")
+    with LineDispatchStore(instance).locked() as connection:
+        rows = connection.execute(
+            "SELECT line_id,SUM(eligible_at<=?),COUNT(*),"
+            "MIN(CASE WHEN eligible_at<=? THEN eligible_at END),MIN(eligible_at) "
+            "FROM pending WHERE disposition='pending' GROUP BY line_id ORDER BY line_id",
+            (format_datetime(evaluation_time),) * 2,
+        ).fetchall()
+    if not rows:
+        return PlaybillNextHealthV1(state="idle")
+    lines = [
+        {
+            "line_identity_digest": line_id,
+            "due": due,
+            "waiting": pending - due,
+            "oldest_eligible_at": oldest,
+        }
+        for line_id, due, pending, _oldest_due, oldest in rows
+    ]
+    detail = {
+        "due": sum(line["due"] for line in lines),
+        "waiting": sum(line["waiting"] for line in lines),
+        "lines": lines,
+    }
+    due_lines = [(oldest_due, line_id, due) for line_id, due, _, oldest_due, _ in rows if due]
+    if not due_lines:
+        return PlaybillNextHealthV1(state="waiting", detail=detail)
+    _oldest, line_id, due = min(due_lines)
+    dispatch = PlaybillNextRepairV1(
+        operation="playbill.line.dispatch",
+        target=line_id,
+        required_change="dispatch_the_due_line_occurrences",
+        arguments={"line": line_id, "limit": min(due, _LINE_DISPATCH_LIMIT)},
+    )
+    return PlaybillNextHealthV1(
+        state="due",
+        detail=detail,
+        repair=dispatch.model_copy(
+            update={"command": _repair_command(dispatch.operation, arguments=dispatch.arguments)}
+        ),
+    )
+
+
 def _procedure_catalog_health(
     instance: PlaybillInstance,
     *,
@@ -3630,6 +3711,11 @@ def service_playbill_next(
             observation=request.workspace_observation,
         ),
         compiler=_compiler_health(instance),
+        line_dispatch=_line_dispatch_health(
+            instance,
+            evaluation_time=request.evaluation_time,
+            access_profile=request.access_profile,
+        ),
     )
     values = {
         "coordinate": public_coordinate,

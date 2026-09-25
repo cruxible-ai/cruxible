@@ -128,5 +128,6 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "playbill.document.propose",
         "playbill.proposal.readmit",
         "playbill.compiler.upgrade",
+        "playbill.line.dispatch",
         "hand_edit",
     }
