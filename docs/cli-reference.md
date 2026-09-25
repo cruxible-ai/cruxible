@@ -79,8 +79,7 @@ cruxible server stop [--timeout SECONDS] [--json]
 server start is the long-running daemon process and does not connect to an
 existing server. State defaults to `~/.cruxible`; `--state-root` overrides
 `CRUXIBLE_STATE_ROOT`. The obsolete `CRUXIBLE_SERVER_STATE_DIR` name is
-refused. See [Canonical repository and daemon layout](canonical-repository-layout.md)
-for the exact directory contract.
+refused.
 
 `server start` takes an exclusive lock on `<state-root>/daemon/lock` before it
 opens any store, so a second daemon over the same state root refuses with a
@@ -330,8 +329,7 @@ generation. If the server response is lost after generation, each custody pair
 has a transport- and instance-bound local retry marker; the exact retry adopts
 that pair and clears the marker after success. This is not general key import:
 existing keys without the matching marker are refused. Re-seed with fresh
-owner, reviewer, and recovery custody by default; see
-[Canonical repository and daemon layout](canonical-repository-layout.md).
+owner, reviewer, and recovery custody by default.
 
 Successful initialization remembers the initialized instance and atomically
 writes the selected workspace config before rendering either JSON or human
