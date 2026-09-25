@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from functools import wraps
 from typing import Annotated, Any, Callable, Literal
 
@@ -416,10 +417,18 @@ def register_tools(
         claim_id: str,
         stance: Literal["support", "contradict", "unsure"],
         note: str | None = None,
+        valid_until: datetime | None = None,
     ) -> ClaimAttestationAppendResultV1:
-        """Sign that the caller examined this exact Claim, then append the evidence."""
+        """Sign that the caller examined this exact Claim, then append the evidence.
 
-        return handlers.handle_playbill_claim_attest(instance_id, claim_id, stance, note)
+        ``unsure`` holds the Claim's contested ``next`` rows until what was examined
+        changes; a hold on stale or uncovered evidence lapses at ``valid_until``,
+        else after the ClaimType's ``unsure_hold_for`` (default 30 days).
+        """
+
+        return handlers.handle_playbill_claim_attest(
+            instance_id, claim_id, stance, note, valid_until
+        )
 
     @_tool
     def cruxible_playbill_claim_attest_new_capture(

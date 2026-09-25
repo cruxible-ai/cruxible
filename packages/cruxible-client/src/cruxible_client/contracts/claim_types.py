@@ -155,10 +155,16 @@ class ClaimType(_StrictClaimTypeModel):
     slot_policy: None = None
     evidence_freshness: ClaimEvidenceFreshnessV1 | None = None
     attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = None
+    #: How long an ``unsure`` examined attestation holds a standing ``next`` row
+    #: (stale or uncovered evidence) when it names no ``valid_until``. Absent,
+    #: the engine default applies.
+    unsure_hold_for: ClaimFreshnessDurationV1 | None = None
 
     @model_serializer(mode="wrap")
     def _versioned_wire(self, handler: Any) -> dict[str, object]:
         payload = cast(dict[str, object], handler(self))
+        if self.unsure_hold_for is None:
+            payload.pop("unsure_hold_for", None)
         if self.artifact_format in {
             "playbill-claim-type-v1",
             "playbill-claim-type-v3",
@@ -212,6 +218,11 @@ class ClaimType(_StrictClaimTypeModel):
             and self.attestation_consequence_policy is None
         ):
             raise ValueError("ClaimType v4 requires an attestation consequence policy")
+        if self.unsure_hold_for is not None:
+            if self.artifact_format != "playbill-claim-type-v5":
+                raise ValueError("only ClaimType v5 can declare unsure_hold_for")
+            if self.unsure_hold_for.microseconds <= 0:
+                raise ValueError("ClaimType unsure_hold_for must be positive")
         if self.artifact_format == "playbill-claim-type-v5":
             if not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV2):
                 raise ValueError(

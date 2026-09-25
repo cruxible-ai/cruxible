@@ -119,15 +119,22 @@ def activate(
     instance.refresh()
 
 
-def seed_claims(tmp_path: Path) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
+def seed_claims(
+    tmp_path: Path, *, claim_type_override: ClaimType | None = None
+) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
     """Return an instance holding two accepted work-item status Claims."""
 
     instance, owner = initialize_local(tmp_path)
-    seed_claims_into(instance, owner)
+    seed_claims_into(instance, owner, claim_type_override=claim_type_override)
     return instance, owner
 
 
-def seed_claims_into(instance: PlaybillInstance, owner: GeneratedKeyMaterial) -> None:
+def seed_claims_into(
+    instance: PlaybillInstance,
+    owner: GeneratedKeyMaterial,
+    *,
+    claim_type_override: ClaimType | None = None,
+) -> None:
     """Accept the Claim surface and two work-item status Claims into ``instance``."""
 
     source_id = "fixture.work-items"
@@ -135,6 +142,7 @@ def seed_claims_into(instance: PlaybillInstance, owner: GeneratedKeyMaterial) ->
         instance,
         owner,
         contract=foreign_source_capture_contract(source_id),
+        claim_type_override=claim_type_override,
     )
     first_body = instance.body_store().store(b"status: ready")
     first = service_propose_playbill_claim(

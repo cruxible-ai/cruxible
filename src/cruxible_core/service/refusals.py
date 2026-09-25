@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import get_args
 
 from cruxible_client.contracts import (
-    PLAYBILL_HAND_EDIT_NEXT_REASONS,
     PlaybillNextReason,
     ProviderLaneUnavailableCodeV1,
 )
@@ -49,7 +48,7 @@ ALL_SERVED_REFUSAL_CODES = frozenset().union(*CLOSED_SERVED_REFUSAL_VOCABULARIES
 # Everything else resolves to the truthful undeclared hand edit. The count is
 # pinned by the guardrail so a new closed refusal member cannot join silently:
 # adding one forces either a declared repair or an explicit re-pin here.
-UNDECLARED_REFUSAL_CODE_COUNT = 152
+UNDECLARED_REFUSAL_CODE_COUNT = 148
 
 
 def repair_for_refusal(code: str) -> ServedRepairV1:
@@ -70,12 +69,6 @@ def undeclared_refusal_codes() -> frozenset[str]:
     )
 
 
-def hand_edit_next_reasons() -> frozenset[str]:
-    """Expose the exact client-owned positive exemption membership."""
-
-    return frozenset(PLAYBILL_HAND_EDIT_NEXT_REASONS)
-
-
 __all__ = [
     "ALL_SERVED_REFUSAL_CODES",
     "CLOSED_SERVED_REFUSAL_VOCABULARIES",
@@ -83,7 +76,6 @@ __all__ = [
     "RUNNABLE_REFUSAL_REPAIRS",
     "UNDECLARED_HAND_EDIT_CHANGE",
     "UNDECLARED_REFUSAL_CODE_COUNT",
-    "hand_edit_next_reasons",
     "repair_for_refusal",
     "undeclared_refusal_codes",
 ]

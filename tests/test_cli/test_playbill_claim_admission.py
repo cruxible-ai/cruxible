@@ -82,6 +82,22 @@ def test_claim_get_and_explain_render_one_actionable_line_per_capture(monkeypatc
                 coverage={},
                 admission_evaluation_time="2026-08-22T12:00:00Z",
                 admission_accounts=[_account()],
+                retirement_context={
+                    "tag": "playbill-claim-retirement-context-v1",
+                    "shared_with_retired": [
+                        {
+                            "tag": "playbill-claim-retired-relation-v1",
+                            "relation_kind": "capture",
+                            "live_citation_id": CITATION,
+                            "live_capture_digest": CAPTURE,
+                            "relation_key": f"capture:{CAPTURE}",
+                            "retired_claim_count": 1,
+                            "retired_claim_witnesses": ["Claim:CLM-" + "b" * 32],
+                            "retired_citation_count": 1,
+                            "retired_citation_witnesses": [CITATION],
+                        }
+                    ],
+                },
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -98,10 +114,17 @@ def test_claim_get_and_explain_render_one_actionable_line_per_capture(monkeypatc
     assert get_result.output.count(f"Capture {CAPTURE}") == 1
     assert "closest verified-source" in get_result.output
 
-    explain_result = CliRunner().invoke(cli, [*common, "explain", "CLM-" + "a" * 32])
+    explain_result = CliRunner().invoke(
+        cli,
+        [*common, "explain", "CLM-" + "a" * 32],
+    )
     assert explain_result.exit_code == 0, explain_result.output
     assert explain_result.output.count(f"Capture {CAPTURE}") == 1
     assert "verdict=uncovered" in explain_result.output
+    assert "Retirement context:" in explain_result.output
+    assert f"shares capture (citation {CITATION}) with 1 retired Claim(s)" in (
+        explain_result.output
+    )
 
 
 def test_claim_get_brief_help_describes_the_statement_card() -> None:

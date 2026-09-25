@@ -10,6 +10,7 @@ from cruxible_client.contracts.accepted_attestations import (
     render_accepted_attestation,
 )
 from cruxible_client.contracts.claim_attestations import claim_attestation_v2_envelope_digest
+from tests.core_support._next_support import unfolded_next
 from tests.test_claims.test_claim_attestation_service import _request
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 from tests.test_indexes.test_resolution_contracts import _accept_tree
@@ -299,7 +300,7 @@ def test_new_kind_does_not_change_previous_compiler_registration() -> None:
 def test_new_capture_acceptance_uses_historical_binding_and_discovery(tmp_path: Path) -> None:
     from cruxible_client.contracts.claims import claim_path
     from cruxible_core.coverage.contracts import CoverageAccessProfileV1
-    from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
+    from cruxible_core.service.discovery.next import PlaybillNextRequestV1
     from tests.test_claims.test_claim_attestation_service import (
         RECORDED_AT,
         _coordinator_new_capture,
@@ -337,7 +338,7 @@ def test_new_capture_acceptance_uses_historical_binding_and_discovery(tmp_path: 
     assert instance.blob_at(after.git_oid, claim_path(claim_id)) == instance.blob_at(
         before.git_oid, claim_path(claim_id)
     )
-    result = service_playbill_next(
+    result = unfolded_next(
         instance,
         request=PlaybillNextRequestV1(
             evaluation_time=RECORDED_AT,

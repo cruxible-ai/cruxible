@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts import PlaybillClaimViewV2 as ClientClaimViewV2
 from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
@@ -102,6 +102,10 @@ from cruxible_core.query.dereference import (
 from cruxible_core.query.semantic_discovery import DiscoveryEntryV1
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.claims.retirement_context import (
+    ClaimRetirementContextV1,
+    claim_retirement_context,
+)
 from cruxible_core.storage.cas import BodyAccessContext
 
 if TYPE_CHECKING:
@@ -234,6 +238,11 @@ class PlaybillClaimExplanationV2(_StrictClaimServiceModel):
     coverage: CoverageDescriptorV1
     admission_evaluation_time: datetime
     admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
+    # Review context, not work: what this Claim shares with retired Claims.
+    # Absent when it shares nothing, so the explanation's bytes do not change.
+    retirement_context: ClaimRetirementContextV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class EvidenceRecaptureOperationV1(_StrictClaimServiceModel):
@@ -274,6 +283,9 @@ class PlaybillClaimExplanationV3(_StrictClaimServiceModel):
     admission_evaluation_time: datetime
     admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
     freshness: tuple[ClaimEvidenceFreshnessLineV1, ...]
+    retirement_context: ClaimRetirementContextV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 def _resolve_coordinate(
@@ -930,6 +942,11 @@ def service_explain_playbill_claim(
             logical_source,
         )
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    retirement_context = claim_retirement_context(
+        instance,
+        coordinate=coordinate,
+        claim_identity=claim.identity.qualified,
+    )
     coverage = CoverageDescriptorV1(
         requested_facets=("governance", "provenance", "sources"),
         available_facets=("governance", "provenance", "sources"),
@@ -979,6 +996,7 @@ def service_explain_playbill_claim(
             freshness=tuple(
                 sorted(freshness, key=lambda item: item.capture_digest.encode("ascii"))
             ),
+            retirement_context=retirement_context,
         )
     if not isinstance(law, ClaimLawEvidenceV1):
         raise ProposalIntegrityError(
@@ -1001,6 +1019,7 @@ def service_explain_playbill_claim(
         coverage=coverage,
         admission_evaluation_time=evaluated_at,
         admission_accounts=read.admission_accounts,
+        retirement_context=retirement_context,
     )
 
 

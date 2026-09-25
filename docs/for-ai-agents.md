@@ -329,8 +329,8 @@ candidate. Local write completion does not imply remote visibility. Before a
 remote review, run `playbill ledger publish --json` and require non-null
 `wait_sequence` with `published_sequence >= wait_sequence`; retry or inspect
 `detail` if the bounded wait is unacknowledged. The background publisher combines
-pending work and reports pending/failure through `ledger_mirror_behind` in
-`playbill next`. Publication receipts name the exact acknowledged ref snapshot.
+pending work and reports it in the `ledger_mirror` facet of `playbill next`'s
+`status` (`publishing` while in flight, `behind` after a failure). Publication receipts name the exact acknowledged ref snapshot.
 
 The change set's own summary reaches that commit only if a door carried one.
 `pb.changes(rationale="...")` and the `rationale` field on the tagless

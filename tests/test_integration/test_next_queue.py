@@ -105,7 +105,7 @@ def test_next_reason_uses_the_exact_public_closed_vocabulary() -> None:
     assert set(get_args(NextReason)) == set(get_args(contracts.PlaybillNextReason))
 
 
-def test_provider_lane_degradation_is_a_typed_advisory_with_hand_edit_repair(
+def test_provider_lane_degradation_is_typed_status_with_hand_edit_repair(
     tmp_path: Path,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
@@ -122,15 +122,17 @@ def test_provider_lane_degradation_is_a_typed_advisory_with_hand_edit_repair(
         ),
     )
 
-    row = next(item for item in result.items if item.reason == "provider_lane_unavailable")
-    assert row.severity == "warning"
-    assert row.detail == {
+    lane = result.status.provider_lane
+    assert lane.state == "unavailable"
+    assert lane.detail == {
         "code": "provider_process_lease_invalid",
         "detail": "control socket path is too long",
     }
-    assert row.repair.operation == "hand_edit"
-    assert row.repair.target == "daemon/provider-runtime.json"
-    assert row.repair.command is None
+    assert lane.repair is not None
+    assert lane.repair.operation == "hand_edit"
+    assert lane.repair.target == "daemon/provider-runtime.json"
+    assert lane.repair.command is None
+    assert result.status.attention() == (("provider_lane", lane),)
 
 
 def test_workspace_drift_is_verified_against_the_accepted_citation(
@@ -175,7 +177,9 @@ def test_workspace_drift_is_verified_against_the_accepted_citation(
         "workspace_sources",
     )
     assert result.unobserved_domains == ("workspace_projections",)
-    assert {item.reason for item in result.items}.issuperset({"citation_drifted", "floor_missing"})
+    assert "citation_drifted" in {item.reason for item in result.items}
+    # An unconfigured floor is environment status, never a work row.
+    assert result.status.floor.state in {"missing", "not_configured"}
     drift = next(item for item in result.items if item.reason == "citation_drifted")
     assert drift.related_identities == (citation.citation_id,)
     assert drift.repair.operation == "playbill.authoring.bind"
@@ -550,6 +554,110 @@ def test_conflict_repair_names_qualifier_separation_not_dispositions(tmp_path: P
     conflict = next(item for item in result.items if item.reason == "claim_conflicted")
     assert conflict.repair.required_change == "revise_claims_into_distinct_qualifiers"
     assert conflict.repair.arguments == {"claim_ids": list(conflict.related_identities)}
+
+
+def test_two_values_of_a_many_valued_predicate_are_not_a_conflict(tmp_path: Path) -> None:
+    from tests.test_claims.test_claims import _claim_type
+
+    many = _claim_type().model_copy(
+        update={
+            "cardinality": "many",
+            "resolution_policy": _claim_type().resolution_policy.model_copy(
+                update={"cardinality": "many", "selector": "all"}
+            ),
+        }
+    )
+    instance, owner = seed_claims(tmp_path, claim_type_override=many)
+    second = service_propose_playbill_claim(
+        instance,
+        authoring=work_item_authoring("wi-42", "blocked", with_claim_type=False),
+        actor_id="owner",
+        proposal_name="second-work-item-value",
+        timestamp="2026-08-24T17:00:03.000000Z",
+    )
+    activate_work_item_claim(instance, owner, second)
+    values = {
+        claim.statement.object.model_dump(mode="json")["value"]
+        for claim in (
+            _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
+        )
+        if claim.statement.subject.artifact_path.endswith("/wi-42.json")
+    }
+    assert values == {"ready", "blocked"}
+
+    result = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=_access()),
+    )
+
+    assert not [item for item in result.items if item.reason == "claim_conflicted"]
+
+
+def test_a_claim_not_yet_in_effect_is_not_reported_uncovered(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    instance, owner = seed_claims(tmp_path)
+    future = work_item_authoring("wi-44", "ready", with_claim_type=False)
+    future = future.model_copy(
+        update={
+            "statement": future.statement.model_copy(
+                update={"effective_from": EVALUATION_TIME + timedelta(days=1)}
+            )
+        }
+    )
+    proposal = service_propose_playbill_claim(
+        instance,
+        authoring=future,
+        actor_id="owner",
+        proposal_name="future-work-item",
+        timestamp="2026-08-24T17:00:03.000000Z",
+    )
+    activate_work_item_claim(instance, owner, proposal)
+
+    result = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=_access()),
+    )
+
+    assert not [
+        item
+        for item in result.items
+        if item.reason == "claim_uncovered"
+        and any(path.endswith("/wi-44.json") for path in item.related_identities)
+    ]
+
+
+def test_a_caller_without_instance_access_is_told_nothing_about_claims(tmp_path: Path) -> None:
+    instance, owner = seed_claims(tmp_path)
+    second = service_propose_playbill_claim(
+        instance,
+        authoring=work_item_authoring("wi-42", "blocked", with_claim_type=False),
+        actor_id="owner",
+        proposal_name="conflicting-work-item",
+        timestamp="2026-08-24T17:00:03.000000Z",
+    )
+    activate_work_item_claim(instance, owner, second)
+    claim_reasons = {
+        "claim_conflicted",
+        "claim_stale_evidence",
+        "evidence_expiring",
+        "claim_uncovered",
+        "claim_attestation_threshold_met",
+        "claim_contradicting_evidence_available",
+        "claim_new_evidence_supporting",
+        "claim_new_evidence_unreviewed",
+    }
+
+    def reasons(profile: CoverageAccessProfileV1) -> set[str]:
+        result = service_playbill_next(
+            instance,
+            request=PlaybillNextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=profile),
+        )
+        return {item.reason for item in result.items} & claim_reasons
+
+    assert "claim_conflicted" in reasons(_access())
+    public = CoverageAccessProfileV1(profile_id="public-only", permitted_access_classes=("public",))
+    assert reasons(public) == set()
 
 
 def test_conflict_repair_names_the_first_byte_ordered_disjoint_value_discriminator() -> None:

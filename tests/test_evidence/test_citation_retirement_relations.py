@@ -1,64 +1,29 @@
-"""Shared-Capture retirement consequences through real authoring and next surfaces."""
+"""Shared-Capture retirement context through real authoring and Claim explanation surfaces."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
-from cruxible_client.authoring.workspace import _coverage_v3_fields
-from cruxible_client.contracts.artifacts import ArtifactLifecycle
-from cruxible_client.contracts.claims import (
-    claim_artifact_digest,
-    claim_path,
-    parse_claim,
-    render_claim,
-)
-from cruxible_client.contracts.documents import (
-    DocumentAuthority,
-    DocumentLifecycle,
-    DocumentShell,
-    document_digest,
-)
 from cruxible_core.claims.claim_retirement import service_retire_claim
-from cruxible_core.coverage.adapter import observe_working_source
 from cruxible_core.coverage.contracts import (
     CoverageAccessProfileV1,
-    CoverageCommitmentScanProofV1,
-    LogicalSourceIdentityV1,
-    PlaybillCitationWindowObservationV1,
 )
-from cruxible_core.coverage.indexes import WorkingOccurrenceV1
 from cruxible_core.evidence.citation_relations import (
     RELATION_RETIRED_CONFLICT_SCHEMA,
     retired_activation_live_candidates,
 )
-from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.service.authoring.documents import (
-    service_activate_playbill_proposal,
-    service_propose_playbill_document,
-    service_submit_playbill_approval,
-)
-from cruxible_core.service.discovery.coverage import service_resolve_playbill_coverage
+from cruxible_core.proposals.proposals import AuthenticatedActor
+from cruxible_core.service.claims.claims import service_explain_playbill_claim
+from cruxible_core.service.claims.retirement_context import ClaimRetirementContextV1
 from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,
-    PlaybillNextRequestV2,
-    PlaybillNextSourceObservationV4,
-    PlaybillNextWorkspaceObservationV1,
-    _complete_retirement_activation_sequence,
-    post_retirement_examined_support_suppresses_claim_cites_retired,
     service_playbill_next,
 )
 from tests.core_support._citation_relations_oracle import (
     RELATION_USE_SCHEMA,
     build_citation_relation_facts,
 )
-from tests.core_support._published_world import (
-    published_world as _published_world,
-)
-from tests.core_support._published_world import (
-    retire_claim as _retire,
-)
-from tests.core_support._support import client_material
 from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
 from tests.test_claims.test_claim_retirement import (
     _activate as _activate_retirement,
@@ -66,8 +31,11 @@ from tests.test_claims.test_claim_retirement import (
 from tests.test_claims.test_claim_retirement import (
     _request as _retirement_request,
 )
-from tests.test_ledger.test_activation import _sign
-from tests.test_proposals.test_retirement_citing_advisory import copied_from_world
+from tests.test_proposals.test_retirement_citing_advisory import (
+    COPY_CLAIM_ID,
+    SOURCE_CLAIM_ID,
+    copied_from_world,
+)
 
 EVALUATION_TIME = datetime(2026, 8, 24, 18, tzinfo=UTC)
 
@@ -90,178 +58,54 @@ def _retire_claim(instance, owner, claim_id: str) -> None:  # type: ignore[no-un
     instance.refresh()
 
 
-def claim_cites_retired_world(root: Path):  # type: ignore[no-untyped-def]
-    instance, owner, _actor, first, second, *_rest = shared_capture_world(root)
-    _retire_claim(instance, owner, first)
-    return instance, owner, second
-
-
-def _next(instance, workspace=None):  # type: ignore[no-untyped-def]
+def _next(instance):  # type: ignore[no-untyped-def]
     return service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
-            evaluation_time=EVALUATION_TIME,
-            access_profile=_access(),
-            workspace_observation=workspace,
-        ),
+        request=PlaybillNextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=_access()),
     )
 
 
-def test_shared_capture_emits_one_claim_cites_retired_row_and_retirement_clears_it(
+def retirement_context(instance, claim_id: str) -> ClaimRetirementContextV1 | None:  # type: ignore[no-untyped-def]
+    explanation = service_explain_playbill_claim(
+        instance, identity=claim_id, evaluation_time=EVALUATION_TIME
+    )
+    return explanation.retirement_context
+
+
+def test_shared_capture_is_explain_context_not_queue_work_and_retirement_clears_it(
     tmp_path: Path,
 ) -> None:
-    instance, owner, live_claim_id = claim_cites_retired_world(tmp_path)
+    instance, owner, _actor, first, live_claim_id, *_rest = shared_capture_world(tmp_path)
+    _retire_claim(instance, owner, first)
 
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         conflicts = projection.citations.conflicts()
     assert len(conflicts) == 1
     assert conflicts[0].value["relation_kind"] == "capture"  # type: ignore[index]
     assert conflicts[0].value["live_claim_identity"] == f"Claim:{live_claim_id}"  # type: ignore[index]
-    assert conflicts[0].value["retired_claim_count"] == 1  # type: ignore[index]
-    assert conflicts[0].value["retired_citation_count"] == 1  # type: ignore[index]
 
-    rows = tuple(item for item in _next(instance).items if item.reason == "claim_cites_retired")
-
-    assert len(rows) == 1
-    (row,) = rows
-    assert row.subject_identity == f"Claim:{live_claim_id}"
-    assert row.detail["relation_kind"] == "capture"
-    assert row.repair.operation == "playbill.claim.retire"
-    assert row.repair.required_change == "retire_or_replace_claim_citing_retired_evidence"
+    # Sharing evidence with a retired Claim is context for its reviewer, not work.
+    assert not [
+        item for item in _next(instance).items if item.subject_identity == f"Claim:{live_claim_id}"
+    ]
+    context = retirement_context(instance, live_claim_id)
+    assert context is not None
+    (relation,) = context.shared_with_retired
+    assert relation.relation_kind == "capture"
+    assert relation.relation_key == f"capture:{relation.live_capture_digest}"
+    assert relation.retired_claim_count == 1
+    assert relation.retired_claim_witnesses == (f"Claim:{first}",)
+    assert relation.retired_citation_count == 1
+    assert len(relation.retired_citation_witnesses) == 1
+    # The retired side shares nothing live, and the section is absent on the wire.
+    assert retirement_context(instance, first) is None
+    explanation = service_explain_playbill_claim(
+        instance, identity=first, evaluation_time=EVALUATION_TIME
+    )
+    assert "retirement_context" not in explanation.model_dump(mode="json")
 
     _retire_claim(instance, owner, live_claim_id)
-    assert not [item for item in _next(instance).items if item.reason == "claim_cites_retired"]
-
-
-def test_examined_support_seam_fails_closed_without_complete_fold_inputs() -> None:
-    assert not post_retirement_examined_support_suppresses_claim_cites_retired("sha256:" + "1" * 64)
-
-
-def test_truncated_retirement_witnesses_cannot_suppress_a_later_retirement() -> None:
-    witnesses = tuple(f"Claim:CLM-{index:032x}" for index in range(8))
-    sequences = {witness: index + 1 for index, witness in enumerate(witnesses)}
-
-    assert (
-        _complete_retirement_activation_sequence(
-            witnesses,
-            retired_claim_count=9,
-            retirement_sequences=sequences,
-        )
-        is None
-    )
-    assert (
-        _complete_retirement_activation_sequence(
-            witnesses,
-            retired_claim_count=8,
-            retirement_sequences=sequences,
-        )
-        == 8
-    )
-
-
-def test_post_retirement_examined_support_suppresses_and_rearms_through_real_surfaces(
-    tmp_path: Path,
-) -> None:
-    from cruxible_core.service.evidence.claim_attestations import (
-        service_append_claim_attestation,
-    )
-    from tests.test_claims.test_claim_attestation_service import _request
-
-    instance, owner, _actor, retired_claim_id, live_claim_id, *_rest = shared_capture_world(
-        tmp_path
-    )
-    instant = EVALUATION_TIME
-
-    def append(*, stance: str, basis: str, offset: int) -> None:
-        request = _request(
-            instance,
-            owner,
-            live_claim_id,
-            tmp_path,
-            basis=basis,
-            stance=stance,
-            attested_at=instant + timedelta(minutes=offset),
-        )
-        service_append_claim_attestation(
-            instance,
-            request=request,
-            actor_id="owner",
-            recorded_at=instant + timedelta(minutes=offset),
-        )
-
-    def rows() -> tuple:  # type: ignore[no-untyped-def]
-        return tuple(
-            item
-            for item in service_playbill_next(
-                instance,
-                request=PlaybillNextRequestV2(
-                    evaluation_time=instant + timedelta(hours=1),
-                    access_profile=_access(),
-                ),
-            ).items
-            if item.reason == "claim_cites_retired"
-        )
-
-    append(stance="support", basis="examined_existing", offset=0)
-    _retire_claim(instance, owner, retired_claim_id)
-    assert len(rows()) == 1, "a pre-retirement referent may not suppress"
-
-    append(stance="support", basis="examined_existing", offset=1)
-    assert rows() == ()
-    ((event, payload),) = instance.claim_attestation_evidence_store().fold_events()
-    not_current = payload.model_copy(update={"current_at_append": False})
-    assert not post_retirement_examined_support_suppresses_claim_cites_retired(
-        payload.attestation.statement.claim_artifact_digest,
-        claim_identity=payload.attestation.statement.claim_identity.qualified,
-        retired_activation_sequence=instance.accepted_history()[-1].sequence,
-        door_events=((event, not_current),),
-        accepted_sequence_by_semantic_root={
-            generation.semantic_root.tagged: generation.sequence
-            for generation in instance.accepted_history()
-        },
-    )
-    append(stance="unsure", basis="examined_existing", offset=2)
-    assert len(rows()) == 1
-    append(stance="support", basis="examined_existing", offset=3)
-    assert rows() == ()
-    append(stance="support", basis="new_capture", offset=4)
-    assert len(rows()) == 1, "new-capture support is not an examined-existing review"
-    append(stance="support", basis="examined_existing", offset=5)
-    assert rows() == ()
-
-    path = claim_path(live_claim_id)
-    base = instance.accepted_coordinate()
-    tree = instance.tree_at(base.git_oid)
-    live = parse_claim(tree[path], path=path)
-    successor = live.model_copy(
-        update={
-            "lifecycle": ArtifactLifecycle(
-                predecessor_digest=claim_artifact_digest(live).tagged,
-            )
-        }
-    )
-    tree[path] = render_claim(successor)
-    proposal = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id="owner"),
-        request=ProposalAdmissionRequest(
-            target_ref="refs/proposals/owner/rearm-citation-review",
-            proposed_base_oid=base.git_oid,
-        ),
-        candidate_tree=tree,
-        timestamp="2026-08-24T19:10:00.000000Z",
-    )
-    assert proposal.candidate is not None, proposal.evaluation.diagnostics
-    assert (
-        service_activate_playbill_proposal(
-            instance,
-            proposal_id=proposal.admission.proposal_id,
-            activated_by="owner",
-        ).status
-        == "accepted"
-    )
-    instance.refresh()
-
-    assert len(rows()) == 1, "a Claim successor re-arms review for its new artifact digest"
+    assert retirement_context(instance, live_claim_id) is None
 
 
 def test_published_retirement_conflicts_match_complete_source_oracle(
@@ -334,190 +178,12 @@ def test_span_sweep_scans_active_live_set_once_per_retired_activation_epoch() ->
     assert visits == len(active_live)
 
 
-def _accept_document(
-    instance,  # type: ignore[no-untyped-def]
-    *,
-    shell: DocumentShell,
-    proposal_name: str,
-    timestamp: str,
-) -> None:
-    proposal = service_propose_playbill_document(
-        instance,
-        shell=shell,
-        actor_id="owner",
-        proposal_name=proposal_name,
-        timestamp=timestamp,
-    )
-    candidate = proposal.proposal.candidate
-    assert candidate is not None
-    approval = _sign(
-        client_material(instance.root.parent, instance),
-        candidate.candidate_digest,
-        instance.accepted_coordinate().semantic_root,
-    )
-    service_submit_playbill_approval(
-        instance,
-        proposal_id=proposal.proposal.admission.proposal_id,
-        attestation=approval.attestation,
-        authenticated_submitter="owner",
-    )
-    assert (
-        service_activate_playbill_proposal(
-            instance,
-            proposal_id=proposal.proposal.admission.proposal_id,
-            activated_by="owner",
-        ).status
-        == "accepted"
-    )
-    instance.refresh()
+def test_a_copied_claim_shares_its_retired_source_span(tmp_path: Path) -> None:
+    instance, _owner, _coordinator, _actor = copied_from_world(tmp_path)
 
-
-def _workspace_observation(
-    instance,  # type: ignore[no-untyped-def]
-    *,
-    content: bytes,
-    expect_no_claim_cards: bool = False,
-) -> PlaybillNextWorkspaceObservationV1:
-    source_id = "repo.work-items"
-    source = LogicalSourceIdentityV1(plane="external", identity=source_id)
-    coverage = service_resolve_playbill_coverage(
-        instance,
-        instance_id=instance.descriptor.instance_id,
-        observations=(observe_working_source(source, content),),
-    )
-    assert len(coverage.spans) == 1
-    if expect_no_claim_cards:
-        assert all(not card.citation_associations for card in coverage.spans[0].cards), (
-            "retired citations may supply windows but never retired Claim cards"
-        )
-    occurrences, proofs, windows, notes = _coverage_v3_fields(
-        coverage.spans[0].model_dump(mode="json"),
-        source_id=source_id,
-        content=content,
-    )
-    return PlaybillNextWorkspaceObservationV1(
-        source_observations=(
-            PlaybillNextSourceObservationV4(
-                source_id=source_id,
-                document_id="work-items",
-                observed_source_digest=observe_working_source(source, content).content_digest,
-                byte_length=len(content),
-                marker_summaries=(),
-                occurrences=tuple(WorkingOccurrenceV1.model_validate(item) for item in occurrences),
-                commitment_scan_proofs=tuple(
-                    CoverageCommitmentScanProofV1.model_validate(item) for item in proofs
-                ),
-                citation_window_observations=tuple(
-                    PlaybillCitationWindowObservationV1.model_validate(item) for item in windows
-                ),
-                scan_notes=notes,
-                marker_notes=(),
-            ),
-        )
-    )
-
-
-def retired_source_world(root: Path):  # type: ignore[no-untyped-def]
-    instance, owner, claim_id = _published_world(root)
-    content = b"ready"
-    body = instance.store_document_body(content)
-    document = DocumentShell(
-        identity="document:work-items",
-        document_kind="work-items",
-        title="Work items",
-        media_type="text/markdown",
-        body_digest=body.digest,
-        authority=DocumentAuthority(required_tier="governed_write"),
-        governance_scope=("project:playbill",),
-        lifecycle=DocumentLifecycle(revision=1),
-    )
-    _accept_document(
-        instance,
-        shell=document,
-        proposal_name="add-work-items-document",
-        timestamp="2026-08-21T12:00:02.000000Z",
-    )
-    _retire(instance, owner, claim_id)
-    instance.refresh()
-    return instance, document, content
-
-
-def test_retired_source_window_is_served_without_retired_claim_cards_and_repair_clears(
-    tmp_path: Path,
-) -> None:
-    instance, document, content = retired_source_world(tmp_path)
-    observation = _workspace_observation(
-        instance,
-        content=content,
-        expect_no_claim_cards=True,
-    )
-
-    rows = tuple(
-        item
-        for item in _next(instance, observation).items
-        if item.reason == "retired_claim_source_stale"
-    )
-    assert len(rows) == 1
-    (row,) = rows
-    assert row.subject_identity == "document:work-items"
-    assert row.repair.operation == "playbill.document.propose"
-    assert row.repair.required_change == "revise_retired_claim_source_span"
-    replacement = b"status: replaced"
-    replacement_body = instance.store_document_body(replacement)
-    successor = document.model_copy(
-        update={
-            "body_digest": replacement_body.digest,
-            "predecessor_digest": document_digest(document).tagged,
-            "lifecycle": DocumentLifecycle(revision=2),
-        }
-    )
-    _accept_document(
-        instance,
-        shell=successor,
-        proposal_name="replace-retired-passage",
-        timestamp="2026-08-21T12:02:00.000000Z",
-    )
-    replacement_observation = _workspace_observation(instance, content=replacement)
-    assert not [
-        item
-        for item in _next(instance, replacement_observation).items
-        if item.reason == "retired_claim_source_stale"
+    assert retirement_context(instance, SOURCE_CLAIM_ID) is None
+    context = retirement_context(instance, COPY_CLAIM_ID)
+    assert context is not None
+    assert [relation.relation_kind for relation in context.shared_with_retired] == [
+        "same_version_span"
     ]
-
-
-def test_ambiguous_relocation_is_silent_instead_of_guessing(tmp_path: Path) -> None:
-    instance, _document, _content = retired_source_world(tmp_path)
-    ambiguous = _workspace_observation(instance, content=b"ready ready")
-
-    assert not [
-        item
-        for item in _next(instance, ambiguous).items
-        if item.reason == "retired_claim_source_stale"
-    ]
-
-
-def test_live_copy_association_suppresses_retired_source_staleness(tmp_path: Path) -> None:
-    instance, owner, _coordinator, _actor = copied_from_world(tmp_path)
-    content = b"status: ready"
-    body = instance.store_document_body(content)
-    document = DocumentShell(
-        identity="document:work-items",
-        document_kind="work-items",
-        title="Work items",
-        media_type="text/markdown",
-        body_digest=body.digest,
-        authority=DocumentAuthority(required_tier="governed_write"),
-        governance_scope=("project:playbill",),
-        lifecycle=DocumentLifecycle(revision=1),
-    )
-    _accept_document(
-        instance,
-        shell=document,
-        proposal_name="add-covered-work-items-document",
-        timestamp="2026-08-21T12:03:00.000000Z",
-    )
-
-    rows = _next(instance, _workspace_observation(instance, content=content)).items
-
-    assert not [item for item in rows if item.reason == "retired_claim_source_stale"]
-    assert len([item for item in rows if item.reason == "claim_cites_retired"]) == 1

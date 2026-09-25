@@ -58,6 +58,7 @@ from cruxible_core.service.evidence.claim_attestations import (
     ClaimAttestationRefusal,
     service_append_claim_attestation,
 )
+from tests.core_support._next_support import unfolded_next
 from tests.test_authoring.test_authoring_existing_capture import _activate, shared_capture_world
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
@@ -668,14 +669,14 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
         permitted_access_classes=("instance", "public"),
     )
 
-    legacy = service_playbill_next(
+    legacy = unfolded_next(
         instance,
         request=PlaybillNextRequestV1(
             evaluation_time=RECORDED_AT,
             access_profile=access,
         ),
     )
-    result = service_playbill_next(
+    result = unfolded_next(
         instance,
         request=PlaybillNextRequestV2(
             evaluation_time=RECORDED_AT,
@@ -686,7 +687,7 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
 
     assert result.tag == "playbill-next-result-v2"
     assert result.attestation_head_digest == appended.current_head
-    assert result == service_playbill_next(
+    assert result == unfolded_next(
         instance,
         request=PlaybillNextRequestV2(
             evaluation_time=RECORDED_AT,
@@ -706,6 +707,7 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
         "attestation_basis",
         "stance",
         "attesting_principal",
+        "attested_at",
         "current_at_append",
         "lineage_status",
     }
@@ -771,7 +773,7 @@ def _assert_successor_resolves_attestation_membership(
     def rows() -> tuple:  # type: ignore[no-untyped-def]
         return tuple(
             item
-            for item in service_playbill_next(
+            for item in unfolded_next(
                 instance,
                 request=PlaybillNextRequestV2(
                     evaluation_time=RECORDED_AT,
@@ -824,3 +826,57 @@ def test_copy_successor_keeps_membership_and_evidence_successor_resolves_it(
         stance="contradict",
         reason="claim_contradicting_evidence_available",
     )
+
+
+def test_new_evidence_rows_count_only_attestations_current_at_the_evaluation_time(
+    tmp_path: Path,
+) -> None:
+    from datetime import timedelta
+
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    capture = build_coordinator_self_source_capture(
+        store=instance.body_store(),
+        actor_id="owner",
+        claim_id=claim_id,
+        body=b"contradicting observation\n",
+        observed_at=RECORDED_AT,
+        accepted_coordinate=coordinate,
+    )
+    appended = service_append_claim_attestation(
+        instance,
+        request=_request(
+            instance,
+            owner,
+            claim_id,
+            tmp_path,
+            basis="new_capture",
+            stance="contradict",
+            captures=(capture.capture_digest,),
+            valid_until=RECORDED_AT + timedelta(hours=1),
+        ),
+        actor_id="owner",
+        recorded_at=RECORDED_AT,
+    )
+    access = CoverageAccessProfileV1(
+        profile_id="attestation-door-test",
+        permitted_access_classes=("instance", "public"),
+    )
+
+    def rows(at: datetime) -> tuple:  # type: ignore[type-arg]
+        result = service_playbill_next(
+            instance,
+            request=PlaybillNextRequestV2(
+                evaluation_time=at,
+                access_profile=access,
+                at_attestation_head_digest=appended.current_head,
+            ),
+        )
+        return tuple(
+            item for item in result.items if item.reason == "claim_contradicting_evidence_available"
+        )
+
+    assert len(rows(RECORDED_AT)) == 1
+    # Not yet attested, and past valid_until: neither asks for adjudication.
+    assert rows(RECORDED_AT - timedelta(minutes=1)) == ()
+    assert rows(RECORDED_AT + timedelta(hours=2)) == ()

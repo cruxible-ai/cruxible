@@ -82,7 +82,8 @@ class PlaybillProjectionAdvisoryPolicyV1(_StrictDeclaredBlockModel):
     """Per-artifact-kind switches for local projection advisories."""
 
     claim: bool = False
-    procedure: bool = True
+    # Off unless a kit or workspace asks for a complete Procedure catalog.
+    procedure: bool = False
 
 
 class PlaybillPresentationPolicyV2(_StrictDeclaredBlockModel):

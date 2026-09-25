@@ -1,0 +1,250 @@
+"""The environment the queue is read in is status beside the work, not work rows.
+
+Each facet names its condition and its repair while it needs attention, and
+returns to a healthy state once the repair is made.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from cruxible_client.contracts import ProviderLaneStatusV1
+from cruxible_client.contracts.declared_blocks import (
+    PlaybillPresentationPolicyV2,
+    PlaybillProjectionAdvisoryPolicyV1,
+)
+from cruxible_client.contracts.errors import PlaybillInstanceDecommissioned
+from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
+from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.runtime.instance import DESCRIPTOR_FILE
+from cruxible_core.service.discovery.next import (
+    PlaybillNextRequestV1,
+    PlaybillNextWorkspaceObservationV1,
+    service_playbill_next,
+)
+from tests.core_support._support import initialize_local
+from tests.test_integration.test_graph_v4_provider_closure import _accepted_procedure
+from tests.test_integration.test_next_closed_loop import (
+    EVALUATION_TIME,
+    _access,
+    _request,
+)
+
+_ENVIRONMENT_REASONS = {
+    "floor_missing",
+    "floor_stale",
+    "procedure_projection_missing",
+    "instance_decommissioned",
+    "provider_lane_unavailable",
+    "ledger_mirror_behind",
+}
+
+
+def _status(instance, request, **kwargs):  # type: ignore[no-untyped-def]
+    result = service_playbill_next(instance, request=request, **kwargs)
+    # The environment never reappears as work rows.
+    assert not {item.reason for item in result.items} & _ENVIRONMENT_REASONS
+    return result.status
+
+
+@pytest.mark.parametrize("reported", ["missing", "stale"])
+def test_a_missing_or_stale_floor_names_the_export_until_it_is_current(
+    tmp_path: Path, reported: str
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+
+    status = _status(
+        instance,
+        _request(instance, workspace=PlaybillNextWorkspaceObservationV1(floor_status=reported)),
+    )
+    assert status.floor.state == reported
+    assert status.floor.repair is not None
+    assert status.floor.repair.operation == "playbill.floor.export"
+    assert status.attention() == (("floor", status.floor),)
+
+    current = _status(
+        instance,
+        _request(
+            instance,
+            workspace=PlaybillNextWorkspaceObservationV1(
+                floor_status="current", installed_coordinate=coordinate
+            ),
+        ),
+    )
+    assert current.floor.state == "current" and current.attention() == ()
+
+
+def test_a_workspace_that_never_configured_a_floor_says_nothing_about_it(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+
+    status = _status(
+        instance,
+        _request(
+            instance, workspace=PlaybillNextWorkspaceObservationV1(floor_status="not_configured")
+        ),
+    )
+
+    assert status.floor.state == "not_configured" and status.attention() == ()
+
+
+def test_an_unavailable_provider_lane_is_status_until_it_recovers(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    request = _request(instance)
+
+    degraded = _status(
+        instance,
+        request,
+        provider_lane=ProviderLaneStatusV1(
+            state="unavailable",
+            code="provider_runtime_recovery_failed",
+            detail="operator recovery failed",
+        ),
+    )
+    assert degraded.provider_lane.state == "unavailable"
+    assert degraded.provider_lane.repair is not None
+    assert degraded.provider_lane.repair.operation == "hand_edit"
+
+    repaired = _status(
+        instance,
+        request,
+        provider_lane=ProviderLaneStatusV1(state="available", code=None, detail=None),
+    )
+    assert repaired.provider_lane.state == "available" and repaired.attention() == ()
+
+
+def _bare_mirror(instance, remote: Path) -> None:  # type: ignore[no-untyped-def]
+    subprocess.run(
+        [
+            "git",
+            "init",
+            "--bare",
+            "-q",
+            f"--object-format={instance.descriptor.git_object_format}",
+            str(remote),
+        ],
+        check=True,
+    )
+
+
+def test_a_mirror_whose_push_failed_is_behind_until_the_remote_is_restored(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    request = _request(instance)
+    assert _status(instance, request).ledger_mirror.state == "not_configured"
+    remote = tmp_path / "mirror.git"
+    _bare_mirror(instance, remote)
+    subprocess.run(["rm", "-rf", str(remote)], check=True)
+    assert instance.set_ledger_mirror(str(remote)).status == "behind"  # type: ignore[union-attr]
+
+    behind = _status(instance, request)
+    assert behind.ledger_mirror.state == "behind"
+    assert behind.ledger_mirror.repair is not None
+    assert behind.ledger_mirror.repair.target == str(remote)
+
+    _bare_mirror(instance, remote)
+    assert instance.publish_ledger_mirror().status == "current"  # type: ignore[union-attr]
+    restored = _status(instance, request)
+    assert restored.ledger_mirror.state == "current" and restored.attention() == ()
+
+
+def test_a_current_mirror_stays_current_for_an_earlier_requested_coordinate(
+    tmp_path: Path,
+) -> None:
+    from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
+
+    instance, owner = initialize_local(tmp_path)
+    earlier = _request(instance)
+    remote = tmp_path / "mirror.git"
+    _bare_mirror(instance, remote)
+    assert instance.set_ledger_mirror(str(remote)).status == "current"  # type: ignore[union-attr]
+    _seed_claim_surface(instance, owner)
+    assert instance.publish_ledger_mirror().status == "current"  # type: ignore[union-attr]
+    assert earlier.at is not None and earlier.at.git_oid != instance.accepted_coordinate().git_oid
+
+    # Mirror health is measured at the head, not at the coordinate read.
+    assert _status(instance, earlier).ledger_mirror.state == "current"
+
+
+def _catalog_observation(instance, *, advisory: bool) -> PlaybillNextWorkspaceObservationV1:  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.declared_blocks import (
+        PlaybillProjectionCoverageObservationV1,
+    )
+
+    public = ClientAcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
+    )
+    return PlaybillNextWorkspaceObservationV1(
+        presentation_policy=PlaybillPresentationPolicyV2(
+            projection_advisories=PlaybillProjectionAdvisoryPolicyV1(procedure=advisory)
+        ),
+        projection_coverage=PlaybillProjectionCoverageObservationV1(
+            coordinate=public, complete_kinds=("Procedure",), bindings=()
+        ),
+    )
+
+
+def test_a_procedure_catalog_is_checked_only_where_the_workspace_asks_for_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.indexes.typed_state import ProcedureInventoryRow, TypedStateReader
+
+    instance, _owner = initialize_local(tmp_path)
+    procedure = _accepted_procedure()
+    monkeypatch.setattr(
+        TypedStateReader,
+        "procedure_inventory",
+        lambda self: (
+            ProcedureInventoryRow(
+                procedure.procedure.identity.qualified, procedure.path, "live", False
+            ),
+        ),
+    )
+
+    def status(observation):  # type: ignore[no-untyped-def]
+        return _status(
+            instance,
+            PlaybillNextRequestV1(
+                evaluation_time=EVALUATION_TIME,
+                access_profile=_access(),
+                workspace_observation=observation,
+            ),
+        )
+
+    # Off by default: an uncatalogued Procedure is not a finding.
+    assert status(_catalog_observation(instance, advisory=False)).procedure_catalog.state == (
+        "not_required"
+    )
+    asked = status(_catalog_observation(instance, advisory=True)).procedure_catalog
+    assert asked.state == "missing"
+    assert asked.repair is not None
+    assert asked.repair.target == ".playbill/sources.yaml"
+    assert asked.repair.required_change == "add_procedure_projection_catalog_entries"
+
+
+def test_a_decommissioned_instance_blocks_in_the_status_header(tmp_path: Path) -> None:
+    root = tmp_path / "decommissioned"
+    root.mkdir()
+    instance, _owner = initialize_local(root)
+    request = _request(instance)
+    active = _status(instance, request)
+    assert not active.blocking and active.instance.state == "active"
+
+    instance.decommission(reason="superseded by a fresh host", decommissioned_by="owner")
+
+    status = _status(instance, request)
+    assert status.blocking and status.instance.state == "decommissioned"
+    assert status.instance.repair is not None
+    assert status.instance.repair.target == DESCRIPTOR_FILE
+    assert status.instance.repair.required_change == (
+        "allocate_a_new_instance_with_playbill_host_create_or_archive_this_directory_yourself"
+    )
+    # Terminal: nothing inside the instance clears it.
+    with pytest.raises(PlaybillInstanceDecommissioned):
+        instance.decommission(reason="a second reason", decommissioned_by="owner")

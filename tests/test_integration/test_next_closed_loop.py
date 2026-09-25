@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,7 +10,6 @@ from typing import get_args
 
 import pytest
 
-from cruxible_client.contracts import PLAYBILL_HAND_EDIT_NEXT_REASONS, ProviderLaneStatusV1
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
@@ -41,10 +39,6 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
-from cruxible_client.contracts.declared_blocks import (
-    PlaybillPresentationPolicyV2,
-    PlaybillProjectionCoverageObservationV1,
-)
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -52,12 +46,10 @@ from cruxible_client.contracts.documents import (
     document_digest,
     render_document,
 )
-from cruxible_client.contracts.errors import PlaybillInstanceDecommissioned
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
-from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.subjects import render_subject, subject_path
@@ -79,7 +71,6 @@ from cruxible_core.coverage.indexes import WorkingOccurrenceV1
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.proposals.settlement import ChangeActorBinding
-from cruxible_core.runtime.instance import DESCRIPTOR_FILE
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_propose_playbill_document,
@@ -90,7 +81,6 @@ from cruxible_core.service.claims.claims import (
     service_list_playbill_claims,
 )
 from cruxible_core.service.discovery.next import (
-    HAND_EDIT_NEXT_REASONS,
     NextReason,
     PlaybillNextDriftObservationV1,
     PlaybillNextRequestV1,
@@ -123,7 +113,6 @@ from tests.core_support._support import client_material, initialize_local
 from tests.test_authoring import test_authoring_insertions_v2 as publication_v2
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type
-from tests.test_evidence import test_citation_retirement_relations as citation_retirement
 from tests.test_evidence.test_evidence_freshness import _activate as _activate_migration
 from tests.test_indexes.test_projection_next import (
     _claim_backing,
@@ -134,7 +123,6 @@ from tests.test_indexes.test_projection_next import (
 from tests.test_indexes.test_projection_next import (
     _request as _projection_request,
 )
-from tests.test_integration.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_ledger.test_activation import _sign
 from tests.test_query.test_dependency_impact import (
     DERIVED_INDEX,
@@ -161,8 +149,6 @@ EXPECTED_OPERATIONS = {
     "citation_drifted": "playbill.authoring.bind",
     "citation_source_unobserved": "playbill.authoring.bind",
     "evidence_expiring": "playbill.authoring.bind",
-    "floor_missing": "playbill.floor.export",
-    "floor_stale": "playbill.floor.export",
     "floor_invalid": "playbill.floor.export",
     "projection_dirty": "playbill.block.repin",
     # Nothing renders a block, so no sync converges one: a drifted block is
@@ -179,15 +165,7 @@ EXPECTED_OPERATIONS = {
     "claim_new_evidence_supporting": "playbill.authoring.create",
     "claim_new_evidence_unreviewed": "playbill.authoring.create",
     "document_modified": "playbill.document.propose",
-    "claim_cites_retired": "playbill.claim.retire",
-    "retired_claim_source_stale": "playbill.document.propose",
     "unregistered_projection_block": "playbill.block.repin",
-    "provider_lane_unavailable": "hand_edit",
-    "procedure_projection_missing": "hand_edit",
-    "instance_decommissioned": "hand_edit",
-    # The daemon already retried: it pushes after every write. A mirror still
-    # behind is behind for a reason off this host.
-    "ledger_mirror_behind": "hand_edit",
     # A stopped arm is resumed by rearming under authority that still holds.
     "line_stalled": "playbill.line.arm",
 }
@@ -944,12 +922,7 @@ def _citation_source_unobserved(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
 def _floor_case(root: Path, reason: str) -> None:
     instance, _owner = initialize_local(root)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    if reason == "floor_missing":
-        before_workspace = PlaybillNextWorkspaceObservationV1(floor_status="missing")
-    elif reason == "floor_invalid":
-        before_workspace = PlaybillNextWorkspaceObservationV1(floor_status="invalid")
-    else:
-        before_workspace = PlaybillNextWorkspaceObservationV1(floor_status="stale")
+    before_workspace = PlaybillNextWorkspaceObservationV1(floor_status="invalid")
     row = _row(instance, reason, _request(instance, workspace=before_workspace))
     assert row.repair.operation == EXPECTED_OPERATIONS[reason]
 
@@ -958,14 +931,6 @@ def _floor_case(root: Path, reason: str) -> None:
         installed_coordinate=coordinate,
     )
     _assert_gone(instance, reason, _request(instance, workspace=current))
-
-
-def _floor_missing(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    _floor_case(root, "floor_missing")
-
-
-def _floor_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    _floor_case(root, "floor_stale")
 
 
 def _floor_invalid(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1267,87 +1232,8 @@ def _claim_attestation_door(
     )
 
 
-def _claim_cites_retired(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    citation_retirement.test_shared_capture_emits_one_claim_cites_retired_row_and_retirement_clears_it(
-        root
-    )
-
-
-def _retired_claim_source_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    citation_retirement.test_retired_source_window_is_served_without_retired_claim_cards_and_repair_clears(
-        root
-    )
-
-
 def _unregistered_projection_block(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     publication_v2.test_prepared_publication_can_be_abandoned_without_observing_the_source(root)
-
-
-def _provider_lane_unavailable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    instance, _owner = initialize_local(root)
-    request = _request(instance)
-    degraded = service_playbill_next(
-        instance,
-        request=request,
-        provider_lane=ProviderLaneStatusV1(
-            state="unavailable",
-            code="provider_runtime_recovery_failed",
-            detail="operator recovery failed",
-        ),
-    )
-    row = next(item for item in degraded.items if item.reason == "provider_lane_unavailable")
-    assert row.repair.operation == "hand_edit"
-    assert row.repair.command is None
-    repaired = service_playbill_next(
-        instance,
-        request=request,
-        provider_lane=ProviderLaneStatusV1(state="available", code=None, detail=None),
-    )
-    assert all(item.reason != "provider_lane_unavailable" for item in repaired.items)
-
-
-def _ledger_mirror_behind(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    instance, _owner = initialize_local(root)
-    request = _request(instance)
-    remote = root / "mirror.git"
-    subprocess.run(
-        [
-            "git",
-            "init",
-            "--bare",
-            "-q",
-            f"--object-format={instance.descriptor.git_object_format}",
-            str(remote),
-        ],
-        check=True,
-    )
-    # Bind a remote that is not there. Binding publishes, so the failure is
-    # recorded before any governed write happens at all.
-    subprocess.run(["rm", "-rf", str(remote)], check=True)
-    state = instance.set_ledger_mirror(str(remote))
-    assert state is not None and state.status == "behind"
-
-    row = _row(instance, "ledger_mirror_behind", request)
-    assert row.severity == "warning"
-    assert row.repair.operation == "hand_edit"
-    assert row.repair.command is None
-    assert row.repair.target == str(remote)
-
-    # The named repair is off this host: restore the remote. Nothing else runs.
-    subprocess.run(
-        [
-            "git",
-            "init",
-            "--bare",
-            "-q",
-            f"--object-format={instance.descriptor.git_object_format}",
-            str(remote),
-        ],
-        check=True,
-    )
-    republished = instance.publish_ledger_mirror()
-    assert republished is not None and republished.status == "current"
-    _assert_gone(instance, "ledger_mirror_behind", request)
 
 
 def _line_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1391,86 +1277,6 @@ def _line_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "line_stalled", request)
 
 
-def _procedure_projection_missing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    instance, _owner = initialize_local(root)
-    coordinate = instance.accepted_coordinate()
-    procedure = _accepted_procedure()
-    from cruxible_core.indexes.typed_state import ProcedureInventoryRow, TypedStateReader
-
-    def with_procedure(self):
-        return (
-            ProcedureInventoryRow(
-                procedure.procedure.identity.qualified, procedure.path, "live", False
-            ),
-        )
-
-    monkeypatch.setattr(TypedStateReader, "procedure_inventory", with_procedure)
-    public = ClientAcceptedCoordinate.model_validate(
-        AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
-    )
-    result = service_playbill_next(
-        instance,
-        request=PlaybillNextRequestV1(
-            evaluation_time=EVALUATION_TIME,
-            access_profile=_access(),
-            workspace_observation=PlaybillNextWorkspaceObservationV1(
-                presentation_policy=PlaybillPresentationPolicyV2(),
-                projection_coverage=PlaybillProjectionCoverageObservationV1(
-                    coordinate=public,
-                    complete_kinds=("Procedure",),
-                    bindings=(),
-                ),
-            ),
-        ),
-    )
-    row = next(item for item in result.items if item.reason == "procedure_projection_missing")
-    assert row.repair.operation == "hand_edit"
-    assert row.repair.command is None
-    assert row.repair.target == ".playbill/sources.yaml"
-    assert row.repair.required_change == "add_procedure_projection_catalog_entries"
-
-
-def _instance_decommissioned(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ops hotfix 1 (card 71): the terminal row of the hand-edit class.
-
-    Nothing inside a decommissioned instance retracts the state -- a second
-    `decommission` is refused rather than restamped and the record survives every
-    reopen -- so no served command and no edit here can clear this row. The named
-    repair is therefore to allocate a fresh instance (or archive this directory by
-    hand), and the effective close is observed on the instance the work moves to.
-    """
-
-    terminal_root = root / "decommissioned"
-    terminal_root.mkdir()
-    instance, _owner = initialize_local(terminal_root)
-    request = _request(instance)
-    _assert_gone(instance, "instance_decommissioned", request)
-
-    instance.decommission(reason="superseded by a fresh host", decommissioned_by="owner")
-
-    row = _row(instance, "instance_decommissioned", request)
-    assert row.severity == "blocking"
-    assert row.repair.operation == "hand_edit"
-    assert row.repair.command is None
-    assert row.repair.target == DESCRIPTOR_FILE
-    assert row.repair.required_change == (
-        "allocate_a_new_instance_with_playbill_host_create_or_archive_this_directory_yourself"
-    )
-
-    # Terminal: the row does not clear in place, and the state it reports cannot
-    # be re-stamped away.
-    with pytest.raises(PlaybillInstanceDecommissioned):
-        instance.decommission(reason="a second reason", decommissioned_by="owner")
-    assert _row(instance, "instance_decommissioned", request).detail == row.detail
-
-    # Driving the named repair: a freshly allocated instance serves a queue that
-    # carries no terminal row.
-    replacement_root = root / "replacement"
-    replacement_root.mkdir()
-    replacement, _replacement_owner = initialize_local(replacement_root)
-    _assert_gone(replacement, "instance_decommissioned", _request(replacement))
-
-
 CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("claim_conflicted", None): _claim_conflicted,
     ("claim_uncovered", None): _claim_uncovered,
@@ -1480,8 +1286,6 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("citation_drifted", "ambiguous"): _citation_drifted_ambiguous,
     ("citation_source_unobserved", None): _citation_source_unobserved,
     ("evidence_expiring", None): _evidence_expiring,
-    ("floor_missing", None): _floor_missing,
-    ("floor_stale", None): _floor_stale,
     ("floor_invalid", None): _floor_invalid,
     ("projection_dirty", None): _projection_dirty,
     ("projection_backing_stale", "revised"): _projection_backing_stale_revised,
@@ -1512,13 +1316,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
         reason="claim_new_evidence_unreviewed",
     ),
     ("document_modified", None): _document_modified,
-    ("claim_cites_retired", None): _claim_cites_retired,
-    ("retired_claim_source_stale", None): _retired_claim_source_stale,
     ("unregistered_projection_block", None): _unregistered_projection_block,
-    ("provider_lane_unavailable", None): _provider_lane_unavailable,
-    ("procedure_projection_missing", None): _procedure_projection_missing,
-    ("instance_decommissioned", None): _instance_decommissioned,
-    ("ledger_mirror_behind", None): _ledger_mirror_behind,
     ("line_stalled", None): _line_stalled,
 }
 
@@ -1544,10 +1342,6 @@ def test_every_next_reason_has_an_effective_named_repair(
         if reason == "projection_backing_stale"
     } == {"revised", "retired", "exhausted"}
     assert set(EXPECTED_OPERATIONS) == reasons
-    assert HAND_EDIT_NEXT_REASONS == PLAYBILL_HAND_EDIT_NEXT_REASONS
-    assert {
-        reason for reason, operation in EXPECTED_OPERATIONS.items() if operation == "hand_edit"
-    } == set(HAND_EDIT_NEXT_REASONS)
 
     case_root = tmp_path / "-".join(part for part in key if part is not None)
     case_root.mkdir()

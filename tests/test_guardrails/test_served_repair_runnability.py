@@ -17,7 +17,6 @@ from cruxible_core.service.refusals import (
     CLOSED_SERVED_REFUSAL_VOCABULARIES,
     RUNNABLE_REFUSAL_REPAIRS,
     UNDECLARED_REFUSAL_CODE_COUNT,
-    hand_edit_next_reasons,
     repair_for_refusal,
     undeclared_refusal_codes,
 )
@@ -112,15 +111,6 @@ def test_undeclared_repair_debt_is_pinned_and_can_only_shrink() -> None:
         repair = repair_for_refusal(code)
         assert isinstance(repair, HandEditRepairV1)
         assert repair.hand_edit.required_change == UNDECLARED_HAND_EDIT_CHANGE
-
-
-def test_hand_edit_next_membership_is_client_owned_and_positive() -> None:
-    assert hand_edit_next_reasons() == {
-        "instance_decommissioned",
-        "procedure_projection_missing",
-        "provider_lane_unavailable",
-        "ledger_mirror_behind",
-    }
 
 
 def test_unregistered_free_string_is_not_promoted_to_authority() -> None:

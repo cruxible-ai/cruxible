@@ -432,8 +432,8 @@ budget report a publication failure rather than splitting the atomic update.
 
 A push that fails never refuses the write that preceded it. The ledger on disk
 is the record and the remote is a copy, so a network that is down, a credential
-that expired or a remote that was deleted becomes the `ledger_mirror_behind`
-warning row in `playbill next`, carrying the URL and Git's own reason.
+that expired or a remote that was deleted puts the `ledger_mirror` facet of
+`playbill next`'s status at `behind`, carrying the URL and Git's own reason.
 
 Remote discovery and push each have a 30-second deadline; one attempt may
 therefore take up to roughly 60 seconds. These commands run in a background
@@ -584,6 +584,7 @@ the other's law.
 ~~~text
 cruxible playbill claim retire IDENTITY REQUEST_FILE
 cruxible playbill claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
+  [--valid-until TS]
 cruxible playbill claim list [--subject PATH] [--predicate P] [--include-retired]
 cruxible playbill claim get IDENTITY [--brief]
 cruxible playbill claim history IDENTITY
@@ -595,7 +596,21 @@ direct v1 proposal commands are not a second writer. `retire` preflights or subm
 attributed retirement over the complete dependent Claim closure; the request
 must name every dependent reason and never receives a daemon-synthesized end
 time. explain returns the verdict together with the law evidence and source
-handles it was computed from.
+handles it was computed from. When the Claim shares anything with a retired
+Claim, explain also carries a `retirement_context` section, which the CLI prints
+beneath the verdict. It is review context, not queue work, so `next` does not
+report it. It lists each retired Claim the Claim shares a capture, an exact
+external source, or a same-version cited span with, with the relation kind, the
+shared capture, and the retired Claim and citation witnesses. It is read from
+accepted state alone, like the rest of the explanation.
+A real dependency on a retired Claim stays a `claim_dependency_stale` row in
+`next`.
+
+`attest` signs that the caller examined the current exact Claim. `--unsure` is
+how an agent leaves contested state contested instead of forcing a judgment it
+is not confident in: it holds the Claim's rows in `next` (see below) until what
+the agent examined changes. `--valid-until` ends the attestation, and with it
+the hold.
 `claim get --brief` renders the typed subject, predicate, object, role,
 qualifier, flat lifecycle state, and predecessor digest. JSON returns the same
 shape in the top-level `statement` field alongside the canonical envelope.
@@ -1257,11 +1272,31 @@ Without actual source or drift observations, `workspace_sources` remains explici
 unobserved. Procedure-catalog coverage is accounted for separately as
 `workspace_projections` and cannot imply that workspace sources were scanned.
 An entry with `kind: procedure`, a `Procedure` identity, and a workspace-relative
-`locator` declares projection intent for that accepted Procedure. A complete,
-coordinate-bound catalog observation produces one nonblocking warning listing all
-live Procedures without such entries; the repair carries their exact hand-edit
-entry shapes until a projection-authoring command exists.
-Empty output means only that no work exists in the explicitly observed domains.
+`locator` declares projection intent for that accepted Procedure. Where the
+workspace turns on the Procedure projection advisory (off by default), a
+complete, coordinate-bound catalog observation reports every live Procedure
+without such an entry in the `procedure_catalog` status facet; the repair
+carries their exact hand-edit entry shapes.
+
+The result's `status` reports the environment the queue was read in, beside the
+work rather than as rows: `instance` (active or decommissioned; decommissioned
+sets `blocking`), `floor`, `ledger_mirror`, `provider_lane`, and
+`procedure_catalog`. Each facet carries a `state`, and a `repair` while it needs
+attention. The CLI prints facets that need attention before the rows.
+
+A current `unsure` examined attestation holds a row, and `status.held` counts
+the rows held. A hold lasts only while its basis is unchanged:
+
+| Row | Held while |
+|---|---|
+| `claim_conflicted` | every contender carries a hold made by someone whose accepted coordinate already had every contender's current version |
+| `claim_contradicting_evidence_available`, `claim_new_evidence_unreviewed` | the hold was attested after that evidence |
+| `claim_dependency_stale` | the hold's coordinate already had each upstream Claim's current version |
+| `claim_stale_evidence`, `claim_uncovered` | the hold was attested after the last expiry, until its `valid_until`, else the ClaimType's `unsure_hold_for`, else 30 days |
+
+A revised Claim, a later support or contradict from the same principal, or a
+lapsed validity window ends the hold, and the row returns.
+Empty `items` means only that no work exists in the explicitly observed domains.
 Conflicting values in the same claim slot require revisions into distinct
 qualifiers; when a shared value field such as `topic` separates the contenders,
 the repair identifies that field.
@@ -1381,7 +1416,7 @@ in `coverage-manifest.json`, enumerated in the root manifest like every other
 floor file. `floor_output.path` is obsolete and refused; a v2 coverage config
 enables refresh with only the fixed profile. `floor export` records that profile
 when the config lacks it, so the following `next` observation no longer reports
-`floor_missing` after a successful export:
+the floor as `missing` after a successful export:
 
 ~~~json
 {

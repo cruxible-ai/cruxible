@@ -131,18 +131,17 @@ def test_a_decommissioned_instance_refuses_writes_typed_and_keeps_serving_reads(
     assert orientation is not None
     assert orientation.decommissioned is True
 
-    rows = service_playbill_next(
+    status = service_playbill_next(
         instance,
         request=PlaybillNextRequestV1(
             evaluation_time=EVALUATION_TIME,
             access_profile=CoverageAccessProfileV1(profile_id="decommission-test"),
         ),
-    ).items
-    terminal = [item for item in rows if item.reason == "instance_decommissioned"]
-    assert len(terminal) == 1
-    assert terminal[0].severity == "blocking"
-    assert terminal[0].detail["reason"] == "superseded by a fresh host"
-    assert terminal[0].detail["decommissioned_at"] == record.decommissioned_at
+    ).status
+    assert status.blocking
+    assert status.instance.state == "decommissioned"
+    assert status.instance.detail["reason"] == "superseded by a fresh host"
+    assert status.instance.detail["decommissioned_at"] == record.decommissioned_at
 
 
 def test_the_terminal_state_survives_a_restart_and_deletes_nothing(tmp_path: Path) -> None:

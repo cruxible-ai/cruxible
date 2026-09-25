@@ -2553,6 +2553,14 @@ def recover_claim_attestations() -> None:
 @click.option("--contradict", is_flag=True)
 @click.option("--unsure", is_flag=True)
 @click.option("--note")
+@click.option(
+    "--valid-until",
+    default=None,
+    help=(
+        "ISO-8601 end of this attestation. An --unsure hold on stale or uncovered "
+        "evidence otherwise lapses after the ClaimType's unsure_hold_for (default 30 days)."
+    ),
+)
 @json_option
 @handle_errors
 def attest_claim(
@@ -2561,9 +2569,14 @@ def attest_claim(
     contradict: bool,
     unsure: bool,
     note: str | None,
+    valid_until: str | None,
     output_json: bool,
 ) -> None:
-    """Sign that this caller examined the current exact Claim."""
+    """Sign that this caller examined the current exact Claim.
+
+    --unsure holds the Claim's contested `next` rows until what you examined
+    changes, instead of forcing a judgment you are not confident in.
+    """
 
     selected = tuple(
         value
@@ -2592,6 +2605,11 @@ def attest_claim(
                 attestation_basis="examined_existing",
                 stance=cast(ClaimStance, stance),
                 attested_at=datetime.now(UTC),
+                valid_until=(
+                    None
+                    if valid_until is None
+                    else datetime.fromisoformat(valid_until.replace("Z", "+00:00"))
+                ),
                 note=note,
             ),
             signer=signer,
@@ -3256,6 +3274,21 @@ def explain_claim(identity: str, evaluation_time: str | None, output_json: bool)
         f"at {result.evaluation_time}"
     )
     _emit_admission_accounts(result.admission_accounts)
+    if result.retirement_context is not None:
+        _emit_retirement_context(result.retirement_context)
+
+
+def _emit_retirement_context(context: Mapping[str, Any]) -> None:
+    """Print what the Claim shares with retired Claims: review context, not work."""
+
+    click.echo("Retirement context:")
+    for relation in context.get("shared_with_retired", ()):
+        click.echo(
+            f"  shares {relation['relation_kind'].replace('_', ' ')} "
+            f"(citation {relation['live_citation_id']}) with "
+            f"{relation['retired_claim_count']} retired Claim(s): "
+            + ", ".join(relation["retired_claim_witnesses"])
+        )
 
 
 @playbill_group.group("block")
@@ -4239,6 +4272,7 @@ def next_work(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
+    _echo_next_status(result.status)
     if not result.items:
         click.echo(
             "No changes since the requested queue digest."
@@ -4261,6 +4295,31 @@ def next_work(
         )
     if result.unobserved_domains:
         click.echo("Unobserved: " + ", ".join(result.unobserved_domains))
+
+
+#: Facet states the status header shows; healthy and unobserved facets stay quiet.
+_NEXT_STATUS_ATTENTION = {
+    "instance": {"decommissioned"},
+    "floor": {"missing", "stale"},
+    "ledger_mirror": {"behind", "never_published"},
+    "provider_lane": {"unavailable"},
+    "procedure_catalog": {"missing"},
+}
+
+
+def _echo_next_status(status: dict[str, Any]) -> None:
+    """Print the environment facets that need attention above the work rows."""
+
+    if status.get("blocking"):
+        click.echo("BLOCKING: this instance refuses every write.")
+    for facet, states in _NEXT_STATUS_ATTENTION.items():
+        health = status.get(facet) or {}
+        if health.get("state") not in states:
+            continue
+        repair = health.get("repair") or {}
+        hint = repair.get("command") or repair.get("required_change")
+        label = facet.replace("_", " ")
+        click.echo(f"Status: {label} {health['state']}" + (f"  next={hint}" if hint else ""))
 
 
 @playbill_group.group("curation")

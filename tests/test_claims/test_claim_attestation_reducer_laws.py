@@ -27,9 +27,9 @@ from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV2,
     _attestation_claim_lineage,
     _AttestationLineageArtifact,
-    service_playbill_next,
 )
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
+from tests.core_support._next_support import unfolded_next
 from tests.test_claims.test_claim_attestation_service import RECORDED_AT, _request
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
@@ -90,7 +90,7 @@ def _door_rows(instance):  # type: ignore[no-untyped-def]
     }
     return tuple(
         item
-        for item in service_playbill_next(
+        for item in unfolded_next(
             instance,
             request=PlaybillNextRequestV2(
                 evaluation_time=RECORDED_AT,

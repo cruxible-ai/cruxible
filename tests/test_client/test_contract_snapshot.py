@@ -282,7 +282,6 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "LineArmStopReasonV1",
         "ApprovalPolicyMode",
         "PlaybillAuthoringExampleName",
-        "PlaybillHandEditNextReason",
         "PlaybillHostCompatibilityReasonCodeV1",
         "PlaybillHostCompatibilityV1",
         "PlaybillHostStatus",

@@ -97,8 +97,6 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "citation_drifted",
         "citation_source_unobserved",
         "evidence_expiring",
-        "floor_missing",
-        "floor_stale",
         "floor_invalid",
         "projection_dirty",
         "projection_backing_stale",
@@ -112,19 +110,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "claim_new_evidence_supporting",
         "claim_new_evidence_unreviewed",
         "document_modified",
-        "claim_cites_retired",
-        "retired_claim_source_stale",
         "unregistered_projection_block",
-        "provider_lane_unavailable",
-        "procedure_projection_missing",
-        # Ops hotfix 1 (card 71) ratified the terminal decommission row: a
-        # decommissioned instance answers reads and refuses every write, and
-        # this reason is how the queue says so.
-        "instance_decommissioned",
-        # The ledger publishes itself to a remote after every write. That remote
-        # is a copy and never a condition of a write, so a push that failed is
-        # not a refusal -- it is this row, and nothing else would say it.
-        "ledger_mirror_behind",
         # An armed Line that stopped by itself, or stopped draining its own work.
         "line_stalled",
     }

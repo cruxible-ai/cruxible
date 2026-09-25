@@ -249,8 +249,6 @@ PlaybillNextReason: TypeAlias = Literal[
     "citation_drifted",
     "citation_source_unobserved",
     "evidence_expiring",
-    "floor_missing",
-    "floor_stale",
     "floor_invalid",
     "projection_dirty",
     "projection_backing_stale",
@@ -260,34 +258,10 @@ PlaybillNextReason: TypeAlias = Literal[
     "claim_new_evidence_supporting",
     "claim_new_evidence_unreviewed",
     "document_modified",
-    "claim_cites_retired",
-    "retired_claim_source_stale",
     "unregistered_projection_block",
     "projection_marker_invalid",
-    "provider_lane_unavailable",
-    "procedure_projection_missing",
-    "instance_decommissioned",
-    "ledger_mirror_behind",
     "line_stalled",
 ]
-PlaybillHandEditNextReason: TypeAlias = Literal[
-    "procedure_projection_missing",
-    "provider_lane_unavailable",
-    "instance_decommissioned",
-    # The daemon has already retried by construction: it pushes after every
-    # write, so a mirror that is still behind is behind for a reason no verb
-    # can clear -- a remote that moved, a credential that expired, a network
-    # that is down. What repairs it is off this host.
-    "ledger_mirror_behind",
-]
-PLAYBILL_HAND_EDIT_NEXT_REASONS: frozenset[PlaybillHandEditNextReason] = frozenset(
-    {
-        "procedure_projection_missing",
-        "provider_lane_unavailable",
-        "instance_decommissioned",
-        "ledger_mirror_behind",
-    }
-)
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
     "provider_process_lease_invalid",
@@ -1216,6 +1190,11 @@ class PlaybillClaimExplanationV2(BaseModel):
     coverage: dict[str, Any]
     admission_evaluation_time: str
     admission_accounts: list[PlaybillCaptureAdmissionAccount]
+    # What this Claim shares with retired Claims; absent when it shares nothing.
+    retirement_context: dict[str, Any] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class PlaybillClaimExplanationV3(BaseModel):
@@ -1234,6 +1213,10 @@ class PlaybillClaimExplanationV3(BaseModel):
     admission_evaluation_time: str
     admission_accounts: list[PlaybillCaptureAdmissionAccount]
     freshness: list[dict[str, Any]]
+    retirement_context: dict[str, Any] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class PlaybillCandidateStatus(BaseModel):
@@ -1613,6 +1596,9 @@ class PlaybillNextResult(BaseModel):
             "workspace_projections",
         ]
     ]
+    # The environment the queue was read in: instance, floor, ledger mirror,
+    # provider lane and Procedure catalog health, beside the work items.
+    status: dict[str, Any]
     items: list[dict[str, Any]]
     result_digest: str
     # Set only on a delta. Items are the changed rows while result_digest names

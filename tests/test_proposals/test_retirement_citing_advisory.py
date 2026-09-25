@@ -1,20 +1,21 @@
 """Historical preflight silence and accepted citation-relation consequences.
 
 The retirement preflight advisory stays withdrawn: retiring a Claim never
-enumerates downstream consequences in the governed operation. The stateless
-queue instead uses explicit shared-Capture and same-source-version selector
-relations. It remains silent when all it knows is equal bytes from unrelated
-sources; it does not need a workspace observation for accepted same-version
-selector overlap.
+enumerates downstream consequences in the governed operation. A Claim's
+explanation instead reports explicit shared-Capture and same-source-version
+selector relations as review context. It remains silent when all it knows is
+equal bytes from unrelated sources; it does not need a workspace observation
+for accepted same-version selector overlap.
 
 What is kept here is the evidence for that ruling, not the withdrawn machinery:
 the historical self-source refusal, the reachable copied-from world, and the
-pins that keep the governed operation silent while the queue reports the
+pins that keep the governed operation silent while the explanation reports the
 accepted relation.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from cruxible_client.contracts.claims import (
@@ -249,38 +250,22 @@ def test_retiring_a_claim_says_nothing_about_who_else_read_the_same_bytes(
     assert preflight.citing_claims == ()
 
 
-def test_same_version_selector_relation_reports_the_claim_that_copied_a_retired_one(
+def test_same_version_selector_relation_explains_the_claim_that_copied_a_retired_one(
     tmp_path: Path,
 ) -> None:
     """Accepted same-version spans are sufficient without a workspace observation."""
-    from cruxible_core.coverage.contracts import CoverageAccessProfileV1
-    from cruxible_core.service.discovery.next import (
-        PlaybillNextRequestV1,
-        service_playbill_next,
-    )
+    from cruxible_core.service.claims.claims import service_explain_playbill_claim
 
     instance, _owner, _coordinator, _actor = copied_from_world(tmp_path)
 
-    result = service_playbill_next(
+    explanation = service_explain_playbill_claim(
         instance,
-        request=PlaybillNextRequestV1(
-            evaluation_time="2026-08-20T00:00:00.000000Z",
-            access_profile=CoverageAccessProfileV1(
-                profile_id="withdrawn-stranded-citation",
-                permitted_access_classes=("instance", "public"),
-            ),
-        ),
+        identity=COPY_CLAIM_ID,
+        evaluation_time=datetime(2026, 8, 20, tzinfo=UTC),
     )
 
-    rows = tuple(item for item in result.items if item.reason == "claim_cites_retired")
-    assert len(rows) == 1
-    assert rows[0].subject_identity == f"Claim:{COPY_CLAIM_ID}"
-    assert rows[0].detail["relation_kind"] == "same_version_span"
-
-
-def test_the_relation_reason_remains_in_the_closed_wire_vocabulary() -> None:
-    from typing import get_args
-
-    from cruxible_core.service.discovery.next import NextReason
-
-    assert "claim_cites_retired" in get_args(NextReason)
+    context = explanation.retirement_context
+    assert context is not None
+    (relation,) = context.shared_with_retired
+    assert relation.relation_kind == "same_version_span"
+    assert relation.retired_claim_witnesses == (f"Claim:{SOURCE_CLAIM_ID}",)

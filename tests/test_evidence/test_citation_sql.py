@@ -546,67 +546,13 @@ def test_exact_external_group_retains_original_producer_binding_exclusion(world)
     }
 
 
-def _next_relation_findings(world, reader):
+def _retirement_relations(reader, claim_identity):  # type: ignore[no-untyped-def]
     from contextlib import nullcontext
     from types import SimpleNamespace
 
-    from cruxible_core.compiler.compiler import P2_B5_COMPILER
-    from cruxible_core.coverage.contracts import (
-        CoverageAccessProfileV1,
-        CoverageCommitmentScanProofV1,
-        CoverageLineOverlayV1,
-        LogicalSourceIdentityV1,
-        occurrence_identity_digest,
-    )
-    from cruxible_core.coverage.indexes import WorkingOccurrenceV1
-    from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
-    from cruxible_core.service.discovery.next import (
-        PlaybillNextSourceObservationV4,
-        PlaybillNextWorkspaceObservationV1,
-        _citation_relation_items,
-    )
+    from cruxible_core.service.claims.retirement_context import claim_retirement_context
 
-    source = LogicalSourceIdentityV1(plane="external", identity="source-0")
-    occurrence = WorkingOccurrenceV1(
-        source=source,
-        observed_commitment_digest=DIGEST,
-        byte_length=10,
-        ordinal=0,
-        identity_digest=occurrence_identity_digest(
-            source=source,
-            observed_commitment_digest=DIGEST,
-            ordinal=0,
-        ),
-        line_overlay=CoverageLineOverlayV1(start_byte=0, end_byte=10, start_line=1, end_line=1),
-    )
-    observation = PlaybillNextSourceObservationV4(
-        source_id="source-0",
-        observed_source_digest=DIGEST,
-        byte_length=20,
-        marker_summaries=(),
-        occurrences=(occurrence,),
-        commitment_scan_proofs=(
-            CoverageCommitmentScanProofV1(
-                source=source,
-                commitment_digest=DIGEST,
-                byte_length=10,
-            ),
-        ),
-        citation_window_observations=(),
-        scan_notes=(),
-        marker_notes=(),
-    )
-    coordinate = AcceptedProjectionCoordinate(
-        instance_id="citation-test",
-        repository_path="/fixture/ledger.git",
-        git_object_format="sha1",
-        git_oid=AT.git_oid,
-        semantic_root=AT.semantic_root,
-        generation_root=AT.generation_root,
-        compiler=P2_B5_COMPILER,
-    )
-
-    def refuse_tree_read(*_args):
+    def refuse_tree_read(*_args):  # type: ignore[no-untyped-def]
         pytest.fail("citation relation service enumerated the accepted tree")
 
     instance = SimpleNamespace(
@@ -614,31 +560,29 @@ def _next_relation_findings(world, reader):
         tree_at=refuse_tree_read,
         bind_accepted_projection=lambda _coordinate: nullcontext(SimpleNamespace(citations=reader)),
     )
-    return _citation_relation_items(
-        instance,
-        coordinate=coordinate,
-        access_profile=CoverageAccessProfileV1(
-            profile_id="test",
-            permitted_access_classes=("instance",),
-        ),
-        observation=PlaybillNextWorkspaceObservationV1(source_observations=(observation,)),
+    context = claim_retirement_context(
+        instance,  # type: ignore[arg-type]
+        coordinate=AT,  # type: ignore[arg-type]
+        claim_identity=claim_identity,
     )
+    return () if context is None else context.shared_with_retired
 
 
-def test_next_relation_findings_use_sql_without_accepted_tree_reads(world):
+def test_retirement_relations_use_sql_without_accepted_tree_reads(world):
     digest = world.capture(1)
     live = world.claim(1, [digest])
     retired = world.claim(2, [digest], retired=True)
     world.publish(live, retired)
-    findings = _next_relation_findings(world, world.reader)
-    assert len(findings) == 1
-    assert findings[0].detail["relation_kind"] == "capture"
-    assert findings[0].subject_identity == live.identity.qualified
+    (relation,) = _retirement_relations(world.reader, live.identity.qualified)
+    assert relation.relation_kind == "capture"
+    assert retired.identity.qualified in relation.retired_claim_witnesses
 
 
 @pytest.mark.parametrize("unavailable", ["missing", "corrupt"])
 @pytest.mark.parametrize("shared", [True, False])
-def test_next_findings_survive_unavailable_cas_like_retained_facts(world, unavailable, shared):
+def test_retirement_relations_survive_unavailable_cas_like_retained_facts(
+    world, unavailable, shared
+):
     from types import SimpleNamespace
 
     from cruxible_core.indexes.evidence.citation_sql import CitationSourceUse
@@ -646,7 +590,8 @@ def test_next_findings_survive_unavailable_cas_like_retained_facts(world, unavai
 
     first = world.capture(1, start=0, end=5)
     second = first if shared else world.capture(2, start=10, end=15)
-    world.publish(world.claim(1, [first]), world.claim(2, [second], retired=True))
+    live = world.claim(1, [first])
+    world.publish(live, world.claim(2, [second], retired=True))
     # These are the exact accepted rows the prior semantic-fact reader retained.
     retained = build_citation_relation_facts(world.sources, bodies=world.store)
     conflicts = tuple(
@@ -657,7 +602,7 @@ def test_next_findings_survive_unavailable_cas_like_retained_facts(world, unavai
     )
     uses = [f.value for f in retained if f.schema_id == RELATION_SOURCE_USE_SCHEMA]
     old_reader = SimpleNamespace(
-        conflicts=lambda: conflicts,
+        conflicts=lambda **_selection: conflicts,
         uses_for_source=lambda source: tuple(
             CitationSourceUse(
                 capture_digest=u["capture_digest"]["$digest"],
@@ -675,16 +620,17 @@ def test_next_findings_survive_unavailable_cas_like_retained_facts(world, unavai
             if u["source"]["source_identity"] == source
         ),
     )
-    expected = _next_relation_findings(world, old_reader)
-    assert len(expected) == 1
-    assert expected[0].detail["relation_kind"] == ("capture" if shared else "current_span_overlap")
-    assert _next_relation_findings(world, world.reader) == expected
+    identity = live.identity.qualified
+    expected = _retirement_relations(old_reader, identity)
+    # Distinct captures share nothing in accepted state.
+    assert [relation.relation_kind for relation in expected] == (["capture"] if shared else [])
+    assert _retirement_relations(world.reader, identity) == expected
     if unavailable == "missing":
         world.store._path(first).unlink()
     else:
         world.store._path(first).write_bytes(b"corrupt Capture bytes")
-    assert _next_relation_findings(world, old_reader) == expected
-    assert _next_relation_findings(world, world.reader) == expected
+    assert _retirement_relations(old_reader, identity) == expected
+    assert _retirement_relations(world.reader, identity) == expected
     assert world.reader.conflicts() == conflicts
     with pytest.raises(PlaybillCasError):
         coverage_rows(world.reader, bodies=world.store, at=AT)
