@@ -17,7 +17,7 @@ def test_typed_sdk_http_check_listen_evaluate_and_dispatch(playbill_http, tmp_pa
         tmp_path / "line-world", CaptureLandingTriggerPolicyV2(event=SELECTOR)
     )
     manager = get_playbill_manager()
-    manager.line_listener.close()  # deterministic matching is exercised in its own thread test
+    manager.consumer_runner.close()  # deterministic matching is exercised in its own thread test
     original_get = manager.get
     monkeypatch.setattr(
         manager, "get", lambda key: instance if key == instance_id else original_get(key)

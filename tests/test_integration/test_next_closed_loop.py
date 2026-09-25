@@ -171,7 +171,7 @@ EXPECTED_OPERATIONS = {
     "proposal_awaiting_approval": "playbill.proposal.approve",
     "mandate_expiring": "playbill.authoring.create",
     # A stopped arm is resumed by rearming under authority that still holds.
-    "line_stalled": "playbill.line.arm",
+    "consumer_stalled": "playbill.line.arm",
 }
 
 
@@ -1449,7 +1449,7 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "mandate_expiring", _request(instance))
 
 
-def _line_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
     from cruxible_core.runtime.line_arms import dispatch_armed_line
@@ -1473,7 +1473,7 @@ def _line_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     )
     request = _request(instance)
 
-    row = _row(instance, "line_stalled", request)
+    row = _row(instance, "consumer_stalled", request)
     assert row.subject_identity == line.identity.qualified
     assert row.detail["stop_reason"] == "credential_revoked"
     assert row.repair.command == f"cruxible playbill line arm {line.identity.name}"
@@ -1487,7 +1487,7 @@ def _line_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         now=start + timedelta(seconds=5),
         daemon_id="daemon",
     )
-    _assert_gone(instance, "line_stalled", request)
+    _assert_gone(instance, "consumer_stalled", request)
 
 
 CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
@@ -1533,7 +1533,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("proposal_stale", None): _proposal_stale,
     ("proposal_awaiting_approval", None): _proposal_awaiting_approval,
     ("mandate_expiring", None): _mandate_expiring,
-    ("line_stalled", None): _line_stalled,
+    ("consumer_stalled", None): _consumer_stalled,
 }
 
 

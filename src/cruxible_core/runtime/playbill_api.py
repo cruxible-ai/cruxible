@@ -1941,7 +1941,7 @@ def playbill_line_arm(instance_id: str, line: str) -> contracts.LineArmV1:
         principal=current_arm_principal(),
         actor=actor,
         now=_evaluation_time(None),
-        daemon_id=manager.line_listener.daemon_id,
+        daemon_id=manager.consumer_runner.daemon_id,
     )
 
 

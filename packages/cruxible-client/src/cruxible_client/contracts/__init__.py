@@ -263,7 +263,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "proposal_stale",
     "proposal_awaiting_approval",
     "mandate_expiring",
-    "line_stalled",
+    "consumer_stalled",
 ]
 PlaybillNextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
 PlaybillNextRepairOperation: TypeAlias = Literal[
