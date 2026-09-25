@@ -902,10 +902,6 @@ def _repair_command(
         if not isinstance(prediction_id, str) or not prediction_id:
             return None
         parts.extend(["--example", shlex.quote(prediction_id)])
-        for flag, key in (("--contract", "contract"), ("--trigger-event", "trigger_event")):
-            value = values.get(key)
-            if isinstance(value, Mapping):
-                parts.extend([flag, shlex.quote(canonical_bytes(value).decode())])
     elif operation == "playbill.proposal.readmit":
         proposal_id = values.get("proposal_id")
         if not isinstance(proposal_id, str):
@@ -2979,11 +2975,9 @@ def _prediction_items(
                     required_change=(
                         "settle_the_prediction_from_an_accepted_observation_in_its_window"
                     ),
-                    arguments={
-                        "prediction_id": owed.contract.identity.name,
-                        "contract": owed.contract.model_dump(mode="json"),
-                        "trigger_event": event,
-                    },
+                    # The bound contract id names the exact window; the daemon
+                    # fills in its contract and anchor for the template.
+                    arguments={"prediction_id": owed.bound_contract_id},
                 ),
             )
         )

@@ -1283,6 +1283,22 @@ def playbill_predict(
     )
 
 
+def playbill_prediction_settle_example(
+    instance_id: str, bound_contract_id: str
+) -> contracts.PlaybillSettleExampleV1:
+    """The settle request for one bound prediction window, evidence left to fill in."""
+
+    check_permission("cruxible_playbill_next", instance_id=instance_id)
+    from cruxible_core.service.procedures.predictions import service_prediction_settle_example
+
+    request = service_prediction_settle_example(
+        get_playbill_manager().get(instance_id), bound_contract_id=bound_contract_id
+    )
+    return contracts.PlaybillSettleExampleV1(
+        bound_contract_id=bound_contract_id, request=request.model_dump(mode="json")
+    )
+
+
 def playbill_settle_prediction(
     instance_id: str,
     prediction_id: str,

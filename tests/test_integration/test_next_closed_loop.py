@@ -1538,17 +1538,10 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    import json
-    import shlex
     from datetime import timedelta
 
-    from click.testing import CliRunner
-
-    from cruxible_client.contracts.predictions import (
-        ObservationSettlementEvidenceV2,
-        PlaybillSettleRequestV2,
-    )
-    from cruxible_core.cli.main import cli
+    from cruxible_client.contracts.predictions import ObservationSettlementEvidenceV2
+    from cruxible_core.service.procedures.predictions import service_prediction_settle_example
     from tests.test_consumers import test_prediction_settlement as worker
 
     instance, owner, capture, contract = worker.fixed_world(root)
@@ -1571,16 +1564,18 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
         for item in service_playbill_next(instance, request=hidden).items
     )
 
-    # The named repair: the row's command prints the request with the exact
-    # contract and window; the settler supplies only the observation.
-    assert row.repair.command is not None
-    printed = CliRunner().invoke(cli, shlex.split(row.repair.command)[1:])
-    assert printed.exit_code == 0, printed.output
-    template = PlaybillSettleRequestV2.model_validate(json.loads(printed.output))
+    # The named repair: a short command naming the bound window, whose template
+    # the daemon fills with the exact contract and window; the settler supplies
+    # only the observation.
+    bound = row.detail["bound_contract_id"]
+    assert row.repair.command == f"cruxible playbill settle --example {bound}"
+    template = service_prediction_settle_example(instance, bound_contract_id=bound)
+    assert template.contract.identity.qualified == contract.identity.qualified
+    assert template.trigger_event is None  # a fixed window has no anchor
     observation = worker.observe(instance, owner, capture, at="2026-09-02T12:02:00.000000Z")
     worker.served.service_settle_playbill_prediction(
         instance,
-        prediction_id=row.repair.arguments["prediction_id"],
+        prediction_id=template.contract.identity.name,
         request=template.model_copy(
             update={"evidence": ObservationSettlementEvidenceV2(claim=observation)}
         ),

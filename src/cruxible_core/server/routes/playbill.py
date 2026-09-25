@@ -803,6 +803,18 @@ async def predict(
     )
 
 
+@router.get(
+    "/{instance_id}/playbill/predictions/{bound_contract_id}/settle-example",
+    response_model=contracts.PlaybillSettleExampleV1,
+)
+async def prediction_settle_example(
+    instance_id: str, bound_contract_id: str
+) -> contracts.PlaybillSettleExampleV1:
+    return playbill_api.playbill_prediction_settle_example(
+        resolve_server_instance_id(instance_id), bound_contract_id
+    )
+
+
 @router.post(
     "/{instance_id}/playbill/predictions/{prediction_id}/settlements",
     response_model=contracts.PlaybillSettleResultV2,

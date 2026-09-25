@@ -188,6 +188,9 @@
   "/api/v1/{instance_id}/playbill/predictions": {
     "POST": "PlaybillPredictResultV2"
   },
+  "/api/v1/{instance_id}/playbill/predictions/{bound_contract_id}/settle-example": {
+    "GET": "PlaybillSettleExampleV1"
+  },
   "/api/v1/{instance_id}/playbill/predictions/{prediction_id}/settlements": {
     "POST": "PlaybillSettleResultV2"
   },

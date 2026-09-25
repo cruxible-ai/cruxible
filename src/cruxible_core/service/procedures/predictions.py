@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import ValidationError
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     AuthoringIntentViewV1,
     ResolutionContractAuthoringPayloadV1,
@@ -30,8 +31,10 @@ from cruxible_client.contracts.predictions import (
     PredictionRefusalCodeV1,
     TerminalSettlementEvidenceV2,
 )
+from cruxible_client.contracts.projection import AcceptedCoordinate as PublicAcceptedCoordinate
 from cruxible_client.contracts.repairs import ServedRepairV1, served_repair_for_refusal
 from cruxible_client.contracts.resolution_contracts import (
+    ClaimVersionReferenceV1,
     InvestigationBindingV1,
     ResolutionContractV1,
     resolution_contract_digest,
@@ -339,6 +342,44 @@ def _append_settlement(
             expected_fencing_token=_WRITER_TOKEN,
         )
     return resolution
+
+
+def service_prediction_settle_example(
+    instance: PlaybillInstance, *, bound_contract_id: str
+) -> PlaybillSettleRequestV2:
+    """A settlement request for one bound window, with everything but its evidence filled in.
+
+    The prediction worker holds each bound window by its contract id (RSC-...),
+    so the id alone names the exact contract reference and the anchor event;
+    the evidence Claim is the settler's to choose and stays a placeholder.
+    """
+
+    from cruxible_core.consumers.predictions import bound_window
+
+    held = bound_window(instance, bound_contract_id)
+    if held is None:
+        raise _refuse(
+            "prediction_window_unknown",
+            f"No bound prediction window {bound_contract_id} is held by the prediction worker.",
+        )
+    placeholder = PublicAcceptedCoordinate(
+        git_oid="0" * 40,
+        semantic_root="sha256:" + "0" * 64,
+        generation_root="sha256:" + "0" * 64,
+        compiler_digest="sha256:" + "0" * 64,
+    )
+    return PlaybillSettleRequestV2(
+        contract=held.contract,
+        trigger_event=held.window.event,
+        evidence=ObservationSettlementEvidenceV2(
+            claim=ClaimVersionReferenceV1(
+                identity=ArtifactIdentity(kind="Claim", name="CLM-" + "0" * 32),
+                artifact_digest="sha256:" + "0" * 64,
+                statement_digest="sha256:" + "0" * 64,
+                coordinate=placeholder,
+            )
+        ),
+    )
 
 
 def service_settle_playbill_prediction(
