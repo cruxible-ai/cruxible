@@ -89,7 +89,9 @@
         "proposal_awaiting_approval",
         "mandate_expiring",
         "consumer_stalled",
-        "evidence_unavailable"
+        "evidence_unavailable",
+        "prediction_settleable",
+        "prediction_window_unbindable"
       ]
     },
     "PlaybillNextRefusalCodeV1": {
@@ -112,6 +114,7 @@
         "playbill.compiler.upgrade",
         "playbill.line.arm",
         "playbill.line.dispatch",
+        "playbill.settle",
         "hand_edit"
       ]
     },
@@ -735,6 +738,7 @@
           "schema": {
             "enum": [
               "running",
+              "lagging",
               "stopped",
               "stalled",
               "disabled"
@@ -782,6 +786,7 @@
           "state": {
             "enum": [
               "running",
+              "lagging",
               "stopped",
               "stalled",
               "disabled"
@@ -24809,7 +24814,9 @@
               "proposal_awaiting_approval",
               "mandate_expiring",
               "consumer_stalled",
-              "evidence_unavailable"
+              "evidence_unavailable",
+              "prediction_settleable",
+              "prediction_window_unbindable"
             ],
             "title": "Reason",
             "type": "string"
@@ -24912,6 +24919,7 @@
                   "playbill.compiler.upgrade",
                   "playbill.line.arm",
                   "playbill.line.dispatch",
+                  "playbill.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -24964,7 +24972,9 @@
               "proposal_awaiting_approval",
               "mandate_expiring",
               "consumer_stalled",
-              "evidence_unavailable"
+              "evidence_unavailable",
+              "prediction_settleable",
+              "prediction_window_unbindable"
             ],
             "title": "Reason",
             "type": "string"
@@ -25105,6 +25115,7 @@
                   "playbill.compiler.upgrade",
                   "playbill.line.arm",
                   "playbill.line.dispatch",
+                  "playbill.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -25228,7 +25239,9 @@
               "proposal_awaiting_approval",
               "mandate_expiring",
               "consumer_stalled",
-              "evidence_unavailable"
+              "evidence_unavailable",
+              "prediction_settleable",
+              "prediction_window_unbindable"
             ],
             "title": "Reason",
             "type": "string"
@@ -25328,7 +25341,9 @@
                   "proposal_awaiting_approval",
                   "mandate_expiring",
                   "consumer_stalled",
-                  "evidence_unavailable"
+                  "evidence_unavailable",
+                  "prediction_settleable",
+                  "prediction_window_unbindable"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -25405,6 +25420,7 @@
                   "playbill.compiler.upgrade",
                   "playbill.line.arm",
                   "playbill.line.dispatch",
+                  "playbill.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -25467,7 +25483,9 @@
               "proposal_awaiting_approval",
               "mandate_expiring",
               "consumer_stalled",
-              "evidence_unavailable"
+              "evidence_unavailable",
+              "prediction_settleable",
+              "prediction_window_unbindable"
             ],
             "title": "Reason",
             "type": "string"
@@ -25571,6 +25589,7 @@
               "playbill.compiler.upgrade",
               "playbill.line.arm",
               "playbill.line.dispatch",
+              "playbill.settle",
               "hand_edit"
             ],
             "title": "Operation",
@@ -25631,6 +25650,7 @@
               "playbill.compiler.upgrade",
               "playbill.line.arm",
               "playbill.line.dispatch",
+              "playbill.settle",
               "hand_edit"
             ],
             "title": "Operation",
@@ -25923,7 +25943,9 @@
                   "proposal_awaiting_approval",
                   "mandate_expiring",
                   "consumer_stalled",
-                  "evidence_unavailable"
+                  "evidence_unavailable",
+                  "prediction_settleable",
+                  "prediction_window_unbindable"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -26042,7 +26064,9 @@
                   "proposal_awaiting_approval",
                   "mandate_expiring",
                   "consumer_stalled",
-                  "evidence_unavailable"
+                  "evidence_unavailable",
+                  "prediction_settleable",
+                  "prediction_window_unbindable"
                 ],
                 "title": "Reason",
                 "type": "string"
@@ -26120,6 +26144,7 @@
                   "playbill.compiler.upgrade",
                   "playbill.line.arm",
                   "playbill.line.dispatch",
+                  "playbill.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -26151,6 +26176,9 @@
                 "type": "boolean"
               },
               "compiler": {
+                "$ref": "#/$defs/PlaybillNextHealth"
+              },
+              "consumers": {
                 "$ref": "#/$defs/PlaybillNextHealth"
               },
               "floor": {
@@ -26192,7 +26220,8 @@
               "provider_lane",
               "procedure_catalog",
               "compiler",
-              "line_dispatch"
+              "line_dispatch",
+              "consumers"
             ],
             "title": "PlaybillNextStatus",
             "type": "object"
@@ -26345,6 +26374,15 @@
           "has_default": false,
           "has_default_factory": false,
           "json_name": "compiler",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
+        },
+        "consumers": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "consumers",
           "required": true,
           "schema": {
             "$ref": "#/$defs/PlaybillNextHealth"
@@ -26503,6 +26541,7 @@
                   "playbill.compiler.upgrade",
                   "playbill.line.arm",
                   "playbill.line.dispatch",
+                  "playbill.settle",
                   "hand_edit"
                 ],
                 "title": "Operation",
@@ -26534,6 +26573,9 @@
             "type": "boolean"
           },
           "compiler": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          },
+          "consumers": {
             "$ref": "#/$defs/PlaybillNextHealth"
           },
           "floor": {
@@ -26575,7 +26617,8 @@
           "provider_lane",
           "procedure_catalog",
           "compiler",
-          "line_dispatch"
+          "line_dispatch",
+          "consumers"
         ],
         "title": "PlaybillNextStatus",
         "type": "object"
@@ -26583,6 +26626,7 @@
       "required_fields": [
         "blocking",
         "compiler",
+        "consumers",
         "floor",
         "instance",
         "ledger_mirror",
@@ -81440,6 +81484,7 @@
               "state": {
                 "enum": [
                   "running",
+                  "lagging",
                   "stopped",
                   "stalled",
                   "disabled"

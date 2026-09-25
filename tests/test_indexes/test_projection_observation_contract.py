@@ -118,6 +118,9 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         # An armed Line that stopped by itself, or stopped draining its own work.
         "consumer_stalled",
         "evidence_unavailable",
+        # A closed prediction window its own resolution journal has not answered.
+        "prediction_settleable",
+        "prediction_window_unbindable",
     }
     assert set(get_args(NextRepairOperation)) == {
         "playbill.authoring.create",
@@ -136,5 +139,6 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "playbill.compiler.upgrade",
         "playbill.line.arm",
         "playbill.line.dispatch",
+        "playbill.settle",
         "hand_edit",
     }

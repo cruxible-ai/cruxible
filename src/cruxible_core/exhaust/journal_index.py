@@ -302,21 +302,64 @@ class JournalIndex:
                 args.append(limit)
             return tuple(self.read_row(row) for row in conn.execute(sql, args).fetchall())
 
-    def positions(self, stream: JournalStreamIdentityV1) -> dict[str, Any]:
+    def positions(
+        self, stream: JournalStreamIdentityV1, *, event_kind: str | None = None
+    ) -> dict[str, Any]:
         """A disposable live-reader position, never a work-completion authority.
 
         A new cache identity invalidates live positions after a rebuild. Pending
         work still rebuilds from retained transitions; listeners open a new
         forward range instead of guessing which old cache ordinal was observed.
+        With an event kind, the position is that kind's latest record, so a
+        reader of one kind does not move for every other record.
         """
         with self.connection() as conn:
             identity = conn.execute(
                 "SELECT identity FROM index_identity WHERE singleton=1"
             ).fetchone()[0]
-            ordinal = conn.execute(
-                "SELECT coalesce(max(id),0) FROM records WHERE stream=?", (_key(stream),)
+            ordinal = (
+                conn.execute(
+                    "SELECT coalesce(max(id),0) FROM records WHERE stream=?", (_key(stream),)
+                )
+                if event_kind is None
+                else conn.execute(
+                    "SELECT coalesce(max(id),0) FROM records WHERE stream=? AND event_kind=?",
+                    (_key(stream), event_kind),
+                )
             ).fetchone()[0]
             return {"generation": identity, "ordinal": ordinal}
+
+    def appended_partitions(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        after: dict[str, Any],
+        through: dict[str, Any],
+        limit: int,
+    ) -> tuple[tuple[str, ...], dict[str, Any] | None]:
+        """The partitions that gained a record in one live-reader range, in append order.
+
+        A locator read only: the caller re-reads each partition through its
+        verified log. Returns where the page stopped, or None once the range is
+        exhausted.
+        """
+        with self.connection() as conn:
+            generation = conn.execute(
+                "SELECT identity FROM index_identity WHERE singleton=1"
+            ).fetchone()[0]
+            if after["generation"] != generation or through["generation"] != generation:
+                raise PlaybillJournalIntegrityError(
+                    "live event reader position was invalidated by an index rebuild"
+                )
+            rows = conn.execute(
+                "SELECT id,partition_id FROM records WHERE stream=? AND id>? AND id<=? "
+                "ORDER BY id LIMIT ?",
+                (_key(stream), after["ordinal"], through["ordinal"], limit + 1),
+            ).fetchall()
+        partitions = tuple(dict.fromkeys(row["partition_id"] for row in rows[:limit]))
+        if len(rows) > limit:
+            return partitions, {"generation": generation, "ordinal": rows[limit - 1]["id"]}
+        return partitions, None
 
     def captures(
         self,

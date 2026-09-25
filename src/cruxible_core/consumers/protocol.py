@@ -22,7 +22,7 @@ from typing import Any, Literal, Protocol
 
 CursorPolicy = Literal["forward_only", "resume"]
 EffectClass = Literal["governed", "findings"]
-ConsumerState = Literal["running", "stopped", "stalled", "disabled"]
+ConsumerState = Literal["running", "lagging", "stopped", "stalled", "disabled"]
 
 
 @dataclass(frozen=True)

@@ -28,8 +28,9 @@ _log = structlog.get_logger(__name__)
 def consumer_kinds() -> tuple[ConsumerKind, ...]:
     from cruxible_core.consumers.evidence import EVIDENCE_AVAILABILITY
     from cruxible_core.consumers.lines import LINE_ARMS
+    from cruxible_core.consumers.predictions import PREDICTION_SETTLEMENT
 
-    return (LINE_ARMS, EVIDENCE_AVAILABILITY)
+    return (LINE_ARMS, EVIDENCE_AVAILABILITY, PREDICTION_SETTLEMENT)
 
 
 def consumer_health(instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
@@ -119,6 +120,12 @@ class ConsumerRunner:
             # Work already started finishes; nothing new starts once the runner stops.
             executor.shutdown(wait=True, cancel_futures=True)
         self._executors = {}
+
+    @property
+    def running(self) -> bool:
+        """Whether this daemon's consumer loop is running now."""
+
+        return self.thread is not None and self.thread.is_alive()
 
     def match_once(self, instance_id: str, instance: Any, *, now: datetime) -> None:
         """Match every active kind on one instance and schedule its due work."""

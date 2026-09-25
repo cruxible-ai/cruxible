@@ -402,3 +402,66 @@ def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path
 
     status = _status(instance, _request(instance, evaluation_time=now))
     assert status.line_dispatch.state == "idle" and status.attention() == ()
+
+
+def test_worker_findings_report_how_current_they_are(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime
+
+    from cruxible_core.consumers.evidence import SWEEP_INTERVAL
+    from tests.test_consumers.test_evidence_availability import _drain, _world
+
+    instance, _capture = _world(tmp_path)
+    swept = datetime(2026, 9, 1, tzinfo=UTC)
+    _drain(instance, now=swept)
+
+    def consumers(at, **kwargs):  # type: ignore[no-untyped-def]
+        return _status(instance, _request(instance, evaluation_time=at), **kwargs).consumers
+
+    # No consumer loop: findings stand as of the last pass, and that is not work.
+    idle = consumers(swept)
+    assert idle.state == "not_running" and idle.repair is None
+    assert [worker["kind"] for worker in idle.detail["workers"]] == ["evidence"]
+
+    assert consumers(swept, consumers_running=True).state == "current"
+    late = swept + 2 * SWEEP_INTERVAL
+    lagging = _status(instance, _request(instance, evaluation_time=late), consumers_running=True)
+    assert lagging.consumers.state == "lagging"
+    assert lagging.attention() == (("consumers", lagging.consumers),)
+
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "evidence")
+    off = consumers(late, consumers_running=True)
+    assert off.state == "current" and off.detail["workers"] == [
+        {"kind": "evidence", "state": "disabled"}
+    ]
+
+    hidden = PlaybillNextRequestV1(
+        evaluation_time=late,
+        access_profile=_access().model_copy(update={"permitted_access_classes": ("public",)}),
+    )
+    assert _status(instance, hidden, consumers_running=True).consumers.state == "not_observed"
+
+
+def test_one_next_request_reads_each_workers_health_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime
+
+    from cruxible_core.consumers.evidence import EVIDENCE_AVAILABILITY
+    from tests.test_consumers.test_evidence_availability import _drain, _world
+
+    instance, _capture = _world(tmp_path)
+    swept = datetime(2026, 9, 1, tzinfo=UTC)
+    _drain(instance, now=swept)
+    health = EVIDENCE_AVAILABILITY.health
+    calls: list[datetime] = []
+
+    def counted(target, *, now):  # type: ignore[no-untyped-def]
+        calls.append(now)
+        return health(target, now=now)
+
+    monkeypatch.setattr(EVIDENCE_AVAILABILITY, "health", counted)
+    _status(instance, _request(instance, evaluation_time=swept), consumers_running=True)
+
+    assert calls == [swept]

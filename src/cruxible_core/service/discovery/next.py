@@ -86,6 +86,7 @@ from cruxible_client.contracts.temporal import ensure_utc, format_datetime, pars
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.compiler.compiler import COMPILER_REVISION_LABELS, current_compiler_coordinate
 from cruxible_core.compiler.upgrades import upgrade_law
+from cruxible_core.consumers.protocol import ConsumerHealth
 from cruxible_core.coverage.contracts import (
     CoverageAccessProfileV1,
     CoverageCommitmentScanProofV1,
@@ -612,6 +613,7 @@ _HEALTH_STATES: dict[str, frozenset[str]] = {
     "procedure_catalog": frozenset({"not_observed", "not_required", "complete", "missing"}),
     "compiler": frozenset({"current", "upgrade_available", "no_upgrade_path"}),
     "line_dispatch": frozenset({"not_observed", "idle", "waiting", "due"}),
+    "consumers": frozenset({"not_observed", "not_running", "current", "lagging", "stalled"}),
 }
 #: Facet states that call for attention; every other state is healthy or unobserved.
 _HEALTH_ATTENTION: dict[str, frozenset[str]] = {
@@ -622,6 +624,8 @@ _HEALTH_ATTENTION: dict[str, frozenset[str]] = {
     "procedure_catalog": frozenset({"missing"}),
     "compiler": frozenset({"upgrade_available"}),
     "line_dispatch": frozenset({"due"}),
+    # A stalled worker is already a consumer_stalled row; lag is the silent case.
+    "consumers": frozenset({"lagging"}),
 }
 
 
@@ -645,8 +649,9 @@ class PlaybillNextStatusV1(_StrictNextModel):
     These are conditions of the instance and its workspace -- a decommissioned
     instance, an unexported floor, a lagging ledger mirror, an unavailable
     provider lane, an incomplete Procedure catalog, a compiler behind the
-    running one, Line occurrences waiting on dispatch -- not work items about
-    accepted state. `blocking` is set only when no write can succeed.
+    running one, Line occurrences waiting on dispatch, built-in workers behind
+    on what they report -- not work items about accepted state. `blocking` is
+    set only when no write can succeed.
     """
 
     tag: Literal["playbill-next-status-v1"] = "playbill-next-status-v1"
@@ -658,6 +663,7 @@ class PlaybillNextStatusV1(_StrictNextModel):
     procedure_catalog: PlaybillNextHealthV1
     compiler: PlaybillNextHealthV1
     line_dispatch: PlaybillNextHealthV1
+    consumers: PlaybillNextHealthV1
     #: Rows parked by a current ``unsure`` attestation whose basis is unchanged.
     held: int = Field(default=0, ge=0)
 
@@ -784,6 +790,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.compiler.upgrade": "playbill compiler upgrade",
     "playbill.line.arm": "playbill line arm",
     "playbill.line.dispatch": "playbill line dispatch",
+    "playbill.settle": "playbill settle",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -888,6 +895,17 @@ def _repair_command(
         parts.append(shlex.quote(line))
         if operation == "playbill.line.dispatch" and isinstance(limit, int) and limit > 1:
             parts.extend(["--limit", str(limit)])
+    elif operation == "playbill.settle":
+        # The request's evidence is the settler's to choose, so the runnable
+        # step is the template with the exact contract and window filled in.
+        prediction_id = values.get("prediction_id")
+        if not isinstance(prediction_id, str) or not prediction_id:
+            return None
+        parts.extend(["--example", shlex.quote(prediction_id)])
+        for flag, key in (("--contract", "contract"), ("--trigger-event", "trigger_event")):
+            value = values.get(key)
+            if isinstance(value, Mapping):
+                parts.extend([flag, shlex.quote(canonical_bytes(value).decode())])
     elif operation == "playbill.proposal.readmit":
         proposal_id = values.get("proposal_id")
         if not isinstance(proposal_id, str):
@@ -2816,12 +2834,22 @@ def _workspace_items(
     return tuple(domains), tuple(items)
 
 
-def _consumer_stalled_items(
+def _consumer_healths(
     instance: PlaybillInstance,
     *,
     evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1,
-) -> tuple[PlaybillNextItemV1, ...]:
+) -> tuple[ConsumerHealth, ...]:
+    """Every active consumer's health, read once per request for its rows and its facet."""
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.consumers.runner import consumer_health
+
+    return consumer_health(instance, now=evaluation_time)
+
+
+def _consumer_stalled_items(healths: tuple[ConsumerHealth, ...]) -> tuple[PlaybillNextItemV1, ...]:
     """A daemon consumer that stopped by itself, or stopped keeping up with its work.
 
     Consumers are operational state, measured now, like mirror health: an arm
@@ -2829,10 +2857,6 @@ def _consumer_stalled_items(
     else, and automation that quietly stops is the failure it otherwise hides.
     A deliberate disarm is not a finding. Each kind names its own repair.
     """
-
-    if not access_profile.permits("instance"):
-        return ()
-    from cruxible_core.consumers.runner import consumer_health
 
     return tuple(
         _item(
@@ -2847,7 +2871,7 @@ def _consumer_stalled_items(
                 arguments=health.repair.arguments,
             ),
         )
-        for health in consumer_health(instance, now=evaluation_time)
+        for health in healths
         if health.state in {"stopped", "stalled"} and health.repair is not None
     )
 
@@ -2910,6 +2934,79 @@ def _evidence_unavailable_items(
                     ),
                 )
             )
+    return tuple(items)
+
+
+def _prediction_items(
+    instance: PlaybillInstance,
+    *,
+    access_profile: CoverageAccessProfileV1,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Predictions the settlement worker found owed, or unable to bind, at its last look.
+
+    One row per closed bound window whose own resolution journal holds no
+    current answer, and one per anchor Capture whose material no longer binds
+    the window its contract asks for. The worker's findings are read, never
+    recomputed here.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    from cruxible_core.consumers.predictions import settleable_windows, unbindable_anchors
+
+    items: list[PlaybillNextItemV1] = []
+    for owed in settleable_windows(instance):
+        subject = owed.contract.identity.qualified
+        event = None if owed.window.event is None else owed.window.event.model_dump(mode="json")
+        items.append(
+            _item(
+                severity="repair",
+                reason="prediction_settleable",
+                subject_identity=subject,
+                related_identities=(owed.hypothesis,),
+                detail={
+                    "bound_contract_id": owed.bound_contract_id,
+                    "window": {
+                        "starts_at": format_datetime(owed.window.starts_at),
+                        "ends_at": format_datetime(owed.window.ends_at),
+                    },
+                    "anchor_event": event,
+                    "evaluated_at": format_datetime(owed.checked_at),
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="playbill.settle",
+                    target=subject,
+                    required_change=(
+                        "settle_the_prediction_from_an_accepted_observation_in_its_window"
+                    ),
+                    arguments={
+                        "prediction_id": owed.contract.identity.name,
+                        "contract": owed.contract.model_dump(mode="json"),
+                        "trigger_event": event,
+                    },
+                ),
+            )
+        )
+    for anchor in unbindable_anchors(instance):
+        subject = anchor.contract.identity.qualified
+        items.append(
+            _item(
+                severity="repair",
+                reason="prediction_window_unbindable",
+                subject_identity=subject,
+                related_identities=(anchor.hypothesis,),
+                detail={
+                    "anchor_event": anchor.event.model_dump(mode="json"),
+                    "code": anchor.code,
+                    "evaluated_at": format_datetime(anchor.checked_at),
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="hand_edit",
+                    target=subject,
+                    required_change="restore_the_anchor_capture_material_or_retire_the_contract",
+                ),
+            )
+        )
     return tuple(items)
 
 
@@ -3086,6 +3183,50 @@ def _line_dispatch_health(
             update={"command": _repair_command(dispatch.operation, arguments=dispatch.arguments)}
         ),
     )
+
+
+def _consumers_health(
+    instance: PlaybillInstance,
+    healths: tuple[ConsumerHealth, ...],
+    *,
+    access_profile: CoverageAccessProfileV1,
+    running: bool,
+) -> PlaybillNextHealthV1:
+    """How current the built-in workers' findings are that some rows are read from.
+
+    Rows such as `evidence_unavailable` are what a worker last observed, not a
+    computation at read time, so this says how far behind that observation is.
+    Without a running consumer loop -- a library read, a daemon shutting down --
+    those rows are as of each worker's last pass and nothing is advancing them.
+    """
+
+    if not access_profile.permits("instance"):
+        return PlaybillNextHealthV1(state="not_observed")
+    from cruxible_core.consumers.runner import consumer_kinds
+
+    workers: list[dict[str, object]] = []
+    for kind in consumer_kinds():
+        if kind.effect_class != "findings":
+            continue
+        if not kind.active(instance):
+            workers.append({"kind": kind.name, "state": "disabled"})
+            continue
+        workers.extend(
+            {"kind": health.kind, "state": health.state, **health.detail}
+            for health in healths
+            if health.kind == kind.name
+        )
+    states = {str(worker["state"]) for worker in workers}
+    state = (
+        "not_running"
+        if not running
+        else "stalled"
+        if "stalled" in states
+        else "lagging"
+        if "lagging" in states
+        else "current"
+    )
+    return PlaybillNextHealthV1(state=state, detail={"workers": workers})
 
 
 def _procedure_catalog_health(
@@ -3794,6 +3935,7 @@ def service_playbill_next(
     *,
     request: PlaybillNextRequestAny,
     provider_lane: ProviderLaneStatusV1 | None = None,
+    consumers_running: bool = False,
     caller_principal_id: str | None = None,
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
     """Fold accepted state and explicit client observations into one repair queue.
@@ -3863,6 +4005,9 @@ def service_playbill_next(
         if domain == "accepted_state" or domain in workspace_domains
     )
     unobserved = tuple(domain for domain in _ALL_DOMAINS if domain not in observed)
+    consumer_healths = _consumer_healths(
+        instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile
+    )
     found = (
         *_claim_items(
             instance,
@@ -3929,11 +4074,8 @@ def service_playbill_next(
             coordinate=coordinate,
             access_profile=request.access_profile,
         ),
-        *_consumer_stalled_items(
-            instance,
-            evaluation_time=request.evaluation_time,
-            access_profile=request.access_profile,
-        ),
+        *_prediction_items(instance, access_profile=request.access_profile),
+        *_consumer_stalled_items(consumer_healths),
     )
     held = 0
     if parsed_claims is not None and request.access_profile.permits("instance"):
@@ -4013,6 +4155,12 @@ def service_playbill_next(
             coordinate=coordinate,
             evaluation_time=request.evaluation_time,
             access_profile=request.access_profile,
+        ),
+        consumers=_consumers_health(
+            instance,
+            consumer_healths,
+            access_profile=request.access_profile,
+            running=consumers_running,
         ),
     )
     values = {

@@ -20,12 +20,9 @@ worker needs no authority and a restart resumes from its cursor.
 from __future__ import annotations
 
 import sqlite3
-import threading
-from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any, Literal
 
 from cruxible_client.contracts.captures import (
@@ -49,6 +46,7 @@ from cruxible_core.consumers.protocol import (
     CursorPolicy,
     EffectClass,
 )
+from cruxible_core.consumers.state import DisposableState
 from cruxible_core.server.config import get_disabled_consumers
 
 #: How often every cited Capture is re-hashed.
@@ -59,8 +57,6 @@ CHECK_BATCH = 256
 GENERATION_BATCH = 64
 
 _READER = BodyAccessContext(principal_id="evidence-availability", can_read_body=True)
-_LOCKS: dict[Path, threading.Lock] = {}
-_LOCKS_GUARD = threading.Lock()
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (
@@ -69,12 +65,19 @@ CREATE TABLE IF NOT EXISTS progress (
  last_error TEXT, last_error_at TEXT
 ) STRICT;
 CREATE TABLE IF NOT EXISTS pending (capture_digest TEXT PRIMARY KEY) STRICT;
+CREATE TABLE IF NOT EXISTS tally (name TEXT PRIMARY KEY, value INTEGER NOT NULL) STRICT;
+INSERT OR IGNORE INTO tally VALUES ('pending',0);
+CREATE TRIGGER IF NOT EXISTS pending_added AFTER INSERT ON pending
+ BEGIN UPDATE tally SET value=value+1 WHERE name='pending'; END;
+CREATE TRIGGER IF NOT EXISTS pending_removed AFTER DELETE ON pending
+ BEGIN UPDATE tally SET value=value-1 WHERE name='pending'; END;
 CREATE TABLE IF NOT EXISTS findings (
  capture_digest TEXT NOT NULL, part TEXT NOT NULL CHECK(part IN ('envelope','body')),
  object_digest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('missing','corrupt')),
  checked_at TEXT NOT NULL, PRIMARY KEY(capture_digest, part)
 ) STRICT;
 """
+_STATE = DisposableState("evidence-availability", _SCHEMA)
 
 
 @dataclass(frozen=True)
@@ -86,36 +89,10 @@ class EvidenceFinding:
     checked_at: datetime
 
 
-def _root(instance: Any) -> Path:
-    exhaust = Path(instance.root) / str(instance.descriptor.storage.exhaust)
-    return exhaust / "evidence-availability"
-
-
-@contextmanager
-def _state(instance: Any, *, create: bool = True) -> Iterator[sqlite3.Connection | None]:
-    root = _root(instance)
-    if not root.exists():
-        if not create:
-            yield None
-            return
-        root.mkdir(mode=0o700, parents=True)
-    path = root / "state.sqlite3"
-    with _LOCKS_GUARD:
-        lock = _LOCKS.setdefault(path.resolve(), threading.Lock())
-    with lock:
-        connection = sqlite3.connect(path, timeout=30)
-        try:
-            connection.executescript(_SCHEMA)
-            yield connection
-            connection.commit()
-        finally:
-            connection.close()
-
-
 def evidence_findings(instance: Any) -> tuple[EvidenceFinding, ...]:
     """The unavailable cited evidence the worker last observed; empty before it ran."""
 
-    with _state(instance, create=False) as connection:
+    with _STATE.open(instance, create=False) as connection:
         if connection is None:
             return ()
         rows = connection.execute(
@@ -228,7 +205,7 @@ class EvidenceAvailabilityConsumers:
     def match(self, instance: Any, *, now: datetime, daemon_id: str) -> None:
         with instance.accepted_history_reader() as history:
             head = history.sequence
-            with _state(instance) as connection:
+            with _STATE.open(instance) as connection:
                 assert connection is not None
                 row = connection.execute("SELECT generation FROM progress").fetchone()
                 if row is None:
@@ -255,7 +232,7 @@ class EvidenceAvailabilityConsumers:
                         str(use["capture_digest"])
                         for use in projection.citations.owner_uses("Claim", identity)
                     )
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             connection.executemany(
                 "INSERT OR IGNORE INTO pending VALUES (?)", ((digest,) for digest in captures)
@@ -263,7 +240,7 @@ class EvidenceAvailabilityConsumers:
             connection.execute("UPDATE progress SET generation=?", (through,))
 
     def due(self, instance: Any, *, now: datetime) -> Iterable[ConsumerWork]:
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             pending = connection.execute("SELECT 1 FROM pending LIMIT 1").fetchone()
             row = connection.execute(
@@ -289,19 +266,19 @@ class EvidenceAvailabilityConsumers:
             else:
                 self._sweep(instance, now=now)
         except Exception as exc:
-            with _state(instance) as connection:
+            with _STATE.open(instance) as connection:
                 assert connection is not None
                 connection.execute(
                     "UPDATE progress SET last_error=?,last_error_at=?",
                     (f"{type(exc).__name__}: {exc}", format_datetime(now)),
                 )
             raise
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             connection.execute("UPDATE progress SET last_error=NULL,last_error_at=NULL")
 
     def _check_pending(self, instance: Any, *, now: datetime) -> None:
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             digests = [
                 row[0]
@@ -311,14 +288,14 @@ class EvidenceAvailabilityConsumers:
                 ).fetchall()
             ]
         self._check(instance, digests, now=now)
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             connection.executemany(
                 "DELETE FROM pending WHERE capture_digest=?", ((digest,) for digest in digests)
             )
 
     def _sweep(self, instance: Any, *, now: datetime) -> None:
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             (after,) = connection.execute("SELECT sweep_after FROM progress").fetchone()
         with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
@@ -326,7 +303,7 @@ class EvidenceAvailabilityConsumers:
                 projection.typed.connection, after=after or "", limit=CHECK_BATCH
             )
         self._check(instance, digests, now=now)
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             if stopped is None:
                 connection.execute(
@@ -370,7 +347,7 @@ class EvidenceAvailabilityConsumers:
                     )
                 ):
                     observed.append((digest, "body", body, body_state))
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             connection.executemany(
                 "DELETE FROM findings WHERE capture_digest=?", ((digest,) for digest in digests)
@@ -381,25 +358,35 @@ class EvidenceAvailabilityConsumers:
             )
 
     def health(self, instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
-        with _state(instance, create=False) as connection:
+        with _STATE.open(instance, create=False) as connection:
             if connection is None:
                 return ()
             row = connection.execute(
                 "SELECT generation,sweep_after,sweep_completed_at,last_error,last_error_at "
                 "FROM progress"
             ).fetchone()
-            pending = connection.execute("SELECT count(*) FROM pending").fetchone()[0]
+            # Kept by triggers as checks queue and drain, so health reads no backlog.
+            pending = connection.execute("SELECT value FROM tally WHERE name='pending'").fetchone()[
+                0
+            ]
         if row is None:
             return ()
         generation, sweep_after, completed, error, error_at = row
         failing = error is not None
+        with instance.accepted_history_reader() as history:
+            behind = history.sequence - generation
+        # Behind by more than one matching pass, or a sweep a full interval late.
+        lagging = behind > GENERATION_BATCH or (
+            completed is not None and now >= _instant(completed) + 2 * SWEEP_INTERVAL
+        )
         return (
             ConsumerHealth(
                 kind=self.name,
                 consumer_id="consumer:evidence",
-                state="stalled" if failing else "running",
+                state="stalled" if failing else "lagging" if lagging else "running",
                 detail={
                     "generation": generation,
+                    "generations_behind": behind,
                     "pending_checks": pending,
                     "sweep_in_progress": sweep_after is not None,
                     "sweep_completed_at": completed,
