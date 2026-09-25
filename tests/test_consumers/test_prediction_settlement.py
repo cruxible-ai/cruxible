@@ -205,7 +205,7 @@ def accept_event_contract(instance, owner, capture, *, name: str = "event-test")
 
 
 def _windows(instance) -> dict[str, str]:  # type: ignore[no-untyped-def]
-    with sqlite3.connect(predictions._root(instance) / "state.sqlite3") as connection:
+    with sqlite3.connect(predictions._STATE.path(instance)) as connection:
         return dict(connection.execute("SELECT contract_id,status FROM windows").fetchall())
 
 
@@ -335,7 +335,7 @@ def test_a_scan_page_read_before_an_index_rebuild_cannot_undo_its_reset(
     drain(instance, now=now)
 
     assert rebuilt
-    with sqlite3.connect(predictions._root(instance) / "state.sqlite3") as connection:
+    with sqlite3.connect(predictions._STATE.path(instance)) as connection:
         ((current,),) = connection.execute("SELECT index_generation FROM progress").fetchall()
         ((scanned_in,),) = connection.execute("SELECT capture_generation FROM contracts").fetchall()
     assert scanned_in == current
@@ -523,7 +523,7 @@ def test_an_idle_readiness_check_costs_the_same_whatever_the_contract_population
 
     def steps(count: int) -> int:
         instance = _fake_instance(tmp_path / str(count))
-        with predictions._state(instance) as connection:
+        with predictions._STATE.open(instance) as connection:
             assert connection is not None
             connection.execute(
                 "INSERT INTO progress(singleton,generation,index_generation,capture_head) "
@@ -548,7 +548,7 @@ def test_health_costs_the_same_whatever_the_window_population(
 
     def steps(count: int) -> int:
         instance = _fake_instance(tmp_path / str(count))
-        with predictions._state(instance) as connection:
+        with predictions._STATE.open(instance) as connection:
             assert connection is not None
             connection.execute("INSERT INTO progress(singleton,generation) VALUES (1,0)")
             connection.executemany(
@@ -566,3 +566,25 @@ def test_health_costs_the_same_whatever_the_window_population(
 
     small, large = steps(1_000), steps(10_000)
     assert large < small * 1.5, (small, large)
+
+
+def test_state_an_earlier_version_wrote_is_rebuilt_with_exact_counts(tmp_path: Path) -> None:
+    instance, _owner, _capture, _contract = fixed_world(tmp_path)
+    drain(instance, now=FIXED_CLOSES)
+    # The shape this worker's state had before its tallies and requeue generations.
+    with sqlite3.connect(predictions._STATE.path(instance)) as connection:
+        for (trigger,) in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"
+        ).fetchall():
+            connection.execute(f"DROP TRIGGER {trigger}")
+        connection.execute("DROP TABLE tally")
+        connection.execute("ALTER TABLE pending DROP COLUMN generation")
+
+    drain(instance, now=FIXED_CLOSES)
+
+    (owed,) = settleable_windows(instance)
+    (health,) = WORKER.health(instance, now=FIXED_CLOSES)
+    assert (health.detail["contracts"], health.detail["settleable_windows"]) == (1, 1)
+    assert (health.detail["open_windows"], health.detail["pending_contracts"]) == (0, 0)
+    with sqlite3.connect(predictions._STATE.path(instance)) as connection:
+        assert connection.execute("SELECT count(*) FROM windows").fetchone() == (1,)

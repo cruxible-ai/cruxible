@@ -87,7 +87,7 @@ def test_a_newly_cited_capture_is_checked_without_waiting_for_the_sweep(tmp_path
     with instance.accepted_history_reader() as history:
         head = history.sequence
     # Rewind the worker so the generation that cited the capture is new to it.
-    with sqlite3.connect(evidence._root(instance) / "state.sqlite3") as connection:
+    with sqlite3.connect(evidence._STATE.path(instance)) as connection:
         connection.execute("UPDATE progress SET generation=?", (head - 1,))
     instance.body_store()._path(capture).unlink()
 
@@ -215,7 +215,7 @@ def test_health_costs_the_same_whatever_the_pending_backlog(
 
     def steps(count: int) -> int:
         instance = _fake_instance(tmp_path / str(count))
-        with evidence._state(instance) as connection:
+        with evidence._STATE.open(instance) as connection:
             assert connection is not None
             connection.execute("INSERT INTO progress(singleton,generation) VALUES (1,0)")
             connection.executemany(
@@ -228,3 +228,28 @@ def test_health_costs_the_same_whatever_the_pending_backlog(
 
     small, large = steps(1_000), steps(10_000)
     assert large < small * 1.5, (small, large)
+
+
+def test_state_an_earlier_version_wrote_is_rebuilt_with_exact_counts(tmp_path: Path) -> None:
+    instance, _capture = _world(tmp_path)
+    _drain(instance, now=NOW)
+    # The shape this worker's state had before its pending tally, with a backlog.
+    with sqlite3.connect(evidence._STATE.path(instance)) as connection:
+        for (trigger,) in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"
+        ).fetchall():
+            connection.execute(f"DROP TRIGGER {trigger}")
+        connection.execute("DROP TABLE tally")
+        connection.executemany(
+            "INSERT INTO pending VALUES (?)", ((f"sha256:{index:064x}",) for index in range(3))
+        )
+
+    # Rebuilt: nothing survives, so the worker starts over as on a new instance.
+    assert WORKER.health(instance, now=NOW) == ()
+    with sqlite3.connect(evidence._STATE.path(instance)) as connection:
+        assert connection.execute("SELECT count(*) FROM pending").fetchone() == (0,)
+        assert connection.execute("SELECT value FROM tally").fetchall() == [(0,)]
+    _drain(instance, now=NOW)
+    _drain(instance, now=NOW)
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.detail["pending_checks"] == 0 and _findings(instance) == set()

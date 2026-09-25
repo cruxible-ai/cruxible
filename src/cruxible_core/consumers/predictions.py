@@ -24,12 +24,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import threading
-from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -53,6 +50,7 @@ from cruxible_core.consumers.protocol import (
     CursorPolicy,
     EffectClass,
 )
+from cruxible_core.consumers.state import DisposableState
 from cruxible_core.server.config import get_disabled_consumers
 
 if TYPE_CHECKING:
@@ -72,8 +70,6 @@ CHECK_BATCH = 256
 UNBINDABLE_RETRY = timedelta(hours=1)
 
 _PREFIX = "resolutions:"
-_LOCKS: dict[Path, threading.Lock] = {}
-_LOCKS_GUARD = threading.Lock()
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (
@@ -134,6 +130,7 @@ CREATE TRIGGER IF NOT EXISTS window_moved AFTER UPDATE OF status ON windows
  UPDATE tally SET value=value+1 WHERE name=NEW.status;
  END;
 """
+_STATE = DisposableState("prediction-settlement", _SCHEMA)
 
 
 @dataclass(frozen=True)
@@ -164,32 +161,6 @@ class _Contract:
     reference: ResolutionContractReferenceV1
     contract: ResolutionContractV1
     accepted_at: datetime
-
-
-def _root(instance: Any) -> Path:
-    exhaust = Path(instance.root) / str(instance.descriptor.storage.exhaust)
-    return exhaust / "prediction-settlement"
-
-
-@contextmanager
-def _state(instance: Any, *, create: bool = True) -> Iterator[sqlite3.Connection | None]:
-    root = _root(instance)
-    if not root.exists():
-        if not create:
-            yield None
-            return
-        root.mkdir(mode=0o700, parents=True)
-    path = root / "state.sqlite3"
-    with _LOCKS_GUARD:
-        lock = _LOCKS.setdefault(path.resolve(), threading.Lock())
-    with lock:
-        connection = sqlite3.connect(path, timeout=30)
-        try:
-            connection.executescript(_SCHEMA)
-            yield connection
-            connection.commit()
-        finally:
-            connection.close()
 
 
 def _instant(value: str) -> datetime:
@@ -265,7 +236,7 @@ def _bind(
 def settleable_windows(instance: Any) -> tuple[SettleableWindow, ...]:
     """The closed, unanswered windows the worker last observed; empty before it ran."""
 
-    with _state(instance, create=False) as connection:
+    with _STATE.open(instance, create=False) as connection:
         if connection is None:
             return ()
         rows = connection.execute(
@@ -288,7 +259,7 @@ def settleable_windows(instance: Any) -> tuple[SettleableWindow, ...]:
 def unbindable_anchors(instance: Any) -> tuple[UnbindableAnchor, ...]:
     """Matching anchors whose material could not bind a window at the last look."""
 
-    with _state(instance, create=False) as connection:
+    with _STATE.open(instance, create=False) as connection:
         if connection is None:
             return ()
         rows = connection.execute(
@@ -356,7 +327,7 @@ class PredictionSettlementConsumers:
     def match(self, instance: Any, *, now: datetime, daemon_id: str) -> None:
         with instance.accepted_history_reader() as history:
             head = history.sequence
-            with _state(instance) as connection:
+            with _STATE.open(instance) as connection:
                 assert connection is not None
                 row = connection.execute("SELECT generation FROM progress").fetchone()
             cursor = head if row is None else row[0]
@@ -371,7 +342,7 @@ class PredictionSettlementConsumers:
         captures = journal.index.positions(captures_stream, event_kind="produced_capture")
         resolutions = journal.index.positions(resolution_stream)
         generation = captures["generation"]
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             if row is None:
                 # A new worker reads today's live contracts, not their history;
@@ -392,7 +363,7 @@ class PredictionSettlementConsumers:
             resolution_stream, after=after, through=resolutions, limit=EVENT_BATCH
         )
         mark = uuid4().hex
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             # A later generation re-queues a contract the worker may be loading
             # now; the worker only clears the queueing it read.
@@ -427,7 +398,7 @@ class PredictionSettlementConsumers:
             )
 
     def due(self, instance: Any, *, now: datetime) -> Iterable[ConsumerWork]:
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             progress = connection.execute(
                 "SELECT backfill_after,capture_head FROM progress"
@@ -469,21 +440,21 @@ class PredictionSettlementConsumers:
             else:
                 self._windows(instance, now=now)
         except Exception as exc:
-            with _state(instance) as connection:
+            with _STATE.open(instance) as connection:
                 assert connection is not None
                 connection.execute(
                     "UPDATE progress SET last_error=?,last_error_at=?",
                     (f"{type(exc).__name__}: {exc}", format_datetime(now)),
                 )
             raise
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             connection.execute("UPDATE progress SET last_error=NULL,last_error_at=NULL")
 
     def _contracts(self, instance: Any, *, now: datetime) -> None:
         """Follow accepted contracts: load a new version, drop a retired or revised one."""
 
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             pending = connection.execute(
                 "SELECT identity,generation FROM pending ORDER BY identity LIMIT ?",
@@ -514,7 +485,7 @@ class PredictionSettlementConsumers:
                     (identity,),
                 ).fetchone()
                 live[identity] = None if row is None else row[0]
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             known = dict(
                 connection.execute(
@@ -537,7 +508,7 @@ class PredictionSettlementConsumers:
             if (digest is None and identity in known)
             or (digest is not None and known.get(identity) not in {None, digest})
         ]
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             for identity in dropped:
                 for table in ("contracts", "windows", "unbindable"):
@@ -602,7 +573,7 @@ class PredictionSettlementConsumers:
     def _captures(self, instance: Any, *, now: datetime) -> None:
         """Bind one window per landed Capture an event contract's selector matches."""
 
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             generation, head = connection.execute(
                 "SELECT index_generation,capture_head FROM progress"
@@ -655,7 +626,7 @@ class PredictionSettlementConsumers:
                 bound.append(stored.record_digest)
                 if (item := _window_row(contract, window)) is not None:
                     windows.append(item)
-            with _state(instance) as connection:
+            with _STATE.open(instance) as connection:
                 assert connection is not None
                 (current,) = connection.execute("SELECT index_generation FROM progress").fetchone()
                 if current != generation:
@@ -735,7 +706,7 @@ class PredictionSettlementConsumers:
             "w.contract_id,w.window,w.dirty,c.identity,c.reference,c.contract,c.accepted_at "
             "FROM windows w JOIN contracts c ON c.identity=w.identity"
         )
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             rows = connection.execute(
                 f"SELECT {columns} WHERE w.dirty IS NOT NULL LIMIT ?", (CHECK_BATCH,)
@@ -785,7 +756,7 @@ class PredictionSettlementConsumers:
                 continue
             row = _window_row(contract, window)
             rebound.append((contract, [] if row is None else [row], [], [digest]))
-        with _state(instance) as connection:
+        with _STATE.open(instance) as connection:
             assert connection is not None
             for contract_id, status, dirty in checked:
                 connection.execute(
@@ -803,7 +774,7 @@ class PredictionSettlementConsumers:
                 )
 
     def health(self, instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
-        with _state(instance, create=False) as connection:
+        with _STATE.open(instance, create=False) as connection:
             if connection is None:
                 return ()
             row = connection.execute(
