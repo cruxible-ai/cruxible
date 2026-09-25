@@ -257,6 +257,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "document_modified",
     "unregistered_projection_block",
     "projection_marker_invalid",
+    "proposal_stale",
 ]
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[

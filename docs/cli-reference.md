@@ -1269,6 +1269,14 @@ Conflicting values in the same claim slot require revisions into distinct
 qualifiers; when a shared value field such as `topic` separates the contenders,
 the repair identifies that field.
 
+A `proposal_stale` row is exactly a `proposal list` entry whose terminal reason
+is `stale`: a candidate neither accepted, refused nor withdrawn whose parent is
+no longer the coordinate's semantic root, so it cannot activate. The row names
+the proposal's author in `detail.actor_id`; its repair is
+`cruxible playbill proposal readmit PROPOSAL_ID`, which only that author may
+run, and `proposal withdraw` is the alternative when the change is no longer
+wanted. A readmission at the same coordinate, or a withdrawal, closes the row.
+
 ## playbill curation
 
 ~~~text

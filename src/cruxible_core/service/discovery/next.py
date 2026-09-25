@@ -118,6 +118,7 @@ from cruxible_core.service.evidence.evidence import (
     accepted_claim_attestations,
     service_evaluate_playbill_claim_verdict,
 )
+from cruxible_core.service.proposals.proposals import stale_unreadmitted_proposals
 from cruxible_core.service.proposals.publications import (
     ProjectionBlockRegistration,
     registered_projection_blocks,
@@ -151,6 +152,7 @@ NextRepairOperation = Literal[
     "playbill.block.repin",
     "playbill.block.sync",
     "playbill.document.propose",
+    "playbill.proposal.readmit",
     "hand_edit",
 ]
 
@@ -736,6 +738,7 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.block.repin": "playbill block repin",
     "playbill.block.sync": "playbill block sync",
     "playbill.document.propose": "playbill document propose",
+    "playbill.proposal.readmit": "playbill proposal readmit",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -820,6 +823,11 @@ def _repair_command(
             parts.append("--all")
         else:
             return None
+    elif operation == "playbill.proposal.readmit":
+        proposal_id = values.get("proposal_id")
+        if not isinstance(proposal_id, str):
+            return None
+        parts.append(shlex.quote(proposal_id))
     elif operation == "playbill.claim.retire":
         claim_id = values.get("claim_id")
         if isinstance(claim_id, str):
@@ -2899,6 +2907,46 @@ def _document_items(
     return tuple(items)
 
 
+def _proposal_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: PlaybillAcceptedCoordinate,
+    access_profile: CoverageAccessProfileV1,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Stale proposals: admitted work that can no longer activate where it stands.
+
+    Activation settles a candidate only onto the state it was evaluated
+    against, so a proposal whose parent head has moved past waits on its
+    author: readmit rebases the same tree onto the current head, and withdraw
+    says it will never be settled. Either one closes the row.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    return tuple(
+        _item(
+            severity="repair",
+            reason="proposal_stale",
+            subject_identity=proposal.proposal_id,
+            related_identities=(proposal.target_ref,),
+            detail={
+                "actor_id": proposal.actor_id,
+                "admitted_at": proposal.admitted_at,
+                "candidate_parent_semantic_root": proposal.candidate_parent_semantic_root,
+                "accepted_semantic_root": coordinate.semantic_root,
+                "target_ref": proposal.target_ref,
+            },
+            repair=PlaybillNextRepairV1(
+                operation="playbill.proposal.readmit",
+                target=proposal.proposal_id,
+                required_change="readmit_as_its_author_or_withdraw_the_stale_proposal",
+                arguments={"proposal_id": proposal.proposal_id},
+            ),
+        )
+        for proposal in stale_unreadmitted_proposals(instance, coordinate)
+    )
+
+
 def _registered_publication_blocks(
     instance: PlaybillInstance,
 ) -> dict[tuple[str, str], ProjectionBlockRegistration] | None:
@@ -3375,6 +3423,11 @@ def service_playbill_next(
             coordinate=coordinate,
             access_profile=request.access_profile,
             observation=request.workspace_observation,
+        ),
+        *_proposal_items(
+            instance,
+            coordinate=public_coordinate,
+            access_profile=request.access_profile,
         ),
     )
     held = 0

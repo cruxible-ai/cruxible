@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -148,7 +152,6 @@ def _proposal_entries(
     proposal_id: str | None = None,
 ) -> tuple[PlaybillProposalListEntryV1, ...]:
     evidence = instance.proposal_evidence()
-    assert evidence.index is not None
     if proposal_id is not None:
         # A selected status is an evidence read, not an inventory-only answer.
         evidence.read_admission(proposal_id)
@@ -156,35 +159,22 @@ def _proposal_entries(
         if evaluation.candidate_digest is not None:
             evidence.read_candidate(evaluation.candidate_digest)
         evidence.read_withdrawal(proposal_id)
-    with evidence.index.read(evidence) as connection:
-        if connection.execute("SELECT 1 FROM proposals LIMIT 1").fetchone() is None:
+    with _bound_inventory(instance, coordinate) as bound:
+        if bound is None:
             return ()
-    with instance.accepted_history_reader(at=coordinate) as history:
-        with evidence.index.read(evidence) as connection:
-            generation = connection.execute(
-                "SELECT git_oid,semantic_root,generation_root,compiler_digest "
-                "FROM accepted_generations WHERE sequence=?",
-                (history.sequence,),
-            ).fetchone()
-            if tuple(generation or ()) != (
-                coordinate.git_oid,
-                coordinate.semantic_root,
-                coordinate.generation_root,
-                coordinate.compiler_digest,
-            ):
-                raise ProposalIntegrityError("proposal inventory history binding differs")
-            rows = connection.execute(
-                "SELECT p.*, CASE WHEN evaluation_status='refused' THEN 'refused' "
-                "WHEN EXISTS (SELECT 1 FROM accepted_generations g "
-                "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?) THEN 'accepted' "
-                "WHEN withdrawal_path IS NOT NULL THEN 'withdrawn' "
-                "WHEN candidate_parent_semantic_root=? THEN NULL ELSE 'stale' END AS reason "
-                "FROM proposals p "
-                + ("WHERE proposal_id=? " if proposal_id is not None else "")
-                + "ORDER BY admitted_at_us,proposal_id",
-                (history.sequence, coordinate.semantic_root)
-                + ((proposal_id,) if proposal_id is not None else ()),
-            ).fetchall()
+        connection, sequence = bound
+        rows = connection.execute(
+            "SELECT p.*, CASE WHEN evaluation_status='refused' THEN 'refused' "
+            "WHEN EXISTS (SELECT 1 FROM accepted_generations g "
+            "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?) THEN 'accepted' "
+            "WHEN withdrawal_path IS NOT NULL THEN 'withdrawn' "
+            "WHEN candidate_parent_semantic_root=? THEN NULL ELSE 'stale' END AS reason "
+            "FROM proposals p "
+            + ("WHERE proposal_id=? " if proposal_id is not None else "")
+            + "ORDER BY admitted_at_us,proposal_id",
+            (sequence, coordinate.semantic_root)
+            + ((proposal_id,) if proposal_id is not None else ()),
+        ).fetchall()
     entries = []
     for row in rows:
         missing: list[ProposalIncompleteReason] = []
@@ -214,6 +204,118 @@ def _proposal_entries(
             )
         )
     return tuple(entries)
+
+
+@contextmanager
+def _bound_inventory(
+    instance: PlaybillInstance,
+    coordinate: PlaybillAcceptedCoordinate,
+) -> Iterator[tuple[sqlite3.Connection, int] | None]:
+    """One proposal-index read bound to the history sequence of `coordinate`.
+
+    Yields None for an instance that has never admitted a proposal.
+    """
+
+    evidence = instance.proposal_evidence()
+    assert evidence.index is not None
+    with evidence.index.read(evidence) as connection:
+        if connection.execute("SELECT 1 FROM proposals LIMIT 1").fetchone() is None:
+            yield None
+            return
+    with instance.accepted_history_reader(at=coordinate) as history:
+        with evidence.index.read(evidence) as connection:
+            generation = connection.execute(
+                "SELECT git_oid,semantic_root,generation_root,compiler_digest "
+                "FROM accepted_generations WHERE sequence=?",
+                (history.sequence,),
+            ).fetchone()
+            if tuple(generation or ()) != (
+                coordinate.git_oid,
+                coordinate.semantic_root,
+                coordinate.generation_root,
+                coordinate.compiler_digest,
+            ):
+                raise ProposalIntegrityError("proposal inventory history binding differs")
+            yield connection, history.sequence
+
+
+@dataclass(frozen=True)
+class StaleProposal:
+    """A candidate evaluated against a state accepted head has since moved past."""
+
+    proposal_id: str
+    actor_id: str
+    target_ref: str
+    admitted_at: str
+    candidate_parent_semantic_root: str
+
+
+def readmission_operation_digest(proposal_id: str, coordinate: PlaybillAcceptedCoordinate) -> str:
+    """The one readmission of `proposal_id` that `coordinate` admits."""
+
+    return typed_digest(
+        Sha256Value,
+        "playbill-proposal-readmit-v1",
+        {
+            "source_proposal_id": proposal_id,
+            "current_accepted_coordinate": coordinate.model_dump(mode="json"),
+        },
+    ).tagged
+
+
+def _readmission_target_ref(actor_id: str, operation_digest: str) -> str:
+    return f"refs/proposals/{actor_id}/readmit-{operation_digest.removeprefix('sha256:')[:24]}"
+
+
+def stale_unreadmitted_proposals(
+    instance: PlaybillInstance,
+    coordinate: PlaybillAcceptedCoordinate,
+) -> tuple[StaleProposal, ...]:
+    """The inventory's stale proposals nobody has withdrawn or readmitted here.
+
+    Exactly `proposal list`'s `stale` terminal reason -- a candidate neither
+    refused, accepted nor withdrawn whose parent semantic root is not the
+    coordinate's -- read through the open-parent locator rather than the whole
+    inventory. A proposal already readmitted at this coordinate is answered:
+    its readmission is the proposal that now carries the change, and that ref
+    is found by the target-ref locator, never by listing admissions.
+    """
+
+    with _bound_inventory(instance, coordinate) as bound:
+        if bound is None:
+            return ()
+        connection, sequence = bound
+        rows = connection.execute(
+            "SELECT proposal_id,actor_id,target_ref,admitted_at_us,"
+            "candidate_parent_semantic_root FROM proposals p "
+            "WHERE evaluation_status='candidate' AND withdrawal_path IS NULL "
+            "AND admission_path IS NOT NULL AND candidate_parent_semantic_root IS NOT NULL "
+            "AND candidate_parent_semantic_root!=? AND NOT EXISTS ("
+            "SELECT 1 FROM accepted_generations g "
+            "WHERE g.candidate_digest=p.candidate_digest AND g.sequence<=?) "
+            "ORDER BY admitted_at_us,proposal_id",
+            (coordinate.semantic_root, sequence),
+        ).fetchall()
+        stale = []
+        for row in rows:
+            readmission = _readmission_target_ref(
+                row["actor_id"],
+                readmission_operation_digest(row["proposal_id"], coordinate),
+            )
+            if connection.execute(
+                "SELECT 1 FROM proposals WHERE target_ref=? LIMIT 1", (readmission,)
+            ).fetchone():
+                continue
+            stale.append(
+                StaleProposal(
+                    proposal_id=row["proposal_id"],
+                    actor_id=row["actor_id"],
+                    target_ref=row["target_ref"],
+                    admitted_at=timestamp(row["admitted_at_us"]),
+                    candidate_parent_semantic_root=row["candidate_parent_semantic_root"],
+                )
+            )
+    return tuple(stale)
 
 
 def service_resolve_playbill_proposal_selector(
@@ -300,14 +402,7 @@ def service_readmit_playbill_proposal(
     ):
         raise ProposalReadmitRequiresResubmission()
     coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    operation_digest = typed_digest(
-        Sha256Value,
-        "playbill-proposal-readmit-v1",
-        {
-            "source_proposal_id": proposal_id,
-            "current_accepted_coordinate": coordinate.model_dump(mode="json"),
-        },
-    ).tagged
+    operation_digest = readmission_operation_digest(proposal_id, coordinate)
     matching = tuple(
         admission
         for admission in instance.proposal_evidence().list_admissions()
@@ -324,10 +419,7 @@ def service_readmit_playbill_proposal(
         result = instance.proposal_service().submit(
             actor=AuthenticatedActor(actor_id=actor_id),
             request=ProposalAdmissionRequest(
-                target_ref=(
-                    f"refs/proposals/{actor_id}/readmit-"
-                    f"{operation_digest.removeprefix('sha256:')[:24]}"
-                ),
+                target_ref=_readmission_target_ref(actor_id, operation_digest),
                 proposed_base_oid=source.admission.proposed_base_oid,
                 source_compilation_digest=operation_digest,
                 claim_type_expansions=source.admission.claim_type_expansions,
@@ -480,9 +572,12 @@ __all__ = [
     "PrincipalRegistrationStatus",
     "ProposalInventoryStatus",
     "ProposalTerminalReason",
+    "StaleProposal",
     "WhoAmIActorIdSource",
+    "readmission_operation_digest",
     "service_list_playbill_proposals",
     "service_readmit_playbill_proposal",
     "service_withdraw_playbill_proposal",
     "service_playbill_whoami",
+    "stale_unreadmitted_proposals",
 ]

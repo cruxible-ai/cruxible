@@ -73,7 +73,8 @@
         "claim_new_evidence_unreviewed",
         "document_modified",
         "unregistered_projection_block",
-        "projection_marker_invalid"
+        "projection_marker_invalid",
+        "proposal_stale"
       ]
     },
     "PlaybillPolicyKind": {
