@@ -52,6 +52,11 @@ def test_every_documented_knob_default_matches_the_model() -> None:
             assert field.default == (), (name, field.default)
             assert documented[name] == "[]", (name, documented[name])
             continue
+        if field.default is None:
+            # Optional knobs (``provider_repository``) are documented as JSON null
+            # for the same reason: the table shows the config shape, not repr().
+            assert documented[name] == "null", (name, documented[name])
+            continue
         assert documented[name] == str(field.default), (name, documented[name], field.default)
 
 
