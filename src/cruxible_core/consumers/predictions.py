@@ -657,6 +657,12 @@ class PredictionSettlementConsumers:
                     windows.append(item)
             with _state(instance) as connection:
                 assert connection is not None
+                (current,) = connection.execute("SELECT index_generation FROM progress").fetchone()
+                if current != generation:
+                    # The index was rebuilt while this pass read it, and matching
+                    # already reset every scan: nothing read here may land, not
+                    # even the cursor that would undo that reset.
+                    return
                 self._record_bindings(
                     connection, contract.identity, windows, unbound, bound, now=now
                 )

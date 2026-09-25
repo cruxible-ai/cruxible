@@ -308,6 +308,41 @@ def unbindable_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     return instance, event, lambda: payload.write_bytes(original)
 
 
+def test_a_scan_page_read_before_an_index_rebuild_cannot_undo_its_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.procedures.procedure_runs import _journal
+
+    instance, owner, capture = served._world(tmp_path)
+    accept_event_contract(instance, owner, capture)
+    first = land(instance, at=served.PREDICTED_AT + timedelta(minutes=1), run="one")
+    now = served.PREDICTED_AT + timedelta(minutes=5)
+    drain(instance, now=now)
+    second = land(instance, at=served.PREDICTED_AT + timedelta(minutes=2), run="two")
+    bind = predictions._bind
+    rebuilt: list[bool] = []
+
+    def bind_across_a_rebuild(*args, **kwargs):  # type: ignore[no-untyped-def]
+        if not rebuilt:
+            # The page in hand was read from the old index; the rebuild renumbers
+            # every record, and matching resets each scan while this page binds.
+            rebuilt.append(True)
+            _journal(instance)[0].index.path.unlink()
+            WORKER.match(instance, now=now, daemon_id="daemon")
+        return bind(*args, **kwargs)
+
+    monkeypatch.setattr(predictions, "_bind", bind_across_a_rebuild)
+    drain(instance, now=now)
+
+    assert rebuilt
+    with sqlite3.connect(predictions._root(instance) / "state.sqlite3") as connection:
+        ((current,),) = connection.execute("SELECT index_generation FROM progress").fetchall()
+        ((scanned_in,),) = connection.execute("SELECT capture_generation FROM contracts").fetchall()
+    assert scanned_in == current
+    drain(instance, now=now + timedelta(hours=1))
+    assert [item.window.event for item in settleable_windows(instance)] == [first, second]
+
+
 def test_an_anchor_whose_material_is_gone_is_a_finding_until_restored(tmp_path: Path) -> None:
     instance, event, restore = unbindable_world(tmp_path)
     now = served.PREDICTED_AT + timedelta(minutes=5)
