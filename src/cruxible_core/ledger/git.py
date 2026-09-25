@@ -1411,13 +1411,16 @@ class GitLedger:
         return objects
 
     def tree_oid(self, commit_oid: str) -> str:
+        """A commit's tree (a tree names itself), from hash-checked object bytes."""
+
         self._validate_oid(commit_oid)
         tree = self._commit_tree(commit_oid)
         if tree is not None:
             return tree
-        oid = self._git(["rev-parse", f"{commit_oid}^{{tree}}"]).decode().strip()
-        self._validate_oid(oid)
-        return oid
+        found = _batch_reader(self.path).objects((commit_oid,))[commit_oid]
+        if found is None or found[0] != "tree":
+            raise PlaybillGitError(f"ledger object names no tree: {commit_oid}")
+        return commit_oid
 
     def set_main_genesis(self, oid: str) -> None:
         self._validate_oid(oid)
@@ -1902,23 +1905,9 @@ class GitLedger:
 
         Rename detection is disabled: moves are a removal and an insertion.
         Mode changes are included and the blob reader checks successor modes.
+        The delta comes from hash-checked tree objects, as ``changed_entries``.
         """
-        self._validate_oid(before)
-        self._validate_oid(after)
-        raw = self._git(
-            [
-                "diff-tree",
-                "--no-commit-id",
-                "--name-only",
-                "-r",
-                "--no-renames",
-                "-z",
-                before,
-                after,
-                "--",
-            ]
-        )
-        return tuple(path.decode("utf-8") for path in raw.split(b"\0") if path)
+        return tuple(change.path for change in self.changed_entries(before, after))
 
     def read_tree(self, oid: str) -> dict[str, bytes]:
         entries = _proven_blob_entries(self.list_tree(oid))

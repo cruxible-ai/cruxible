@@ -179,3 +179,33 @@ def test_a_tree_object_replaced_on_disk_is_refused(ledger: GitLedger, tmp_path: 
     empty = _tree(ledger, {}, tmp_path / "index")
     with pytest.raises(PlaybillGitError, match="do not hash to their ID"):
         ledger._read_changed_entries(empty, tree)
+
+
+def test_a_forged_subtree_never_hides_a_generations_changes_from_history(
+    tmp_path: Path,
+) -> None:
+    """History sync takes each generation's changed paths from checked trees too."""
+
+    from tests.core_support._knowledge_loop_support import seed_claims
+
+    instance, _owner = seed_claims(tmp_path)
+    with instance.accepted_history_reader():
+        pass
+    ledger = instance._ledger
+    head, parent = instance.accepted_history()[-1], instance.accepted_history()[-2]
+    head_entries = ledger._tree_entries_of(ledger.tree_oid(head.oid))
+    parent_entries = ledger._tree_entries_of(ledger.tree_oid(parent.oid))
+    name = next(
+        name
+        for name in ("claims", "subjects")
+        if name in head_entries and head_entries[name] != parent_entries.get(name)
+    )
+    source = parent_entries[name][1]
+    body = ledger_git._batch_reader(ledger.path).objects((source,))[source]
+    assert body is not None
+    _forge_subtree(ledger, head_entries[name][1], body[1])
+    _clear_caches()
+    instance._accepted_history_index.invalidate()
+    with pytest.raises(PlaybillGitError, match="do not hash to their ID"):
+        with instance.accepted_history_reader():
+            pass
