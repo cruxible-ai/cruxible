@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from cruxible_client import Playbill
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
 from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependentV1
@@ -23,6 +23,7 @@ from cruxible_client.contracts.captures import (
     render_capture_contract,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, parse_claim_type
+from cruxible_client.contracts.claims import ClaimArtifactV3, parse_claim
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
 from cruxible_client.contracts.kits import (
     KitArtifactBytesV1,
@@ -56,6 +57,7 @@ from cruxible_client.contracts.query.grammar import (
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.kits import read_kit_directory, write_kit_directory
 from cruxible_client.transport.http import CruxibleClient
+from cruxible_core.claims.artifact_references import REFERENCE_FIELDS
 from cruxible_core.errors import DataValidationError
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
@@ -65,7 +67,6 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
-from cruxible_core.service.kits import KIT_REFERENCE_FIELDS
 from tests.core_support._pc_c_support import capture_contract
 
 SEATS = "acme.account.seats"
@@ -844,5 +845,103 @@ def _digest_fields(
 def test_the_reference_table_names_every_digest_field_of_each_kit_family(
     prefix: str, model: type[BaseModel]
 ) -> None:
-    table = {tuple(step for step in steps if step != "*") for steps in KIT_REFERENCE_FIELDS[prefix]}
+    table = {tuple(step for step in steps if step != "*") for steps in REFERENCE_FIELDS[prefix]}
     assert table == _digest_fields(model)
+
+
+@pytest.mark.parametrize(
+    ("prefix", "model"), [("claims/", ClaimArtifactV3), ("documents/", DocumentShell)]
+)
+def test_state_reference_fields_are_real_digest_fields(prefix: str, model: type[BaseModel]) -> None:
+    # Claims and Documents also hold content digests, which are never references.
+    table = {tuple(step for step in steps if step != "*") for steps in REFERENCE_FIELDS[prefix]}
+    assert table <= _digest_fields(model)
+
+
+def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_claims_follow(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    contract = _contract("acme.orders-v1")
+    _author_contract(publisher, contract)
+    consumer.add(publisher.build("1.0.0"))
+    held = parse_capture_contract(consumer.tree()[CONTRACT_PATH], path=CONTRACT_PATH)
+    held_digest = capture_contract_digest(held).tagged
+    local = _claim_type("local.order.source", {"type": "string", "const": held_digest})
+    local = local.model_copy(
+        update={
+            "pins": (
+                ArtifactPin(
+                    role="capture-contract",
+                    target=ArtifactIdentity(kind="CaptureContract", name="acme.orders-v1"),
+                    artifact_digest=held_digest,
+                ),
+            )
+        }
+    )
+    consumer.author(local)
+    draft = consumer.pb.changes(rationale="Record where one order came from.")
+    draft.subject(
+        SubjectShell(
+            identity=ArtifactIdentity(kind="Subject", name="local.order/one"),
+            subject_kind="local.order",
+            subject_id="one",
+            lifecycle=ArtifactLifecycle(),
+        )
+    )
+    draft.claim(
+        subject="local.order/one",
+        predicate="local.order.source",
+        value=held_digest,
+        role="observation",
+        rationale="The order names its contract.",
+        supported_by=None,
+        copied_from=None,
+        self_source=f"source: {held_digest}\n",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit()
+    assert submitted._candidate_status is not None
+    assert submitted._candidate_status.proposal_id is not None
+    consumer.approve(submitted._candidate_status.proposal_id)
+    claim_path = next(path for path in consumer.tree() if path.startswith("claims/"))
+    claim_id = parse_claim(consumer.tree()[claim_path], path=claim_path).identity
+
+    _author_contract(
+        publisher,
+        _contract(
+            "acme.orders-v1", max_rows=5, predecessor=capture_contract_digest(contract).tagged
+        ),
+    )
+    result = playbill_api.playbill_kit_add(
+        consumer.instance_id,
+        PlaybillKitAddRequestV1(
+            bundle=publisher.build("1.1.0"),
+            source="test",
+            dependents=(
+                ClaimTypeSuccessionDependentV1(
+                    identity=claim_id,
+                    disposition="retire",
+                    claim_retirement_reason="was-rescinded",
+                ),
+            ),
+        ),
+    )
+    consumer.settle(result)
+
+    successor = consumer.claim_type("local.order.source")
+    new_contract = parse_capture_contract(consumer.tree()[CONTRACT_PATH], path=CONTRACT_PATH)
+    assert successor.pins[0].artifact_digest == capture_contract_digest(new_contract).tagged
+    # The constant is a value that happened to equal the old digest; it stays.
+    assert successor.literal_schema == {"type": "string", "const": held_digest}
+    retired = parse_claim(consumer.tree()[claim_path], path=claim_path)
+    assert retired.lifecycle.state == "retired"
+    assert retired.statement.claim_type_digest == claim_type_digest(successor).tagged
+    assert retired.statement.object.value == held_digest

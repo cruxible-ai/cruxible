@@ -49,6 +49,7 @@ from cruxible_client.contracts.kits import (
     kit_artifact_path_allowed,
     kit_receipt_document_id,
 )
+from cruxible_core.claims.artifact_references import move_references, referenced_digests
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
     ClaimTypeMigrationError,
@@ -74,85 +75,17 @@ _RECEIPT_ACCESS = BodyAccessContext(principal_id="kit-receipt", can_read_body=Tr
 _RECEIPT_SCOPE = ("kit",)
 _SNAPSHOT_LIFECYCLE = {"predecessor_digest": None, "state": "live"}
 
-# Every field of each kit family that holds another artifact's digest, by path;
-# "*" steps into each list element. Nothing outside these fields is ever read as
-# a pin or rewritten, so literal data that happens to hold a digest stays as it
-# is. `tests/test_server/test_playbill_kits.py` checks the table against the
-# models, so a new reference field cannot be missed silently.
-_PIN = ("*", "artifact_digest")
-KIT_REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
-    "capture-contracts/": (
-        ("pins", *_PIN),
-        ("coordinate_schema_pins", *_PIN),
-        ("selector_schema_pins", *_PIN),
-        ("commitment_canonicalizer", "artifact_digest"),
-        ("retention_erasure_policy", "erasure_rule_digest"),
-        ("replay_policy_digest",),
-        ("provenance_rule_digest",),
-        ("source_subject_mapping_digest",),
-    ),
-    "claim-types/": (
-        ("pins", *_PIN),
-        ("evidence_admission_policy", "rules", "*", "capture_contract_digests", "*"),
-        ("evidence_admission_policy", "rules", "*", "allowed_reducer_digests", "*"),
-        ("admission_policy", "corroboration_requirements", "*", "query_definition_digest"),
-    ),
-    "query-definitions/": (("pins", *_PIN),),
-}
-
 
 def _without_lifecycle(value: Mapping[str, Any]) -> dict[str, Any]:
     return {key: item for key, item in value.items() if key != "lifecycle"}
 
 
-def _fields(path: str) -> tuple[tuple[str, ...], ...]:
-    for prefix, fields in KIT_REFERENCE_FIELDS.items():
-        if path.startswith(prefix):
-            return fields
-    return ()
-
-
-def _at(value: object, steps: tuple[str, ...], remap: Mapping[str, str] | None) -> Iterator[str]:
-    """Yield the digest at ``steps``; with ``remap``, rewrite it in place too."""
-
-    if not steps:
-        return
-    head, rest = steps[0], steps[1:]
-    if head == "*":
-        if isinstance(value, list):
-            for index, item in enumerate(value):
-                if not rest and isinstance(item, str):
-                    yield item
-                    if remap is not None:
-                        value[index] = remap.get(item, item)
-                else:
-                    yield from _at(item, rest, remap)
-        return
-    if not isinstance(value, dict) or head not in value:
-        return
-    item = value[head]
-    if not rest:
-        if isinstance(item, str):
-            yield item
-            if remap is not None:
-                value[head] = remap.get(item, item)
-        return
-    yield from _at(item, rest, remap)
-
-
 def _references(path: str, payload: dict[str, Any]) -> Iterator[str]:
-    for steps in _fields(path):
-        yield from _at(payload, steps, None)
+    return referenced_digests(path, payload)
 
 
 def _substitute(path: str, payload: Mapping[str, Any], remap: Mapping[str, str]) -> dict[str, Any]:
-    """A copy of ``payload`` with its reference fields moved through ``remap``."""
-
-    moved: dict[str, Any] = json.loads(json.dumps(payload))
-    for steps in _fields(path):
-        for _ in _at(moved, steps, remap):
-            pass
-    return moved
+    return move_references(path, payload, remap)
 
 
 def _artifact_state(path: str, content: bytes) -> ArtifactDependencyStateV1:

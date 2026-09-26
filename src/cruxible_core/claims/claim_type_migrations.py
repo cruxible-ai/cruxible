@@ -41,6 +41,7 @@ from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
+from cruxible_core.claims.artifact_references import move_references, reference_fields
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputV1,
     ClaimTypeLintWarningV1,
@@ -579,6 +580,7 @@ def _canonical_successor_bytes(
     successor_type: ClaimType | None,
     claim_retirement_reason: ClaimRetirementReason | None = None,
     claim_effective_until: datetime | None = None,
+    typed_references: bool = False,
 ) -> bytes:
     """Return the exact successor bytes one dependent takes under its disposition.
 
@@ -671,7 +673,11 @@ def _canonical_successor_bytes(
     if supplied_content is not None:
         payload = None
     elif supplied is None:
-        payload = _replace_exact_digests(json.loads(content), replacements)
+        payload = (
+            move_references(current.path, json.loads(content), replacements)
+            if typed_references
+            else _replace_exact_digests(json.loads(content), replacements)
+        )
         if not isinstance(payload, dict):
             raise ClaimTypeMigrationDependentInvalid(
                 f"{ClaimTypeMigrationDependentInvalid.code}: dependent is not an envelope"
@@ -1064,7 +1070,12 @@ def build_dependent_closure_candidate(
                     f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
                     f"{disposition}"
                 )
-            successor_type = _final_claim_type(tree, changed, row.path, current)
+            if reference_fields(row.path) is None:
+                raise ClaimTypeMigrationDependentInvalid(
+                    f"{ClaimTypeMigrationDependentInvalid.code}: {identity} cannot be re-pinned "
+                    "automatically; settle it through its own change first"
+                )
+            successor_type = _final_claim_type(tree, {**changed, **writes}, row.path, current)
             content = _canonical_successor_bytes(
                 current=current,
                 content=tree[row.path],
@@ -1074,6 +1085,7 @@ def build_dependent_closure_candidate(
                 successor_type=successor_type,
                 claim_retirement_reason=entry.claim_retirement_reason,
                 claim_effective_until=entry.claim_effective_until,
+                typed_references=True,
             )
             writes[row.path] = content
             successor_state = parse_dependency_artifact(row.path, content)
@@ -1107,7 +1119,11 @@ def _final_claim_type(
     path: str,
     current: ArtifactDependencyStateV1,
 ) -> ClaimType | None:
-    """The ClaimType a Claim dependent speaks after this set: changed, else accepted."""
+    """The ClaimType a Claim dependent speaks after this set.
+
+    ``changed`` holds everything this set writes so far -- the caller's own
+    definitions and the dependents already settled -- ahead of the accepted tree.
+    """
 
     if current.artifact_kind != "claim":
         return None
