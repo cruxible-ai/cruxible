@@ -986,6 +986,10 @@ def cli(
     json_compact: bool | None,
 ) -> None:
     """Cruxible — hard state for AI agents: governed, queryable, durable, with receipts."""
+    if ctx.invoked_subcommand == "mcp":
+        # The MCP server reads only its own environment; remembered CLI context,
+        # workspace discovery and root options must neither configure nor break it.
+        return
     try:
         stored = load_cli_context()
         resolved = resolve_playbill_context(

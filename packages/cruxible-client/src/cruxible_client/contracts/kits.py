@@ -47,7 +47,16 @@ class _Strict(BaseModel):
 
 
 def kit_artifact_path_allowed(path: str) -> bool:
-    return path.endswith(".json") and path.startswith(KIT_ARTIFACT_PREFIXES)
+    """A canonical relative artifact path inside one kit family, and nothing else."""
+
+    parts = path.split("/")
+    return (
+        path.endswith(".json")
+        and path.startswith(KIT_ARTIFACT_PREFIXES)
+        and "\\" not in path
+        and all(part not in {"", ".", ".."} for part in parts)
+        and all(part.isprintable() for part in parts)
+    )
 
 
 def kit_receipt_document_id(kit_id: str) -> str:
@@ -226,7 +235,10 @@ class KitReceiptV1(_Strict):
     version: str
     content_digest: str
     owns: tuple[str, ...]
+    # Definitions the kit owns: it may replace and retire these.
     artifacts: tuple[KitArtifactV1, ...]
+    # Definitions it pins but does not own: never replaced or retired through it.
+    carried: tuple[KitArtifactV1, ...] = ()
     source: str | None = None
 
     @field_validator("kit_id")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -11,9 +12,18 @@ from fastapi.testclient import TestClient
 from cruxible_client import Playbill
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.attestations import ApprovalStatement
+from cruxible_client.contracts.captures import (
+    CaptureContractV1,
+    capture_contract_digest,
+    render_capture_contract,
+)
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, parse_claim_type
+from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
 from cruxible_client.contracts.kits import (
+    KitArtifactBytesV1,
+    KitArtifactV1,
     KitBundleV1,
+    KitReleaseRefV1,
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
     PlaybillKitChangeResultV1,
@@ -22,6 +32,7 @@ from cruxible_client.contracts.kits import (
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicyV1,
 )
 from cruxible_client.kits import read_kit_directory, write_kit_directory
@@ -35,6 +46,7 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
+from tests.core_support._pc_c_support import capture_contract
 
 SEATS = "acme.account.seats"
 PLAN = "acme.account.plan"
@@ -415,3 +427,207 @@ def test_a_build_with_nothing_owned_is_refused(worlds: tuple[_World, _World]) ->
 
     with pytest.raises(DataValidationError, match="no live definitions"):
         publisher.build("1.0.0", owns=("nothing.",))
+
+
+def _contract(name: str, *, max_rows: int = 4, predecessor: str | None = None) -> CaptureContractV1:
+    base = capture_contract(name=name)
+    return base.model_copy(
+        update={
+            "selection_budget": base.selection_budget.model_copy(update={"max_rows": max_rows}),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=predecessor),
+        }
+    )
+
+
+def _pinning_type(predicate: str, contract: CaptureContractV1) -> ClaimType:
+    return _claim_type(predicate, {"type": "string"}).model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                rules=(
+                    ClaimEvidenceAdmissionRuleV1(
+                        rule_id="orders",
+                        claim_roles=("observation",),
+                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
+                        evidence_kinds=("database_record",),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
+
+
+def _author_contract(world: _World, contract: CaptureContractV1) -> None:
+    draft = world.pb.changes(rationale="Define the orders capture.")
+    draft.capture_contract(contract)
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit()
+    assert submitted._candidate_status is not None
+    proposal_id = submitted._candidate_status.proposal_id
+    assert proposal_id is not None
+    world.approve(proposal_id)
+    world.pb.refresh()
+
+
+CONTRACT_PATH = "capture-contracts/acme.orders-v1.json"
+
+
+def test_release_lineage_moves_owned_pins_and_leaves_literal_values_alone(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    first = _contract("acme.orders-v1")
+    _author_contract(publisher, first)
+    revised = _contract(
+        "acme.orders-v1", max_rows=5, predecessor=capture_contract_digest(first).tagged
+    )
+    _author_contract(publisher, revised)
+    local_digest = capture_contract_digest(revised).tagged
+    publisher.author(
+        _pinning_type("acme.orders.status", revised),
+        # A literal value that happens to equal the contract digest is data, not a pin.
+        _claim_type("acme.orders.zlimit", {"type": "string", "const": local_digest}),
+    )
+
+    release = publisher.build("1.0.0")
+
+    released = release.manifest.digests()[CONTRACT_PATH]
+    assert released != local_digest
+    status = parse_claim_type(
+        release.contents()["claim-types/acme.orders/status.json"],
+        path="claim-types/acme.orders/status.json",
+    )
+    assert status.evidence_admission_policy.rules[0].capture_contract_digests == (released,)
+    zlimit = parse_claim_type(
+        release.contents()["claim-types/acme.orders/zlimit.json"],
+        path="claim-types/acme.orders/zlimit.json",
+    )
+    assert zlimit.literal_schema == {"type": "string", "const": local_digest}
+    consumer.add(release)
+    for path, content in release.contents().items():
+        assert consumer.tree()[path] == content
+
+
+def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    contract = _contract("acme.orders-v1")
+    _author_contract(publisher, contract)
+    publisher.author(_pinning_type("beta.orders.status", contract))
+    acme = publisher.build("1.0.0")
+    beta = playbill_api.playbill_kit_build(
+        publisher.instance_id,
+        PlaybillKitBuildRequestV1(kit_id="beta", version="1.0.0", owns=("beta.",)),
+    ).bundle
+    assert CONTRACT_PATH in beta.manifest.digests()
+
+    consumer.add(acme)
+    added = consumer.add(beta)
+    assert (CONTRACT_PATH, "unchanged") in {(item.path, item.action) for item in added.plan}
+
+    # A release of beta that carries a different acme contract is refused for that
+    # path rather than replacing the definition acme owns.
+    revised = _contract(
+        "acme.orders-v1", max_rows=9, predecessor=capture_contract_digest(contract).tagged
+    )
+    content = render_capture_contract(revised)
+    artifacts = tuple(
+        item
+        if item.path != CONTRACT_PATH
+        else KitArtifactV1(
+            path=CONTRACT_PATH, artifact_digest=capture_contract_digest(revised).tagged
+        )
+        for item in beta.manifest.artifacts
+    )
+    forged = KitBundleV1(
+        manifest=beta.manifest.model_copy(
+            update={
+                "version": "1.1.0",
+                "previous": KitReleaseRefV1(
+                    version="1.0.0", content_digest=beta.manifest.content_digest
+                ),
+                "artifacts": artifacts,
+            }
+        ),
+        artifacts=tuple(
+            item if item.path != CONTRACT_PATH else KitArtifactBytesV1.of(CONTRACT_PATH, content)
+            for item in beta.artifacts
+        ),
+    )
+    refused = consumer.add(forged)
+    assert refused.status == "blocked"
+    assert (CONTRACT_PATH, "conflict") in {(item.path, item.action) for item in refused.plan}
+
+    removed = playbill_api.playbill_kit_remove(
+        consumer.instance_id, PlaybillKitRemoveRequestV1(kit_id="beta")
+    )
+    assert {item.path for item in removed.plan} == {"claim-types/beta.orders/status.json"}
+
+
+def test_a_carried_definition_with_local_history_refuses_the_build(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, _consumer = worlds
+    first = _contract("acme.orders-v1")
+    _author_contract(publisher, first)
+    revised = _contract(
+        "acme.orders-v1", max_rows=5, predecessor=capture_contract_digest(first).tagged
+    )
+    _author_contract(publisher, revised)
+    publisher.author(_pinning_type("beta.orders.status", revised))
+
+    with pytest.raises(DataValidationError, match="local history"):
+        playbill_api.playbill_kit_build(
+            publisher.instance_id,
+            PlaybillKitBuildRequestV1(kit_id="beta", version="1.0.0", owns=("beta.",)),
+        )
+
+
+def test_an_ordinary_document_named_like_a_receipt_does_not_break_kits(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    stored = playbill_api.playbill_store_body(
+        consumer.instance_id, content_base64=base64.b64encode(b"# notes\n").decode("ascii")
+    )
+    shell = DocumentShell(
+        identity="document:kit-notes",
+        document_kind="note",
+        title="Notes",
+        media_type="text/markdown",
+        body_digest=stored.digest,
+        governance_scope=("notes",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+    proposed = playbill_api.playbill_propose_document(
+        consumer.instance_id, shell=shell, proposal_name="kit-notes"
+    )
+    consumer.activate(proposed.proposal["admission"]["proposal_id"])
+
+    assert playbill_api.playbill_kit_status(consumer.instance_id).kits == ()
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    assert [kit.kit_id for kit in playbill_api.playbill_kit_status(consumer.instance_id).kits] == [
+        "acme"
+    ]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "claim-types/../../victim.json",
+        "claim-types/acme/../../../victim.json",
+        "claim-types//acme.json",
+        "claim-types/./acme.json",
+        "claim-types\\acme.json",
+        "governance/approval-policy.json",
+    ],
+)
+def test_a_kit_path_must_be_a_canonical_path_inside_a_kit_family(path: str) -> None:
+    with pytest.raises(ValueError):
+        KitArtifactV1(path=path, artifact_digest="sha256:" + "a" * 64)
+    with pytest.raises(ValueError):
+        KitArtifactBytesV1.of(path, b"{}\n")

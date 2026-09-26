@@ -75,26 +75,41 @@ def _without_lifecycle(value: Mapping[str, Any]) -> dict[str, Any]:
     return {key: item for key, item in value.items() if key != "lifecycle"}
 
 
-def _strings(value: object) -> Iterator[str]:
+# Author-controlled literal data; a digest string inside it is a value, never a pin.
+_LITERAL_KEYS = frozenset({"lifecycle", "literal_schema", "value_schema"})
+
+
+def _is_reference(key: str | None) -> bool:
+    return key is not None and (key == "artifact_digest" or key.endswith(("_digest", "_digests")))
+
+
+def _references(value: object, key: str | None = None) -> Iterator[str]:
+    """Digest strings held in reference fields, outside lifecycle and literal data."""
+
     if isinstance(value, str):
-        yield value
+        if _is_reference(key):
+            yield value
     elif isinstance(value, Mapping):
-        for item in value.values():
-            yield from _strings(item)
+        for name, item in value.items():
+            if name not in _LITERAL_KEYS:
+                yield from _references(item, name)
     elif isinstance(value, list):
         for item in value:
-            yield from _strings(item)
+            yield from _references(item, key)
 
 
-def _substitute(value: object, remap: Mapping[str, str]) -> object:
-    """Replace every exact digest string in ``remap``; digests never collide with prose."""
+def _substitute(value: object, remap: Mapping[str, str], key: str | None = None) -> object:
+    """Move reference fields from rewritten digests to their new ones; leave literals alone."""
 
     if isinstance(value, str):
-        return remap.get(value, value)
+        return remap.get(value, value) if _is_reference(key) else value
     if isinstance(value, Mapping):
-        return {key: _substitute(item, remap) for key, item in value.items()}
+        return {
+            name: item if name in _LITERAL_KEYS else _substitute(item, remap, name)
+            for name, item in value.items()
+        }
     if isinstance(value, list):
-        return [_substitute(item, remap) for item in value]
+        return [_substitute(item, remap, key) for item in value]
     return value
 
 
@@ -138,8 +153,7 @@ class _DefinitionIndex:
             )
             if target is not None:
                 found.add(target)
-        payload = _without_lifecycle(json.loads(self.tree[path]))
-        for text in _strings(payload):
+        for text in _references(json.loads(self.tree[path])):
             target = self.by_digest.get(text)
             if target is not None:
                 found.add(target)
@@ -191,11 +205,28 @@ def service_build_kit(
     """Export owned definitions at the accepted head as one release of ``kit_id``."""
 
     tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
-    return PlaybillKitBuildResultV1(bundle=build_kit(tree, request))
+    installed = {
+        path: receipt.kit_id
+        for receipt in _receipts(instance, tree)
+        if receipt.kit_id != request.kit_id
+        for path in receipt.digests()
+    }
+    return PlaybillKitBuildResultV1(bundle=build_kit(tree, request, installed=installed))
 
 
-def build_kit(tree: Mapping[str, bytes], request: PlaybillKitBuildRequestV1) -> KitBundleV1:
-    """Export the owned definitions of one accepted tree as a kit release."""
+def build_kit(
+    tree: Mapping[str, bytes],
+    request: PlaybillKitBuildRequestV1,
+    *,
+    installed: Mapping[str, str] | None = None,
+) -> KitBundleV1:
+    """Export the owned definitions of one accepted tree as a kit release.
+
+    Owned definitions get the kit's own release lineage. Carried definitions --
+    everything owned definitions pin that the kit does not own -- keep their
+    exact accepted bytes, so they stay identical to whatever defines them
+    (another kit, recorded in ``installed``, or a definition with no history).
+    """
 
     previous = request.previous
     previous_bytes: dict[str, bytes] = {}
@@ -213,8 +244,26 @@ def build_kit(tree: Mapping[str, bytes], request: PlaybillKitBuildRequestV1) -> 
     index = _DefinitionIndex(tree)
     remap: dict[str, str] = {}
     built: dict[str, bytes] = {}
+    installed = installed or {}
     for path in _selected(index, request.owns):
         state = index.states[path]
+        if not _owned(state, request.owns):
+            moved = [
+                dep
+                for dep in index.dependencies(path)
+                if index.states[dep].artifact_digest in remap
+            ]
+            if moved:
+                raise DataValidationError(
+                    f"carried {path} pins owned {moved[0]}; own it too so its pins can move"
+                )
+            if state.lifecycle.predecessor_digest is not None and path not in installed:
+                raise DataValidationError(
+                    f"carried {path} has local history no consumer can reproduce; own it, or "
+                    "install the kit that defines it and build against that"
+                )
+            built[path] = tree[path]
+            continue
         payload = _substitute(json.loads(tree[path]), remap)
         assert isinstance(payload, dict)
         prior = previous_bytes.get(path)
@@ -260,6 +309,21 @@ def _verify_bundle(bundle: KitBundleV1) -> dict[str, bytes]:
     return contents
 
 
+def _receipt_at(
+    instance: PlaybillInstance, path: str, raw: bytes, kit_id: str
+) -> tuple[DocumentShell, KitReceiptV1] | None:
+    """The receipt at ``path``, or None when an ordinary Document holds that name."""
+
+    shell = parse_document(raw, path=path)
+    if shell.document_kind != KIT_RECEIPT_DOCUMENT_KIND:
+        return None
+    body = instance.body_store().read(shell.body_digest, access=_RECEIPT_ACCESS)
+    receipt = KitReceiptV1.model_validate_json(body)
+    if receipt.kit_id != kit_id:
+        raise ProposalIntegrityError(f"{path} records kit {receipt.kit_id}, not {kit_id}")
+    return shell, receipt
+
+
 def _read_receipt(
     instance: PlaybillInstance, tree: Mapping[str, bytes], kit_id: str
 ) -> tuple[DocumentShell, KitReceiptV1] | None:
@@ -267,17 +331,19 @@ def _read_receipt(
     raw = tree.get(path)
     if raw is None:
         return None
-    shell = parse_document(raw, path=path)
-    if shell.document_kind != KIT_RECEIPT_DOCUMENT_KIND:
-        raise ProposalIntegrityError(f"{path} is not a kit receipt")
-    body = instance.body_store().read(shell.body_digest, access=_RECEIPT_ACCESS)
-    return shell, KitReceiptV1.model_validate_json(body)
+    found = _receipt_at(instance, path, raw, kit_id)
+    if found is None:
+        raise DataValidationError(
+            f"{path} is an ordinary Document, so kit {kit_id} has no receipt path"
+        )
+    return found
 
 
 def _receipts(instance: PlaybillInstance, tree: Mapping[str, bytes]) -> Iterator[KitReceiptV1]:
     for path in sorted(tree):
         if path.startswith("documents/kit-") and path.endswith(".json"):
-            found = _read_receipt(instance, tree, path.removeprefix("documents/kit-")[:-5])
+            kit_id = path.removeprefix("documents/kit-").removesuffix(".json")
+            found = _receipt_at(instance, path, tree[path], kit_id)
             if found is not None:
                 yield found[1]
 
@@ -295,12 +361,41 @@ def _plan(
     tree: Mapping[str, bytes],
     installed: Mapping[str, str],
     incoming: Mapping[str, bytes],
+    carried: Mapping[str, bytes] | None = None,
 ) -> tuple[list[KitPathPlanV1], dict[str, bytes]]:
-    """Per-path actions and the bytes they write; a conflict writes nothing."""
+    """Per-path actions and the bytes they write; a conflict writes nothing.
 
+    ``installed`` and ``incoming`` are the kit's owned definitions, which it may
+    add, replace and retire. ``carried`` definitions belong to someone else: the
+    kit may add one that is absent, and otherwise needs it exactly as accepted.
+    """
+
+    carried = carried or {}
     plan: list[KitPathPlanV1] = []
     writes: dict[str, bytes] = {}
-    for path in sorted(set(installed) | set(incoming)):
+    for path, content in sorted(carried.items()):
+        current = tree.get(path)
+        state = _artifact_state(path, content)
+        if current is None and state.lifecycle.predecessor_digest is None:
+            plan.append(KitPathPlanV1(path=path, action="add", detail="carried"))
+            writes[path] = content
+        elif current is None:
+            plan.append(
+                KitPathPlanV1(
+                    path=path,
+                    action="conflict",
+                    detail="carried; install the release that defines it first",
+                )
+            )
+        elif _artifact_state(path, current).artifact_digest == state.artifact_digest:
+            plan.append(KitPathPlanV1(path=path, action="unchanged", detail="carried"))
+        else:
+            plan.append(
+                KitPathPlanV1(
+                    path=path, action="conflict", detail="carried; differs from the accepted one"
+                )
+            )
+    for path in sorted((set(installed) | set(incoming)) - set(carried)):
         current = tree.get(path)
         current_digest = None if current is None else _artifact_state(path, current).artifact_digest
         if path in incoming:
@@ -463,7 +558,14 @@ def service_add_kit(
 
     bundle = request.bundle
     manifest = bundle.manifest
-    incoming = _verify_bundle(bundle)
+    contents = _verify_bundle(bundle)
+    owned_paths = {
+        path
+        for path, content in contents.items()
+        if _owned(_artifact_state(path, content), manifest.owns)
+    }
+    incoming = {path: contents[path] for path in owned_paths}
+    carried = {path: content for path, content in contents.items() if path not in owned_paths}
     tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
     found = _read_receipt(instance, tree, manifest.kit_id)
     shell, installed = (None, None) if found is None else found
@@ -481,11 +583,11 @@ def service_add_kit(
                 f"release {manifest.version} does not follow the installed {installed.version}; "
                 "upgrade one release at a time"
             )
-    plan, writes = _plan(tree, {} if installed is None else installed.digests(), incoming)
+    plan, writes = _plan(tree, {} if installed is None else installed.digests(), incoming, carried)
     conflicts = [item.path for item in plan if item.action == "conflict"]
     if conflicts:
         blocked.append(f"{len(conflicts)} path(s) conflict")
-    missing = _missing_interfaces(tree, incoming)
+    missing = _missing_interfaces(tree, contents)
     if blocked:
         return PlaybillKitChangeResultV1(
             kit_id=manifest.kit_id,
@@ -500,7 +602,8 @@ def service_add_kit(
         version=manifest.version,
         content_digest=manifest.content_digest,
         owns=manifest.owns,
-        artifacts=manifest.artifacts,
+        artifacts=tuple(item for item in manifest.artifacts if item.path in owned_paths),
+        carried=tuple(item for item in manifest.artifacts if item.path not in owned_paths),
         source=request.source,
     )
     return _submit(
@@ -540,7 +643,7 @@ def service_remove_kit(
             plan=tuple(plan),
             detail="edited kit paths must be reverted or retired by their own change first",
         )
-    receipt = installed.model_copy(update={"artifacts": ()})
+    receipt = installed.model_copy(update={"artifacts": (), "carried": ()})
     return _submit(
         instance,
         kit_id=request.kit_id,

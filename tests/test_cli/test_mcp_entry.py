@@ -8,12 +8,21 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_cruxible_mcp_answers_initialize_over_stdio(tmp_path: Path) -> None:
-    """The first stdout bytes are the server's JSON-RPC reply, nothing from the root CLI."""
+@pytest.mark.parametrize("remembered_context", [None, "{not json"])
+def test_cruxible_mcp_answers_initialize_over_stdio(
+    tmp_path: Path, remembered_context: str | None
+) -> None:
+    """The first stdout bytes are the server's reply; CLI context can neither leak nor block it."""
     env = {key: value for key, value in os.environ.items() if not key.startswith("CRUXIBLE_")}
+    if remembered_context is not None:
+        context_path = tmp_path / "client-context.json"
+        context_path.write_text(remembered_context, encoding="utf-8")
+        env["CRUXIBLE_CLI_CONTEXT_PATH"] = str(context_path)
     env["CRUXIBLE_STATE_ROOT"] = str(tmp_path / "state")
     env["HOME"] = str(tmp_path)
     env["PYTHONPATH"] = os.pathsep.join(

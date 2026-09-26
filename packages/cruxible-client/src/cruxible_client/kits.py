@@ -59,7 +59,12 @@ def write_kit_directory(bundle: KitBundleV1, root: Path) -> None:
     (root / KIT_MANIFEST_FILE).write_bytes(
         pretty_canonical_bytes(bundle.manifest.model_dump(mode="json"))
     )
+    artifact_root = (root / KIT_ARTIFACT_DIRECTORY).resolve()
     for item in bundle.artifacts:
-        target = root / KIT_ARTIFACT_DIRECTORY / item.path
+        target = artifact_root / item.path
+        # The contract already refuses traversal; containment is checked again
+        # here because this helper writes wherever a caller points it.
+        if not target.resolve().is_relative_to(artifact_root):
+            raise ValueError(f"kit artifact {item.path} escapes the kit directory")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(item.content)
