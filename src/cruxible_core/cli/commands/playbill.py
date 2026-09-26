@@ -2557,7 +2557,7 @@ def settle(
     `playbill next` names each settleable prediction window by its bound
     contract id with a `--example RSC-...` command; the daemon fills in the exact
     contract and bound window, you replace the evidence Claim reference with the
-    accepted observation, then pass the file here.
+    accepted observation, then pass the file here under the same RSC-... id.
     """
 
     if example:

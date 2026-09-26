@@ -352,6 +352,9 @@ def service_prediction_settle_example(
     The prediction worker holds each bound window by its contract id (RSC-...),
     so the id alone names the exact contract reference and the anchor event;
     the evidence Claim is the settler's to choose and stays a placeholder.
+    The worker's findings may trail accepted state, so the held contract version
+    must still be the live one at the accepted head, and the held window must
+    rebuild the same bound contract id settle will journal under.
     """
 
     from cruxible_core.consumers.predictions import bound_window
@@ -361,6 +364,34 @@ def service_prediction_settle_example(
         raise _refuse(
             "prediction_window_unknown",
             f"No bound prediction window {bound_contract_id} is held by the prediction worker.",
+        )
+    reference = held.contract
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        live = projection.typed.connection.execute(
+            "SELECT artifact_digest FROM resolution_contracts "
+            "WHERE identity=? AND lifecycle='live'",
+            (reference.identity.qualified,),
+        ).fetchone()
+    if live is None or live[0] != reference.artifact_digest:
+        raise _refuse(
+            "prediction_window_unknown",
+            f"Bound prediction window {bound_contract_id} belongs to a contract version "
+            "that is no longer live at the accepted head.",
+        )
+    contract = read_resolution_contract(instance, reference)
+    activation = build_independent_activation(
+        contract,
+        InvestigationBindingV1(
+            contract=canonical_contract_reference(instance, reference),
+            hypothesis=contract.hypothesis,
+            window=held.window,
+        ),
+        activated_at=artifact_accepted_time(instance, reference),
+    )
+    if activation.contract_id != bound_contract_id:
+        raise _refuse(
+            "prediction_window_unknown",
+            f"Bound prediction window {bound_contract_id} does not rebuild from its contract.",
         )
     placeholder = PublicAcceptedCoordinate(
         git_oid="0" * 40,
@@ -390,15 +421,19 @@ def service_settle_playbill_prediction(
     actor_context: GovernedActorContext,
     recorded_at: datetime,
 ) -> PlaybillSettleResultV2:
-    """Settle one accepted predicted Claim from a later accepted outcome."""
+    """Settle one accepted predicted Claim from a later accepted outcome.
+
+    The route names the contract (its name or qualified identity) or one bound
+    window of it (the RSC-... id `next` and `settle --example` name); a bound
+    window id must be the one this request's contract and window rebuild.
+    """
 
     instance.require_writable()
     reference = request.contract
-    if prediction_id not in {reference.identity.name, reference.identity.qualified}:
-        raise _refuse(
-            "settlement_evidence_mismatch",
-            "Settlement route differs from its exact contract reference.",
-        )
+    names_bound_window = prediction_id not in {
+        reference.identity.name,
+        reference.identity.qualified,
+    }
     contract = read_resolution_contract(instance, reference)
     reference = canonical_contract_reference(instance, reference)
     if contract.lifecycle.state != "live":
@@ -418,6 +453,11 @@ def service_settle_playbill_prediction(
         investigation,
         activated_at=artifact_accepted_time(instance, reference),
     )
+    if names_bound_window and activation.contract_id != prediction_id:
+        raise _refuse(
+            "settlement_evidence_mismatch",
+            "Settlement route differs from its exact contract reference and bound window.",
+        )
     prediction_claim = read_claim_reference(instance, contract.hypothesis)
     observation = read_claim_reference(instance, request.evidence.claim)
     observation_coordinate = request.evidence.claim.coordinate

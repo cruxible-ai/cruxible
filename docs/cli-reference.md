@@ -1122,7 +1122,9 @@ hypothesis Claim version and returns the proposal ID and authoring intent. The
 contract must be accepted before it can bind an investigation or settlement.
 `resolution-contracts` finds accepted contracts for an exact hypothesis version.
 
-`settle` names that contract by ID and exact accepted reference. It checks later
+`settle` names that contract by ID, or one of its bound windows by its bound
+contract ID (`RSC-...`), and gives its exact accepted reference; a bound window
+ID must be the one the request's contract and window rebuild. It checks later
 accepted observation evidence against the contract's selector, mechanical rule,
 and bound window. Terminal-backed settlement additionally requires one delivered
 `settle_change_set` receipt from the same investigation whose outcome is
@@ -1136,7 +1138,9 @@ remain disabled in the public Procedure runner.
 (`RSC-...`), it asks the daemon for the prediction worker's window and fills in
 the exact accepted contract reference and, for an event window, the anchor event
 the window is bound to, so only the evidence Claim reference is left to replace.
-A window the worker does not hold is refused with `prediction_window_unknown`.
+A window the worker does not hold, or whose contract version is no longer live
+at the accepted head, is refused with `prediction_window_unknown`. Submit the
+filled request with `cruxible playbill settle RSC-... REQUEST_FILE`.
 Given any other ID it prints a placeholder template without contacting the
 daemon. The `prediction_settleable` row in `playbill next` renders this command
 with its bound window ID.

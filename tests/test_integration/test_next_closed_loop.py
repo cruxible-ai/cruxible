@@ -1541,7 +1541,10 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
     from datetime import timedelta
 
     from cruxible_client.contracts.predictions import ObservationSettlementEvidenceV2
-    from cruxible_core.service.procedures.predictions import service_prediction_settle_example
+    from cruxible_core.service.procedures.predictions import (
+        PredictionRefused,
+        service_prediction_settle_example,
+    )
     from tests.test_consumers import test_prediction_settlement as worker
 
     instance, owner, capture, contract = worker.fixed_world(root)
@@ -1573,12 +1576,24 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
     assert template.contract.identity.qualified == contract.identity.qualified
     assert template.trigger_event is None  # a fixed window has no anchor
     observation = worker.observe(instance, owner, capture, at="2026-09-02T12:02:00.000000Z")
+    filled = template.model_copy(
+        update={"evidence": ObservationSettlementEvidenceV2(claim=observation)}
+    )
+    # The id the row and the example name also submits the filled request, and
+    # only for the window this contract and window rebuild.
+    with pytest.raises(PredictionRefused, match="bound window") as refused:
+        worker.served.service_settle_playbill_prediction(
+            instance,
+            prediction_id="RSC-" + "0" * 32,
+            request=filled,
+            actor_context=worker.served._actor(),
+            recorded_at=worker.FIXED_CLOSES + timedelta(minutes=1),
+        )
+    assert refused.value.code == "settlement_evidence_mismatch"
     worker.served.service_settle_playbill_prediction(
         instance,
-        prediction_id=template.contract.identity.name,
-        request=template.model_copy(
-            update={"evidence": ObservationSettlementEvidenceV2(claim=observation)}
-        ),
+        prediction_id=bound,
+        request=filled,
         actor_context=worker.served._actor(),
         recorded_at=worker.FIXED_CLOSES + timedelta(minutes=1),
     )
