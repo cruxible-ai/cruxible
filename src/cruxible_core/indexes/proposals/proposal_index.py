@@ -149,6 +149,26 @@ def timestamp(value: int) -> str:
     )
 
 
+# The proposal source lock is an flock, which conflicts across descriptors even
+# within one process. An unreachable index's finalizer runs on whichever thread
+# triggers garbage collection, including one inside this lock's critical section
+# for the same root; taking the lock there would wait on itself forever.
+_HELD_SOURCE_LOCKS = threading.local()
+
+
+def _held_source_roots() -> dict[tuple[int, int], int]:
+    held: dict[tuple[int, int], int] | None = getattr(_HELD_SOURCE_LOCKS, "roots", None)
+    if held is None:
+        held = {}
+        _HELD_SOURCE_LOCKS.roots = held
+    return held
+
+
+def _root_key(root: Path) -> tuple[int, int]:
+    stat = root.stat()
+    return (stat.st_dev, stat.st_ino)
+
+
 class ProposalIndex:
     """Component of AcceptedHistoryIndex, sharing its file and acquisition lock."""
 
@@ -226,10 +246,18 @@ class ProposalIndex:
                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
                 0o600,
             )
+            held = _held_source_roots()
+            key: tuple[int, int] | None = None
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX)
+                key = _root_key(evidence.root)
+                held[key] = held.get(key, 0) + 1
                 yield
             finally:
+                if key is not None:
+                    held[key] -= 1
+                    if not held[key]:
+                        del held[key]
                 os.close(descriptor)
 
     @staticmethod
@@ -761,7 +789,9 @@ def close_working_database(
     valid = False
     marker = None
     try:
-        if root is not None and root.is_dir():
+        # Inside this thread's own source-lock section nothing can be certified;
+        # close uncertified and leave the old checkpoint for the next reader.
+        if root is not None and root.is_dir() and _root_key(root) not in _held_source_roots():
             descriptor = os.open(
                 root / ".proposal-source.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600
             )

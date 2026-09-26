@@ -96,3 +96,40 @@ def test_warm_service_list_acquires_while_other_process_has_uncommitted_write(tm
         pool.shutdown(wait=True)
     assert acquired, "list acquisition waited for an unrelated cross-process transaction"
     assert result.entries[0].proposal_id == proposal.admission.proposal_id
+
+
+def test_a_finalizer_on_the_thread_holding_the_source_lock_does_not_wait_on_itself(tmp_path):
+    import threading
+
+    from cruxible_core.indexes.proposals.proposal_index import (
+        ProposalIndex,
+        close_working_database,
+    )
+
+    instance, _ = initialize_local(tmp_path)
+    _submit(instance, "one")
+    service_list_playbill_proposals(instance)
+    evidence = instance.proposal_evidence()
+    index = evidence.index
+    marker = ProposalIndex._marker(evidence.root)
+    proof = {"root": str(evidence.root), "marker": marker}
+    stale = sqlite3.connect(index.path, check_same_thread=False)
+    closed = threading.Event()
+
+    # An unreachable index's finalizer runs on whatever thread triggers garbage
+    # collection, including one inside the source lock's critical section. The
+    # lock is an flock, so a fresh descriptor on the same thread blocks forever.
+    def collect_inside_the_critical_section():
+        with index._source_lock(evidence):
+            close_working_database(index.path, [stale], proof)
+            closed.set()
+
+    worker = threading.Thread(target=collect_inside_the_critical_section, daemon=True)
+    worker.start()
+    worker.join(timeout=5)
+    assert closed.is_set(), "a finalizer waited on the source lock its own thread holds"
+    # It could not certify from inside the holder's section, so the old
+    # checkpoint stands and the next reader reconstructs if the bytes moved.
+    assert ProposalIndex._marker(evidence.root) == marker
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        stale.execute("SELECT 1")
