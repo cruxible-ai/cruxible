@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from cruxible_client.artifacts import (
+    ArtifactImage,
     ArtifactKind,
     Reference,
     RegistryClient,
@@ -112,6 +113,22 @@ KIT_ARTIFACT: ArtifactKind[KitBundleV1] = ArtifactKind(
 )
 
 
+def fetch_kit_image(
+    source: str, *, registry: RegistryClient | None = None
+) -> tuple[ArtifactImage, str]:
+    """The verified kit artifact at a registry reference, exactly as published."""
+
+    ref = parse_reference(source)
+    client = registry if registry is not None else RegistryClient()
+    try:
+        image = client.pull(ref)
+    finally:
+        if registry is None:
+            client.close()
+    unpack_artifact(KIT_ARTIFACT, image)
+    return image, str(ref.pinned(image.digest))
+
+
 def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple[KitBundleV1, str]:
     """A bundle from a kit directory, an OCI layout, or a registry reference.
 
@@ -125,14 +142,8 @@ def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple
             image = read_layout(path)
             return unpack_artifact(KIT_ARTIFACT, image), f"{path.name}@{image.digest}"
         return read_kit_directory(path), path.name
-    ref = parse_reference(source)
-    client = registry if registry is not None else RegistryClient()
-    try:
-        image = client.pull(ref)
-    finally:
-        if registry is None:
-            client.close()
-    return unpack_artifact(KIT_ARTIFACT, image), str(ref.pinned(image.digest))
+    image, origin = fetch_kit_image(source, registry=registry)
+    return unpack_artifact(KIT_ARTIFACT, image), origin
 
 
 def push_kit(bundle: KitBundleV1, ref: Reference, *, registry: RegistryClient) -> str:

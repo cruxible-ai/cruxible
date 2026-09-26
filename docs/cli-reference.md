@@ -562,10 +562,14 @@ fetches and verifies one into a kit directory (or, with `--layout`, an OCI image
 layout for offline transfer) without installing it. Every blob is checked
 against its digest, a digest reference must match the manifest pulled, and blobs
 are cached by digest under `CRUXIBLE_ARTIFACT_CACHE` (default
-`~/.cache/cruxible/artifacts`) and re-hashed on every use. Registry credentials
-come from `CRUXIBLE_REGISTRY_USERNAME` and `CRUXIBLE_REGISTRY_PASSWORD` and are
-sent only to a token realm on the registry's own host; without them requests are
-anonymous. The client does all fetching: the daemon receives only the verified
+`~/.cache/cruxible/artifacts`) and re-hashed on every use; responses are bounded
+while they stream, and layers admit only plain regular files. Registry
+credentials come from `CRUXIBLE_REGISTRY_USERNAME` and
+`CRUXIBLE_REGISTRY_PASSWORD`, apply only to the host named in
+`CRUXIBLE_REGISTRY` (for example `ghcr.io`), and are sent only to a token realm on
+that host. Every other registry is contacted anonymously, a registry token is
+never sent to another origin (such as an upload location), and nothing is sent
+over a downgraded scheme. The client does all fetching: the daemon receives only the verified
 bundle, and the receipt records the source pinned to its manifest digest.
 
 A kit is one release of definitions: ClaimTypes, CaptureContracts and

@@ -26,7 +26,12 @@ from cruxible_client import (
     observe_playbill_next_workspace,
 )
 from cruxible_client._error_base import printable
-from cruxible_client.artifacts import RegistryClient, parse_reference
+from cruxible_client.artifacts import (
+    RegistryClient,
+    parse_reference,
+    unpack_artifact,
+    write_layout,
+)
 from cruxible_client.authoring.attestations import (
     append_prepared_claim_attestation,
     local_attestation_signer_from_environment,
@@ -88,10 +93,11 @@ from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompil
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
+    KIT_ARTIFACT,
+    fetch_kit_image,
     push_kit,
     resolve_kit,
     write_kit_directory,
-    write_kit_layout,
 )
 from cruxible_client.provider_installation import install_provider_package
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1, claim_type_input_template
@@ -1405,7 +1411,8 @@ def add_kit(kit: str, source: str | None, output_json: bool) -> None:
 def push_kit_cmd(kit: str, reference: str, output_json: bool) -> None:
     """Publish KIT (a directory or OCI layout) to a registry REFERENCE.
 
-    Credentials come from CRUXIBLE_REGISTRY_USERNAME and CRUXIBLE_REGISTRY_PASSWORD.
+    Credentials come from CRUXIBLE_REGISTRY_USERNAME and CRUXIBLE_REGISTRY_PASSWORD,
+    for the one registry host named in CRUXIBLE_REGISTRY.
     """
     bundle, _origin = resolve_kit(kit)
     ref = parse_reference(reference)
@@ -1430,9 +1437,11 @@ def pull_kit(reference: str, out: Path, layout: bool, output_json: bool) -> None
     """Fetch and verify a kit from a registry into OUT, without installing it."""
     if out.exists():
         raise click.UsageError(f"{out} already exists")
-    bundle, origin = resolve_kit(reference)
+    # The layout keeps the published bytes exactly, so it carries the same digest.
+    image, origin = fetch_kit_image(reference)
+    bundle = unpack_artifact(KIT_ARTIFACT, image)
     if layout:
-        write_kit_layout(bundle, out, ref=origin)
+        write_layout(image, out, ref=origin)
     else:
         write_kit_directory(bundle, out)
     if output_json:

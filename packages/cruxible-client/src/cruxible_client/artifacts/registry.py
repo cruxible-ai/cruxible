@@ -22,6 +22,7 @@ from cruxible_client.artifacts.oci import (
     MANIFEST_MEDIA_TYPE,
     ArtifactImage,
     assemble_image,
+    manifest_descriptors,
     sha256_digest,
 )
 
@@ -81,11 +82,19 @@ def parse_reference(text: str, *, default_namespace: str = DEFAULT_NAMESPACE) ->
 
 
 def environment_credentials(registry: str) -> tuple[str, str] | None:
-    """Basic credentials from CRUXIBLE_REGISTRY_USERNAME/PASSWORD, else anonymous."""
+    """Basic credentials for exactly the registry named by CRUXIBLE_REGISTRY.
 
+    CRUXIBLE_REGISTRY_USERNAME and CRUXIBLE_REGISTRY_PASSWORD apply only to the
+    host in CRUXIBLE_REGISTRY (for example ``ghcr.io``); every other registry is
+    contacted anonymously, so fetching a kit from elsewhere never offers them.
+    """
+
+    bound = os.environ.get("CRUXIBLE_REGISTRY")
     username = os.environ.get("CRUXIBLE_REGISTRY_USERNAME")
     password = os.environ.get("CRUXIBLE_REGISTRY_PASSWORD")
-    return (username, password) if username and password else None
+    if not bound or bound != registry or not username or not password:
+        return None
+    return username, password
 
 
 def default_cache_root() -> Path:
@@ -127,6 +136,14 @@ class BlobCache:
 
 
 _CHALLENGE_RE = re.compile(r'(\w+)="([^"]*)"')
+MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+MAX_BLOB_BYTES = 512 * 1024 * 1024
+MAX_LAYERS = 64
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parts = urllib.parse.urlsplit(url)
+    return parts.scheme, (parts.hostname or ""), parts.port
 
 
 class RegistryClient:
@@ -139,11 +156,15 @@ class RegistryClient:
         timeout: float = 120.0,
         scheme: str = "https",
     ) -> None:
+        # Redirects are followed (blob stores redirect to CDNs); httpx drops the
+        # Authorization header on any cross-origin hop, and every final URL must
+        # keep the client's scheme.
         self._http = httpx.Client(transport=transport, timeout=timeout, follow_redirects=True)
         self._credentials = credentials
         self._cache = cache if cache is not None else BlobCache(default_cache_root())
         self._scheme = scheme
-        self._tokens: dict[tuple[str, str], str] = {}
+        # Tokens are held per exact origin and scope, and only ever sent there.
+        self._tokens: dict[tuple[tuple[str, str, int | None], str], str] = {}
 
     def close(self) -> None:
         self._http.close()
@@ -157,31 +178,51 @@ class RegistryClient:
     def _url(self, ref: Reference, suffix: str) -> str:
         return f"{self._scheme}://{ref.registry}/v2/{ref.repository}/{suffix}"
 
-    def _token(self, ref: Reference, challenge: str, scope: str) -> str | None:
+    def _token(self, host: str, challenge: str, scope: str) -> str | None:
+        """A bearer token for ``host``; credentials only to that host's own realm."""
+
         if not challenge.lower().startswith("bearer "):
             return None
         params = dict(_CHALLENGE_RE.findall(challenge))
         realm = params.get("realm")
         if realm is None:
             return None
-        query = {"service": params.get("service", ref.registry), "scope": scope}
-        # Credentials go only to a token realm the registry itself serves: a
-        # challenge naming any other host gets an anonymous token request.
         realm_url = urllib.parse.urlsplit(realm)
-        registry_host = ref.registry.partition(":")[0]
-        trusted = realm_url.scheme == self._scheme and (
-            realm_url.hostname == registry_host
-            or (realm_url.hostname or "").endswith("." + registry_host)
-        )
-        credentials = self._credentials(ref.registry) if trusted else None
-        response = self._http.get(
-            realm + "?" + urllib.parse.urlencode(query),
-            auth=credentials,
-        )
+        if realm_url.scheme != self._scheme:
+            raise ValueError(f"{host} names a token realm over {realm_url.scheme}")
+        bare = host.partition(":")[0]
+        trusted = realm_url.hostname == bare or (realm_url.hostname or "").endswith("." + bare)
+        credentials = self._credentials(host) if trusted else None
+        query = {"service": params.get("service", host), "scope": scope}
+        response = self._http.get(realm + "?" + urllib.parse.urlencode(query), auth=credentials)
         response.raise_for_status()
         body = response.json()
         token = body.get("token") or body.get("access_token")
         return token if isinstance(token, str) else None
+
+    def _send(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        content: bytes | None,
+        limit: int | None,
+    ) -> tuple[httpx.Response, bytes]:
+        """One request; with ``limit``, the body is streamed and refused past it."""
+
+        with self._http.stream(method, url, headers=headers, content=content) as response:
+            if response.url.scheme != self._scheme:
+                raise ValueError(f"{url} redirected to {response.url.scheme}")
+            if limit is None or response.status_code >= 300:
+                return response, response.read()
+            chunks = []
+            total = 0
+            for chunk in response.iter_bytes():
+                total += len(chunk)
+                if total > limit:
+                    raise ValueError(f"{url} returned more than {limit} bytes")
+                chunks.append(chunk)
+            return response, b"".join(chunks)
 
     def _request(
         self,
@@ -192,46 +233,57 @@ class RegistryClient:
         push: bool = False,
         headers: dict[str, str] | None = None,
         content: bytes | None = None,
-    ) -> httpx.Response:
+        limit: int | None = None,
+    ) -> tuple[httpx.Response, bytes]:
+        origin = _origin(url)
+        if origin[0] != self._scheme:
+            raise ValueError(f"{url} does not use {self._scheme}")
         scope = f"repository:{ref.repository}:{'pull,push' if push else 'pull'}"
-        key = (ref.registry, scope)
+        key = (origin, scope)
         sent = dict(headers or {})
         if key in self._tokens:
             sent["Authorization"] = f"Bearer {self._tokens[key]}"
-        response = self._http.request(method, url, headers=sent, content=content)
+        response, body = self._send(method, url, sent, content, limit)
         if response.status_code == 401:
-            token = self._token(ref, response.headers.get("www-authenticate", ""), scope)
+            host = origin[1] if origin[2] is None else f"{origin[1]}:{origin[2]}"
+            token = self._token(host, response.headers.get("www-authenticate", ""), scope)
             if token is not None:
                 self._tokens[key] = token
                 sent["Authorization"] = f"Bearer {token}"
-                response = self._http.request(method, url, headers=sent, content=content)
-        return response
+                response, body = self._send(method, url, sent, content, limit)
+        return response, body
 
     def pull(self, ref: Reference) -> ArtifactImage:
         """The artifact at ``ref``; a digest reference must match the manifest bytes."""
 
-        response = self._request(
+        response, manifest = self._request(
             "GET",
             ref,
             self._url(ref, f"manifests/{ref.reference}"),
             headers={"Accept": MANIFEST_MEDIA_TYPE},
+            limit=MAX_MANIFEST_BYTES,
         )
         response.raise_for_status()
-        manifest = response.content
         if ref.digest is not None and sha256_digest(manifest) != ref.digest:
             raise ValueError(f"{ref} returned a manifest with a different digest")
+        _config, layers = manifest_descriptors(manifest)
+        if len(layers) > MAX_LAYERS:
+            raise ValueError(f"{ref} names more than {MAX_LAYERS} layers")
 
         def fetch(descriptor: dict[str, object]) -> bytes:
             digest = str(descriptor["digest"])
+            size = descriptor["size"]
+            if not isinstance(size, int) or size < 0 or size > MAX_BLOB_BYTES:
+                raise ValueError(f"{ref} names blob {digest} of unacceptable size")
             cached = self._cache.get(digest)
             if cached is not None:
                 return cached
-            blob = self._request("GET", ref, self._url(ref, f"blobs/{digest}"))
+            blob, content = self._request("GET", ref, self._url(ref, f"blobs/{digest}"), limit=size)
             blob.raise_for_status()
-            if sha256_digest(blob.content) != digest:
+            if sha256_digest(content) != digest:
                 raise ValueError(f"{ref} served blob {digest} with different bytes")
-            self._cache.put(blob.content)
-            return blob.content
+            self._cache.put(content)
+            return content
 
         return assemble_image(manifest, fetch)
 
@@ -239,16 +291,21 @@ class RegistryClient:
         """Upload every blob the registry lacks, then the manifest; returns its digest."""
 
         for blob in image.blobs():
-            exists = self._request("HEAD", ref, self._url(ref, f"blobs/{blob.digest}"), push=True)
+            exists, _ = self._request(
+                "HEAD", ref, self._url(ref, f"blobs/{blob.digest}"), push=True
+            )
             if exists.status_code == 200:
                 continue
-            started = self._request("POST", ref, self._url(ref, "blobs/uploads/"), push=True)
+            started, _ = self._request("POST", ref, self._url(ref, "blobs/uploads/"), push=True)
             if started.status_code != 202 or "location" not in started.headers:
                 started.raise_for_status()
                 raise ValueError(f"{ref.registry} did not start a blob upload")
+            # An upload location on another origin is contacted with that
+            # origin's own credentials (none, unless it challenges), never with
+            # the registry's token; a downgrade to another scheme is refused.
             location = urllib.parse.urljoin(str(started.url), started.headers["location"])
             separator = "&" if "?" in location else "?"
-            finished = self._request(
+            finished, _ = self._request(
                 "PUT",
                 ref,
                 f"{location}{separator}digest={urllib.parse.quote(blob.digest)}",
@@ -257,7 +314,7 @@ class RegistryClient:
                 headers={"Content-Type": "application/octet-stream"},
             )
             finished.raise_for_status()
-        response = self._request(
+        response, _ = self._request(
             "PUT",
             ref,
             self._url(ref, f"manifests/{ref.tag or image.digest}"),

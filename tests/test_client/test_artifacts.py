@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from cruxible_client.artifacts import (
+    ArtifactImage,
     ArtifactKind,
     BlobCache,
     RegistryClient,
@@ -25,20 +26,26 @@ from cruxible_client.artifacts import (
     write_layout,
 )
 from cruxible_client.artifacts.oci import sha256_digest
+from cruxible_client.artifacts.registry import environment_credentials
 from cruxible_client.contracts.kits import (
     KitArtifactBytesV1,
     KitArtifactV1,
     KitBundleV1,
     KitManifestV1,
 )
-from cruxible_client.kits import KIT_ARTIFACT, resolve_kit, write_kit_layout
+from cruxible_client.kits import KIT_ARTIFACT, fetch_kit_image, resolve_kit, write_kit_layout
 
 
 class FakeRegistry:
     """The registry-v2 subset artifacts use, behind a bearer-token challenge."""
 
-    def __init__(self, *, realm: str = "https://registry.test/token") -> None:
+    def __init__(
+        self, *, realm: str = "https://registry.test/token", upload_origin: str | None = None
+    ) -> None:
         self.realm = realm
+        self.upload_origin = upload_origin
+        self.upload_requests: list[httpx.Request] = []
+        self.oversized: set[str] = set()
         self.blobs: dict[str, bytes] = {}
         self.manifests: dict[tuple[str, str], bytes] = {}
         self.uploads: dict[str, str] = {}
@@ -48,9 +55,13 @@ class FakeRegistry:
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = request.url
-        if url.path == "/token" or url.host != "registry.test":
+        if url.path == "/token":
             self.token_requests.append(request)
             return httpx.Response(200, json={"token": "granted"})
+        if url.path.startswith("/upload/"):
+            self.upload_requests.append(request)
+            self.blobs[url.params["digest"]] = request.content
+            return httpx.Response(201)
         if request.headers.get("authorization") != "Bearer granted":
             challenge = (
                 f'Bearer realm="{self.realm}",service="registry.test",scope="repository:x:pull"'
@@ -67,9 +78,12 @@ class FakeRegistry:
             if request.method == "POST":
                 upload = uuid.uuid4().hex
                 self.uploads[upload] = repository
-                return httpx.Response(
-                    202, headers={"location": f"/v2/{repository}/blobs/uploads/{upload}"}
+                location = (
+                    f"{self.upload_origin}/upload/{upload}"
+                    if self.upload_origin
+                    else f"/v2/{repository}/blobs/uploads/{upload}"
                 )
+                return httpx.Response(202, headers={"location": location})
             digest = url.params["digest"]
             assert sha256_digest(request.content) == digest
             self.blobs[digest] = request.content
@@ -81,7 +95,11 @@ class FakeRegistry:
                 return httpx.Response(200)
             self.blob_gets += 1
             body = self.blobs[rest]
-            return httpx.Response(200, content=body + b"x" if rest in self.corrupt else body)
+            if rest in self.oversized:
+                return httpx.Response(200, content=body + b"x" * (1024 * 1024))
+            if rest in self.corrupt:  # same length, different bytes
+                body = body[:-1] + bytes([body[-1] ^ 1])
+            return httpx.Response(200, content=body)
         if request.method == "PUT":
             digest = sha256_digest(request.content)
             self.manifests[(repository, rest)] = request.content
@@ -268,3 +286,74 @@ def test_a_kit_layout_is_a_kit_source(tmp_path: Path) -> None:
     resolved, origin = resolve_kit(str(tmp_path / "acme-layout"))
     assert resolved == bundle
     assert origin == f"acme-layout@{digest}"
+
+
+def test_an_upload_location_on_another_origin_never_receives_the_registry_token(
+    tmp_path: Path,
+) -> None:
+    registry = FakeRegistry(upload_origin="https://uploads.test")
+    with registry.client(tmp_path / "cache") as client:
+        client.push(pack_artifact(NOTE, {"a.txt": "alpha"}), parse_reference("registry.test/t/n:1"))
+    assert registry.upload_requests
+    assert all("authorization" not in request.headers for request in registry.upload_requests)
+
+
+def test_an_upload_location_downgrading_to_http_is_refused(tmp_path: Path) -> None:
+    registry = FakeRegistry(upload_origin="http://registry.test")
+    with registry.client(tmp_path / "cache") as client:
+        with pytest.raises(ValueError, match="does not use https"):
+            client.push(
+                pack_artifact(NOTE, {"a.txt": "alpha"}), parse_reference("registry.test/t/n:1")
+            )
+
+
+def test_environment_credentials_belong_to_one_named_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_REGISTRY", "ghcr.io")
+    monkeypatch.setenv("CRUXIBLE_REGISTRY_USERNAME", "user")
+    monkeypatch.setenv("CRUXIBLE_REGISTRY_PASSWORD", "secret")
+    assert environment_credentials("ghcr.io") == ("user", "secret")
+    assert environment_credentials("attacker.example") is None
+    monkeypatch.delenv("CRUXIBLE_REGISTRY")
+    assert environment_credentials("ghcr.io") is None
+
+
+def test_a_blob_larger_than_its_descriptor_is_refused_while_streaming(tmp_path: Path) -> None:
+    registry = FakeRegistry()
+    ref = parse_reference("registry.test/test/notes:1")
+    image = pack_artifact(NOTE, {"a.txt": "alpha"})
+    with registry.client(tmp_path / "push-cache") as client:
+        client.push(image, ref)
+    registry.oversized.add(image.layers[0].digest)
+    with registry.client(tmp_path / "pull-cache") as client:
+        with pytest.raises(ValueError, match="more than"):
+            client.pull(ref)
+
+
+@pytest.mark.parametrize("fmt", [tarfile.PAX_FORMAT, tarfile.GNU_FORMAT])
+def test_a_layer_with_extension_headers_is_refused_before_they_are_parsed(fmt: int) -> None:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=fmt) as archive:
+        info = tarfile.TarInfo("claim-types/" + "x" * 200 + ".json")
+        info.size = 2
+        archive.addfile(info, io.BytesIO(b"{}"))
+    with pytest.raises(ValueError, match="not a regular file"):
+        unpack_files(buffer.getvalue())
+
+
+def test_an_offline_pull_keeps_the_published_bytes_and_digest(tmp_path: Path) -> None:
+    registry = FakeRegistry()
+    image = pack_artifact(KIT_ARTIFACT, _bundle())
+    # A valid artifact built by another tool: same content, different manifest bytes.
+    manifest = json.loads(image.manifest)
+    manifest["annotations"] = {"org.opencontainers.image.source": "https://example.test"}
+    published = ArtifactImage(
+        manifest=json.dumps(manifest).encode(), config=image.config, layers=image.layers
+    )
+    ref = parse_reference("registry.test/cruxible-ai/kits/acme:1.0.0")
+    with registry.client(tmp_path / "cache") as client:
+        digest = client.push(published, ref)
+        fetched, origin = fetch_kit_image(str(ref), registry=client)
+    write_layout(fetched, tmp_path / "offline", ref=origin)
+    assert read_layout(tmp_path / "offline").digest == digest != image.digest
