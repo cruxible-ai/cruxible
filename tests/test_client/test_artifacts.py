@@ -46,6 +46,11 @@ class FakeRegistry:
         self.upload_origin = upload_origin
         self.upload_requests: list[httpx.Request] = []
         self.oversized: set[str] = set()
+        self.cdn_origin: str | None = None
+        self.cdn_requests: list[httpx.Request] = []
+        self.upload_redirect: str | None = None
+        self.token_body: bytes | None = None
+        self.error_body: bytes | None = None
         self.blobs: dict[str, bytes] = {}
         self.manifests: dict[tuple[str, str], bytes] = {}
         self.uploads: dict[str, str] = {}
@@ -57,7 +62,17 @@ class FakeRegistry:
         url = request.url
         if url.path == "/token":
             self.token_requests.append(request)
+            if self.token_body is not None:
+                return httpx.Response(200, content=self.token_body)
             return httpx.Response(200, json={"token": "granted"})
+        if url.path.startswith("/cdn/"):
+            self.cdn_requests.append(request)
+            return httpx.Response(200, content=self.blobs[url.path.removeprefix("/cdn/")])
+        if url.path.startswith("/upload/") and self.upload_redirect is not None:
+            self.upload_requests.append(request)
+            return httpx.Response(307, headers={"location": self.upload_redirect})
+        if self.error_body is not None and request.headers.get("authorization"):
+            return httpx.Response(500, content=self.error_body)
         if url.path.startswith("/upload/"):
             self.upload_requests.append(request)
             self.blobs[url.params["digest"]] = request.content
@@ -93,6 +108,8 @@ class FakeRegistry:
                 return httpx.Response(404)
             if request.method == "HEAD":
                 return httpx.Response(200)
+            if self.cdn_origin is not None:
+                return httpx.Response(307, headers={"location": f"{self.cdn_origin}/cdn/{rest}"})
             self.blob_gets += 1
             body = self.blobs[rest]
             if rest in self.oversized:
@@ -357,3 +374,58 @@ def test_an_offline_pull_keeps_the_published_bytes_and_digest(tmp_path: Path) ->
         fetched, origin = fetch_kit_image(str(ref), registry=client)
     write_layout(fetched, tmp_path / "offline", ref=origin)
     assert read_layout(tmp_path / "offline").digest == digest != image.digest
+
+
+def test_a_redirect_to_another_origin_is_followed_without_the_registry_token(
+    tmp_path: Path,
+) -> None:
+    registry = FakeRegistry()
+    ref = parse_reference("registry.test/test/notes:1")
+    with registry.client(tmp_path / "push-cache") as client:
+        client.push(pack_artifact(NOTE, {"a.txt": "alpha"}), ref)
+    registry.cdn_origin = "https://cdn.test"
+    with registry.client(tmp_path / "pull-cache") as client:
+        assert unpack_artifact(NOTE, client.pull(ref)) == {"a.txt": "alpha"}
+    assert registry.cdn_requests
+    assert all("authorization" not in request.headers for request in registry.cdn_requests)
+
+
+def test_a_redirect_that_downgrades_is_refused_before_anything_is_sent(tmp_path: Path) -> None:
+    registry = FakeRegistry(upload_origin="https://registry.test")
+    registry.upload_redirect = "http://registry.test/plain"
+    with registry.client(tmp_path / "cache") as client:
+        with pytest.raises(ValueError, match="does not use https"):
+            client.push(
+                pack_artifact(NOTE, {"a.txt": "alpha"}), parse_reference("registry.test/t/n:1")
+            )
+    assert all(request.url.scheme == "https" for request in registry.upload_requests)
+
+
+def test_an_oversized_token_response_is_refused(tmp_path: Path) -> None:
+    registry = FakeRegistry()
+    registry.token_body = b"x" * (1024 * 1024)
+    with registry.client(tmp_path / "cache") as client:
+        with pytest.raises(ValueError, match="more than"):
+            client.pull(parse_reference("registry.test/t/n:1"))
+
+
+def test_an_oversized_error_body_is_read_only_up_to_its_bound(tmp_path: Path) -> None:
+    registry = FakeRegistry()
+    registry.error_body = b"x" * (8 * 1024 * 1024)
+    with registry.client(tmp_path / "cache") as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            client.pull(parse_reference("registry.test/t/n:1"))
+
+
+def test_an_artifact_over_the_total_budget_is_refused_before_any_blob_is_fetched(
+    tmp_path: Path,
+) -> None:
+    registry = FakeRegistry()
+    image = pack_artifact(NOTE, {"a.txt": "alpha"})
+    manifest = json.loads(image.manifest)
+    manifest["layers"] = [dict(manifest["layers"][0], size=300 * 1024 * 1024)] * 2
+    registry.manifests[("t/n", "1")] = json.dumps(manifest).encode()
+    with registry.client(tmp_path / "cache") as client:
+        with pytest.raises(ValueError, match="larger than"):
+            client.pull(parse_reference("registry.test/t/n:1"))
+    assert registry.blob_gets == 0

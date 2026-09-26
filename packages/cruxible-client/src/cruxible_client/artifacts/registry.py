@@ -9,6 +9,8 @@ re-hashed on every cache hit.
 
 from __future__ import annotations
 
+import base64
+import json
 import os
 import re
 import urllib.parse
@@ -137,8 +139,27 @@ class BlobCache:
 
 _CHALLENGE_RE = re.compile(r'(\w+)="([^"]*)"')
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
-MAX_BLOB_BYTES = 512 * 1024 * 1024
+# One artifact's blobs together, checked from the manifest before any is fetched.
+MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
 MAX_LAYERS = 64
+MAX_TOKEN_BYTES = 64 * 1024
+MAX_ERROR_BYTES = 64 * 1024
+MAX_ACK_BYTES = 64 * 1024
+MAX_REDIRECTS = 5
+
+
+def _read(response: httpx.Response, limit: int, *, truncate: bool) -> bytes:
+    chunks = []
+    total = 0
+    for chunk in response.iter_bytes():
+        total += len(chunk)
+        if total > limit:
+            if truncate:
+                chunks.append(chunk[: len(chunk) - (total - limit)])
+                break
+            raise ValueError(f"{response.request.url} returned more than {limit} bytes")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _origin(url: str) -> tuple[str, str, int | None]:
@@ -156,10 +177,9 @@ class RegistryClient:
         timeout: float = 120.0,
         scheme: str = "https",
     ) -> None:
-        # Redirects are followed (blob stores redirect to CDNs); httpx drops the
-        # Authorization header on any cross-origin hop, and every final URL must
-        # keep the client's scheme.
-        self._http = httpx.Client(transport=transport, timeout=timeout, follow_redirects=True)
+        # Redirects (blob stores redirect to CDNs) are followed hop by hop in
+        # ``_send``, where each destination is checked before anything is sent.
+        self._http = httpx.Client(transport=transport, timeout=timeout, follow_redirects=False)
         self._credentials = credentials
         self._cache = cache if cache is not None else BlobCache(default_cache_root())
         self._scheme = scheme
@@ -188,16 +208,20 @@ class RegistryClient:
         if realm is None:
             return None
         realm_url = urllib.parse.urlsplit(realm)
-        if realm_url.scheme != self._scheme:
-            raise ValueError(f"{host} names a token realm over {realm_url.scheme}")
         bare = host.partition(":")[0]
         trusted = realm_url.hostname == bare or (realm_url.hostname or "").endswith("." + bare)
         credentials = self._credentials(host) if trusted else None
+        headers = {}
+        if credentials is not None:
+            pair = base64.b64encode(f"{credentials[0]}:{credentials[1]}".encode()).decode()
+            headers["Authorization"] = f"Basic {pair}"
         query = {"service": params.get("service", host), "scope": scope}
-        response = self._http.get(realm + "?" + urllib.parse.urlencode(query), auth=credentials)
+        response, body = self._send(
+            "GET", realm + "?" + urllib.parse.urlencode(query), headers, None, MAX_TOKEN_BYTES
+        )
         response.raise_for_status()
-        body = response.json()
-        token = body.get("token") or body.get("access_token")
+        payload = json.loads(body)
+        token = payload.get("token") or payload.get("access_token")
         return token if isinstance(token, str) else None
 
     def _send(
@@ -206,23 +230,39 @@ class RegistryClient:
         url: str,
         headers: dict[str, str],
         content: bytes | None,
-        limit: int | None,
+        limit: int,
     ) -> tuple[httpx.Response, bytes]:
-        """One request; with ``limit``, the body is streamed and refused past it."""
+        """One request, following redirects by hand, with every body read under a bound.
 
-        with self._http.stream(method, url, headers=headers, content=content) as response:
-            if response.url.scheme != self._scheme:
-                raise ValueError(f"{url} redirected to {response.url.scheme}")
-            if limit is None or response.status_code >= 300:
-                return response, response.read()
-            chunks = []
-            total = 0
-            for chunk in response.iter_bytes():
-                total += len(chunk)
-                if total > limit:
-                    raise ValueError(f"{url} returned more than {limit} bytes")
-                chunks.append(chunk)
-            return response, b"".join(chunks)
+        Each hop is checked before it is sent: it must keep the client's scheme,
+        and a hop to another origin drops the Authorization header. A successful
+        body is refused past ``limit``; an error body is read no further than
+        ``MAX_ERROR_BYTES``; a redirect body is never read.
+        """
+
+        sent = dict(headers)
+        origin = _origin(url)
+        for _hop in range(MAX_REDIRECTS + 1):
+            if _origin(url)[0] != self._scheme:
+                raise ValueError(f"{url} does not use {self._scheme}")
+            request = self._http.build_request(method, url, headers=sent, content=content)
+            response = self._http.send(request, stream=True, follow_redirects=False)
+            try:
+                if response.is_redirect:
+                    target = urllib.parse.urljoin(url, response.headers["location"])
+                    if _origin(target) != origin:
+                        sent.pop("Authorization", None)
+                        origin = _origin(target)
+                    if response.status_code in {301, 302, 303} and method not in {"GET", "HEAD"}:
+                        method, content = "GET", None
+                    url = target
+                    continue
+                if response.status_code >= 300:
+                    return response, _read(response, MAX_ERROR_BYTES, truncate=True)
+                return response, _read(response, limit, truncate=False)
+            finally:
+                response.close()
+        raise ValueError(f"{url} redirected more than {MAX_REDIRECTS} times")
 
     def _request(
         self,
@@ -233,7 +273,7 @@ class RegistryClient:
         push: bool = False,
         headers: dict[str, str] | None = None,
         content: bytes | None = None,
-        limit: int | None = None,
+        limit: int = MAX_ACK_BYTES,
     ) -> tuple[httpx.Response, bytes]:
         origin = _origin(url)
         if origin[0] != self._scheme:
@@ -266,14 +306,16 @@ class RegistryClient:
         response.raise_for_status()
         if ref.digest is not None and sha256_digest(manifest) != ref.digest:
             raise ValueError(f"{ref} returned a manifest with a different digest")
-        _config, layers = manifest_descriptors(manifest)
+        config, layers = manifest_descriptors(manifest)
         if len(layers) > MAX_LAYERS:
             raise ValueError(f"{ref} names more than {MAX_LAYERS} layers")
+        if sum(int(item["size"]) for item in (config, *layers)) > MAX_ARTIFACT_BYTES:
+            raise ValueError(f"{ref} is larger than {MAX_ARTIFACT_BYTES} bytes in total")
 
         def fetch(descriptor: dict[str, object]) -> bytes:
             digest = str(descriptor["digest"])
             size = descriptor["size"]
-            if not isinstance(size, int) or size < 0 or size > MAX_BLOB_BYTES:
+            if not isinstance(size, int) or size < 0:
                 raise ValueError(f"{ref} names blob {digest} of unacceptable size")
             cached = self._cache.get(digest)
             if cached is not None:
