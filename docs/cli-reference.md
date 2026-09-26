@@ -542,10 +542,35 @@ and `POST /{instance}/playbill/providers/install`.
 ~~~text
 cruxible playbill kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
   --out KIT_DIR [--json]
-cruxible playbill kit add KIT_DIR [--source TEXT] [--json]
+cruxible playbill kit add KIT [--source TEXT] [--json]
+cruxible playbill kit push KIT REFERENCE [--json]
+cruxible playbill kit pull REFERENCE --out DIR [--layout] [--json]
 cruxible playbill kit status [--json]
 cruxible playbill kit remove ID [--json]
 ~~~
+
+`KIT` is a kit directory, an OCI image layout directory, or a registry
+reference. A bare name such as `project-state:1.0.0` resolves under
+`ghcr.io/cruxible-ai/kits`; a full reference names its registry
+(`ghcr.io/acme/kits/foo:2`, `localhost:5000/kits/foo@sha256:...`).
+
+Distributed, a kit is an OCI artifact (`application/vnd.cruxible.kit.v1`): the
+manifest is its config blob and the artifacts are one deterministic,
+uncompressed tar layer, so rebuilding a release gives the same manifest digest.
+`push` publishes a kit and prints the reference pinned to that digest; `pull`
+fetches and verifies one into a kit directory (or, with `--layout`, an OCI image
+layout for offline transfer) without installing it. Every blob is checked
+against its digest, a digest reference must match the manifest pulled, and blobs
+are cached by digest under `CRUXIBLE_ARTIFACT_CACHE` (default
+`~/.cache/cruxible/artifacts`) and re-hashed on every use; responses are bounded
+while they stream, and layers admit only plain regular files. Registry
+credentials come from `CRUXIBLE_REGISTRY_USERNAME` and
+`CRUXIBLE_REGISTRY_PASSWORD`, apply only to the host named in
+`CRUXIBLE_REGISTRY` (for example `ghcr.io`), and are sent only to a token realm on
+that host. Every other registry is contacted anonymously, a registry token is
+never sent to another origin (such as an upload location), and nothing is sent
+over a downgraded scheme. The client does all fetching: the daemon receives only the verified
+bundle, and the receipt records the source pinned to its manifest digest.
 
 A kit is one release of definitions: ClaimTypes, CaptureContracts and
 QueryDefinitions. It never carries authority (governance, principals, mandates),

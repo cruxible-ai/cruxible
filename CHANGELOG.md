@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Kits travel as OCI artifacts.** `cruxible playbill kit push` publishes a kit
+  as a content-addressed OCI artifact (manifest config blob, one deterministic
+  tar layer) and prints its digest-pinned reference; `kit pull` fetches and
+  verifies one without installing it; `kit add` now accepts a kit directory, an
+  OCI image layout, or a registry reference, with bare names resolving under
+  `ghcr.io/cruxible-ai/kits`. Blobs are digest-checked and cached, and registry
+  credentials go only to the registry's own token realm. The transport is the
+  kind-independent `cruxible_client.artifacts` library, so later artifact kinds
+  reuse it.
+
 - **Kits distribute definitions on demand.** `cruxible playbill kit build`
   exports the live definitions under owned identity prefixes, plus everything
   they pin, as one self-contained release of lineage-free snapshots; a pin into
