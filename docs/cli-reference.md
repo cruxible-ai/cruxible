@@ -547,10 +547,11 @@ cruxible playbill kit status [--json]
 cruxible playbill kit remove ID [--json]
 ~~~
 
-A kit is one release of definitions: ClaimTypes, CaptureContracts, Procedures,
-QueryDefinitions, ProviderInterfaces and SourceAcquisitionPolicies. It never
-carries authority (governance, principals, mandates), local binding (Providers,
-Lines) or state (Subjects, Claims). A kit directory holds `cruxible-kit.json` and
+A kit is one release of definitions: ClaimTypes, CaptureContracts and
+QueryDefinitions. It never carries authority (governance, principals, mandates),
+local binding (Providers, Lines) or state (Subjects, Claims). Procedures,
+ProviderInterfaces and SourceAcquisitionPolicies join once their references can
+be moved field by field. A kit directory holds `cruxible-kit.json` and
 the artifact bytes under `artifacts/`.
 
 A release is self-contained. `build` exports every live definition whose
@@ -564,9 +565,11 @@ release can be installed on its own.
 change set: a missing definition is added as released, a changed one is replaced
 by a successor naming this instance's current digest, and one the kit installed
 that the release dropped is retired. Pins are remapped to the digests this
-instance actually holds. A replaced ClaimType carries its live dependents to the
-successor, as a succession would; the SDK/MCP request's `dependents` names any
-that should be retired instead. A definition the kit only carries (it pins it but
+instance actually holds. Every live artifact in this instance that pins a
+replaced kit definition takes one successor in the same change set, carried to
+the kit's final definitions as a succession would carry it; the SDK/MCP request's
+`dependents` names any that should be retired instead, and a dependent of a
+retired definition must be named. A definition the kit only carries (it pins it but
 does not own it) is added when absent and must otherwise match. A path edited
 since install, one defined outside the kit, and another kit's overlapping `owns`
 prefix are conflicts that block the change. `add` only proposes: activation, and

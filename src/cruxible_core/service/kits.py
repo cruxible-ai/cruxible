@@ -20,7 +20,6 @@ from typing import Any
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_digest, pretty_canonical_bytes
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.claim_types import parse_claim_type
 from cruxible_client.contracts.documents import (
     DocumentLifecycle,
     DocumentShell,
@@ -53,11 +52,10 @@ from cruxible_client.contracts.kits import (
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
     ClaimTypeMigrationError,
-    build_claim_type_migration_candidate,
-    claim_type_migration_inventory,
+    build_dependent_closure_candidate,
+    dependent_closure_inventory,
 )
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
-from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import DataValidationError
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -74,47 +72,87 @@ _INDEXED_PREFIXES: tuple[str, ...] = (
 )
 _RECEIPT_ACCESS = BodyAccessContext(principal_id="kit-receipt", can_read_body=True)
 _RECEIPT_SCOPE = ("kit",)
-# Author-controlled literal data; a digest string inside it is a value, never a pin.
-_LITERAL_KEYS = frozenset({"lifecycle", "literal_schema", "value_schema"})
 _SNAPSHOT_LIFECYCLE = {"predecessor_digest": None, "state": "live"}
+
+# Every field of each kit family that holds another artifact's digest, by path;
+# "*" steps into each list element. Nothing outside these fields is ever read as
+# a pin or rewritten, so literal data that happens to hold a digest stays as it
+# is. `tests/test_server/test_playbill_kits.py` checks the table against the
+# models, so a new reference field cannot be missed silently.
+_PIN = ("*", "artifact_digest")
+KIT_REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "capture-contracts/": (
+        ("pins", *_PIN),
+        ("coordinate_schema_pins", *_PIN),
+        ("selector_schema_pins", *_PIN),
+        ("commitment_canonicalizer", "artifact_digest"),
+        ("retention_erasure_policy", "erasure_rule_digest"),
+        ("replay_policy_digest",),
+        ("provenance_rule_digest",),
+        ("source_subject_mapping_digest",),
+    ),
+    "claim-types/": (
+        ("pins", *_PIN),
+        ("evidence_admission_policy", "rules", "*", "capture_contract_digests", "*"),
+        ("evidence_admission_policy", "rules", "*", "allowed_reducer_digests", "*"),
+        ("admission_policy", "corroboration_requirements", "*", "query_definition_digest"),
+    ),
+    "query-definitions/": (("pins", *_PIN),),
+}
 
 
 def _without_lifecycle(value: Mapping[str, Any]) -> dict[str, Any]:
     return {key: item for key, item in value.items() if key != "lifecycle"}
 
 
-def _is_reference(key: str | None) -> bool:
-    return key is not None and (key == "artifact_digest" or key.endswith(("_digest", "_digests")))
+def _fields(path: str) -> tuple[tuple[str, ...], ...]:
+    for prefix, fields in KIT_REFERENCE_FIELDS.items():
+        if path.startswith(prefix):
+            return fields
+    return ()
 
 
-def _references(value: object, key: str | None = None) -> Iterator[str]:
-    """Digest strings held in reference fields, outside lifecycle and literal data."""
+def _at(value: object, steps: tuple[str, ...], remap: Mapping[str, str] | None) -> Iterator[str]:
+    """Yield the digest at ``steps``; with ``remap``, rewrite it in place too."""
 
-    if isinstance(value, str):
-        if _is_reference(key):
-            yield value
-    elif isinstance(value, Mapping):
-        for name, item in value.items():
-            if name not in _LITERAL_KEYS:
-                yield from _references(item, name)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _references(item, key)
+    if not steps:
+        return
+    head, rest = steps[0], steps[1:]
+    if head == "*":
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                if not rest and isinstance(item, str):
+                    yield item
+                    if remap is not None:
+                        value[index] = remap.get(item, item)
+                else:
+                    yield from _at(item, rest, remap)
+        return
+    if not isinstance(value, dict) or head not in value:
+        return
+    item = value[head]
+    if not rest:
+        if isinstance(item, str):
+            yield item
+            if remap is not None:
+                value[head] = remap.get(item, item)
+        return
+    yield from _at(item, rest, remap)
 
 
-def _substitute(value: object, remap: Mapping[str, str], key: str | None = None) -> object:
-    """Move reference fields to remapped digests; leave lifecycle and literals alone."""
+def _references(path: str, payload: dict[str, Any]) -> Iterator[str]:
+    for steps in _fields(path):
+        yield from _at(payload, steps, None)
 
-    if isinstance(value, str):
-        return remap.get(value, value) if _is_reference(key) else value
-    if isinstance(value, Mapping):
-        return {
-            name: item if name in _LITERAL_KEYS else _substitute(item, remap, name)
-            for name, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_substitute(item, remap, key) for item in value]
-    return value
+
+def _substitute(path: str, payload: Mapping[str, Any], remap: Mapping[str, str]) -> dict[str, Any]:
+    """A copy of ``payload`` with its reference fields moved through ``remap``."""
+
+    moved: dict[str, Any] = json.loads(json.dumps(payload))
+    for steps in _fields(path):
+        for _ in _at(moved, steps, remap):
+            pass
+    return moved
 
 
 def _artifact_state(path: str, content: bytes) -> ArtifactDependencyStateV1:
@@ -137,7 +175,7 @@ def _owned(state: ArtifactDependencyStateV1, owns: tuple[str, ...]) -> bool:
 
 def _dependency_order(
     states: Mapping[str, ArtifactDependencyStateV1],
-    payloads: Mapping[str, Mapping[str, Any]],
+    payloads: Mapping[str, dict[str, Any]],
     *,
     within: set[str] | None = None,
 ) -> Iterator[tuple[str, tuple[str, ...]]]:
@@ -156,7 +194,7 @@ def _dependency_order(
             )
             if target is not None:
                 found.add(target)
-        for text in _references(payloads[path]):
+        for text in _references(path, payloads[path]):
             if text in by_digest:
                 found.add(by_digest[text])
         found.discard(path)
@@ -226,8 +264,7 @@ def build_kit(tree: Mapping[str, bytes], request: PlaybillKitBuildRequestV1) -> 
                 )
             if states[dependency].lifecycle.state != "live":
                 raise DataValidationError(f"{path} pins retired {dependency}")
-        payload = _substitute(payloads[path], remap)
-        assert isinstance(payload, dict)
+        payload = _substitute(path, payloads[path], remap)
         payload["lifecycle"] = dict(_SNAPSHOT_LIFECYCLE)
         content, digest = _render(path, payload)
         if digest != states[path].artifact_digest:
@@ -336,8 +373,7 @@ def _diff_release(
     diff = _Diff()
     for path, _pinned in _dependency_order(states, payloads):
         release_digest = states[path].artifact_digest
-        payload = _substitute(payloads[path], diff.installed)
-        assert isinstance(payload, dict)
+        payload = _substitute(path, payloads[path], diff.installed)
         carried = path not in owned
         tag = "carried" if carried else None
         current = tree.get(path)
@@ -407,79 +443,72 @@ def _retire_dropped(
             diff.writes[path] = content
 
 
-def _settle_successions(
+def _settle_dependents(
     tree: Mapping[str, bytes],
     diff: _Diff,
     overrides: Mapping[str, ClaimTypeDependentDispositionV3],
 ) -> tuple[dict[str, bytes], list[str]]:
-    """Every write, plus the closure each replaced ClaimType owes, as one succession would.
+    """Every write, plus one successor for each accepted dependent they change.
 
-    A changed ClaimType moves its live dependents with it: each is carried to
-    the successor unless the request names another disposition for it. The
-    kit's own writes are laid over the result, so a dependent the kit itself
-    replaces lands as the kit wrote it.
+    A normal change set owes the closure of what it changes: every live artifact
+    pinning a replaced or retired kit definition takes a successor in the same
+    generation. Each is read at its accepted bytes, carried (re-pinned) to the
+    kit's final definitions by default or retired when the request says so, and
+    settled once however many kit definitions it pins. A dependent of a retired
+    definition has nothing to be carried to, so it needs an explicit disposition.
     """
 
-    working: Mapping[str, bytes] = tree
-    settled: dict[str, bytes] = {}
-    refused: list[str] = []
-    kit_paths = set(diff.writes)
-    for type_path in sorted(path for path in diff.writes if path.startswith("claim-types/")):
-        if type_path not in tree:
-            continue
-        successor = parse_claim_type(diff.writes[type_path], path=type_path)
-        try:
-            inventory = claim_type_migration_inventory(working, root=successor.identity)
-        except ClaimTypeMigrationError as error:
-            refused.append(f"{type_path}: {error}")
-            continue
-        if not inventory:
-            continue
-        dispositions = []
-        for item in inventory:
-            qualified = item.identity.qualified
-            chosen = overrides.get(qualified)
-            if chosen is None and (
-                item.path in kit_paths or "successor" in item.permitted_dispositions
-            ):
-                chosen = ClaimTypeDependentDispositionV3(
-                    identity=item.identity, disposition="successor"
-                )
-            if chosen is None:
-                refused.append(f"{qualified} needs a disposition")
-                continue
-            dispositions.append(chosen)
-        if len(dispositions) != len(inventory):
-            continue
-        try:
-            candidate, normalized, _warnings = build_claim_type_migration_candidate(
-                tree=working,
-                type_path=type_path,
-                successor=successor,
-                inventory=inventory,
-                dispositions=tuple(dispositions),
+    changed = {path: content for path, content in diff.writes.items() if path in tree}
+    if not changed:
+        return dict(diff.writes), []
+    retired = {
+        _artifact_state(path, content).identity.qualified
+        for path, content in changed.items()
+        if _artifact_state(path, content).lifecycle.state == "retired"
+    }
+    roots = tuple(_artifact_state(path, tree[path]).identity for path in sorted(changed))
+    try:
+        inventory = dependent_closure_inventory(
+            tree, roots=roots, fixed_paths=frozenset(diff.writes)
+        )
+    except ClaimTypeMigrationError as error:
+        return dict(diff.writes), [str(error)]
+    if not inventory:
+        return dict(diff.writes), []
+    refused = []
+    dispositions = []
+    for item in inventory:
+        qualified = item.identity.qualified
+        chosen = overrides.get(qualified)
+        if chosen is None and (
+            item.triggering_identity.qualified not in retired
+            and "successor" in item.permitted_dispositions
+        ):
+            chosen = ClaimTypeDependentDispositionV3(
+                identity=item.identity, disposition="successor"
             )
-        except ClaimTypeMigrationError as error:
-            refused.append(f"{type_path}: {error}")
+        if chosen is None:
+            refused.append(f"{qualified} needs a disposition")
             continue
-        outcomes = {item.identity.qualified: item.disposition for item in normalized}
-        for item in inventory:
-            settled[item.path] = candidate[item.path]
-            if item.path not in kit_paths:
-                carried_over = outcomes[item.identity.qualified] == "successor"
-                diff.plan.append(
-                    KitPathPlanV1(
-                        path=item.path,
-                        action="carry" if carried_over else "retire",
-                        detail=f"dependent of {successor.predicate}",
-                    )
-                )
-        overlay = fork_tree(working)
-        for path, content in settled.items():
-            overlay[path] = content
-        overlay[type_path] = diff.writes[type_path]
-        working = overlay
-    return {**settled, **diff.writes}, refused
+        dispositions.append(chosen)
+    if refused:
+        return dict(diff.writes), refused
+    try:
+        settled, normalized = build_dependent_closure_candidate(
+            tree=tree, changed=changed, inventory=inventory, dispositions=tuple(dispositions)
+        )
+    except ClaimTypeMigrationError as error:
+        return dict(diff.writes), [str(error)]
+    paths = {item.identity.qualified: item.path for item in inventory}
+    for outcome in normalized:
+        diff.plan.append(
+            KitPathPlanV1(
+                path=paths[outcome.identity.qualified],
+                action="carry" if outcome.disposition == "successor" else "retire",
+                detail="depends on a changed kit definition",
+            )
+        )
+    return {**settled, **diff.writes}, []
 
 
 def _ownership_conflicts(
@@ -638,7 +667,7 @@ def service_add_kit(
     blocked = _ownership_conflicts(instance, tree, manifest)
     diff, owned = _diff_release(tree, contents, owns=manifest.owns, installed=installed)
     _retire_dropped(tree, installed, owned, diff)
-    writes, refused = _settle_successions(tree, diff, overrides)
+    writes, refused = _settle_dependents(tree, diff, overrides)
     blocked.extend(refused)
     conflicts = [item.path for item in diff.plan if item.action == "conflict"]
     if conflicts:

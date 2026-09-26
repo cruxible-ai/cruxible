@@ -64,8 +64,8 @@ that starts reaching one more verb moves the pin.
 
 ## Kits
 
-A kit is a release of definitions (ClaimTypes, CaptureContracts, Procedures,
-QueryDefinitions, ProviderInterfaces, SourceAcquisitionPolicies) that installs
+A kit is a release of definitions (ClaimTypes, CaptureContracts, QueryDefinitions)
+that installs
 as a diff against the consumer: one proposed change set that adds, replaces and
 retires definitions. Adding or removing a kit only proposes; activation and any
 approval stay the ordinary steps.

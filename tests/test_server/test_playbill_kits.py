@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import base64
+import typing
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from cruxible_client import Playbill
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.attestations import ApprovalStatement
+from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
+from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependentV1
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
     capture_contract_digest,
@@ -35,6 +39,20 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicyV1,
 )
+from cruxible_client.contracts.query.definitions import (
+    QueryDefinitionSpecV1,
+    QueryDefinitionV1,
+    QueryEvaluationPolicyV1,
+    parse_query_definition,
+    query_definition_digest,
+)
+from cruxible_client.contracts.query.grammar import (
+    QueryBudgetsV1,
+    QueryClaimValueRefV1,
+    QueryEntryV1,
+    QueryProjectionFieldV1,
+    QueryProjectionV1,
+)
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.kits import read_kit_directory, write_kit_directory
 from cruxible_client.transport.http import CruxibleClient
@@ -47,6 +65,7 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
+from cruxible_core.service.kits import KIT_REFERENCE_FIELDS
 from tests.core_support._pc_c_support import capture_contract
 
 SEATS = "acme.account.seats"
@@ -110,12 +129,17 @@ class _World:
         assert activated.status_code == 200, activated.text
         assert activated.json()["status"] == "accepted", activated.text
 
-    def author(self, *definitions: ClaimType, successions: tuple[ClaimType, ...] = ()) -> None:
+    def author(
+        self,
+        *definitions: ClaimType,
+        successions: tuple[ClaimType, ...] = (),
+        dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = (),
+    ) -> None:
         draft = self.pb.changes(rationale="Shape the account vocabulary.")
         for definition in definitions:
             draft.claim_type(definition)
         for successor in successions:
-            draft.succeed_claim_type(successor)
+            draft.succeed_claim_type(successor, dependents=dependents)
         intent = draft.prepare()
         assert not intent.refused, intent.diagnostics
         submitted = intent.submit()
@@ -125,7 +149,12 @@ class _World:
         self.approve(proposal_id)
         self.pb.refresh()
 
-    def succeed(self, predicate: str, schema: dict[str, object]) -> None:
+    def succeed(
+        self,
+        predicate: str,
+        schema: dict[str, object],
+        dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = (),
+    ) -> None:
         current = self.claim_type(predicate)
         successor = current.model_copy(
             update={
@@ -135,7 +164,7 @@ class _World:
                 ),
             }
         )
-        self.author(successions=(successor,))
+        self.author(successions=(successor,), dependents=dependents)
 
     def build(
         self, version: str, owns: tuple[str, ...] = ("acme.",), kit_id: str = "acme"
@@ -680,3 +709,140 @@ def test_a_kit_path_must_be_a_canonical_path_inside_a_kit_family(path: str) -> N
         KitArtifactV1(path=path, artifact_digest="sha256:" + "a" * 64)
     with pytest.raises(ValueError):
         KitArtifactBytesV1.of(path, b"{}\n")
+
+
+def _query(name: str, predicates: tuple[str, ...]) -> QueryDefinitionInput:
+    return QueryDefinitionInput(
+        kind="query_definition",
+        query_definition=QueryDefinitionSpecV1(
+            identity=ArtifactIdentity(kind="QueryDefinition", name=name),
+            description="Accounts with their seats and plan.",
+            entry=QueryEntryV1(binding="item", subject_kinds=("acme.account",)),
+            result_binding="item",
+            result_shape="subject",
+            result_cardinality="many",
+            dedupe="subject",
+            projection=QueryProjectionV1(
+                fields=tuple(
+                    QueryProjectionFieldV1(
+                        name=predicate.rpartition(".")[2],
+                        value=QueryClaimValueRefV1(binding="item", predicate=predicate),
+                    )
+                    for predicate in predicates
+                )
+            ),
+            evaluation_policy=QueryEvaluationPolicyV1(
+                visible_verdicts=("supported",),
+                visible_currency=("current",),
+                conflict_behavior="surface_conflicts",
+            ),
+            default_budgets=QueryBudgetsV1(max_results=100, max_traversal_depth=0),
+            maximum_budgets=QueryBudgetsV1(max_results=1000, max_traversal_depth=0),
+        ),
+    )
+
+
+def _author_query(world: _World, definition: QueryDefinitionInput) -> None:
+    draft = world.pb.changes(rationale="Read accounts.")
+    draft.query_definition(definition)
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit()
+    assert submitted._candidate_status is not None
+    assert submitted._candidate_status.proposal_id is not None
+    world.approve(submitted._candidate_status.proposal_id)
+    world.pb.refresh()
+
+
+def test_a_local_definition_pinning_two_changed_types_takes_one_successor(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    consumer.add(publisher.build("1.0.0"))
+    _author_query(consumer, _query("local.accounts", (PLAN, SEATS)))
+    query_path = "query-definitions/local.accounts.json"
+    accepted_query = consumer.tree()[query_path]
+
+    publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
+    publisher.succeed(PLAN, {"type": "string", "minLength": 1})
+    upgraded = consumer.add(publisher.build("1.1.0"))
+
+    assert (query_path, "carry") in {(item.path, item.action) for item in upgraded.plan}
+    query = parse_query_definition(consumer.tree()[query_path], path=query_path)
+    accepted = parse_query_definition(accepted_query, path=query_path)
+    assert query.lifecycle.predecessor_digest == query_definition_digest(accepted).tagged
+    pinned = {pin.artifact_digest for pin in query.pins}
+    assert claim_type_digest(consumer.claim_type(SEATS)).tagged in pinned
+    assert claim_type_digest(consumer.claim_type(PLAN)).tagged in pinned
+
+
+def test_a_kit_dependent_lands_as_the_kit_wrote_it_when_its_type_changes(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    _author_query(publisher, _query("acme.accounts", (SEATS,)))
+    consumer.add(publisher.build("1.0.0"))
+    query_path = "query-definitions/acme.accounts.json"
+    installed_query = consumer.tree()[query_path]
+
+    publisher.succeed(
+        SEATS,
+        {"type": "integer", "minimum": 0},
+        dependents=(
+            ClaimTypeSuccessionDependentV1(
+                identity=ArtifactIdentity(kind="QueryDefinition", name="acme.accounts"),
+                disposition="successor",
+            ),
+        ),
+    )
+    upgraded = consumer.add(publisher.build("1.1.0"))
+
+    actions = {(item.path, item.action) for item in upgraded.plan}
+    assert (query_path, "replace") in actions
+    assert (query_path, "carry") not in actions
+    query = parse_query_definition(consumer.tree()[query_path], path=query_path)
+    installed = parse_query_definition(installed_query, path=query_path)
+    assert query.lifecycle.predecessor_digest == query_definition_digest(installed).tagged
+    assert {pin.artifact_digest for pin in query.pins} == {
+        claim_type_digest(consumer.claim_type(SEATS)).tagged
+    }
+
+
+def _digest_fields(
+    model: type[BaseModel],
+    prefix: tuple[str, ...] = (),
+    seen: frozenset[type[BaseModel]] = frozenset(),
+) -> set[tuple[str, ...]]:
+    """Every *_digest field path; a model already on the path is not re-entered."""
+
+    found: set[tuple[str, ...]] = set()
+    if model in seen:
+        return found
+    for name, field in model.model_fields.items():
+        path = (*prefix, name)
+        if name.endswith(("_digest", "_digests")) and name != "predecessor_digest":
+            found.add(path)
+        stack = [field.annotation]
+        while stack:
+            annotation = stack.pop()
+            if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+                found |= _digest_fields(annotation, path, seen | {model})
+            stack.extend(typing.get_args(annotation))
+    return found
+
+
+@pytest.mark.parametrize(
+    ("prefix", "model"),
+    [
+        ("capture-contracts/", CaptureContractV1),
+        ("claim-types/", ClaimType),
+        ("query-definitions/", QueryDefinitionV1),
+    ],
+)
+def test_the_reference_table_names_every_digest_field_of_each_kit_family(
+    prefix: str, model: type[BaseModel]
+) -> None:
+    table = {tuple(step for step in steps if step != "*") for steps in KIT_REFERENCE_FIELDS[prefix]}
+    assert table == _digest_fields(model)

@@ -8,8 +8,10 @@
   authority, bindings or state refuses the build. `kit add` diffs a release
   against the instance and proposes that diff as one change set: it adds what is
   missing, replaces what changed with successors naming the instance's own
-  digests, retires what the kit dropped, carries a replaced ClaimType's live
-  dependents to the successor, and records a `kit_receipt` Document. It never
+  digests, retires what the kit dropped, settles every live dependent of a
+  replaced definition with one successor as a succession would, and records a
+  `kit_receipt` Document. Kits carry ClaimTypes, CaptureContracts and
+  QueryDefinitions. It never
   activates, so approval and activation stay the ordinary steps. Local edits,
   definitions made outside the kit, changed carried dependencies and
   overlapping ownership are reported and block the change. `kit status` lists
