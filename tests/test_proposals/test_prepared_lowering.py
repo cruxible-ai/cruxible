@@ -246,3 +246,12 @@ def test_a_lowering_over_a_tree_larger_than_the_budget_is_still_reused(tmp_path:
         assert len(prepared_lowering._cache(instance)) == 1
         coordinator.submit(intent.intent_id, actor=actor)
     assert calls == [1]
+
+
+def test_an_entry_counts_the_accepted_root_it_keeps_alive(tmp_path: Path) -> None:
+    instance, coordinator, actor, intent = _setup(tmp_path)
+    coordinator.preflight(intent.intent_id, actor=actor)
+    entry = next(iter(prepared_lowering._cache(instance).values()))
+    tree = entry.lowered.proposed_tree
+    root = tree._parent or tree
+    assert entry.weight >= root._resident_bytes > 0

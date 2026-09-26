@@ -138,12 +138,15 @@ def reuse_lowering(
     lowered = compute()
     bodies = _generated_bodies(intent.payload, lowered)
     assert isinstance(lowered.proposed_tree, SnapshotTree)  # LoweredAuthoring seals its tree.
-    # Weigh what the entry adds: the proposed tree shares every unchanged row
-    # with its accepted root, which the root cache already holds, so counting
-    # the whole tree made any real-size instance's lowering too heavy to keep
-    # and submission recomputed it.
+    # The entry keeps its accepted root alive, even after the root cache lets
+    # it go, so that root counts at its resident size: its rows, which for a
+    # lazily read tree are references rather than blob bytes. Counting its
+    # whole logical size instead made a real-size instance's lowering too heavy
+    # to keep, and submission recomputed it.
+    root = lowered.proposed_tree._parent or lowered.proposed_tree
     weight = (
         len(inputs)
+        + root._resident_bytes
         + len(canonical_bytes(lowered.resolved_authoring))
         + sum(len(path.encode()) + len(content) for path, content in lowered.changed_members)
     )

@@ -71,3 +71,31 @@ def test_edited_claim_items_match_the_cold_oracle(tmp_path: Path, monkeypatch) -
             added_seen += sum(1 for path, _content in items if path in additions)
     assert added_seen > 0  # added Claims were selected alongside accepted ones
     assert overlays == []  # no overlay is built for a Claim lookup
+
+
+def test_the_claim_match_memo_is_bounded_by_the_bytes_it_keeps(monkeypatch) -> None:
+    from cruxible_core.derived import derived_state
+
+    monkeypatch.setattr(derived_state, "_CLAIM_MATCH_MAX_BYTES", 64 * 1024)
+    monkeypatch.setattr(derived_state, "_claim_match_bytes", 0)
+    monkeypatch.setattr(derived_state, "_CLAIM_MATCH_FACTS", derived_state.OrderedDict())
+    monkeypatch.setattr(
+        derived_state,
+        "parse_claim",
+        lambda content, path: type(
+            "C",
+            (),
+            {
+                "statement": type("S", (), {"subject": "s", "predicate": "p"})(),
+                "lifecycle": type("L", (), {"state": "live"})(),
+            },
+        )(),
+    )
+    statement = type("S", (), {"subject": "s", "predicate": "p"})()
+    for index in range(200):
+        derived_state._claim_matches(
+            f"claims/{index}.json", bytes(2048) + bytes([index]), statement
+        )
+    kept = sum(len(p) + len(c) for p, c in derived_state._CLAIM_MATCH_FACTS)
+    assert kept <= 64 * 1024
+    assert kept == derived_state._claim_match_bytes

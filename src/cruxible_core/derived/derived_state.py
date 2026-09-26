@@ -345,13 +345,17 @@ class SnapshotTree(Mapping[str, bytes]):
 
 
 # (path, bytes) -> (subject address, predicate, live) for edited Claims; bytes
-# objects cache their hash, so a repeated lookup costs one dict probe.
+# objects cache their hash, so a repeated lookup costs one dict probe. The keys
+# hold Claim bytes, so the memo is bounded by their total size as well.
 _CLAIM_MATCH_FACTS: OrderedDict[tuple[str, bytes], tuple[object, str, bool]] = OrderedDict()
 _CLAIM_MATCH_CAPACITY = 16384
+_CLAIM_MATCH_MAX_BYTES = 16 * 1024 * 1024
 _CLAIM_MATCH_LOCK = threading.Lock()
+_claim_match_bytes = 0
 
 
 def _claim_matches(path: str, content: bytes, statement: ClaimStatement) -> bool:
+    global _claim_match_bytes
     key = (path, content)
     with _CLAIM_MATCH_LOCK:
         facts = _CLAIM_MATCH_FACTS.get(key)
@@ -364,10 +368,18 @@ def _claim_matches(path: str, content: bytes, statement: ClaimStatement) -> bool
             claim.statement.predicate,
             claim.lifecycle.state == "live",
         )
-        with _CLAIM_MATCH_LOCK:
-            _CLAIM_MATCH_FACTS[key] = facts
-            while len(_CLAIM_MATCH_FACTS) > _CLAIM_MATCH_CAPACITY:
-                _CLAIM_MATCH_FACTS.popitem(last=False)
+        weight = len(path) + len(content)
+        if weight <= _CLAIM_MATCH_MAX_BYTES // 16:
+            with _CLAIM_MATCH_LOCK:
+                if key not in _CLAIM_MATCH_FACTS:
+                    _CLAIM_MATCH_FACTS[key] = facts
+                    _claim_match_bytes += weight
+                while _CLAIM_MATCH_FACTS and (
+                    len(_CLAIM_MATCH_FACTS) > _CLAIM_MATCH_CAPACITY
+                    or _claim_match_bytes > _CLAIM_MATCH_MAX_BYTES
+                ):
+                    (old_path, old_content), _facts = _CLAIM_MATCH_FACTS.popitem(last=False)
+                    _claim_match_bytes -= len(old_path) + len(old_content)
     subject, predicate, live = facts
     return live and subject == statement.subject and predicate == statement.predicate
 
