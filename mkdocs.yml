@@ -72,5 +72,6 @@ nav:
       - CLI reference: cli-reference.md
       - MCP tools: mcp-tools.md
   - Operations:
+      - Upgrading: upgrading.md
       - Isolated deployment: isolated-deployment.md
       - Hosted runtime image: hosted-runtime-image.md
