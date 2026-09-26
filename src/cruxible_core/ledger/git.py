@@ -3174,6 +3174,9 @@ _VERIFIED_COMMITS_LOCK = threading.Lock()
 
 # A commit and its root tree share one listing under two keys, sized and unsized.
 _TREE_LISTING_CAPACITY = 32
+# Listings are also bounded by their total entries, so the memory they hold
+# follows the tree size rather than a fixed count of whole trees.
+_TREE_LISTING_ENTRY_CAPACITY = 400_000
 _TREE_LISTINGS: OrderedDict[tuple[tuple[str, int, int], str, bool], tuple[GitTreeEntry, ...]] = (
     OrderedDict()
 )
@@ -3201,6 +3204,7 @@ _TREE_CHANGES_LOCK = threading.Lock()
 
 
 _LISTING_INDEX_CAPACITY = 16
+_LISTING_INDEX_ENTRY_CAPACITY = 200_000
 # id(listing) -> (the listing itself, path -> position, paths in sorted order).
 # The listing is held so its id cannot be reused while the index is remembered.
 _LISTING_INDEXES: OrderedDict[
@@ -3224,7 +3228,13 @@ def _listing_index(
             indexed = (listing, positions, tuple(sorted(positions)))
             _LISTING_INDEXES[key] = indexed
             _LISTING_INDEXES.move_to_end(key)
-            while len(_LISTING_INDEXES) > _LISTING_INDEX_CAPACITY:
+            # Bounded by count and by total entries, so the memory follows the
+            # tree size; the newest index always stays.
+            while len(_LISTING_INDEXES) > 1 and (
+                len(_LISTING_INDEXES) > _LISTING_INDEX_CAPACITY
+                or sum(len(item[0]) for item in _LISTING_INDEXES.values())
+                > _LISTING_INDEX_ENTRY_CAPACITY
+            ):
                 _LISTING_INDEXES.popitem(last=False)
     return indexed[1], indexed[2]
 
@@ -3344,7 +3354,10 @@ def _remember_listing(
     with _TREE_LISTINGS_LOCK:
         _TREE_LISTINGS[key] = listing
         _TREE_LISTINGS.move_to_end(key)
-        while len(_TREE_LISTINGS) > _TREE_LISTING_CAPACITY:
+        while len(_TREE_LISTINGS) > 1 and (
+            len(_TREE_LISTINGS) > _TREE_LISTING_CAPACITY
+            or sum(len(item) for item in _TREE_LISTINGS.values()) > _TREE_LISTING_ENTRY_CAPACITY
+        ):
             _TREE_LISTINGS.popitem(last=False)
 
 
