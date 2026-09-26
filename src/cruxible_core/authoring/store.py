@@ -265,7 +265,9 @@ _FINGERPRINT_MEMO_LOCK = threading.Lock()
 
 # Serialized byte weight bounds retained input size, not Python heap usage.
 # Entries are private: frozen contract models still contain mutable containers.
-_HISTORY_MEMO_MAX_BYTES = 256 * 1024 * 1024
+# Within the daemon's memory budget: parsed models weigh several times their
+# raw bytes, and with retention off an intent's stream lives only while it runs.
+_HISTORY_MEMO_MAX_BYTES = 32 * 1024 * 1024
 _HISTORY_MEMO_MAX_STREAMS = 128
 _HISTORY_MEMO: OrderedDict[Path, tuple[_ValidatedEvent, ...]] = OrderedDict()
 _HISTORY_MEMO_BYTES = 0

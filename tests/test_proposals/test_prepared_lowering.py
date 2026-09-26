@@ -225,3 +225,33 @@ def test_two_prose_replacements_survive_lowering_reuse(tmp_path: Path) -> None:
     assert submitted.intent.last_preflight == prepared
     assert submitted.status.candidate_digest is not None
     assert lowering.call_count == 3
+
+
+def test_a_lowering_over_a_tree_larger_than_the_budget_is_still_reused(tmp_path: Path) -> None:
+    """The entry is weighed by what it adds, not by the accepted rows it shares."""
+
+    instance, coordinator, actor, intent = _setup(tmp_path)
+    original = preflight_module.lower_authoring
+    calls: list[int] = []
+
+    def huge_tree(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        lowered = original(*args, **kwargs)
+        # As if the accepted tree it forks were far larger than the budget.
+        lowered.proposed_tree._input_bytes = prepared_lowering.MAX_RETAINED_BYTES * 100
+        return lowered
+
+    with patch.object(preflight_module, "lower_authoring", huge_tree):
+        coordinator.preflight(intent.intent_id, actor=actor)
+        assert len(prepared_lowering._cache(instance)) == 1
+        coordinator.submit(intent.intent_id, actor=actor)
+    assert calls == [1]
+
+
+def test_an_entry_counts_the_accepted_root_it_keeps_alive(tmp_path: Path) -> None:
+    instance, coordinator, actor, intent = _setup(tmp_path)
+    coordinator.preflight(intent.intent_id, actor=actor)
+    entry = next(iter(prepared_lowering._cache(instance).values()))
+    tree = entry.lowered.proposed_tree
+    root = tree._parent or tree
+    assert entry.weight >= root._resident_bytes > 0

@@ -153,19 +153,36 @@ class RecoveredGeneration:
         return replace(self, retained_record=None, record_loader=loader)
 
 
-_RELEASED_RECORD_CAPACITY = 32
-_RELEASED_RECORDS: OrderedDict[tuple[str, str], ChangeSetRecordAnyVersion] = OrderedDict()
+# Parsed released records, bounded by their raw size. A member's revision and
+# proofs read every record that touched it, so the cache must hold a hot
+# member's whole history: an entry-count bound smaller than that history
+# evicts in scan order and every write re-parses all of it.
+_RELEASED_RECORD_CAPACITY = 4096
+_RELEASED_RECORD_BYTES = 64 * 1024 * 1024
+_RELEASED_RECORDS: OrderedDict[tuple[str, str], tuple[ChangeSetRecordAnyVersion, int]] = (
+    OrderedDict()
+)
 _RELEASED_RECORDS_LOCK = threading.Lock()
+_released_record_bytes = 0
+
+
+def reset_released_records() -> None:
+    """Forget every parsed released record (tests simulating a new process)."""
+    global _released_record_bytes
+    with _RELEASED_RECORDS_LOCK:
+        _RELEASED_RECORDS.clear()
+        _released_record_bytes = 0
 
 
 def _load_released_record(generation: RecoveredGeneration) -> ChangeSetRecordAnyVersion:
     assert generation.record_digest is not None
     key = (generation.oid, generation.record_digest)
+    global _released_record_bytes
     with _RELEASED_RECORDS_LOCK:
         remembered = _RELEASED_RECORDS.get(key)
         if remembered is not None:
             _RELEASED_RECORDS.move_to_end(key)
-            return remembered
+            return remembered[0]
     if generation.record_loader is None:
         raise SettlementIntegrityError("released change-set record has no ledger reader")
     path = f"changesets/cs-{generation.sequence:020d}.json"
@@ -179,10 +196,16 @@ def _load_released_record(generation: RecoveredGeneration) -> ChangeSetRecordAny
     ):
         raise SettlementIntegrityError("ledger change-set record differs from its verified digest")
     with _RELEASED_RECORDS_LOCK:
-        _RELEASED_RECORDS[key] = record
+        if key not in _RELEASED_RECORDS:
+            _RELEASED_RECORDS[key] = (record, len(raw))
+            _released_record_bytes += len(raw)
         _RELEASED_RECORDS.move_to_end(key)
-        while len(_RELEASED_RECORDS) > _RELEASED_RECORD_CAPACITY:
-            _RELEASED_RECORDS.popitem(last=False)
+        while _RELEASED_RECORDS and (
+            len(_RELEASED_RECORDS) > _RELEASED_RECORD_CAPACITY
+            or _released_record_bytes > _RELEASED_RECORD_BYTES
+        ):
+            _old, (_evicted, size) = _RELEASED_RECORDS.popitem(last=False)
+            _released_record_bytes -= size
     return record
 
 

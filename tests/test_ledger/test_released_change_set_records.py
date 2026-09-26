@@ -29,6 +29,6 @@ def test_a_released_record_that_differs_from_its_digest_is_refused(tmp_path):
     instance, _owner = seed_claims(tmp_path)
     released = instance._recovered.history[1]
     forged = replace(released, record_digest="sha256:" + "00" * 32)
-    recovery_module._RELEASED_RECORDS.clear()
+    recovery_module.reset_released_records()
     with pytest.raises(SettlementIntegrityError, match="differs from its verified digest"):
         _ = forged.record
