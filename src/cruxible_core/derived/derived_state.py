@@ -299,10 +299,23 @@ class SnapshotTree(Mapping[str, bytes]):
 
             base = EvaluationRows(self._accepted_reader())
             try:
-                selected = base if self._parent is None else base.overlay(self._edits)
-                return selected.claim_items(statement)
+                accepted = base.claim_items(statement)
             finally:
                 base.close()
+            if self._parent is None:
+                return accepted
+            # A claim row's match fields are the Claim's own statement and
+            # lifecycle, so the edited selection is the accepted one with edited
+            # Claim paths re-decided from their new bytes. Building a full
+            # overlay per lookup made lowering a change of n Claims O(n^2).
+            selected = dict(accepted)
+            for path, content in self._edits.items():
+                if not path.startswith("claims/"):
+                    continue
+                selected.pop(path, None)
+                if content is not None and _claim_matches(path, content, statement):
+                    selected[path] = content
+            return tuple(sorted(selected.items()))
         # Cold source-only ingress remains the exact full builder oracle.
         rows = []
         for path in self:
@@ -329,6 +342,34 @@ class SnapshotTree(Mapping[str, bytes]):
         if isinstance(parent, SnapshotTree) and self._parent is parent:
             return self._edits
         return None
+
+
+# (path, bytes) -> (subject address, predicate, live) for edited Claims; bytes
+# objects cache their hash, so a repeated lookup costs one dict probe.
+_CLAIM_MATCH_FACTS: OrderedDict[tuple[str, bytes], tuple[object, str, bool]] = OrderedDict()
+_CLAIM_MATCH_CAPACITY = 16384
+_CLAIM_MATCH_LOCK = threading.Lock()
+
+
+def _claim_matches(path: str, content: bytes, statement: ClaimStatement) -> bool:
+    key = (path, content)
+    with _CLAIM_MATCH_LOCK:
+        facts = _CLAIM_MATCH_FACTS.get(key)
+        if facts is not None:
+            _CLAIM_MATCH_FACTS.move_to_end(key)
+    if facts is None:
+        claim = parse_claim(content, path=path)
+        facts = (
+            claim.statement.subject,
+            claim.statement.predicate,
+            claim.lifecycle.state == "live",
+        )
+        with _CLAIM_MATCH_LOCK:
+            _CLAIM_MATCH_FACTS[key] = facts
+            while len(_CLAIM_MATCH_FACTS) > _CLAIM_MATCH_CAPACITY:
+                _CLAIM_MATCH_FACTS.popitem(last=False)
+    subject, predicate, live = facts
+    return live and subject == statement.subject and predicate == statement.predicate
 
 
 class CandidateTree(MutableMapping[str, bytes]):
