@@ -682,6 +682,11 @@ class AuthoringIntentCoordinator:
 
     def _projected_claim_revision(self, *, claim_id: str, artifact_digest: str) -> int:
         path = claim_path(claim_id)
+        # The history index answers without reading any record; a member whose
+        # history predates stored digests falls back to the records.
+        indexed = self.instance.projected_member_revision(path, artifact_digest)
+        if indexed is not None:
+            return indexed
         # Only the records that touched this Claim count toward its revision.
         records = self.instance.member_record_history((path,))
         return projected_revision(

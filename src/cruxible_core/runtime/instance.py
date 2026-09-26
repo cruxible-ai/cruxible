@@ -1725,6 +1725,23 @@ class PlaybillInstance:
             raise ProjectionIntegrityError("indexed generation differs from captured replay")
         return generation
 
+    def projected_member_revision(self, path: str, artifact_digest: str) -> int | None:
+        """``projected_revision`` for one member from the index, without reading records.
+
+        Every accepted occurrence of the path is one earlier revision, and an
+        occurrence already carrying this exact digest means the member is
+        unchanged. None when an occurrence stored no digest (an early record
+        format): the caller then derives it from the records themselves.
+        """
+
+        with self._history_reader_for_epoch(self._recovered) as history:
+            locations = history.member_history(path)
+        if any(location.artifact_digest is None for location in locations):
+            return None
+        if any(location.artifact_digest == artifact_digest for location in locations):
+            return len(locations)
+        return len(locations) + 1
+
     def member_record_history(
         self, paths: Sequence[str]
     ) -> tuple[tuple[str, ChangeSetRecordAnyVersion], ...]:
