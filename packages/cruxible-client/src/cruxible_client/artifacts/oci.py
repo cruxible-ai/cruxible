@@ -124,6 +124,9 @@ def manifest_descriptors(manifest: bytes) -> tuple[dict[str, Any], tuple[dict[st
             raise ValueError("artifact manifest has a malformed descriptor")
         if not str(descriptor["digest"]).startswith("sha256:"):
             raise ValueError("artifact blobs must be sha256-addressed")
+        size = descriptor["size"]
+        if isinstance(size, bool) or size < 0:
+            raise ValueError("artifact manifest names a negative or non-integer blob size")
     return config, tuple(layers)
 
 

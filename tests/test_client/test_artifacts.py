@@ -429,3 +429,16 @@ def test_an_artifact_over_the_total_budget_is_refused_before_any_blob_is_fetched
         with pytest.raises(ValueError, match="larger than"):
             client.pull(parse_reference("registry.test/t/n:1"))
     assert registry.blob_gets == 0
+
+
+def test_a_negative_size_cannot_offset_an_oversized_blob_in_the_budget(tmp_path: Path) -> None:
+    registry = FakeRegistry()
+    image = pack_artifact(NOTE, {"a.txt": "alpha"})
+    manifest = json.loads(image.manifest)
+    manifest["config"] = dict(manifest["config"], size=8 * 1024**3)
+    manifest["layers"] = [dict(manifest["layers"][0], size=-8 * 1024**3)]
+    registry.manifests[("t/n", "1")] = json.dumps(manifest).encode()
+    with registry.client(tmp_path / "cache") as client:
+        with pytest.raises(ValueError, match="negative"):
+            client.pull(parse_reference("registry.test/t/n:1"))
+    assert registry.blob_gets == 0
