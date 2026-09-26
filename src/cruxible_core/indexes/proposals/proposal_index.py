@@ -167,14 +167,6 @@ def _held_source_locks() -> dict[tuple[int, int], int]:
     return held
 
 
-def _holds_source_lock(lock_path: Path) -> bool:
-    try:
-        stat = os.lstat(lock_path)
-    except OSError:
-        return False
-    return (stat.st_dev, stat.st_ino) in _held_source_locks()
-
-
 class ProposalIndex:
     """Component of AcceptedHistoryIndex, sharing its file and acquisition lock."""
 
@@ -796,16 +788,17 @@ def close_working_database(
     valid = False
     marker = None
     try:
-        # Inside this thread's own source-lock section nothing can be certified;
-        # close uncertified and leave the old checkpoint for the next reader.
-        if (
-            root is not None
-            and root.is_dir()
-            and not _holds_source_lock(root / ".proposal-source.lock")
-        ):
+        if root is not None and root.is_dir():
             descriptor = os.open(
                 root / ".proposal-source.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600
             )
+            # Decide on the lock file actually opened, not on its pathname: the
+            # name can resolve to another file between a check and the open.
+            # Inside this thread's own section for it nothing can be certified;
+            # close uncertified and leave the old checkpoint for the next reader.
+            opened = os.fstat(descriptor)
+            if (opened.st_dev, opened.st_ino) in _held_source_locks():
+                return
             fcntl.flock(descriptor, fcntl.LOCK_EX)
             marker = ProposalIndex._marker(root)
             directories = [

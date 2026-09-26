@@ -197,3 +197,42 @@ def test_a_finalizer_for_a_replaced_root_sharing_the_held_lock_file_does_not_wai
                 moved.rename(root)
 
     assert _completes(collect_after_the_root_is_replaced)
+
+
+def test_a_finalizer_that_opens_the_held_lock_after_the_root_is_restored_does_not_wait(
+    tmp_path, monkeypatch
+):
+    from cruxible_core.indexes.proposals import proposal_index
+    from cruxible_core.indexes.proposals.proposal_index import close_working_database
+
+    evidence, marker, stale = _finalizer_world(tmp_path)
+    root = evidence.root
+    moved = root.with_name(root.name + "-moved")
+    lock_name = ".proposal-source.lock"
+    real_open = os.open
+    restored = []
+
+    # A replacement root carries a different lock file, so any check made on the
+    # name before opening sees nothing held; another thread restores the original
+    # root just before the open, which then lands on the held lock file.
+    def restore_then_open(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if not restored and os.fspath(path) == os.fspath(root / lock_name):
+            restored.append(True)
+            (root / lock_name).unlink()
+            root.rmdir()
+            moved.rename(root)
+        return real_open(path, *args, **kwargs)
+
+    def collect_while_the_root_moves() -> None:
+        with evidence.index._source_lock(evidence):
+            root.rename(moved)
+            root.mkdir()
+            (root / lock_name).touch()
+            with monkeypatch.context() as patch:
+                patch.setattr(proposal_index.os, "open", restore_then_open)
+                close_working_database(
+                    evidence.index.path, [stale], {"root": str(root), "marker": marker}
+                )
+
+    assert _completes(collect_while_the_root_moves)
+    assert restored
