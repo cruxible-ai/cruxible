@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- **Kits distribute definitions on demand.** `cruxible playbill kit build`
+  exports the live definitions under owned identity prefixes, plus everything
+  they pin, as one self-contained release of lineage-free snapshots; a pin into
+  authority, bindings or state refuses the build. `kit add` diffs a release
+  against the instance and proposes that diff as one change set: it adds what is
+  missing, replaces what changed with successors naming the instance's own
+  digests, retires what the kit dropped, settles every live dependent of a
+  replaced definition with one successor as a succession would, and records a
+  `kit_receipt` Document. Kits carry ClaimTypes, CaptureContracts and
+  QueryDefinitions. It never
+  activates, so approval and activation stay the ordinary steps. Local edits,
+  definitions made outside the kit, changed carried dependencies and
+  overlapping ownership are reported and block the change. `kit status` lists
+  installed kits and edited paths; `kit remove` proposes retiring what a kit
+  owns. The same operations are served over HTTP and MCP, and
+  `cruxible_client.kits` reads and writes kit directories.
+
+- `cruxible mcp` serves the MCP tools over stdio, the same server as
+  `cruxible-mcp`, so launchers that run a package by its own name
+  (`uvx cruxible mcp`) reach it. The MCP registry listing (`server.json`) now
+  launches `cruxible` at the release version instead of the never-published
+  `cruxible-core` 0.2.0, advertises the environment the server actually reads,
+  and is part of the release version lockstep check. The README carries the
+  registry's `mcp-name` ownership marker, and the Context7 rules describe the
+  current authoring flow.
+
 - Closed review branches are removed, while accepted, withdrawn, stale and refused
   proposal commits remain reachable through the single `refs/settled/archive`
   ref. Historical review, readmission and curation retain their exact candidate
@@ -1009,7 +1035,8 @@
   authoring exposes only v2. The Claim-v1 direct write path and parser are
   retired in favor of ClaimInput through the AuthoringIntent coordinator, and
   seed apply is retired while the pure seed planner remains. The parked
-  coverage hook remains non-executable. Claim-v1 compatibility had previously
+  coverage hook stays registered and runnable for compatibility; new harnesses
+  use the coverage middleware. Claim-v1 compatibility had previously
   been announced through 0.5.0; this unreleased lineage removes it early, so
   pre-release fixtures and ledgers carrying `playbill-claim-v1` must be rebuilt
   or migrated before upgrading.

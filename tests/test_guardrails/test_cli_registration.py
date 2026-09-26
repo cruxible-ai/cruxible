@@ -30,12 +30,14 @@ def _command_modules() -> list[ModuleType]:
         importlib.import_module(f"{commands_package.__name__}.{info.name}")
         for info in pkgutil.iter_modules(commands_package.__path__)
     ]
-    # DP-0B intentionally reduces this package to the four public groups plus
-    # their shared formatting/dispatch helper.
+    # DP-0B intentionally reduces this package to the four public groups, the
+    # stdio MCP entry that registry launchers reach through ``cruxible mcp``,
+    # and their shared formatting/dispatch helper.
     assert {module.__name__.rsplit(".", 1)[-1] for module in modules} == {
         "_common",
         "context",
         "credentials",
+        "mcp",
         "playbill",
         "server",
     }
@@ -95,8 +97,8 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     group_claims, _ = _walk_lazy_map(CLI_COMMANDS)
     defined = _defined_click_objects()
     groups = [(obj, origin) for obj, origin in defined.values() if isinstance(obj, click.Group)]
-    # 32 includes the retained-Capture read group.
-    assert len(groups) == 32, f"expected 32 Playbill/host groups, found {len(groups)}"
+    # 33 includes the retained-Capture read group and the kit group.
+    assert len(groups) == 33, f"expected 33 Playbill/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:
@@ -119,9 +121,9 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
 def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     """A command defined but never registered is dead or invisible, never fine."""
     group_claims, leaf_claims = _walk_lazy_map(CLI_COMMANDS)
-    # Includes retained evidence reads through `capture read`.
-    assert len(leaf_claims) == 122, (
-        f"expected 122 Playbill/host leaf commands, found {len(leaf_claims)}"
+    # Includes retained evidence reads through `capture read`, `cruxible mcp` and the kit verbs.
+    assert len(leaf_claims) == 127, (
+        f"expected 127 Playbill/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

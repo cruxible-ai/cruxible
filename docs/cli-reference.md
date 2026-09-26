@@ -79,8 +79,7 @@ cruxible server stop [--timeout SECONDS] [--json]
 server start is the long-running daemon process and does not connect to an
 existing server. State defaults to `~/.cruxible`; `--state-root` overrides
 `CRUXIBLE_STATE_ROOT`. The obsolete `CRUXIBLE_SERVER_STATE_DIR` name is
-refused. See [Canonical repository and daemon layout](canonical-repository-layout.md)
-for the exact directory contract.
+refused.
 
 `server start` takes an exclusive lock on `<state-root>/daemon/lock` before it
 opens any store, so a second daemon over the same state root refuses with a
@@ -239,6 +238,18 @@ entry count that fits: on the projected count before anything is lowered when
 that already exceeds the bound, and on the exact lowered count -- still before
 the compile -- when it does not.
 
+## mcp
+
+```text
+cruxible mcp
+```
+
+Serves the MCP tools over stdio. It is the same server as the `cruxible-mcp`
+script and reads the same environment (see [MCP tools](mcp-tools.md)); it exists
+so launchers that run a package by its own name, such as `uvx cruxible mcp`,
+reach the server. The root options and remembered CLI context do not configure
+it.
+
 ## playbill host
 
 ~~~text
@@ -318,8 +329,7 @@ generation. If the server response is lost after generation, each custody pair
 has a transport- and instance-bound local retry marker; the exact retry adopts
 that pair and clears the marker after success. This is not general key import:
 existing keys without the matching marker are refused. Re-seed with fresh
-owner, reviewer, and recovery custody by default; see
-[Canonical repository and daemon layout](canonical-repository-layout.md).
+owner, reviewer, and recovery custody by default.
 
 Successful initialization remembers the initialized instance and atomically
 writes the selected workspace config before rendering either JSON or human
@@ -526,6 +536,58 @@ dependency_wheels=(...))`, or `client.install_playbill_provider` with a typed
 request. MCP: `cruxible_playbill_provider_catalog` and
 `cruxible_playbill_provider_install`. HTTP: `GET /{instance}/playbill/providers`
 and `POST /{instance}/playbill/providers/install`.
+
+## playbill kit
+
+~~~text
+cruxible playbill kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
+  --out KIT_DIR [--json]
+cruxible playbill kit add KIT_DIR [--source TEXT] [--json]
+cruxible playbill kit status [--json]
+cruxible playbill kit remove ID [--json]
+~~~
+
+A kit is one release of definitions: ClaimTypes, CaptureContracts and
+QueryDefinitions. It never carries authority (governance, principals, mandates),
+local binding (Providers, Lines) or state (Subjects, Claims). Procedures,
+ProviderInterfaces and SourceAcquisitionPolicies join once their references can
+be moved field by field. A kit directory holds `cruxible-kit.json` and
+the artifact bytes under `artifacts/`.
+
+A release is self-contained. `build` exports every live definition whose
+identity starts with an `--owns` prefix, plus every definition those pin, as
+snapshots with no predecessor that pin only the release's own digests; a pin into
+anything a kit cannot carry refuses the build. The release content digest
+therefore names the same definitions wherever the kit is installed, and any
+release can be installed on its own.
+
+`add` diffs the release against this instance and proposes that diff as one
+change set: a missing definition is added as released, a changed one is replaced
+by a successor naming this instance's current digest, and one the kit installed
+that the release dropped is retired. Pins are remapped to the digests this
+instance actually holds. Every live artifact in this instance that pins a
+replaced kit definition takes one successor in the same change set, carried to
+the kit's final definitions as a succession would carry it; the SDK/MCP request's
+`dependents` names any that should be retired instead, and a dependent of a
+retired definition must be named. A definition the kit only carries (it pins it but
+does not own it) is added when absent and must otherwise match. A path edited
+since install, one defined outside the kit, and another kit's overlapping `owns`
+prefix are conflicts that block the change. `add` only proposes: activation, and
+any approval the instance's policy requires, are the ordinary `playbill proposal
+approve` and `activate` steps. It records a `kit_receipt` Document,
+`documents/kit-<id>.json`, with each path's release digest and installed digest,
+and names any carried ProviderInterface that no installed Provider implements.
+
+`status` lists installed kits and the kit paths edited locally. `remove`
+proposes retiring what a kit owns (never what it only carries); the dependency
+closure refuses it while live Claims depend on those definitions.
+
+MCP: `cruxible_playbill_kit_build`, `cruxible_playbill_kit_status`,
+`cruxible_playbill_kit_add` and `cruxible_playbill_kit_remove`. HTTP:
+`POST /{instance}/playbill/kits/build`, `GET /{instance}/playbill/kits`,
+`POST /{instance}/playbill/kits` and `POST /{instance}/playbill/kits/remove`.
+SDK: `read_kit_directory` and `write_kit_directory` in `cruxible_client.kits`,
+with the matching `CruxibleClient` methods.
 
 ## playbill document
 

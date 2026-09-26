@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -29,6 +30,8 @@ def _write_tree(
     core_version: str = "1.2.3",
     client_version: str = "1.2.3",
     pin: str | None = None,
+    listing_version: str | None = None,
+    listing_identifier: str = "cruxible",
 ) -> dict[str, Path]:
     pin = f"cruxible-client=={client_version}" if pin is None else pin
 
@@ -45,7 +48,24 @@ def _write_tree(
         f'[project]\nname = "cruxible-client"\nversion = "{client_version}"\n',
         encoding="utf-8",
     )
-    return {"core": core, "client": client}
+    listing_version = core_version if listing_version is None else listing_version
+    server = tmp_path / "server.json"
+    server.write_text(
+        json.dumps(
+            {
+                "version": listing_version,
+                "packages": [
+                    {
+                        "registryType": "pypi",
+                        "identifier": listing_identifier,
+                        "version": listing_version,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return {"core": core, "client": client, "server": server}
 
 
 def _argv(paths: dict[str, Path], *extra: str) -> list[str]:
@@ -54,6 +74,8 @@ def _argv(paths: dict[str, Path], *extra: str) -> list[str]:
         str(paths["core"]),
         "--client-pyproject",
         str(paths["client"]),
+        "--server-json",
+        str(paths["server"]),
         *extra,
     ]
 
@@ -126,3 +148,26 @@ def test_ci_parity_runs_the_lockstep_check() -> None:
 def test_publish_workflow_runs_the_same_script_with_the_tag() -> None:
     workflow = (_REPO_ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
     assert 'python scripts/check_version_lockstep.py --tag "$GITHUB_REF_NAME"' in workflow
+
+
+def test_registry_listing_behind_core_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    script = _load_script()
+    paths = _write_tree(tmp_path, listing_version="1.2.2")
+
+    assert script.main(_argv(paths)) == 1
+    err = capsys.readouterr().err
+    assert "server.json version 1.2.2 != cruxible 1.2.3" in err
+    assert "server.json package cruxible version 1.2.2 != cruxible 1.2.3" in err
+
+
+def test_registry_listing_must_launch_cruxible(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The stale listing named the compatibility stub, which was never published."""
+    script = _load_script()
+    paths = _write_tree(tmp_path, listing_identifier="cruxible-core")
+
+    assert script.main(_argv(paths)) == 1
+    assert "must list exactly one PyPI package, cruxible" in capsys.readouterr().err

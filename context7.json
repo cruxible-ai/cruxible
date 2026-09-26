@@ -8,10 +8,11 @@
   "excludeFolders": [],
   "excludeFiles": [],
   "rules": [
-    "Always validate config with cruxible_validate before cruxible_init",
-    "Ingest entities before relationships — edges reference entity IDs",
-    "Use cruxible_add_relationship for inferred relationships, not batch CSV scripts",
-    "Include source, confidence, and evidence in edge properties for provenance",
-    "Use the instance_id from cruxible_init in all subsequent tool calls"
+    "Start with cruxible_playbill_host_create, then cruxible_playbill_init to bootstrap public principals",
+    "Write Claims and Procedures with cruxible_playbill_authoring_compile followed by cruxible_playbill_authoring_submit; the returned status names every remaining approval and activation step",
+    "A proposal is not accepted state and an approval is not activation; read accepted coordinates as state and candidate coordinates as provisional",
+    "Search for an existing Subject or Claim before minting an adjacent concept",
+    "Record contradiction as negative evidence rather than only a new positive inverse",
+    "Never request, transmit, or place a principal private key in a repository"
   ]
 }

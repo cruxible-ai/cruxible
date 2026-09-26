@@ -31,8 +31,6 @@ if TYPE_CHECKING:
 # Modes:
 # - active: acts on the selected instance.
 # - create: creates/restores an instance and therefore has no instance ID yet.
-# - lock: acts on the selected instance unless --kit-dir names an explicit kit.
-# - kit: writes metadata for the explicitly selected local materialized kit.
 # - manual: the command resolves its target from command-specific inputs and
 #   emits the notice itself immediately before the write.
 MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
@@ -43,6 +41,8 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "instance", "decommission"): "active",
     ("playbill", "body", "store"): "active",
     ("playbill", "provider", "seed"): "active",
+    ("playbill", "kit", "add"): "active",
+    ("playbill", "kit", "remove"): "active",
     ("playbill", "ledger", "set-mirror"): "active",
     ("playbill", "ledger", "publish"): "active",
     ("playbill", "document", "propose"): "active",
@@ -437,6 +437,23 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 },
                 module="playbill",
                 attr="provider_group",
+            ),
+            "kit": _group(
+                "Export and import definition kits.",
+                {
+                    "build": _command(
+                        "playbill", "build_kit", "Export owned definitions as a kit release."
+                    ),
+                    "add": _command(
+                        "playbill", "add_kit", "Propose installing or upgrading a kit."
+                    ),
+                    "status": _command("playbill", "kit_status", "List installed kits."),
+                    "remove": _command(
+                        "playbill", "remove_kit", "Propose retiring what a kit installed."
+                    ),
+                },
+                module="playbill",
+                attr="kit_group",
             ),
             "block": _group(
                 "Maintain client-owned declared projection blocks.",
@@ -930,6 +947,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
         module="server",
         attr="server_group",
     ),
+    "mcp": _command("mcp", "mcp_cmd", "Serve the MCP tools over stdio."),
 }
 
 
@@ -968,6 +986,10 @@ def cli(
     json_compact: bool | None,
 ) -> None:
     """Cruxible — hard state for AI agents: governed, queryable, durable, with receipts."""
+    if ctx.invoked_subcommand == "mcp":
+        # The MCP server reads only its own environment; remembered CLI context,
+        # workspace discovery and root options must neither configure nor break it.
+        return
     try:
         stored = load_cli_context()
         resolved = resolve_playbill_context(

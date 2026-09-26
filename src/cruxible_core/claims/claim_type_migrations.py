@@ -41,6 +41,7 @@ from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
+from cruxible_core.claims.artifact_references import move_references, reference_fields
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputV1,
     ClaimTypeLintWarningV1,
@@ -576,9 +577,10 @@ def _canonical_successor_bytes(
     replacements: Mapping[str, str],
     supplied: dict[str, object] | None,
     supplied_content: bytes | None = None,
-    successor_type: ClaimType,
+    successor_type: ClaimType | None,
     claim_retirement_reason: ClaimRetirementReason | None = None,
     claim_effective_until: datetime | None = None,
+    typed_references: bool = False,
 ) -> bytes:
     """Return the exact successor bytes one dependent takes under its disposition.
 
@@ -618,6 +620,10 @@ def _canonical_successor_bytes(
                 raise ClaimTypeMigrationDependentInvalid(
                     f"{ClaimTypeMigrationDependentInvalid.code}: attributed Claim retirement "
                     "successor bytes are machine-owned"
+                )
+            if successor_type is None:
+                raise ClaimTypeMigrationIncomplete(
+                    f"{ClaimTypeMigrationIncomplete.code}: a retired Claim needs its ClaimType"
                 )
             successor_digest = claim_type_digest(successor_type).tagged
             try:
@@ -667,7 +673,11 @@ def _canonical_successor_bytes(
     if supplied_content is not None:
         payload = None
     elif supplied is None:
-        payload = _replace_exact_digests(json.loads(content), replacements)
+        payload = (
+            move_references(current.path, json.loads(content), replacements)
+            if typed_references
+            else _replace_exact_digests(json.loads(content), replacements)
+        )
         if not isinstance(payload, dict):
             raise ClaimTypeMigrationDependentInvalid(
                 f"{ClaimTypeMigrationDependentInvalid.code}: dependent is not an envelope"
@@ -980,6 +990,151 @@ def build_claim_type_migration_candidate(
         ),
         _invalidation_warnings(dispositions),
     )
+
+
+def dependent_closure_inventory(
+    tree: Mapping[str, bytes],
+    *,
+    roots: tuple[ArtifactIdentity, ...],
+    fixed_paths: frozenset[str],
+) -> tuple[ClaimTypeMigrationInventoryItemV1, ...]:
+    """The union of several roots' reverse-pin closures over one accepted tree.
+
+    ``fixed_paths`` are paths the caller writes itself (the roots and anything
+    else changing in the same set); they are traversed but not returned, so a
+    dependent of a fixed path is settled against the caller's bytes.
+    """
+
+    found: dict[str, ClaimTypeMigrationInventoryItemV1] = {}
+    for root in roots:
+        for item in claim_type_migration_inventory(tree, root=root):
+            if item.path not in fixed_paths:
+                found.setdefault(item.path, item)
+    return tuple(found[path] for path in sorted(found))
+
+
+def build_dependent_closure_candidate(
+    *,
+    tree: Mapping[str, bytes],
+    changed: Mapping[str, bytes],
+    inventory: tuple[ClaimTypeMigrationInventoryItemV1, ...],
+    dispositions: tuple[ClaimTypeDependentDispositionV3, ...],
+) -> tuple[dict[str, bytes], tuple[ClaimTypeMigrationDispositionV3, ...]]:
+    """Settle the closure of several changed definitions as one generation.
+
+    The multi-root form of `build_claim_type_migration_candidate`, with the
+    same per-dependent law: every dependent is read at its ACCEPTED bytes, so
+    each takes exactly one successor naming its accepted digest, however many
+    changed definitions it pins; its pins move to the final bytes in
+    ``changed`` and to the successors of dependents settled before it.
+    """
+
+    by_identity = {item.identity.qualified: item for item in inventory}
+    supplied = {item.identity.qualified: item for item in dispositions}
+    if set(by_identity) != set(supplied):
+        missing = sorted(set(by_identity) - set(supplied), key=lambda item: item.encode("utf-8"))
+        extra = sorted(set(supplied) - set(by_identity), key=lambda item: item.encode("utf-8"))
+        raise ClaimTypeMigrationDependentSetMismatch(
+            f"{ClaimTypeMigrationDependentSetMismatch.code}: missing={missing!r}; "
+            f"extra_or_stale={extra!r}"
+        )
+    replacements: dict[str, str] = {}
+    for path, content in changed.items():
+        before = tree.get(path)
+        after = parse_dependency_artifact(path, content)
+        if before is None or after is None:
+            continue
+        current = parse_dependency_artifact(path, before)
+        if current is not None and current.artifact_digest != after.artifact_digest:
+            replacements[current.artifact_digest] = after.artifact_digest
+    writes: dict[str, bytes] = {}
+    normalized: dict[str, ClaimTypeMigrationDispositionV3] = {}
+    remaining = set(by_identity)
+    while remaining:
+        progressed = False
+        for identity in sorted(remaining, key=lambda item: item.encode("utf-8")):
+            row = by_identity[identity]
+            current = parse_dependency_artifact(row.path, tree[row.path])
+            if current is None:
+                raise ClaimTypeMigrationIncomplete(
+                    f"{ClaimTypeMigrationIncomplete.code}: inventory member disappeared"
+                )
+            if {pin.target.qualified for pin in current.pins}.intersection(remaining):
+                continue
+            entry = supplied[identity]
+            disposition: MigrationResultDisposition = (
+                "retire" if entry.disposition == "invalidation" else entry.disposition
+            )
+            if disposition not in row.permitted_dispositions:
+                raise ClaimTypeMigrationDependentInvalid(
+                    f"{ClaimTypeMigrationDependentInvalid.code}: {identity} does not permit "
+                    f"{disposition}"
+                )
+            if reference_fields(row.path) is None:
+                raise ClaimTypeMigrationDependentInvalid(
+                    f"{ClaimTypeMigrationDependentInvalid.code}: {identity} cannot be re-pinned "
+                    "automatically; settle it through its own change first"
+                )
+            successor_type = _final_claim_type(tree, {**changed, **writes}, row.path, current)
+            content = _canonical_successor_bytes(
+                current=current,
+                content=tree[row.path],
+                disposition=disposition,
+                replacements=replacements,
+                supplied=entry.successor,
+                successor_type=successor_type,
+                claim_retirement_reason=entry.claim_retirement_reason,
+                claim_effective_until=entry.claim_effective_until,
+                typed_references=True,
+            )
+            writes[row.path] = content
+            successor_state = parse_dependency_artifact(row.path, content)
+            if successor_state is None:
+                raise ClaimTypeMigrationIncomplete(
+                    f"{ClaimTypeMigrationIncomplete.code}: successor did not parse"
+                )
+            replacements[current.artifact_digest] = successor_state.artifact_digest
+            normalized[identity] = ClaimTypeMigrationDispositionV3(
+                identity=current.identity,
+                disposition=disposition,
+                claim_retirement_reason=entry.claim_retirement_reason,
+                claim_effective_until=entry.claim_effective_until,
+            )
+            remaining.remove(identity)
+            progressed = True
+            break
+        if not progressed:
+            raise ClaimTypeMigrationIncomplete(
+                f"{ClaimTypeMigrationIncomplete.code}: dependent closure contains a cycle"
+            )
+    return writes, tuple(
+        normalized[identity]
+        for identity in sorted(normalized, key=lambda item: item.encode("utf-8"))
+    )
+
+
+def _final_claim_type(
+    tree: Mapping[str, bytes],
+    changed: Mapping[str, bytes],
+    path: str,
+    current: ArtifactDependencyStateV1,
+) -> ClaimType | None:
+    """The ClaimType a Claim dependent speaks after this set.
+
+    ``changed`` holds everything this set writes so far -- the caller's own
+    definitions and the dependents already settled -- ahead of the accepted tree.
+    """
+
+    if current.artifact_kind != "claim":
+        return None
+    predicate = parse_claim(tree[path], path=path).statement.predicate
+    type_path = claim_type_path(predicate)
+    content = changed.get(type_path, tree.get(type_path))
+    if content is None:
+        raise ClaimTypeMigrationIncomplete(
+            f"{ClaimTypeMigrationIncomplete.code}: {predicate} has no ClaimType"
+        )
+    return parse_claim_type(content, path=type_path)
 
 
 def _service_migrate_claim_type_v1(

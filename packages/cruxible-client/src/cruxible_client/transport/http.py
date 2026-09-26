@@ -36,6 +36,14 @@ from cruxible_client.contracts.errors import (
     PlaybillDeprecatedWriteError,
     PlaybillSinceRequestInvalid,
 )
+from cruxible_client.contracts.kits import (
+    PlaybillKitAddRequestV1,
+    PlaybillKitBuildRequestV1,
+    PlaybillKitBuildResultV1,
+    PlaybillKitChangeResultV1,
+    PlaybillKitRemoveRequestV1,
+    PlaybillKitStatusV1,
+)
 from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourcePreviewRequestV1,
     ProcedureSourcePreviewV1,
@@ -428,6 +436,34 @@ class CruxibleClient:
             timeout=600,
         )
         return self._parse_model(response, PlaybillProviderInstallResultV1)
+
+    def build_playbill_kit(
+        self, instance_id: str, request: PlaybillKitBuildRequestV1
+    ) -> PlaybillKitBuildResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/kits/build", json=request.model_dump(mode="json")
+        )
+        return self._parse_model(response, PlaybillKitBuildResultV1)
+
+    def playbill_kit_status(self, instance_id: str) -> PlaybillKitStatusV1:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/kits")
+        return self._parse_model(response, PlaybillKitStatusV1)
+
+    def add_playbill_kit(
+        self, instance_id: str, request: PlaybillKitAddRequestV1
+    ) -> PlaybillKitChangeResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/kits", json=request.model_dump(mode="json")
+        )
+        return self._parse_model(response, PlaybillKitChangeResultV1)
+
+    def remove_playbill_kit(
+        self, instance_id: str, request: PlaybillKitRemoveRequestV1
+    ) -> PlaybillKitChangeResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/kits/remove", json=request.model_dump(mode="json")
+        )
+        return self._parse_model(response, PlaybillKitChangeResultV1)
 
     def propose_playbill_document(
         self,

@@ -27,6 +27,8 @@ _PROFILE_ALIASES = {
 _DEFAULT_TOOLS = {
     "cruxible_version",
     "cruxible_server_info",
+    "cruxible_playbill_kit_status",
+    "cruxible_playbill_kit_add",
     "cruxible_playbill_authoring_create",
     "cruxible_playbill_authoring_example",
     "cruxible_playbill_authoring_get",

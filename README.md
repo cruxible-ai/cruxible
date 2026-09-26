@@ -47,8 +47,7 @@ old Procedure, workflow, query, graph, receipt, and SQLite modules remain only a
 an explicit donor island while their deterministic behavior and goldens are
 transplanted. They are not served by the public Playbill API.
 
-See [Family 1](docs/playbill-family-1.md) and
-[Architecture](docs/architecture.md).
+See [Architecture](docs/architecture.md).
 
 ## The lifecycle
 
@@ -167,8 +166,6 @@ Runtime bearer credentials and Playbill principals solve different problems:
 - source compilation happens client-side, so the daemon never dereferences a
   client filesystem path.
 
-See [Authentication and principals](docs/runtime-auth-and-agent-roles.md).
-
 ## Destructive convergence status
 
 Completed in the current development line:
@@ -207,7 +204,7 @@ oracles must not drift.
 - [Architecture](docs/architecture.md)
 - [CLI reference](docs/cli-reference.md)
 - [MCP reference](docs/mcp-tools.md)
-- [Family 1 Documents](docs/playbill-family-1.md)
-- [Authentication and principals](docs/runtime-auth-and-agent-roles.md)
 
 Apache-2.0 licensed.
+
+<!-- mcp-name: io.github.cruxible-ai/cruxible-core -->

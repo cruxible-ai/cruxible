@@ -42,6 +42,14 @@ from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.kits import (
+    PlaybillKitAddRequestV1,
+    PlaybillKitBuildRequestV1,
+    PlaybillKitBuildResultV1,
+    PlaybillKitChangeResultV1,
+    PlaybillKitRemoveRequestV1,
+    PlaybillKitStatusV1,
+)
 from cruxible_client.contracts.provider_installation import (
     PlaybillProviderCatalogV1,
     PlaybillProviderInstallRequestV1,
@@ -275,6 +283,8 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_line_arm": None,  # path only
     "cruxible_playbill_line_disarm": None,  # path only
     "cruxible_playbill_provider_install": TypeAdapter(PlaybillProviderInstallRequestV1),
+    "cruxible_playbill_kit_add": TypeAdapter(PlaybillKitAddRequestV1),
+    "cruxible_playbill_kit_remove": TypeAdapter(PlaybillKitRemoveRequestV1),
     "cruxible_playbill_activate": None,  # path only
     "cruxible_playbill_authoring_abandon_insertion": TypeAdapter(PlaybillInsertionAbandonRequest),
     "cruxible_playbill_authoring_bind": TypeAdapter(PlaybillAuthoringInputCompileRequest),
@@ -471,6 +481,46 @@ def handle_playbill_provider_install(
         lambda client: client.install_playbill_provider(instance_id, request),
         lambda: playbill_api.playbill_provider_install(instance_id, request),
         operation_name="cruxible_playbill_provider_install",
+        local_payload=request.model_dump(mode="json"),
+    )
+
+
+def handle_playbill_kit_build(
+    instance_id: str, request: PlaybillKitBuildRequestV1
+) -> PlaybillKitBuildResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.build_playbill_kit(instance_id, request),
+        lambda: playbill_api.playbill_kit_build(instance_id, request),
+        operation_name="cruxible_playbill_kit_build",
+    )
+
+
+def handle_playbill_kit_status(instance_id: str) -> PlaybillKitStatusV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.playbill_kit_status(instance_id),
+        lambda: playbill_api.playbill_kit_status(instance_id),
+        operation_name="cruxible_playbill_kit_status",
+    )
+
+
+def handle_playbill_kit_add(
+    instance_id: str, request: PlaybillKitAddRequestV1
+) -> PlaybillKitChangeResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.add_playbill_kit(instance_id, request),
+        lambda: playbill_api.playbill_kit_add(instance_id, request),
+        operation_name="cruxible_playbill_kit_add",
+        local_payload=request.model_dump(mode="json"),
+    )
+
+
+def handle_playbill_kit_remove(
+    instance_id: str, request: PlaybillKitRemoveRequestV1
+) -> PlaybillKitChangeResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.remove_playbill_kit(instance_id, request),
+        lambda: playbill_api.playbill_kit_remove(instance_id, request),
+        operation_name="cruxible_playbill_kit_remove",
         local_payload=request.model_dump(mode="json"),
     )
 

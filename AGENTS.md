@@ -84,9 +84,11 @@ release scope, or sending messages to other agents or people.
 
 ## Versioning
 
-Version lives in two places — keep them in sync:
+Version lives in these places — keep them in sync:
 - `pyproject.toml` (`version = "X.Y.Z"`)
 - `src/cruxible_core/__init__.py` (`__version__ = "X.Y.Z"`)
+- `packages/cruxible-client/pyproject.toml` and the core pin on it
+- `server.json` (the MCP registry listing: top-level and package `version`)
 
 The MCP server name includes the version (`cruxible v0.4.0`) so agents and users can confirm which build is running.
 

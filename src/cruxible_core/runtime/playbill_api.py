@@ -57,6 +57,14 @@ from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
     PlaybillDeprecatedWriteError,
 )
+from cruxible_client.contracts.kits import (
+    PlaybillKitAddRequestV1,
+    PlaybillKitBuildRequestV1,
+    PlaybillKitBuildResultV1,
+    PlaybillKitChangeResultV1,
+    PlaybillKitRemoveRequestV1,
+    PlaybillKitStatusV1,
+)
 from cruxible_client.contracts.ledger_mirror import (
     PlaybillLedgerMirrorUnset,
     validate_mirror_url,
@@ -237,6 +245,12 @@ from cruxible_core.service.evidence.source_catalog import (
     service_propose_playbill_source_bundle,
 )
 from cruxible_core.service.floor.floor import MANIFEST_PATH, service_export_playbill_floor
+from cruxible_core.service.kits import (
+    service_add_kit,
+    service_build_kit,
+    service_kit_status,
+    service_remove_kit,
+)
 from cruxible_core.service.procedures.measurements import (
     service_list_playbill_procedure_readings,
     service_measure_playbill_procedure,
@@ -606,6 +620,52 @@ def playbill_provider_install(
             manager.get(instance_id),
             operator=manager.provider_runtime_operator(),
             request=request,
+            actor_id=_actor_id(),
+            timestamp=canonical_candidate_timestamp(utc_now()),
+        ),
+    )
+
+
+def playbill_kit_build(
+    instance_id: str, request: PlaybillKitBuildRequestV1
+) -> PlaybillKitBuildResultV1:
+    check_permission("cruxible_playbill_kit_build", instance_id=instance_id)
+    return _proposal_validation_boundary(
+        "kit build", lambda: service_build_kit(get_playbill_manager().get(instance_id), request)
+    )
+
+
+def playbill_kit_status(instance_id: str) -> PlaybillKitStatusV1:
+    check_permission("cruxible_playbill_kit_status", instance_id=instance_id)
+    return _proposal_validation_boundary(
+        "kit status", lambda: service_kit_status(get_playbill_manager().get(instance_id))
+    )
+
+
+def playbill_kit_add(
+    instance_id: str, request: PlaybillKitAddRequestV1
+) -> PlaybillKitChangeResultV1:
+    check_permission("cruxible_playbill_kit_add", instance_id=instance_id)
+    return _proposal_validation_boundary(
+        "kit add",
+        lambda: service_add_kit(
+            get_playbill_manager().get(instance_id),
+            request,
+            actor_id=_actor_id(),
+            timestamp=canonical_candidate_timestamp(utc_now()),
+        ),
+    )
+
+
+def playbill_kit_remove(
+    instance_id: str, request: PlaybillKitRemoveRequestV1
+) -> PlaybillKitChangeResultV1:
+    check_permission("cruxible_playbill_kit_remove", instance_id=instance_id)
+    return _proposal_validation_boundary(
+        "kit removal",
+        lambda: service_remove_kit(
+            get_playbill_manager().get(instance_id),
+            request,
             actor_id=_actor_id(),
             timestamp=canonical_candidate_timestamp(utc_now()),
         ),

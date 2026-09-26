@@ -23,6 +23,14 @@ from cruxible_client.contracts.claim_reads import (
 )
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.kits import (
+    PlaybillKitAddRequestV1,
+    PlaybillKitBuildRequestV1,
+    PlaybillKitBuildResultV1,
+    PlaybillKitChangeResultV1,
+    PlaybillKitRemoveRequestV1,
+    PlaybillKitStatusV1,
+)
 from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourcePreviewRequestV1,
     ProcedureSourcePreviewV1,
@@ -215,6 +223,26 @@ def provider_install(
     instance_id: str, request: PlaybillProviderInstallRequestV1
 ) -> PlaybillProviderInstallResultV1:
     return playbill_api.playbill_provider_install(resolve_server_instance_id(instance_id), request)
+
+
+@router.post("/{instance_id}/playbill/kits/build", response_model=PlaybillKitBuildResultV1)
+def kit_build(instance_id: str, request: PlaybillKitBuildRequestV1) -> PlaybillKitBuildResultV1:
+    return playbill_api.playbill_kit_build(resolve_server_instance_id(instance_id), request)
+
+
+@router.get("/{instance_id}/playbill/kits", response_model=PlaybillKitStatusV1)
+def kit_status(instance_id: str) -> PlaybillKitStatusV1:
+    return playbill_api.playbill_kit_status(resolve_server_instance_id(instance_id))
+
+
+@router.post("/{instance_id}/playbill/kits", response_model=PlaybillKitChangeResultV1)
+def kit_add(instance_id: str, request: PlaybillKitAddRequestV1) -> PlaybillKitChangeResultV1:
+    return playbill_api.playbill_kit_add(resolve_server_instance_id(instance_id), request)
+
+
+@router.post("/{instance_id}/playbill/kits/remove", response_model=PlaybillKitChangeResultV1)
+def kit_remove(instance_id: str, request: PlaybillKitRemoveRequestV1) -> PlaybillKitChangeResultV1:
+    return playbill_api.playbill_kit_remove(resolve_server_instance_id(instance_id), request)
 
 
 @router.post(
