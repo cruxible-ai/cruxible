@@ -247,6 +247,8 @@ def test_a_settled_generation_publishes_without_approvals_and_replays(
     assert instance.accepted_history()[-1].record.mandate_digest == digest
 
     # Replay from genesis re-derives the delegated authority from the parent state.
+    # Queued advisory review-ref refreshes bind projections; let them finish first.
+    instance.settled_workspace_advertisement()
     shutil.rmtree(instance.root / "projections")
     (instance.root / "projections").mkdir()
     shutil.rmtree(instance._checkpoint_directory(instance.root))
