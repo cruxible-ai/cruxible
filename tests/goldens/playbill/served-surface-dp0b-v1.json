@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-26:distribution-self-contained-kits",
-    "surface_digest": "sha256:34a10e0e5e9d91b94d0c079199de68fb96561f7fb26a2ca6f6d235272cc8d277"
+    "register_entry": "2026-09-26:distribution-d2-kit-transport",
+    "surface_digest": "sha256:0ef978c602d689541aa601e3cd3b47240b76d46cee7e9300961c0d53934b5d35"
   },
   "surface": {
     "cli_leaves": [
@@ -423,6 +423,16 @@
         ],
         "command": "playbill kit build",
         "delegate": "cruxible_core.cli.commands.playbill.build_kit"
+      },
+      {
+        "client_operations": [],
+        "command": "playbill kit pull",
+        "delegate": "cruxible_core.cli.commands.playbill.pull_kit"
+      },
+      {
+        "client_operations": [],
+        "command": "playbill kit push",
+        "delegate": "cruxible_core.cli.commands.playbill.push_kit_cmd"
       },
       {
         "client_operations": [

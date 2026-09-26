@@ -448,6 +448,10 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "playbill", "add_kit", "Propose installing or upgrading a kit."
                     ),
                     "status": _command("playbill", "kit_status", "List installed kits."),
+                    "push": _command("playbill", "push_kit_cmd", "Publish a kit to a registry."),
+                    "pull": _command(
+                        "playbill", "pull_kit", "Fetch and verify a kit without installing it."
+                    ),
                     "remove": _command(
                         "playbill", "remove_kit", "Propose retiring what a kit installed."
                     ),

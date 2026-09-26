@@ -26,6 +26,7 @@ from cruxible_client import (
     observe_playbill_next_workspace,
 )
 from cruxible_client._error_base import printable
+from cruxible_client.artifacts import RegistryClient, parse_reference
 from cruxible_client.authoring.attestations import (
     append_prepared_claim_attestation,
     local_attestation_signer_from_environment,
@@ -86,7 +87,12 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.errors import DataValidationError
-from cruxible_client.kits import read_kit_directory, write_kit_directory
+from cruxible_client.kits import (
+    push_kit,
+    resolve_kit,
+    write_kit_directory,
+    write_kit_layout,
+)
 from cruxible_client.provider_installation import install_provider_package
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1, claim_type_input_template
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
@@ -1367,15 +1373,20 @@ def build_kit(
 
 
 @kit_group.command("add")
-@click.argument("kit_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
-@click.option("--source", "source", default=None, help="Recorded origin; defaults to the path.")
+@click.argument("kit")
+@click.option(
+    "--source", "source", default=None, help="Recorded origin; defaults to where KIT came from."
+)
 @json_option
 @handle_errors
-def add_kit(kit_dir: Path, source: str | None, output_json: bool) -> None:
-    """Propose installing or upgrading the kit in KIT_DIR as one change set."""
-    request = PlaybillKitAddRequestV1(
-        bundle=read_kit_directory(kit_dir), source=source or kit_dir.name
-    )
+def add_kit(kit: str, source: str | None, output_json: bool) -> None:
+    """Propose installing or upgrading KIT as one change set.
+
+    KIT is a kit directory, an OCI image layout, or a registry reference such as
+    ``project-state:1.0.0`` or ``ghcr.io/acme/kits/foo@sha256:...``.
+    """
+    bundle, origin = resolve_kit(kit)
+    request = PlaybillKitAddRequestV1(bundle=bundle, source=source or origin)
     result = _server_call(
         lambda client, instance_id: client.add_playbill_kit(instance_id, request),
         command_name="playbill kit add",
@@ -1384,6 +1395,50 @@ def add_kit(kit_dir: Path, source: str | None, output_json: bool) -> None:
         _emit_json(result.model_dump(mode="json"))
     else:
         _echo_kit_change(result)
+
+
+@kit_group.command("push")
+@click.argument("kit")
+@click.argument("reference")
+@json_option
+@handle_errors
+def push_kit_cmd(kit: str, reference: str, output_json: bool) -> None:
+    """Publish KIT (a directory or OCI layout) to a registry REFERENCE.
+
+    Credentials come from CRUXIBLE_REGISTRY_USERNAME and CRUXIBLE_REGISTRY_PASSWORD.
+    """
+    bundle, _origin = resolve_kit(kit)
+    ref = parse_reference(reference)
+    with RegistryClient() as registry:
+        digest = push_kit(bundle, ref, registry=registry)
+    pinned = str(ref.pinned(digest))
+    if output_json:
+        _emit_json({"reference": pinned, "digest": digest})
+    else:
+        click.echo(pinned)
+
+
+@kit_group.command("pull")
+@click.argument("reference")
+@click.option("--out", "out", required=True, type=click.Path(path_type=Path))
+@click.option(
+    "--layout", is_flag=True, help="Write an OCI image layout instead of a kit directory."
+)
+@json_option
+@handle_errors
+def pull_kit(reference: str, out: Path, layout: bool, output_json: bool) -> None:
+    """Fetch and verify a kit from a registry into OUT, without installing it."""
+    if out.exists():
+        raise click.UsageError(f"{out} already exists")
+    bundle, origin = resolve_kit(reference)
+    if layout:
+        write_kit_layout(bundle, out, ref=origin)
+    else:
+        write_kit_directory(bundle, out)
+    if output_json:
+        _emit_json({"source": origin, "content_digest": bundle.manifest.content_digest})
+    else:
+        click.echo(f"{origin}: {len(bundle.artifacts)} artifacts")
 
 
 @kit_group.command("status")

@@ -7,14 +7,30 @@
       artifacts/claim-types/acme.account/seats.json
       ...
 
-The directory is what a kit repository reviews and what the OCI layer packs; the
-daemon only ever receives the bundle read from it.
+The directory is what a kit repository reviews. Distributed, a kit is an OCI
+artifact (``application/vnd.cruxible.kit.v1``): the manifest as its config blob
+and one deterministic tar of the artifacts as its layer, so rebuilding a release
+gives the same digest. A kit can come from a directory, an OCI image layout or a
+registry reference; either way the daemon only ever receives the bundle.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from cruxible_client.artifacts import (
+    ArtifactKind,
+    Reference,
+    RegistryClient,
+    is_layout,
+    pack_artifact,
+    pack_files,
+    parse_reference,
+    read_layout,
+    unpack_artifact,
+    unpack_files,
+    write_layout,
+)
 from cruxible_client.contracts.canonical import pretty_canonical_bytes
 from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_DIRECTORY,
@@ -68,3 +84,66 @@ def write_kit_directory(bundle: KitBundleV1, root: Path) -> None:
             raise ValueError(f"kit artifact {item.path} escapes the kit directory")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(item.content)
+
+
+def _pack_kit(bundle: KitBundleV1) -> tuple[bytes, tuple[bytes, ...]]:
+    config = pretty_canonical_bytes(bundle.manifest.model_dump(mode="json"))
+    return config, (pack_files(bundle.contents()),)
+
+
+def _unpack_kit(config: bytes, layers: tuple[bytes, ...]) -> KitBundleV1:
+    if len(layers) != 1:
+        raise ValueError("a kit artifact has exactly one layer")
+    manifest = KitManifestV1.model_validate_json(config)
+    files = unpack_files(layers[0])
+    return KitBundleV1(
+        manifest=manifest,
+        artifacts=tuple(KitArtifactBytesV1.of(path, files[path]) for path in sorted(files)),
+    )
+
+
+KIT_ARTIFACT: ArtifactKind[KitBundleV1] = ArtifactKind(
+    name="kit",
+    artifact_type="application/vnd.cruxible.kit.v1",
+    config_media_type="application/vnd.cruxible.kit.manifest.v1+json",
+    layer_media_type="application/vnd.cruxible.kit.artifacts.v1.tar",
+    pack=_pack_kit,
+    unpack=_unpack_kit,
+)
+
+
+def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple[KitBundleV1, str]:
+    """A bundle from a kit directory, an OCI layout, or a registry reference.
+
+    Returns the bundle and where it came from; a registry source is reported
+    pinned to the manifest digest actually pulled.
+    """
+
+    path = Path(source).expanduser()
+    if path.is_dir():
+        if is_layout(path):
+            image = read_layout(path)
+            return unpack_artifact(KIT_ARTIFACT, image), f"{path.name}@{image.digest}"
+        return read_kit_directory(path), path.name
+    ref = parse_reference(source)
+    client = registry if registry is not None else RegistryClient()
+    try:
+        image = client.pull(ref)
+    finally:
+        if registry is None:
+            client.close()
+    return unpack_artifact(KIT_ARTIFACT, image), str(ref.pinned(image.digest))
+
+
+def push_kit(bundle: KitBundleV1, ref: Reference, *, registry: RegistryClient) -> str:
+    """Publish ``bundle`` at ``ref``; returns the manifest digest consumers pin."""
+
+    return registry.push(pack_artifact(KIT_ARTIFACT, bundle), ref)
+
+
+def write_kit_layout(bundle: KitBundleV1, root: Path, *, ref: str | None = None) -> str:
+    """Write ``bundle`` as an OCI image layout for offline transfer; returns its digest."""
+
+    image = pack_artifact(KIT_ARTIFACT, bundle)
+    write_layout(image, root, ref=ref)
+    return image.digest
