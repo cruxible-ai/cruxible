@@ -151,22 +151,28 @@ def timestamp(value: int) -> str:
 
 # The proposal source lock is an flock, which conflicts across descriptors even
 # within one process. An unreachable index's finalizer runs on whichever thread
-# triggers garbage collection, including one inside this lock's critical section
-# for the same root; taking the lock there would wait on itself forever.
+# triggers garbage collection, including one inside this lock's critical section;
+# taking the same lock file there would wait on itself forever. Each thread
+# records the lock files it holds or is acquiring, by the lock file's own
+# identity, from before flock until after its descriptor closes, so no instant
+# of holding the lock is unrecorded.
 _HELD_SOURCE_LOCKS = threading.local()
 
 
-def _held_source_roots() -> dict[tuple[int, int], int]:
-    held: dict[tuple[int, int], int] | None = getattr(_HELD_SOURCE_LOCKS, "roots", None)
+def _held_source_locks() -> dict[tuple[int, int], int]:
+    held: dict[tuple[int, int], int] | None = getattr(_HELD_SOURCE_LOCKS, "locks", None)
     if held is None:
         held = {}
-        _HELD_SOURCE_LOCKS.roots = held
+        _HELD_SOURCE_LOCKS.locks = held
     return held
 
 
-def _root_key(root: Path) -> tuple[int, int]:
-    stat = root.stat()
-    return (stat.st_dev, stat.st_ino)
+def _holds_source_lock(lock_path: Path) -> bool:
+    try:
+        stat = os.lstat(lock_path)
+    except OSError:
+        return False
+    return (stat.st_dev, stat.st_ino) in _held_source_locks()
 
 
 class ProposalIndex:
@@ -246,19 +252,20 @@ class ProposalIndex:
                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
                 0o600,
             )
-            held = _held_source_roots()
+            held = _held_source_locks()
             key: tuple[int, int] | None = None
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX)
-                key = _root_key(evidence.root)
+                stat = os.fstat(descriptor)
+                key = (stat.st_dev, stat.st_ino)
                 held[key] = held.get(key, 0) + 1
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
                 yield
             finally:
+                os.close(descriptor)
                 if key is not None:
                     held[key] -= 1
                     if not held[key]:
                         del held[key]
-                os.close(descriptor)
 
     @staticmethod
     def _inventory(evidence: ProposalEvidenceStore) -> list[list[int]]:
@@ -791,7 +798,11 @@ def close_working_database(
     try:
         # Inside this thread's own source-lock section nothing can be certified;
         # close uncertified and leave the old checkpoint for the next reader.
-        if root is not None and root.is_dir() and _root_key(root) not in _held_source_roots():
+        if (
+            root is not None
+            and root.is_dir()
+            and not _holds_source_lock(root / ".proposal-source.lock")
+        ):
             descriptor = os.open(
                 root / ".proposal-source.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600
             )

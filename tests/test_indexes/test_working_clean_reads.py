@@ -98,38 +98,102 @@ def test_warm_service_list_acquires_while_other_process_has_uncommitted_write(tm
     assert result.entries[0].proposal_id == proposal.admission.proposal_id
 
 
-def test_a_finalizer_on_the_thread_holding_the_source_lock_does_not_wait_on_itself(tmp_path):
-    import threading
-
-    from cruxible_core.indexes.proposals.proposal_index import (
-        ProposalIndex,
-        close_working_database,
-    )
+def _finalizer_world(tmp_path):  # type: ignore[no-untyped-def]
+    from cruxible_core.indexes.proposals.proposal_index import ProposalIndex
 
     instance, _ = initialize_local(tmp_path)
     _submit(instance, "one")
     service_list_playbill_proposals(instance)
     evidence = instance.proposal_evidence()
-    index = evidence.index
     marker = ProposalIndex._marker(evidence.root)
+    return evidence, marker, sqlite3.connect(evidence.index.path, check_same_thread=False)
+
+
+def _completes(action) -> bool:  # type: ignore[no-untyped-def]
+    import threading
+
+    done = threading.Event()
+
+    def run() -> None:
+        action()
+        done.set()
+
+    # A regression blocks this thread forever on its own flock; a daemon thread
+    # keeps that from hanging the run past the assertion.
+    threading.Thread(target=run, daemon=True).start()
+    return done.wait(timeout=5)
+
+
+# An unreachable index's finalizer runs on whatever thread triggers garbage
+# collection, including one inside the source lock's critical section. The lock
+# is an flock, so a fresh descriptor on the same lock file blocks forever.
+def test_a_finalizer_on_the_thread_holding_the_source_lock_does_not_wait_on_itself(tmp_path):
+    from cruxible_core.indexes.proposals.proposal_index import (
+        ProposalIndex,
+        close_working_database,
+    )
+
+    evidence, marker, stale = _finalizer_world(tmp_path)
     proof = {"root": str(evidence.root), "marker": marker}
-    stale = sqlite3.connect(index.path, check_same_thread=False)
-    closed = threading.Event()
 
-    # An unreachable index's finalizer runs on whatever thread triggers garbage
-    # collection, including one inside the source lock's critical section. The
-    # lock is an flock, so a fresh descriptor on the same thread blocks forever.
-    def collect_inside_the_critical_section():
-        with index._source_lock(evidence):
-            close_working_database(index.path, [stale], proof)
-            closed.set()
+    def collect_inside_the_critical_section() -> None:
+        with evidence.index._source_lock(evidence):
+            close_working_database(evidence.index.path, [stale], proof)
 
-    worker = threading.Thread(target=collect_inside_the_critical_section, daemon=True)
-    worker.start()
-    worker.join(timeout=5)
-    assert closed.is_set(), "a finalizer waited on the source lock its own thread holds"
+    assert _completes(collect_inside_the_critical_section)
     # It could not certify from inside the holder's section, so the old
     # checkpoint stands and the next reader reconstructs if the bytes moved.
     assert ProposalIndex._marker(evidence.root) == marker
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         stale.execute("SELECT 1")
+
+
+def test_a_finalizer_the_moment_the_source_lock_is_acquired_does_not_wait_on_itself(
+    tmp_path, monkeypatch
+):
+    from cruxible_core.indexes.proposals import proposal_index
+    from cruxible_core.indexes.proposals.proposal_index import close_working_database
+
+    evidence, marker, stale = _finalizer_world(tmp_path)
+    proof = {"root": str(evidence.root), "marker": marker}
+    flock = fcntl.flock
+    fired = []
+
+    def collect_right_after_acquisition(descriptor, operation):  # type: ignore[no-untyped-def]
+        flock(descriptor, operation)
+        if not fired and operation == fcntl.LOCK_EX:
+            fired.append(True)
+            close_working_database(evidence.index.path, [stale], proof)
+
+    monkeypatch.setattr(proposal_index.fcntl, "flock", collect_right_after_acquisition)
+
+    def acquire() -> None:
+        with evidence.index._source_lock(evidence):
+            pass
+
+    assert _completes(acquire)
+    assert fired
+
+
+def test_a_finalizer_for_a_replaced_root_sharing_the_held_lock_file_does_not_wait(tmp_path):
+    from cruxible_core.indexes.proposals.proposal_index import close_working_database
+
+    evidence, marker, stale = _finalizer_world(tmp_path)
+    root = evidence.root
+    moved = root.with_name(root.name + "-moved")
+
+    def collect_after_the_root_is_replaced() -> None:
+        with evidence.index._source_lock(evidence):
+            root.rename(moved)
+            try:
+                root.mkdir()
+                os.link(moved / ".proposal-source.lock", root / ".proposal-source.lock")
+                close_working_database(
+                    evidence.index.path, [stale], {"root": str(root), "marker": marker}
+                )
+            finally:
+                (root / ".proposal-source.lock").unlink(missing_ok=True)
+                root.rmdir()
+                moved.rename(root)
+
+    assert _completes(collect_after_the_root_is_replaced)
