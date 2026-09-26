@@ -39,7 +39,7 @@ from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
 from cruxible_core.compiler.upgrades import compiler_after_record
 from cruxible_core.derived.derived_runtime import BoundedCache
 from cruxible_core.derived.memo import memo_get, memo_put
-from cruxible_core.indexes.acquisition import open_working_snapshot
+from cruxible_core.indexes.acquisition import WorkingDatabaseChangedError, open_working_snapshot
 from cruxible_core.ledger.recovery import RecoveredInstanceState
 from cruxible_core.proposals.settlement import (
     ChangeSetRecord,
@@ -877,9 +877,13 @@ class AcceptedHistoryIndex:
         stamp = self._stamp
         if stamp is None or self._ready != ready or self._file_stamp() != stamp:
             return None
-        connection = open_working_snapshot(
-            self.path, expected_stamp=stamp, file_stamp=self._file_stamp
-        )
+        try:
+            connection = open_working_snapshot(
+                self.path, expected_stamp=stamp, file_stamp=self._file_stamp
+            )
+        except WorkingDatabaseChangedError:
+            # A writer moved the file since the checks above; take the locked path.
+            return None
         try:
             if _schema_rows(connection) != _EXPECTED_SCHEMA:
                 raise ProjectionIntegrityError("history index schema differs; rebuild required")

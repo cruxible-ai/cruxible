@@ -28,7 +28,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalEvaluationRecord,
     ProposalWithdrawalRecordV1,
 )
-from cruxible_core.indexes.acquisition import open_working_snapshot
+from cruxible_core.indexes.acquisition import WorkingDatabaseChangedError, open_working_snapshot
 from cruxible_core.indexes.history.history_index import commit_working_write
 from cruxible_core.proposals.proposal_notes import admission_bytes
 
@@ -554,9 +554,13 @@ class ProposalIndex:
             != file_digest(evidence.transport.review_commit_context())
         ):
             return None
-        connection = open_working_snapshot(
-            self.path, expected_stamp=stamp, file_stamp=self._file_stamp
-        )
+        try:
+            connection = open_working_snapshot(
+                self.path, expected_stamp=stamp, file_stamp=self._file_stamp
+            )
+        except WorkingDatabaseChangedError:
+            # A writer moved the file since the checks above; take the locked path.
+            return None
         try:
             schema = _schema_rows(connection)
             if schema == _PRE_ACCEPTANCE_SCHEMA:

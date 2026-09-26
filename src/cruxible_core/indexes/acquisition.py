@@ -15,6 +15,14 @@ class DatabasePathChangedError(ProjectionIntegrityError):
     """Acquisition raced with a namespace change; retry without changing source state."""
 
 
+class WorkingDatabaseChangedError(ProjectionIntegrityError):
+    """The working database's physical stamp moved while a snapshot was acquired.
+
+    Under the writer lock that is an integrity failure. A lock-free reader races
+    ordinary writers, so it falls back to its locked path instead.
+    """
+
+
 # An unrelated entry change in any ancestor refuses an attempt exactly as a swap
 # does, and a shared system temporary directory changes many times a second. A
 # bounded retry with a short growing pause outlasts that churn instead of
@@ -82,7 +90,7 @@ def open_working_snapshot(
         try:
             with guard_database_path(path):
                 if file_stamp() != expected_stamp:
-                    raise ProjectionIntegrityError(
+                    raise WorkingDatabaseChangedError(
                         "working database changed before snapshot acquisition"
                     )
                 connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
@@ -92,7 +100,7 @@ def open_working_snapshot(
                 # proof and the exact physical stamp still protect acquisition.
                 connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
                 if file_stamp() != expected_stamp:
-                    raise ProjectionIntegrityError(
+                    raise WorkingDatabaseChangedError(
                         "working database changed during snapshot acquisition"
                     )
             return connection

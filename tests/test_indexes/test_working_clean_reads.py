@@ -236,3 +236,43 @@ def test_a_finalizer_that_opens_the_held_lock_after_the_root_is_restored_does_no
 
     assert _completes(collect_while_the_root_moves)
     assert restored
+
+
+@pytest.mark.parametrize("surface", ("proposal", "history"))
+def test_a_lock_free_read_whose_file_moves_during_acquisition_takes_the_locked_path(
+    tmp_path, monkeypatch, surface
+):
+    from cruxible_core.indexes.history import history_index
+    from cruxible_core.indexes.proposals import proposal_index
+
+    instance, _ = initialize_local(tmp_path)
+    proposal = _submit(instance, "one")
+    service_list_playbill_proposals(instance)
+    evidence = instance.proposal_evidence()
+    module = proposal_index if surface == "proposal" else history_index
+    real = module.open_working_snapshot
+    raced = []
+
+    # An ordinary writer (a queued review-ref refresh, a settle) may move the
+    # file between the lock-free reader's checks and its snapshot. The real
+    # acquisition sees the stamp move; the reader must fall back, not fail.
+    def writer_moves_the_file(path, *, expected_stamp, file_stamp):  # type: ignore[no-untyped-def]
+        if raced:
+            return real(path, expected_stamp=expected_stamp, file_stamp=file_stamp)
+        raced.append(True)
+        calls = iter((expected_stamp,))
+        return real(
+            path,
+            expected_stamp=expected_stamp,
+            file_stamp=lambda: next(calls, (*expected_stamp[:-1], -1)),
+        )
+
+    monkeypatch.setattr(module, "open_working_snapshot", writer_moves_the_file)
+    if surface == "proposal":
+        with evidence.index.read(evidence) as connection:
+            read = connection.execute("SELECT proposal_id FROM proposals").fetchone()[0]
+        assert read == proposal.admission.proposal_id
+    else:
+        with instance.accepted_history_reader() as history:
+            assert history.generation(0).git_oid
+    assert raced
