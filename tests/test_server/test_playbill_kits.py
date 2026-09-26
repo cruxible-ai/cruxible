@@ -15,6 +15,7 @@ from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
     capture_contract_digest,
+    parse_capture_contract,
     render_capture_contract,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, parse_claim_type
@@ -23,7 +24,6 @@ from cruxible_client.contracts.kits import (
     KitArtifactBytesV1,
     KitArtifactV1,
     KitBundleV1,
-    KitReleaseRefV1,
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
     PlaybillKitChangeResultV1,
@@ -35,6 +35,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicyV1,
 )
+from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.kits import read_kit_directory, write_kit_directory
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.errors import DataValidationError
@@ -137,11 +138,11 @@ class _World:
         self.author(successions=(successor,))
 
     def build(
-        self, version: str, previous: KitBundleV1 | None = None, owns: tuple[str, ...] = ("acme.",)
+        self, version: str, owns: tuple[str, ...] = ("acme.",), kit_id: str = "acme"
     ) -> KitBundleV1:
         return playbill_api.playbill_kit_build(
             self.instance_id,
-            PlaybillKitBuildRequestV1(kit_id="acme", version=version, owns=owns, previous=previous),
+            PlaybillKitBuildRequestV1(kit_id=kit_id, version=version, owns=owns),
         ).bundle
 
     def add(self, bundle: KitBundleV1) -> PlaybillKitChangeResultV1:
@@ -274,26 +275,23 @@ def test_a_release_installs_byte_identical_and_reinstalling_it_changes_nothing(
     assert consumer.add(release).status == "unchanged"
 
 
-def test_an_upgrade_names_the_previous_release_not_the_publishers_history(
+def test_an_upgrade_is_the_consumers_diff_against_a_self_contained_release(
     worlds: tuple[_World, _World],
 ) -> None:
     publisher, consumer = worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
     first = publisher.build("1.0.0")
     consumer.add(first)
+    installed_seats = claim_type_digest(consumer.claim_type(SEATS)).tagged
 
-    # Two revisions between releases; the release must descend from 1.0.0 directly.
     publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
     publisher.succeed(SEATS, {"type": "integer", "minimum": 1})
     publisher.author(_claim_type(OWNER, {"type": "string"}))
-    second = publisher.build("1.1.0", previous=first)
+    second = publisher.build("1.1.0")
 
-    assert second.manifest.previous is not None
-    assert second.manifest.previous.content_digest == first.manifest.content_digest
+    # The release carries no history of its own; the consumer supplies it.
+    assert all(b'"predecessor_digest": null' in content for content in second.contents().values())
     assert second.contents()[_path(PLAN)] == first.contents()[_path(PLAN)]
-    seats = parse_claim_type(second.contents()[_path(SEATS)], path=_path(SEATS))
-    assert seats.lifecycle.predecessor_digest == first.manifest.digests()[_path(SEATS)]
-
     upgraded = consumer.add(second)
 
     assert {(item.path, item.action) for item in upgraded.plan} == {
@@ -301,9 +299,72 @@ def test_an_upgrade_names_the_previous_release_not_the_publishers_history(
         (_path(PLAN), "unchanged"),
         (_path(SEATS), "replace"),
     }
-    tree = consumer.tree()
-    for path, content in second.contents().items():
-        assert tree[path] == content
+    seats = consumer.claim_type(SEATS)
+    assert seats.lifecycle.predecessor_digest == installed_seats
+    assert seats.literal_schema == {"type": "integer", "minimum": 1}
+    assert consumer.tree()[_path(OWNER)] == second.contents()[_path(OWNER)]
+    assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == ()
+
+
+def test_a_later_release_installs_fresh_on_its_own(worlds: tuple[_World, _World]) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    publisher.build("1.0.0")
+    publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
+    later = publisher.build("1.1.0")
+
+    added = consumer.add(later)
+
+    assert [(item.path, item.action) for item in added.plan] == [(_path(SEATS), "add")]
+    assert consumer.tree()[_path(SEATS)] == later.contents()[_path(SEATS)]
+
+
+def test_changing_a_claim_type_carries_its_live_claims_as_a_succession_would(
+    worlds: tuple[_World, _World],
+) -> None:
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+    draft = consumer.pb.changes(rationale="Record Acme's seats.")
+    draft.subject(
+        SubjectShell(
+            identity=ArtifactIdentity(kind="Subject", name="acme.account/acme"),
+            subject_kind="acme.account",
+            subject_id="acme",
+            lifecycle=ArtifactLifecycle(),
+        )
+    )
+    draft.claim(
+        subject="acme.account/acme",
+        predicate=SEATS,
+        value=50,
+        role="observation",
+        rationale="The contract says 50 seats.",
+        supported_by=None,
+        copied_from=None,
+        self_source="seats: 50\n",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+    intent = draft.prepare()
+    assert not intent.refused, intent.diagnostics
+    submitted = intent.submit()
+    assert submitted._candidate_status is not None
+    assert submitted._candidate_status.proposal_id is not None
+    consumer.approve(submitted._candidate_status.proposal_id)
+    claim_paths = [path for path in consumer.tree() if path.startswith("claims/")]
+    assert len(claim_paths) == 1
+
+    publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
+    upgraded = consumer.add(publisher.build("1.1.0"))
+
+    assert (claim_paths[0], "carry") in {(item.path, item.action) for item in upgraded.plan}
+    carried = consumer.tree()[claim_paths[0]]
+    assert claim_type_digest(consumer.claim_type(SEATS)).tagged.encode("ascii") in carried
 
 
 def test_a_local_edit_blocks_the_upgrade_of_that_path_and_is_reported(
@@ -317,7 +378,7 @@ def test_a_local_edit_blocks_the_upgrade_of_that_path_and_is_reported(
     assert playbill_api.playbill_kit_status(consumer.instance_id).kits[0].drifted == (_path(PLAN),)
 
     publisher.succeed(PLAN, {"type": "string", "maxLength": 64})
-    second = publisher.build("1.1.0", previous=first)
+    second = publisher.build("1.1.0")
     blocked = consumer.add(second)
 
     assert blocked.status == "blocked"
@@ -328,27 +389,15 @@ def test_a_local_edit_blocks_the_upgrade_of_that_path_and_is_reported(
     ]
 
 
-def test_skipping_a_release_and_overlapping_ownership_are_refused(
-    worlds: tuple[_World, _World],
-) -> None:
+def test_overlapping_ownership_is_refused(worlds: tuple[_World, _World]) -> None:
     publisher, consumer = worlds
     publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
-    first = publisher.build("1.0.0")
-    publisher.succeed(SEATS, {"type": "integer", "minimum": 0})
-    second = publisher.build("1.1.0", previous=first)
-    publisher.succeed(SEATS, {"type": "integer", "minimum": 1})
-    third = publisher.build("1.2.0", previous=second)
+    consumer.add(publisher.build("1.0.0"))
 
-    consumer.add(first)
-    skipped = consumer.add(third)
-    assert skipped.status == "blocked"
-    assert "one release at a time" in (skipped.detail or "")
+    overlapping = consumer.add(
+        publisher.build("1.0.0", owns=("acme.account.",), kit_id="acme-extra")
+    )
 
-    other = playbill_api.playbill_kit_build(
-        publisher.instance_id,
-        PlaybillKitBuildRequestV1(kit_id="acme-extra", version="1.0.0", owns=("acme.account.",)),
-    ).bundle
-    overlapping = consumer.add(other)
     assert overlapping.status == "blocked"
     assert "owned by kit acme" in (overlapping.detail or "")
 
@@ -530,9 +579,7 @@ def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
 
     # A release of beta that carries a different acme contract is refused for that
     # path rather than replacing the definition acme owns.
-    revised = _contract(
-        "acme.orders-v1", max_rows=9, predecessor=capture_contract_digest(contract).tagged
-    )
+    revised = _contract("acme.orders-v1", max_rows=9)
     content = render_capture_contract(revised)
     artifacts = tuple(
         item
@@ -543,15 +590,7 @@ def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
         for item in beta.manifest.artifacts
     )
     forged = KitBundleV1(
-        manifest=beta.manifest.model_copy(
-            update={
-                "version": "1.1.0",
-                "previous": KitReleaseRefV1(
-                    version="1.0.0", content_digest=beta.manifest.content_digest
-                ),
-                "artifacts": artifacts,
-            }
-        ),
+        manifest=beta.manifest.model_copy(update={"version": "1.1.0", "artifacts": artifacts}),
         artifacts=tuple(
             item if item.path != CONTRACT_PATH else KitArtifactBytesV1.of(CONTRACT_PATH, content)
             for item in beta.artifacts
@@ -567,23 +606,33 @@ def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
     assert {item.path for item in removed.plan} == {"claim-types/beta.orders/status.json"}
 
 
-def test_a_carried_definition_with_local_history_refuses_the_build(
+def test_a_carried_definition_matches_by_content_and_pins_move_to_the_consumers_digest(
     worlds: tuple[_World, _World],
 ) -> None:
-    publisher, _consumer = worlds
+    publisher, consumer = worlds
     first = _contract("acme.orders-v1")
     _author_contract(publisher, first)
+    consumer.add(publisher.build("1.0.0"))
     revised = _contract(
         "acme.orders-v1", max_rows=5, predecessor=capture_contract_digest(first).tagged
     )
     _author_contract(publisher, revised)
+    consumer.add(publisher.build("1.1.0"))
+    consumer_contract = consumer.tree()[CONTRACT_PATH]
     publisher.author(_pinning_type("beta.orders.status", revised))
 
-    with pytest.raises(DataValidationError, match="local history"):
-        playbill_api.playbill_kit_build(
-            publisher.instance_id,
-            PlaybillKitBuildRequestV1(kit_id="beta", version="1.0.0", owns=("beta.",)),
-        )
+    beta = publisher.build("1.0.0", owns=("beta.",), kit_id="beta")
+    added = consumer.add(beta)
+
+    # The consumer's contract has its own history, so its digest differs from the
+    # release's snapshot; content matches, and beta's pin moves to what it holds.
+    assert beta.contents()[CONTRACT_PATH] != consumer_contract
+    assert (CONTRACT_PATH, "unchanged") in {(item.path, item.action) for item in added.plan}
+    status = consumer.claim_type("beta.orders.status")
+    held = parse_capture_contract(consumer_contract, path=CONTRACT_PATH)
+    assert status.evidence_admission_policy.rules[0].capture_contract_digests == (
+        capture_contract_digest(held).tagged,
+    )
 
 
 def test_an_ordinary_document_named_like_a_receipt_does_not_break_kits(

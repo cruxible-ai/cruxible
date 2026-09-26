@@ -541,7 +541,7 @@ and `POST /{instance}/playbill/providers/install`.
 
 ~~~text
 cruxible playbill kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
-  [--previous KIT_DIR] --out KIT_DIR [--json]
+  --out KIT_DIR [--json]
 cruxible playbill kit add KIT_DIR [--source TEXT] [--json]
 cruxible playbill kit status [--json]
 cruxible playbill kit remove ID [--json]
@@ -551,28 +551,33 @@ A kit is one release of definitions: ClaimTypes, CaptureContracts, Procedures,
 QueryDefinitions, ProviderInterfaces and SourceAcquisitionPolicies. It never
 carries authority (governance, principals, mandates), local binding (Providers,
 Lines) or state (Subjects, Claims). A kit directory holds `cruxible-kit.json` and
-the exact artifact bytes under `artifacts/`.
+the artifact bytes under `artifacts/`.
 
-`build` exports every live definition whose identity starts with an `--owns`
-prefix, plus every definition those pin; a pin into anything a kit cannot carry
-refuses the build. The artifacts are the bytes a consumer accepts, so a kit's
-digests are the digests every unmodified consumer holds. Lineage inside them is
-the kit's own: a first release names no predecessors, and a release built with
-`--previous` names that release's digest for each artifact it changes, however
-many times the publisher revised it in between.
+A release is self-contained. `build` exports every live definition whose
+identity starts with an `--owns` prefix, plus every definition those pin, as
+snapshots with no predecessor that pin only the release's own digests; a pin into
+anything a kit cannot carry refuses the build. The release content digest
+therefore names the same definitions wherever the kit is installed, and any
+release can be installed on its own.
 
-`add` proposes one change set that adds, replaces or retires kit paths and
-records a `kit_receipt` Document, `documents/kit-<id>.json`. It only proposes:
-activation, and any approval the instance's policy requires, are the ordinary
-`playbill proposal approve` and `activate` steps. Upgrading is `add` with the
-next release. An upgrade must follow the installed release; a path edited since
-install, or defined outside the kit, is a conflict that blocks the change and is
-listed. Another kit's overlapping `owns` prefix also blocks it. `add` names any
-carried ProviderInterface that no installed Provider implements.
+`add` diffs the release against this instance and proposes that diff as one
+change set: a missing definition is added as released, a changed one is replaced
+by a successor naming this instance's current digest, and one the kit installed
+that the release dropped is retired. Pins are remapped to the digests this
+instance actually holds. A replaced ClaimType carries its live dependents to the
+successor, as a succession would; the SDK/MCP request's `dependents` names any
+that should be retired instead. A definition the kit only carries (it pins it but
+does not own it) is added when absent and must otherwise match. A path edited
+since install, one defined outside the kit, and another kit's overlapping `owns`
+prefix are conflicts that block the change. `add` only proposes: activation, and
+any approval the instance's policy requires, are the ordinary `playbill proposal
+approve` and `activate` steps. It records a `kit_receipt` Document,
+`documents/kit-<id>.json`, with each path's release digest and installed digest,
+and names any carried ProviderInterface that no installed Provider implements.
 
 `status` lists installed kits and the kit paths edited locally. `remove`
-proposes retiring what a kit installed; the dependency closure refuses it while
-live Claims depend on those definitions.
+proposes retiring what a kit owns (never what it only carries); the dependency
+closure refuses it while live Claims depend on those definitions.
 
 MCP: `cruxible_playbill_kit_build`, `cruxible_playbill_kit_status`,
 `cruxible_playbill_kit_add` and `cruxible_playbill_kit_remove`. HTTP:

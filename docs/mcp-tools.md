@@ -66,8 +66,9 @@ that starts reaching one more verb moves the pin.
 
 A kit is a release of definitions (ClaimTypes, CaptureContracts, Procedures,
 QueryDefinitions, ProviderInterfaces, SourceAcquisitionPolicies) that installs
-byte-identical through one proposed change set. Adding or removing a kit only
-proposes; activation and any approval stay the ordinary steps.
+as a diff against the consumer: one proposed change set that adds, replaces and
+retires definitions. Adding or removing a kit only proposes; activation and any
+approval stay the ordinary steps.
 
 | Tool | Purpose | Permission |
 |---|---|---|

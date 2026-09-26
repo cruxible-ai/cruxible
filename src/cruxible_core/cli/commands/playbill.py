@@ -1333,12 +1333,6 @@ def _echo_kit_change(result: PlaybillKitChangeResultV1) -> None:
     help="Identity prefix the kit defines, ending in '.' (repeatable).",
 )
 @click.option(
-    "--previous",
-    "previous",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    help="The previous release's kit directory; later releases descend from it.",
-)
-@click.option(
     "--out", "out", required=True, type=click.Path(path_type=Path), help="New kit directory."
 )
 @json_option
@@ -1347,18 +1341,16 @@ def build_kit(
     kit_id: str,
     version: str,
     owns: tuple[str, ...],
-    previous: Path | None,
     out: Path,
     output_json: bool,
 ) -> None:
-    """Export this instance's owned definitions as one kit release."""
+    """Export this instance's owned definitions as one self-contained kit release."""
     if out.exists():
         raise click.UsageError(f"{out} already exists")
     request = PlaybillKitBuildRequestV1(
         kit_id=kit_id,
         version=version,
         owns=tuple(sorted(set(owns))),
-        previous=None if previous is None else read_kit_directory(previous),
     )
     bundle = _server_call(
         lambda client, instance_id: client.build_playbill_kit(instance_id, request),

@@ -1,11 +1,12 @@
 """Kits: frozen sets of definition artifacts imported through one governed change set.
 
 A kit carries definitions only -- what can be known and how -- never authority,
-bindings, or state. Its artifacts are the exact accepted bytes an instance holds
-after import, so a kit's digests are the digests every unmodified consumer
-holds. The lineage inside those bytes is the kit's own release lineage: a
-first release names no predecessors, and a later release names the previous
-release's digest for each artifact it changes.
+bindings, or state. A release is self-contained: every artifact is a snapshot
+with no predecessor, pinning the release's own digests, so the release's content
+digest names the same definitions wherever it is installed. The consumer, not
+the release, owns history: installing diffs the release against the consumer's
+accepted state and proposes that diff, giving each changed definition the
+consumer's own current digest as its predecessor.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator
 
+from .authoring.models import ClaimTypeSuccessionDependentV1
 from .canonical import Sha256Value, canonical_digest
 
 KIT_MANIFEST_FILE = "cruxible-kit.json"
@@ -114,30 +116,12 @@ class KitArtifactV1(_Strict):
         return _digest(value)
 
 
-class KitReleaseRefV1(_Strict):
-    """The release a later release descends from."""
-
-    version: str
-    content_digest: str
-
-    @field_validator("version")
-    @classmethod
-    def _version(cls, value: str) -> str:
-        return _version(value)
-
-    @field_validator("content_digest")
-    @classmethod
-    def _content_digest(cls, value: str) -> str:
-        return _digest(value)
-
-
 class KitManifestV1(_Strict):
     tag: Literal["playbill-kit-manifest-v1"] = "playbill-kit-manifest-v1"
     kit_id: str
     version: str
     # Identity prefixes this kit defines, each ending in a dot (``dev.``).
     owns: tuple[str, ...]
-    previous: KitReleaseRefV1 | None = None
     artifacts: tuple[KitArtifactV1, ...]
 
     @field_validator("kit_id")
@@ -227,6 +211,30 @@ class KitBundleV1(_Strict):
         return {item.path: item.content for item in self.artifacts}
 
 
+class KitInstalledArtifactV1(_Strict):
+    """One kit path: the release's snapshot digest and the digest this instance holds.
+
+    They differ exactly when the instance already had history for the path, so
+    the accepted artifact names its own predecessor.
+    """
+
+    path: str
+    release_digest: str
+    installed_digest: str
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if not kit_artifact_path_allowed(value):
+            raise ValueError(f"a kit may not carry {value}")
+        return value
+
+    @field_validator("release_digest", "installed_digest")
+    @classmethod
+    def _digests(cls, value: str) -> str:
+        return _digest(value)
+
+
 class KitReceiptV1(_Strict):
     """The accepted record of one installed kit, carried as a Document body."""
 
@@ -236,9 +244,9 @@ class KitReceiptV1(_Strict):
     content_digest: str
     owns: tuple[str, ...]
     # Definitions the kit owns: it may replace and retire these.
-    artifacts: tuple[KitArtifactV1, ...]
+    artifacts: tuple[KitInstalledArtifactV1, ...]
     # Definitions it pins but does not own: never replaced or retired through it.
-    carried: tuple[KitArtifactV1, ...] = ()
+    carried: tuple[KitInstalledArtifactV1, ...] = ()
     source: str | None = None
 
     @field_validator("kit_id")
@@ -257,7 +265,9 @@ class KitReceiptV1(_Strict):
         return _digest(value)
 
     def digests(self) -> dict[str, str]:
-        return {item.path: item.artifact_digest for item in self.artifacts}
+        """The digest this instance accepted for each owned path."""
+
+        return {item.path: item.installed_digest for item in self.artifacts}
 
 
 class PlaybillKitBuildRequestV1(_Strict):
@@ -266,7 +276,6 @@ class PlaybillKitBuildRequestV1(_Strict):
     kit_id: str
     version: str
     owns: tuple[str, ...]
-    previous: KitBundleV1 | None = None
 
     @field_validator("kit_id")
     @classmethod
@@ -294,6 +303,9 @@ class PlaybillKitAddRequestV1(_Strict):
     # Where the bundle came from, recorded in the receipt (a registry reference
     # or a directory name); never interpreted.
     source: str | None = None
+    # A changed ClaimType's live dependents are carried to the successor by
+    # default, as a succession would; name one here to retire it instead.
+    dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = ()
 
 
 class PlaybillKitRemoveRequestV1(_Strict):
@@ -305,7 +317,7 @@ class PlaybillKitRemoveRequestV1(_Strict):
         return _kit_id(value)
 
 
-KitPathAction = Literal["add", "unchanged", "replace", "retire", "conflict"]
+KitPathAction = Literal["add", "unchanged", "replace", "retire", "carry", "conflict"]
 
 
 class KitPathPlanV1(_Strict):
