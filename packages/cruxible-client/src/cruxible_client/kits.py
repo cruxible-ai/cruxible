@@ -30,7 +30,6 @@ from cruxible_client.artifacts import (
     read_layout,
     unpack_artifact,
     unpack_files,
-    write_layout,
 )
 from cruxible_client.contracts.canonical import pretty_canonical_bytes
 from cruxible_client.contracts.kits import (
@@ -150,11 +149,3 @@ def push_kit(bundle: KitBundleV1, ref: Reference, *, registry: RegistryClient) -
     """Publish ``bundle`` at ``ref``; returns the manifest digest consumers pin."""
 
     return registry.push(pack_artifact(KIT_ARTIFACT, bundle), ref)
-
-
-def write_kit_layout(bundle: KitBundleV1, root: Path, *, ref: str | None = None) -> str:
-    """Write ``bundle`` as an OCI image layout for offline transfer; returns its digest."""
-
-    image = pack_artifact(KIT_ARTIFACT, bundle)
-    write_layout(image, root, ref=ref)
-    return image.digest

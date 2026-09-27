@@ -33,7 +33,7 @@ from cruxible_client.contracts.kits import (
     KitBundleV1,
     KitManifestV1,
 )
-from cruxible_client.kits import KIT_ARTIFACT, fetch_kit_image, resolve_kit, write_kit_layout
+from cruxible_client.kits import KIT_ARTIFACT, fetch_kit_image, resolve_kit
 
 
 class FakeRegistry:
@@ -299,7 +299,9 @@ def test_references_resolve_short_names_under_the_default_namespace(
 
 def test_a_kit_layout_is_a_kit_source(tmp_path: Path) -> None:
     bundle = _bundle()
-    digest = write_kit_layout(bundle, tmp_path / "acme-layout")
+    image = pack_artifact(KIT_ARTIFACT, bundle)
+    write_layout(image, tmp_path / "acme-layout")
+    digest = image.digest
     resolved, origin = resolve_kit(str(tmp_path / "acme-layout"))
     assert resolved == bundle
     assert origin == f"acme-layout@{digest}"
