@@ -1253,9 +1253,6 @@ class AuthoringIntentCoordinator:
             return f"ChangeSet:{digest}"
         return authoring_member_identity(payload)
 
-    def _current_claim(self, intent: AuthoringIntentV1) -> ClaimArtifactAny | None:
-        return self._current_claim_by_identity(intent.semantic_identity)
-
     def _publication_claim_current(self, expectation: InsertionExpectationV2) -> bool:
         current_claim = self._current_claim_by_identity(expectation.claim_identity)
         return (
