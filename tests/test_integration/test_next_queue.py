@@ -68,6 +68,7 @@ from tests.core_support._knowledge_loop_support import (
 )
 from tests.core_support._support import initialize_local
 from tests.test_claims.test_claim_query_engine import status_claim
+from tests.test_integration.test_next_status import _attention
 
 EVALUATION_TIME = datetime(2026, 8, 24, 18, tzinfo=UTC)
 
@@ -132,7 +133,7 @@ def test_provider_lane_degradation_is_typed_status_with_hand_edit_repair(
     assert lane.repair.operation == "hand_edit"
     assert lane.repair.target == "daemon/provider-runtime.json"
     assert lane.repair.command is None
-    assert result.status.attention() == (("provider_lane", lane),)
+    assert _attention(result.status) == (("provider_lane", lane),)
 
 
 def test_workspace_drift_is_verified_against_the_accepted_citation(

@@ -280,15 +280,6 @@ def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(
     assert "removed  warning" not in result.output
 
 
-def test_cli_next_attention_states_match_the_served_status_model() -> None:
-    from cruxible_core.cli.commands.playbill import _NEXT_STATUS_ATTENTION
-    from cruxible_core.service.discovery.next import _HEALTH_ATTENTION
-
-    assert _NEXT_STATUS_ATTENTION == {
-        facet: set(states) for facet, states in _HEALTH_ATTENTION.items()
-    }
-
-
 def test_cli_next_prints_status_that_needs_attention_above_the_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

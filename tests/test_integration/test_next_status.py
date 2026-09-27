@@ -18,6 +18,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.errors import PlaybillInstanceDecommissioned
 from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
+from cruxible_core.cli.commands.playbill import _NEXT_STATUS_ATTENTION
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import DESCRIPTOR_FILE
 from cruxible_core.service.discovery.next import (
@@ -43,6 +44,15 @@ _ENVIRONMENT_REASONS = {
 }
 
 
+def _attention(status):  # type: ignore[no-untyped-def]
+    """The facets the CLI prints as needing attention, in its fixed order."""
+    return tuple(
+        (facet, getattr(status, facet))
+        for facet, states in _NEXT_STATUS_ATTENTION.items()
+        if getattr(status, facet).state in states
+    )
+
+
 def _status(instance, request, **kwargs):  # type: ignore[no-untyped-def]
     result = service_playbill_next(instance, request=request, **kwargs)
     # The environment never reappears as work rows.
@@ -64,7 +74,7 @@ def test_a_missing_or_stale_floor_names_the_export_until_it_is_current(
     assert status.floor.state == reported
     assert status.floor.repair is not None
     assert status.floor.repair.operation == "playbill.floor.export"
-    assert status.attention() == (("floor", status.floor),)
+    assert _attention(status) == (("floor", status.floor),)
 
     current = _status(
         instance,
@@ -75,7 +85,7 @@ def test_a_missing_or_stale_floor_names_the_export_until_it_is_current(
             ),
         ),
     )
-    assert current.floor.state == "current" and current.attention() == ()
+    assert current.floor.state == "current" and _attention(current) == ()
 
 
 def test_a_workspace_that_never_configured_a_floor_says_nothing_about_it(
@@ -90,7 +100,7 @@ def test_a_workspace_that_never_configured_a_floor_says_nothing_about_it(
         ),
     )
 
-    assert status.floor.state == "not_configured" and status.attention() == ()
+    assert status.floor.state == "not_configured" and _attention(status) == ()
 
 
 def test_an_unavailable_provider_lane_is_status_until_it_recovers(tmp_path: Path) -> None:
@@ -115,7 +125,7 @@ def test_an_unavailable_provider_lane_is_status_until_it_recovers(tmp_path: Path
         request,
         provider_lane=ProviderLaneStatusV1(state="available", code=None, detail=None),
     )
-    assert repaired.provider_lane.state == "available" and repaired.attention() == ()
+    assert repaired.provider_lane.state == "available" and _attention(repaired) == ()
 
 
 def _bare_mirror(instance, remote: Path) -> None:  # type: ignore[no-untyped-def]
@@ -151,7 +161,7 @@ def test_a_mirror_whose_push_failed_is_behind_until_the_remote_is_restored(
     _bare_mirror(instance, remote)
     assert instance.publish_ledger_mirror().status == "current"  # type: ignore[union-attr]
     restored = _status(instance, request)
-    assert restored.ledger_mirror.state == "current" and restored.attention() == ()
+    assert restored.ledger_mirror.state == "current" and _attention(restored) == ()
 
 
 def test_a_current_mirror_stays_current_for_an_earlier_requested_coordinate(
@@ -265,7 +275,7 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
         f"cruxible playbill compiler upgrade --to {AUTHORITY_VERBS_COMPILER.rule_digest} "
         "--name upgrade-to-authority-verbs-settle-mandates-v1"
     )
-    assert behind.attention() == (("compiler", behind.compiler),)
+    assert _attention(behind) == (("compiler", behind.compiler),)
 
     proposal = propose(instance, AUTHORITY_VERBS_COMPILER)
     approve(instance, proposal, reviewer)
@@ -276,7 +286,7 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
         == "accepted"
     )
     upgraded = _status(instance, _request(instance))
-    assert upgraded.compiler.state == "current" and upgraded.attention() == ()
+    assert upgraded.compiler.state == "current" and _attention(upgraded) == ()
 
 
 def test_a_compiler_with_no_forward_edge_is_reported_without_a_repair(
@@ -292,7 +302,7 @@ def test_a_compiler_with_no_forward_edge_is_reported_without_a_repair(
     )
     status = _status(instance, _request(instance))
     assert status.compiler.state == "no_upgrade_path"
-    assert status.compiler.repair is None and status.attention() == ()
+    assert status.compiler.repair is None and _attention(status) == ()
 
 
 def test_due_line_occurrences_name_their_dispatch_until_it_admits_them(tmp_path: Path) -> None:
@@ -329,7 +339,7 @@ def test_due_line_occurrences_name_their_dispatch_until_it_admits_them(tmp_path:
     assert due.line_dispatch.state == "due"
     assert due.line_dispatch.repair is not None
     assert due.line_dispatch.repair.command == f"cruxible playbill line dispatch {identity}"
-    assert due.attention() == (("line_dispatch", due.line_dispatch),)
+    assert _attention(due) == (("line_dispatch", due.line_dispatch),)
     hidden = PlaybillNextRequestV1(
         evaluation_time=now,
         access_profile=_access().model_copy(update={"permitted_access_classes": ("public",)}),
@@ -346,7 +356,7 @@ def test_due_line_occurrences_name_their_dispatch_until_it_admits_them(tmp_path:
     )
     assert dispatched.items[0].status == "admitted", dispatched
     drained = _status(instance, _request(instance, evaluation_time=now))
-    assert drained.line_dispatch.state == "idle" and drained.attention() == ()
+    assert drained.line_dispatch.state == "idle" and _attention(drained) == ()
 
 
 def test_an_instance_that_never_evaluated_a_line_keeps_no_dispatch_state(tmp_path: Path) -> None:
@@ -401,7 +411,7 @@ def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path
     )
 
     status = _status(instance, _request(instance, evaluation_time=now))
-    assert status.line_dispatch.state == "idle" and status.attention() == ()
+    assert status.line_dispatch.state == "idle" and _attention(status) == ()
 
 
 def test_worker_findings_report_how_current_they_are(
@@ -428,7 +438,7 @@ def test_worker_findings_report_how_current_they_are(
     late = swept + 2 * SWEEP_INTERVAL
     lagging = _status(instance, _request(instance, evaluation_time=late), consumers_running=True)
     assert lagging.consumers.state == "lagging"
-    assert lagging.attention() == (("consumers", lagging.consumers),)
+    assert _attention(lagging) == (("consumers", lagging.consumers),)
 
     monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "evidence")
     off = consumers(late, consumers_running=True)

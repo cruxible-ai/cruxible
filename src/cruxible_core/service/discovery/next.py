@@ -615,18 +615,6 @@ _HEALTH_STATES: dict[str, frozenset[str]] = {
     "line_dispatch": frozenset({"not_observed", "idle", "waiting", "due"}),
     "consumers": frozenset({"not_observed", "not_running", "current", "lagging", "stalled"}),
 }
-#: Facet states that call for attention; every other state is healthy or unobserved.
-_HEALTH_ATTENTION: dict[str, frozenset[str]] = {
-    "instance": frozenset({"decommissioned"}),
-    "floor": frozenset({"missing", "stale"}),
-    "ledger_mirror": frozenset({"behind", "never_published"}),
-    "provider_lane": frozenset({"unavailable"}),
-    "procedure_catalog": frozenset({"missing"}),
-    "compiler": frozenset({"upgrade_available"}),
-    "line_dispatch": frozenset({"due"}),
-    # A stalled worker is already a consumer_stalled row; lag is the silent case.
-    "consumers": frozenset({"lagging"}),
-}
 
 
 class PlaybillNextHealthV1(_StrictNextModel):
@@ -675,15 +663,6 @@ class PlaybillNextStatusV1(_StrictNextModel):
         if self.blocking != (self.instance.state == "decommissioned"):
             raise ValueError("next status blocks exactly a decommissioned instance")
         return self
-
-    def attention(self) -> tuple[tuple[str, PlaybillNextHealthV1], ...]:
-        """The facets calling for attention, in a fixed order."""
-
-        return tuple(
-            (facet, getattr(self, facet))
-            for facet in _HEALTH_STATES
-            if getattr(self, facet).state in _HEALTH_ATTENTION[facet]
-        )
 
 
 class PlaybillNextResultV1(_StrictNextModel):
