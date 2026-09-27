@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -296,22 +295,6 @@ def populate_citations(
         raise
 
 
-@dataclass(frozen=True)
-class CitationSourceUse:
-    """Accepted fields needed by source-observation findings, without a fake envelope."""
-
-    capture_digest: str
-    citation_id: str
-    claim_artifact_digest: str
-    claim_identity: str
-    lifecycle: str
-    commitment_digest: str
-    byte_length: int
-    source_identity: str
-    coordinate_type: str
-    selector_type: str
-
-
 def _decimal_integer(value: object) -> int:
     if not isinstance(value, str) or not value.isascii() or not value.isdecimal():
         raise ProjectionFormatError("citation metadata requires an exact nonnegative integer")
@@ -348,13 +331,6 @@ class CitationReader:
             (kind, key),
         )
 
-    def owners_for_capture(self, digest: str) -> tuple[dict[str, object], ...]:
-        return self._rows(
-            "SELECT owner_kind,owner_key,use_key,capture_digest,origin,role FROM citation_uses "
-            "WHERE capture_digest=? ORDER BY owner_kind,owner_key,use_key",
-            (digest,),
-        )
-
     def _rows(self, sql: str, values: tuple[object, ...] = ()) -> tuple[dict[str, object], ...]:
         cursor = self.connection.execute(sql, values)
         names = tuple(column[0] for column in cursor.description)
@@ -376,37 +352,6 @@ class CitationReader:
             envelopes[digest] = envelope
         return envelope
 
-    def _relation_uses(
-        self,
-        rows: Iterable[dict[str, object]],
-        *,
-        bodies: BodyProjectionProtocol,
-        envelopes: dict[str, CaptureEnvelopeAny] | None = None,
-    ) -> tuple[dict[str, object], ...]:
-        resolved = {} if envelopes is None else envelopes
-        uses = []
-        for row in rows:
-            digest = str(row["capture_digest"])
-            envelope = self._envelope(digest, bodies, resolved)
-            uses.append(
-                {
-                    "capture_contract_digest": {"$digest": envelope.capture_contract_digest},
-                    "capture_digest": {"$digest": digest},
-                    "citation_id": row["use_key"],
-                    "claim_artifact_digest": {"$digest": row["artifact_digest"]},
-                    "claim_identity": row["owner_key"],
-                    "claim_lifecycle": row["lifecycle"],
-                    "claim_path": row["path"],
-                    "commitment": envelope.commitment.model_dump(mode="json"),
-                    "origin": row["origin"],
-                    "role": row["role"],
-                    "source": envelope.source.model_dump(mode="json"),
-                }
-            )
-        return tuple(
-            sorted(uses, key=lambda use: (str(use["claim_path"]), str(use["citation_id"])))
-        )
-
     def source_claim_uses(
         self,
         source_id: str,
@@ -424,65 +369,6 @@ class CitationReader:
             + ("AND c.lifecycle=? " if lifecycle is not None else "")
             + "ORDER BY c.path,u.use_key",
             (source_id,) if lifecycle is None else (source_id, lifecycle),
-        )
-
-    def uses_for_source(self, source_id: str) -> tuple[CitationSourceUse, ...]:
-        """Accepted observation metadata, independent of current envelope availability."""
-        result = []
-        for row in self.source_claim_uses(source_id):
-            if row["lifecycle"] not in ("live", "retired"):
-                raise ProjectionFormatError("citation source use has an invalid lifecycle")
-            result.append(
-                CitationSourceUse(
-                    capture_digest=str(row["capture_digest"]),
-                    citation_id=str(row["use_key"]),
-                    claim_artifact_digest=str(row["artifact_digest"]),
-                    claim_identity=str(row["owner_key"]),
-                    lifecycle=str(row["lifecycle"]),
-                    commitment_digest=str(row["evidence_commitment_digest"]),
-                    byte_length=_decimal_integer(row["commitment_byte_length_decimal"]),
-                    source_identity=str(row["source_identity"]),
-                    coordinate_type=str(row["coordinate_type"]),
-                    selector_type=str(row["selector_type"]),
-                )
-            )
-        return tuple(result)
-
-    def overlapping_uses(
-        self,
-        source_version_key: str,
-        start_byte: int,
-        end_byte: int,
-        *,
-        bodies: BodyProjectionProtocol,
-    ) -> tuple[dict[str, object], ...]:
-        """Narrow by version and interval start, then compare original exact offsets."""
-        if (
-            type(start_byte) is not int
-            or type(end_byte) is not int
-            or not 0 <= start_byte < end_byte
-        ):
-            raise ValueError("citation interval requires increasing nonnegative exact integers")
-        # Null bounds with a version key denote a recognized but unindexable
-        # arbitrary-precision span, not a missing span. They are always candidates.
-        bounded = end_byte <= _MAX_SQL_INTEGER
-        rows = self._rows(
-            "SELECT u.*,c.path,c.artifact_digest,c.lifecycle FROM source_references s "
-            "JOIN captures p USING(source_ref_key) JOIN citation_uses u USING(capture_digest) "
-            "JOIN claims c ON c.identity=u.owner_key WHERE s.source_version_key=? "
-            + ("AND (s.start_byte IS NULL OR s.start_byte < ?) " if bounded else "")
-            + "AND u.owner_kind='Claim' ORDER BY c.path,u.use_key",
-            (source_version_key, end_byte) if bounded else (source_version_key,),
-        )
-        uses = self._relation_uses(rows, bodies=bodies)
-        return tuple(
-            use
-            for use in uses
-            if (
-                (span := _same_version_span_key(use)) is not None
-                and span[1] < end_byte
-                and start_byte < span[2]
-            )
         )
 
     def conflicts(

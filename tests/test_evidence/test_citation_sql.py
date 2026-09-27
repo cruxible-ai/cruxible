@@ -245,7 +245,10 @@ def test_precedence_removal_restores_untouched_weaker_groups(world):
     after = world.reader.conflicts(claim_identities=[live.identity.qualified])
     assert after == world.cold_conflicts()
     assert {f.value["relation_kind"] for f in after} == {"exact_external", "same_version_span"}
-    assert world.reader.owners_for_capture(a)  # live still retains the shared Capture
+    # live still retains the shared Capture
+    assert a in {
+        use["capture_digest"] for use in world.reader.owner_uses("Claim", live.identity.qualified)
+    }
 
 
 def test_randomized_old_new_memberships_and_owner_replacement_match_cold(world):
@@ -284,7 +287,7 @@ def test_roles_witness_bounds_and_half_open_spans(world):
     assert len(facts[0].value["retired_claim_witnesses"]) == 8
 
 
-def test_indexed_spans_filter_ends_and_retain_arbitrary_precision_candidates(world):
+def test_indexed_spans_store_arbitrary_precision_bounds_as_null(world):
     spans = [
         (0, 2),
         (1, 12),
@@ -300,19 +303,11 @@ def test_indexed_spans_filter_ends_and_retain_arbitrary_precision_candidates(wor
     version = _same_version_span_key(
         {"source": world.envelopes[digests[0]].source.model_dump(mode="json")}
     )[0]
-    for start, end in [(2, 10), (9, 11), ((1 << 70) + 1, (1 << 70) + 2)]:
-        result = world.reader.overlapping_uses(version, start, end, bodies=world.store)
-        assert {u["capture_digest"]["$digest"] for u in result} == {
-            d for d, (a, b) in zip(digests, spans) if a < end and start < b
-        }
     row = world.connection.execute(
         "SELECT start_byte,end_byte,selector_type,source_version_key FROM source_references "
         "WHERE start_byte IS NULL"
     ).fetchone()
     assert row == (None, None, FOREIGN_SOURCE_SELECTOR_TYPE, version)
-    for invalid in (True, 1.5, "1"):
-        with pytest.raises(ValueError, match="exact integers"):
-            world.reader.overlapping_uses(version, invalid, 10, bodies=world.store)
     expected = world.cold_conflicts()
     world.store._path(digests[3]).unlink()
     assert world.reader.conflicts() == expected
@@ -502,35 +497,17 @@ def test_owner_rename_and_historical_binding_keep_original_relationships(world):
     assert reader.conflicts() == before
     assert world.reader.conflicts() == world.cold_conflicts()
     assert world.reader.conflicts() != before
-    assert len(world.reader.owners_for_capture(digest)) == 2
+    assert (
+        world.connection.execute(
+            "SELECT count(*) FROM citation_uses WHERE capture_digest=?", (digest,)
+        ).fetchone()[0]
+        == 2
+    )
     assert world.connection.execute(
         "SELECT capture_digest,evidence_commitment_digest FROM captures"
     ).fetchone() == (digest, DIGEST)
     assert digest != DIGEST
     historical.close()
-
-
-def test_span_candidates_stay_within_source_version_and_filter_actual_overlap(world, monkeypatch):
-    starts = [0, 1, 7, 20]
-    selected = [world.capture(n, start=start, end=start + 4) for n, start in enumerate(starts)]
-    unrelated = [world.capture(n + 20, source=n + 1) for n in range(100)]
-    world.publish(
-        *(world.claim(n + 1, [digest]) for n, digest in enumerate([*selected, *unrelated]))
-    )
-    version = _same_version_span_key(
-        {"source": world.envelopes[selected[0]].source.model_dump(mode="json")}
-    )[0]
-    original = world.reader._envelope
-    seen = []
-
-    def counted(digest, bodies, envelopes):
-        seen.append(digest)
-        return original(digest, bodies, envelopes)
-
-    monkeypatch.setattr(CitationReader, "_envelope", staticmethod(counted))
-    uses = world.reader.overlapping_uses(version, 4, 10, bodies=world.store)
-    assert set(seen) == set(selected[:3])
-    assert {u["capture_digest"]["$digest"] for u in uses} == set(selected[1:3])
 
 
 def test_exact_external_group_retains_original_producer_binding_exclusion(world):
@@ -585,9 +562,6 @@ def test_retirement_relations_survive_unavailable_cas_like_retained_facts(
 ):
     from types import SimpleNamespace
 
-    from cruxible_core.indexes.evidence.citation_sql import CitationSourceUse
-    from tests.core_support._citation_relations_oracle import RELATION_SOURCE_USE_SCHEMA
-
     first = world.capture(1, start=0, end=5)
     second = first if shared else world.capture(2, start=10, end=15)
     live = world.claim(1, [first])
@@ -600,25 +574,8 @@ def test_retirement_relations_survive_unavailable_cas_like_retained_facts(
             key=lambda f: f.fact_key,
         )
     )
-    uses = [f.value for f in retained if f.schema_id == RELATION_SOURCE_USE_SCHEMA]
     old_reader = SimpleNamespace(
         conflicts=lambda **_selection: conflicts,
-        uses_for_source=lambda source: tuple(
-            CitationSourceUse(
-                capture_digest=u["capture_digest"]["$digest"],
-                citation_id=u["citation_id"],
-                claim_artifact_digest=u["claim_artifact_digest"]["$digest"],
-                claim_identity=u["claim_identity"],
-                lifecycle=u["claim_lifecycle"],
-                commitment_digest=u["commitment"]["digest"],
-                byte_length=u["commitment"]["byte_length"],
-                source_identity=u["source"]["source_identity"],
-                coordinate_type=u["source"]["coordinate_type"],
-                selector_type=u["source"]["selector_type"],
-            )
-            for u in uses
-            if u["source"]["source_identity"] == source
-        ),
     )
     identity = live.identity.qualified
     expected = _retirement_relations(old_reader, identity)
@@ -640,7 +597,7 @@ def test_source_metadata_retains_exact_large_commitment_length_without_body(worl
     length = 1 << 70
     digest = world.capture(1, byte_length=length)
     world.publish(world.claim(1, [digest]))
-    before = world.reader.uses_for_source("source-0")
-    assert before[0].byte_length == length
+    before = world.reader.source_claim_uses("source-0")
+    assert before[0]["commitment_byte_length_decimal"] == str(length)
     world.store._path(digest).unlink()
-    assert world.reader.uses_for_source("source-0") == before
+    assert world.reader.source_claim_uses("source-0") == before
