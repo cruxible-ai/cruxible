@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 import threading
 
 import pytest
@@ -21,12 +20,6 @@ def test_schedule_server_restart_invokes_exec_via_background_timer(
         assert fired.wait(timeout=2.0)
     finally:
         restart_module.reset_exec_self()
-
-
-def test_restart_command_reproduces_launch_argv() -> None:
-    command = restart_module.restart_command()
-    assert command[0] == sys.executable
-    assert command[1:] == sys.argv
 
 
 def test_reset_exec_self_restores_default() -> None:

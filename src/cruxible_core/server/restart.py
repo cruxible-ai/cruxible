@@ -36,11 +36,6 @@ def _default_exec_self() -> None:
 _exec_self = _default_exec_self
 
 
-def restart_command() -> list[str]:
-    """Return the argv the daemon will re-exec with (for diagnostics/echo)."""
-    return [sys.executable, *sys.argv]
-
-
 def schedule_server_restart() -> None:
     """Schedule an in-place re-exec after the current response is flushed."""
     timer = threading.Timer(_RESTART_DELAY_SECONDS, _exec_self)
