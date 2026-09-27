@@ -197,7 +197,12 @@ def test_profile_law_evidence_reproduces_during_settlement(tmp_path: Path) -> No
             structure=direct.structure,
         )
     )
-    tree = {**instance.tree_at(base.git_oid), CLAIM_TYPE_PATH: render_claim_type(direct)}
+    # Candidate law checks the proposed bytes against the profile's exact
+    # output, so propose the expansion rather than the direct fixture shape.
+    tree = {
+        **instance.tree_at(base.git_oid),
+        CLAIM_TYPE_PATH: render_claim_type(expansion.claim_type),
+    }
     proposal = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
         request=ProposalAdmissionRequest(

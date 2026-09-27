@@ -52,6 +52,11 @@ def test_every_documented_knob_default_matches_the_model() -> None:
             assert field.default == (), (name, field.default)
             assert documented[name] == "[]", (name, documented[name])
             continue
+        if field.default is None:
+            # Optional knobs (``provider_repository``) are documented as JSON null
+            # for the same reason: the table shows the config shape, not repr().
+            assert documented[name] == "null", (name, documented[name])
+            continue
         assert documented[name] == str(field.default), (name, documented[name], field.default)
 
 
@@ -127,7 +132,7 @@ def test_the_portability_guardrail_detects_a_planted_violation(
 def test_the_guardrail_allow_list_is_exactly_the_gated_dogfood_test() -> None:
     module = _load_guardrail()
     assert module.ALLOWED_DEVELOPER_PATHS == {"tests/test_storage/test_family1_dogfood.py"}
-    gated = REPOSITORY_ROOT / "tests" / "test_playbill" / "test_family1_dogfood.py"
+    gated = REPOSITORY_ROOT / "tests" / "test_storage" / "test_family1_dogfood.py"
     assert "CRUXIBLE_RUN_PLAYBILL_DOGFOOD" in gated.read_text("utf-8")
 
 
@@ -146,7 +151,9 @@ def test_the_scratch_prefix_is_gitignored_and_the_tree_is_clean() -> None:
 
 def test_no_adopted_regression_names_a_developer_path() -> None:
     for directory in ("p2b2_round3", "p2b2_round4", "p2b2_round5"):
-        for path in (REPOSITORY_ROOT / "tests" / "test_playbill" / directory).rglob("*.py"):
+        adopted = REPOSITORY_ROOT / "tests" / "test_providers" / directory
+        assert adopted.is_dir(), adopted
+        for path in adopted.rglob("*.py"):
             text = path.read_text("utf-8")
             assert "/" + "Users/" not in text, path
             assert "sys.path." + "insert" not in text, path

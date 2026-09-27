@@ -61,6 +61,9 @@ def test_accepted_document_emits_composable_exact_proof_facts_without_body_leaka
     publication = Path(instance.inspect().storage_directories["projections"])
     coordinate = instance.accepted_coordinate()
     with bind_current_projection(publication, expected=coordinate) as handle:
+        # Typed publications compile Document facts from exact Git members and
+        # managed body metadata; a standalone reader attaches both explicitly.
+        handle.attach_sources(instance._ledger, bodies=instance.body_store(), history=None)
         view = handle.document(
             "document:design",
             access=BodyAccessContext(principal_id="auditor", can_read_body=False),
@@ -147,6 +150,8 @@ def test_rebuild_from_head_reproduces_explanation_logical_digest_and_facts(
             expected=instance.accepted_coordinate(),
         ) as rebuilt_handle,
     ):
+        for handle in (accepted_handle, rebuilt_handle):
+            handle.attach_sources(instance._ledger, bodies=instance.body_store(), history=None)
         access = BodyAccessContext(principal_id="auditor", can_read_body=False)
         accepted = accepted_handle.document("document:design", access=access)
         replayed = rebuilt_handle.document("document:design", access=access)

@@ -151,7 +151,16 @@ def test_host_show_and_server_status_inspect_uninitialized_hosts_without_writing
     assert status.status_code == 200, status.text
     assert status.json()["instance_count"] == 1
     assert [row["instance_id"] for row in status.json()["hosts"]] == ["inst_show_empty"]
-    assert status.json()["compiler_revision"] == "provider-package-registration-v1"
+    from cruxible_core.compiler.compiler import (
+        COMPILER_REVISION_LABELS,
+        current_compiler_coordinate,
+    )
+
+    # The host reports whatever revision the daemon compiles under today.
+    assert (
+        status.json()["compiler_revision"]
+        == (COMPILER_REVISION_LABELS[current_compiler_coordinate()])
+    )
     assert not Path(record.location).exists()
 
 

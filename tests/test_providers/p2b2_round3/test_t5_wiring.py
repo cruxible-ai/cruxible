@@ -205,9 +205,18 @@ def test_r6_regression_shape() -> None:
     served_patches = set(
         re.findall(r'monkeypatch\.setattr\(\s*([\w_.]+),\s*\n?\s*"([\w_]+)"', served)
     )
-    assert served_patches == {("execution_module", "PROVIDER_BUCKET_CLASSIFIER_REGISTRY")}, (
-        served_patches
-    )
+    # Since 27d733208 the served route also patches ``instance.tree_at`` -- but
+    # only with a tripwire that fails the test if the whole accepted tree is
+    # read. That polices selective reads; it stands in for nothing.
+    assert served_patches == {
+        ("execution_module", "PROVIDER_BUCKET_CLASSIFIER_REGISTRY"),
+        ("instance", "tree_at"),
+    }, served_patches
+    assert 'monkeypatch.setattr(instance, "tree_at", unexpected_tree)' in served
+    tripwire = served[served.index("def unexpected_tree(") :]
+    tripwire = tripwire[: tripwire.index("monkeypatch.setattr(instance")]
+    assert "pytest.fail(" in tripwire, tripwire
+    assert "return" not in tripwire, tripwire
 
 
 def test_the_control_socket_budget_selects_the_private_namespace_once() -> None:

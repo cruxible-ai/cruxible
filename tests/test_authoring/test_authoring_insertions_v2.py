@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -602,13 +603,18 @@ def test_registered_publication_never_promotes_a_nonmatching_live_claim(
                 )
             }
         )
-    changed_tree = {**accepted_tree, claim_path_value: render_claim(changed)}
-    original_tree_at = instance.tree_at
-    monkeypatch.setattr(
-        instance,
-        "tree_at",
-        lambda oid: changed_tree if oid == coordinate.git_oid else original_tree_at(oid),
-    )
+    changed_bytes = render_claim(changed)
+    # Coverage reads the registered Claim as one exact accepted blob, so the
+    # changed Claim is substituted at that read rather than in a whole tree.
+    original_blobs_at = instance.blobs_at
+
+    def blobs_at(oid: str, paths: Sequence[str]) -> dict[str, bytes]:
+        found = original_blobs_at(oid, paths)
+        if oid == coordinate.git_oid and claim_path_value in found:
+            found[claim_path_value] = changed_bytes
+        return found
+
+    monkeypatch.setattr(instance, "blobs_at", blobs_at)
 
     source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
     result = service_resolve_playbill_coverage(
@@ -710,7 +716,9 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
     else:
         corrupted = landed[: parsed.opening_start] + landed[parsed.opening_end :]
 
-    marker_summaries, marker_notes = _projection_marker_observation(source_id, corrupted)
+    marker_summaries, marker_notes = _projection_marker_observation(
+        source_id, corrupted, workspace=tmp_path / "workspace"
+    )
     assert marker_summaries == []
     assert marker_notes == ("projection_marker_invalid",)
     assert request.workspace_observation is not None
@@ -1075,7 +1083,9 @@ def test_depublishing_releases_the_registration_and_leaves_the_marker_to_remove(
     assert bound.preparation is not None
     preparation = bound.preparation
 
-    marker_summaries, marker_notes = _projection_marker_observation(preparation.source_id, landed)
+    marker_summaries, marker_notes = _projection_marker_observation(
+        preparation.source_id, landed, workspace=tmp_path / "workspace"
+    )
     assert [summary["stamp"]["block_id"] for summary in marker_summaries] == [preparation.block_id]
 
     def _next_items():  # type: ignore[no-untyped-def]

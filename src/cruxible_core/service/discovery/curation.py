@@ -481,8 +481,12 @@ def _accepted_retirements_for_items(
             sorted(
                 {
                     row["proposal_id"]
+                    # Admission commits publication; an evaluation surviving an
+                    # interrupted submission never names a resolving proposal.
                     for row in evidence.index.rows(
-                        evidence, "candidate_digest=?", (accepted.record.candidate_digest,)
+                        evidence,
+                        "candidate_digest=? AND admission_path IS NOT NULL",
+                        (accepted.record.candidate_digest,),
                     )
                 },
                 key=lambda value: value.encode("ascii"),

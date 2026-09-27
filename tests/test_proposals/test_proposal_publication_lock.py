@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -14,11 +15,11 @@ from cruxible_core.proposals import proposals
 
 @pytest.mark.parametrize("move_under_lock", [False, True])
 def test_publication_integrity_check_finishes_before_activation_unlock(
-    monkeypatch: pytest.MonkeyPatch, move_under_lock: bool
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, move_under_lock: bool
 ) -> None:
     coordinate = AcceptedProjectionCoordinate(
         instance_id="inst_publication_lock",
-        repository_path="/tmp/publication-lock",
+        repository_path=str(tmp_path / "publication-lock"),
         git_object_format="sha1",
         git_oid="11" * 20,
         semantic_root="sha256:" + "22" * 32,

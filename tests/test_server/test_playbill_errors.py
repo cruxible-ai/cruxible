@@ -306,9 +306,15 @@ def test_http_discover_refuses_an_empty_request_typed_not_as_a_server_error(
 
 
 def test_http_discover_still_answers_an_empty_interfaces_request(
-    seeded_playbill_http: tuple[TestClient, str, Path],
+    playbill_http: tuple[TestClient, str, Path],
 ) -> None:
-    client, instance_id, _private_key = seeded_playbill_http
+    """A host with no Provider package installed still answers, and says so.
+
+    Installed interfaces are asserted by the env-gated provider-installation
+    tests; this one pins the typed answer an initialized host gives.
+    """
+
+    client, instance_id, _private_key = playbill_http
 
     response = client.post(
         f"/api/v1/{instance_id}/playbill/discover",
@@ -319,9 +325,8 @@ def test_http_discover_still_answers_an_empty_interfaces_request(
     payload = response.json()
     parsed = contracts.PlaybillInterfaceInventory.model_validate(payload)
     assert payload["tag"] == "playbill-interface-inventory-v1"
-    assert payload["provider_status"] == "installed"
-    assert payload["interfaces"][0]["identity"] == "ProviderInterface:workspace.file"
-    assert parsed.interfaces[0].interface_basis == "accepted_registration"
+    assert payload["provider_status"] == "not_installed"
+    assert not parsed.interfaces
 
 
 def test_http_activate_refuses_a_missing_proposal_id_typed(

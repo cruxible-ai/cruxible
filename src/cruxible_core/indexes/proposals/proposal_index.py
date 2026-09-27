@@ -28,7 +28,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalEvaluationRecord,
     ProposalWithdrawalRecordV1,
 )
-from cruxible_core.indexes.acquisition import open_working_snapshot
+from cruxible_core.indexes.acquisition import WorkingDatabaseChangedError, open_working_snapshot
 from cruxible_core.indexes.history.history_index import commit_working_write
 from cruxible_core.proposals.proposal_notes import admission_bytes
 
@@ -149,6 +149,24 @@ def timestamp(value: int) -> str:
     )
 
 
+# The proposal source lock is an flock, which conflicts across descriptors even
+# within one process. An unreachable index's finalizer runs on whichever thread
+# triggers garbage collection, including one inside this lock's critical section;
+# taking the same lock file there would wait on itself forever. Each thread
+# records the lock files it holds or is acquiring, by the lock file's own
+# identity, from before flock until after its descriptor closes, so no instant
+# of holding the lock is unrecorded.
+_HELD_SOURCE_LOCKS = threading.local()
+
+
+def _held_source_locks() -> dict[tuple[int, int], int]:
+    held: dict[tuple[int, int], int] | None = getattr(_HELD_SOURCE_LOCKS, "locks", None)
+    if held is None:
+        held = {}
+        _HELD_SOURCE_LOCKS.locks = held
+    return held
+
+
 class ProposalIndex:
     """Component of AcceptedHistoryIndex, sharing its file and acquisition lock."""
 
@@ -226,11 +244,20 @@ class ProposalIndex:
                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
                 0o600,
             )
+            held = _held_source_locks()
+            key: tuple[int, int] | None = None
             try:
+                stat = os.fstat(descriptor)
+                key = (stat.st_dev, stat.st_ino)
+                held[key] = held.get(key, 0) + 1
                 fcntl.flock(descriptor, fcntl.LOCK_EX)
                 yield
             finally:
                 os.close(descriptor)
+                if key is not None:
+                    held[key] -= 1
+                    if not held[key]:
+                        del held[key]
 
     @staticmethod
     def _inventory(evidence: ProposalEvidenceStore) -> list[list[int]]:
@@ -527,9 +554,13 @@ class ProposalIndex:
             != file_digest(evidence.transport.review_commit_context())
         ):
             return None
-        connection = open_working_snapshot(
-            self.path, expected_stamp=stamp, file_stamp=self._file_stamp
-        )
+        try:
+            connection = open_working_snapshot(
+                self.path, expected_stamp=stamp, file_stamp=self._file_stamp
+            )
+        except WorkingDatabaseChangedError:
+            # A writer moved the file since the checks above; take the locked path.
+            return None
         try:
             schema = _schema_rows(connection)
             if schema == _PRE_ACCEPTANCE_SCHEMA:
@@ -765,6 +796,13 @@ def close_working_database(
             descriptor = os.open(
                 root / ".proposal-source.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600
             )
+            # Decide on the lock file actually opened, not on its pathname: the
+            # name can resolve to another file between a check and the open.
+            # Inside this thread's own section for it nothing can be certified;
+            # close uncertified and leave the old checkpoint for the next reader.
+            opened = os.fstat(descriptor)
+            if (opened.st_dev, opened.st_ino) in _held_source_locks():
+                return
             fcntl.flock(descriptor, fcntl.LOCK_EX)
             marker = ProposalIndex._marker(root)
             directories = [

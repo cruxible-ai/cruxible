@@ -9,6 +9,11 @@ from types import SimpleNamespace
 import pytest
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
+from cruxible_client.contracts.acquisition_policies import (
+    IndependentCoherenceV1,
+    InputAcquisitionRuleV1,
+    SourceAcquisitionPolicyV1,
+)
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import CanonicalDurationV1
@@ -1996,6 +2001,29 @@ def test_a_degraded_provider_lane_refuses_typed_without_granting_authority(
     )
     accepted_line = _accepted_line(with_policy)
     _admitted_line_service(monkeypatch, accepted, accepted_line)
+    # Since 0cb4cc0c5 the pinned acquisition policy is resolved before the
+    # Provider lane is planned (a trigger Capture binds against it), so the
+    # pinned policy must be accepted for the degraded lane to be what refuses.
+    accepted_policy = SourceAcquisitionPolicyV1(
+        identity=acquisition_pin.target,
+        inputs=(
+            InputAcquisitionRuleV1(
+                input_name="line-source",
+                requirement="required",
+                permitted_replayability=("exact",),
+                on_unavailable="refuse",
+                on_stale="refuse",
+                on_oversized="refuse",
+                on_conflict="refuse",
+            ),
+        ),
+        coherence=IndependentCoherenceV1(),
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_acquisition_policies",
+        lambda *_a, **_k: ((acquisition_pin.artifact_digest, accepted_policy),),
+    )
 
     def refuse(*_args, **_kwargs):  # type: ignore[no-untyped-def]
         raise ProviderLocalRuntimeRefused(

@@ -231,6 +231,8 @@ def test_upgrade_rebuild_and_new_query_preserve_old_receipts(tmp_path, monkeypat
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root).accepted_coordinate()
         == before
     )
+    # Queued advisory review-ref refreshes bind projections; let them finish first.
+    instance.settled_workspace_advertisement()
     shutil.rmtree(instance.root / "projections")
     (instance.root / "projections").mkdir()
     shutil.rmtree(instance._checkpoint_directory(instance.root))
@@ -370,6 +372,9 @@ def test_old_query_receipt_is_identical_after_upgrade_and_rebuild(tmp_path, monk
     service_activate_playbill_proposal(
         instance, proposal_id=proposal.admission.proposal_id, activated_by="owner"
     )
+    # Activation queues the advisory review-ref refresh on a background thread,
+    # which binds projections; let it finish before deleting derived state.
+    instance.settled_workspace_advertisement()
     shutil.rmtree(instance.root / "projections")
     (instance.root / "projections").mkdir()
     shutil.rmtree(instance._checkpoint_directory(instance.root))

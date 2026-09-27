@@ -1,12 +1,13 @@
 """Every widened SDK vocabulary accepts its plain string at the boundary.
 
-The builders take `Enum | str` so a caller can write `"drain"` instead of
-importing `ActivationPolicy`. That widening is only safe if the string is
+The builders take `Enum | str` so a caller can write `"one"` instead of
+importing `Cardinality`. That widening is only safe if the string is
 coerced where it arrives: an uncoerced string reaches `.value` deep inside the
 builder and raises `AttributeError`, which names nothing the caller did wrong.
 
-One test per widened parameter, because `activation_policy` was widened without
-its coercion and nothing here caught it.
+One test per widened parameter, because a parameter was once widened without
+its coercion and nothing here caught it. (Procedure activation policy is now a
+plain Literal string on the builders, so it is no longer an enum boundary.)
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ from __future__ import annotations
 import pytest
 
 from cruxible_client.authoring.sdk import (
-    ActivationPolicy,
     Cardinality,
     ClaimObjectKind,
     ClaimRole,
@@ -24,7 +24,6 @@ from cruxible_client.authoring.sdk import (
 )
 
 VOCABULARIES = [
-    (ActivationPolicy, "activation policy"),
     (Cardinality, "cardinality"),
     (ClaimObjectKind, "object kind"),
     (ClaimRole, "claim role"),
@@ -55,15 +54,3 @@ def test_an_unknown_string_is_refused_naming_the_admissible_values(kind: type, l
     assert label in message
     for member in kind:
         assert member.value in message
-
-
-def test_the_procedure_builder_accepts_a_plain_activation_policy_string() -> None:
-    """The regression: this parameter was widened without its coercion.
-
-    A plain string used to reach `.value` inside the builder and raise
-    AttributeError, so the widening was advertised and did not work.
-    """
-    assert _enum("drain", ActivationPolicy, label="procedure activation policy") is (
-        ActivationPolicy.DRAIN
-    )
-    assert ActivationPolicy("drain") is ActivationPolicy.DRAIN

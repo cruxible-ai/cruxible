@@ -111,6 +111,7 @@ from tests.core_support._p2b1_support import (
     provider_v2,
 )
 from tests.core_support._provider_seal_support import write_test_provider_seal_v2
+from tests.support.short_temporary_root import short_temporary_directory
 from tests.test_procedures.test_procedure_execution import (
     _accepted_line_for_admission,
 )
@@ -301,7 +302,7 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     # path has to stay inside the 103-byte AF_UNIX budget or the store takes the
     # ruled per-user fallback. Use a short system temporary root; the budget
     # itself is unchanged.
-    state_root = Path(tempfile.mkdtemp(prefix=".b2-", dir="/tmp")).resolve()
+    state_root = short_temporary_directory(".b2-").resolve()
     request.addfinalizer(lambda: shutil.rmtree(state_root, ignore_errors=True))
     materialization = state_root / "materializations" / "demo"
     materialization.mkdir(parents=True)
@@ -461,7 +462,15 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
             bind_accepted_projection=lambda _coordinate: nullcontext(
                 SimpleNamespace(
                     typed=SimpleNamespace(
-                        source=lambda _identity: seeded_procedure_runtime_policy()
+                        # The fixture admission fixes its own provider output cap;
+                        # the policy in force must be the one it was planned under.
+                        source=lambda _identity: seeded_procedure_runtime_policy().model_copy(
+                            update={
+                                "provider_output_bytes_cap": (
+                                    prepared.admission.provider_output_bytes_cap
+                                )
+                            }
+                        )
                     )
                 )
             ),
@@ -545,7 +554,7 @@ def test_overlong_state_root_degrades_provider_at_operator_construction(
 ) -> None:
     """Retracted P2-B2 oracle: a verified fallback keeps the Provider lane live."""
 
-    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-operator-", dir="/tmp"))
+    runtime_root = Path(tempfile.mkdtemp(prefix=".u8-operator-"))
     request.addfinalizer(lambda: shutil.rmtree(runtime_root, ignore_errors=True))
     monkeypatch.setenv("TMPDIR", str(runtime_root))
     state_root = tmp_path / ("overlong-" + "x" * 110)
