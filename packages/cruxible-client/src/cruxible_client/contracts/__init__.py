@@ -1333,24 +1333,6 @@ class PlaybillAuthoringSubmitResult(BaseModel):
     )
 
 
-class PlaybillPublicationPrepareWarning(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-publication-prepare-warning-v1"]
-    code: Literal["playbill.authoring.publication_citation_anchor_collision"]
-    source_id: str
-    citation_ids: list[str] = Field(min_length=1)
-
-    @field_validator("citation_ids")
-    @classmethod
-    def _citation_ids(cls, value: list[str]) -> list[str]:
-        if value != sorted(set(value), key=lambda item: item.encode("ascii")):
-            raise ValueError("publication warning citation IDs must be sorted and unique")
-        for item in value:
-            Sha256Value.from_tagged(item)
-        return value
-
-
 class PlaybillInsertionAbandonResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

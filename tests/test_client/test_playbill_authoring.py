@@ -484,13 +484,3 @@ def test_change_set_retire_dedups_the_prefixed_and_bare_spellings(tmp_path: Path
     )
     with pytest.raises(ValidationError, match="member identities must be unique"):
         duplicated.prepare()
-
-
-def test_publication_warning_client_mirror_refuses_non_sha256_citation_ids() -> None:
-    with pytest.raises(ValidationError, match="sha256"):
-        cruxible_client.contracts.PlaybillPublicationPrepareWarning(
-            tag="playbill-publication-prepare-warning-v1",
-            code="playbill.authoring.publication_citation_anchor_collision",
-            source_id="repo.work-items",
-            citation_ids=["not-a-digest"],
-        )
