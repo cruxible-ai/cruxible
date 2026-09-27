@@ -13,18 +13,6 @@ from pydantic import BaseModel
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 
 
-def object_field(fields: dict[str, Any]) -> PropertySchema:
-    return PropertySchema(
-        type="json",
-        json_schema={
-            "type": "object",
-            "properties": fields,
-            "required": list(fields),
-            "additionalProperties": False,
-        },
-    )
-
-
 def expanded_model_schema(model: type[BaseModel]) -> dict[str, Any]:
     raw = model.model_json_schema()
     definitions = raw.get("$defs", {})

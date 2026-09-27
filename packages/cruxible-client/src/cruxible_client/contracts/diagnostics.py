@@ -114,11 +114,6 @@ class CompilerDiagnostic(_StrictDiagnosticModel):
             raise ValueError("related subjects must be sorted and unique")
         return value
 
-    def without_protected_body_metadata(self) -> "CompilerDiagnostic":
-        """Remove exact spans while preserving stable refusal identity."""
-
-        return self.model_copy(update={"span": None})
-
 
 __all__ = [
     "CompilerDiagnostic",

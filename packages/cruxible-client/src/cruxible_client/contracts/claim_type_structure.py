@@ -119,13 +119,6 @@ class ClaimTypeStructure(_StrictClaimTypeStructureModel):
             )
         return self
 
-    def literal_schema_bytes(self) -> bytes | None:
-        """Return exact canonical schema bytes without creating an artifact digest."""
-
-        if self.literal_schema is None:
-            return None
-        return canonical_bytes(self.literal_schema)
-
 
 class ClaimTypeStructuralCheck(_StrictClaimTypeStructureModel):
     """Local compiler coverage that explicitly makes no acceptance claim."""

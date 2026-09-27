@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_type_structure import (
     ClaimTypeStructure,
     check_claim_type_structure,
@@ -31,7 +32,7 @@ def _literal() -> dict[str, object]:
 
 def test_claim_type_structure_validates_exact_literal_schema_without_digesting_artifact() -> None:
     structure = ClaimTypeStructure.model_validate(_literal())
-    assert structure.literal_schema_bytes() == (
+    assert canonical_bytes(structure.literal_schema) == (
         b'{"$schema":"https://json-schema.org/draft/2020-12/schema",'
         b'"enum":["blocked","done","ready"],"type":"string"}'
     )

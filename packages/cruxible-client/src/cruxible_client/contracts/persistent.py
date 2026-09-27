@@ -253,15 +253,6 @@ class PersistentMap(Mapping[str, V]):
         inside, above = _split(rest, high)
         return self._from_root(_concat(below, above)), self._from_root(inside)
 
-    def evolve(self, updated: Mapping[str, V], removed: Iterable[str] = ()) -> PersistentMap[V]:
-        """Remove keys, then apply updates; updates win if a key appears in both."""
-        result = self
-        for key in removed:
-            result = result.delete(key)
-        for key, value in updated.items():
-            result = result.set(key, value)
-        return result
-
     def __deepcopy__(self, memo: dict[int, object]) -> PersistentMap[V]:
         result: PersistentMap[V] = self._from_root(None)
         memo[id(self)] = result

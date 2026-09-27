@@ -304,7 +304,6 @@ def test_query_binds_request_parameters_and_types_the_result():
 
 def test_capture_terminal_has_declared_result_and_requires_material_schema():
     from cruxible_client.contracts.procedures.source_program import SourceProviderBinding
-    from cruxible_client.contracts.procedures.source_views import object_field
     from cruxible_client.contracts.provider_contracts import (
         ACQUISITION_RESULT,
         ProviderOperationContractV1,
@@ -322,7 +321,17 @@ def test_capture_terminal_has_declared_result_and_requires_material_schema():
             input=ContractSchema(fields={"url": PropertySchema(type="string")}),
             output=ACQUISITION_RESULT,
             material=ContractSchema(
-                fields={"retrieved": object_field({"final_url": {"type": "string"}})}
+                fields={
+                    "retrieved": PropertySchema(
+                        type="json",
+                        json_schema={
+                            "type": "object",
+                            "properties": {"final_url": {"type": "string"}},
+                            "required": ["final_url"],
+                            "additionalProperties": False,
+                        },
+                    )
+                }
             ),
         ),
     )

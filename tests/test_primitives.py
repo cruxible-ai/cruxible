@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from cruxible_client.contracts.primitives import canonical_json, json_type_name, new_id
+from cruxible_client.contracts.primitives import canonical_json, new_id
 
 
 class TestCanonicalJson:
@@ -59,17 +59,6 @@ class TestCanonicalJson:
         except ValueError:
             return
         raise AssertionError("expected ValueError on Infinity")
-
-
-class TestJsonTypeName:
-    def test_json_compatible_type_names(self) -> None:
-        assert json_type_name(None) == "null"
-        assert json_type_name(True) == "boolean"
-        assert json_type_name({"a": 1}) == "object"
-        assert json_type_name([1, 2]) == "array"
-        assert json_type_name("x") == "string"
-        assert json_type_name(1) == "number"
-        assert json_type_name(1.5) == "number"
 
 
 class TestNewId:

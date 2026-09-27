@@ -12,16 +12,6 @@ import json
 import uuid
 from typing import Any, Callable
 
-_JSON_TYPE_NAMES: dict[type[Any], str] = {
-    type(None): "null",
-    bool: "boolean",
-    dict: "object",
-    list: "array",
-    str: "string",
-    int: "number",
-    float: "number",
-}
-
 
 def compact_json(
     value: Any,
@@ -71,11 +61,6 @@ def pretty_json(value: Any) -> str:
         ensure_ascii=False,
         allow_nan=False,
     )
-
-
-def json_type_name(value: Any) -> str:
-    """Return a JSON-schema-style type label for a runtime value."""
-    return _JSON_TYPE_NAMES.get(type(value), type(value).__name__)
 
 
 def new_id(prefix: str, *, length: int = 12, separator: str = "-") -> str:

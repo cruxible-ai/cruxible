@@ -97,7 +97,6 @@ def test_mutation_finish_is_a_snapshot_and_mapping_methods_work() -> None:
     assert dict(first) == {"a": 3, "b": 2}
     assert dict(original) == {"a": 1, "b": 2}
     assert dict(mutation.finish()) == {"a": 3, "c": 4}
-    assert dict(first.evolve({"b": 9}, removed=["a", "b"])) == {"b": 9}
 
 
 def test_unicode_order_duplicates_and_missing_keys() -> None:

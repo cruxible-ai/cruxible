@@ -10,7 +10,7 @@ from cruxible_client.contracts.diagnostics import (
     GovernedOperationReference,
     LocalDraftEdit,
 )
-from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
+from cruxible_client.contracts.semantic import SemanticAddress
 
 
 def _subject(name: str) -> SemanticAddress:
@@ -64,21 +64,3 @@ def test_local_edits_can_name_only_exact_unaccepted_draft_bytes() -> None:
     ):
         with pytest.raises(ValidationError, match="extra_forbidden"):
             LocalDraftEdit.model_validate({**payload, **forbidden})
-
-
-def test_diagnostic_redaction_removes_protected_span_but_preserves_identity() -> None:
-    diagnostic = CompilerDiagnostic(
-        code="playbill.document.body_invalid",
-        severity="error",
-        message="Body bytes do not match the declared format.",
-        subject=_subject("design"),
-        span=ContentSpan(
-            content_digest="sha256:" + "55" * 32,
-            start_byte=0,
-            end_byte=12,
-        ),
-    )
-    redacted = diagnostic.without_protected_body_metadata()
-    assert redacted.span is None
-    assert redacted.code == diagnostic.code
-    assert redacted.subject == diagnostic.subject
