@@ -53,7 +53,6 @@ def test_publication_fold_and_release_use_current_intents_only(
         pytest.fail("publication state must not request whole intents or historical events")
 
     monkeypatch.setattr(AuthoringIntentStore, "publication_states", latest)
-    monkeypatch.setattr(AuthoringIntentStore, "latest_intents", historical)
     monkeypatch.setattr(AuthoringIntentStore, "events", historical)
     lock_path = coordinator.store.root / ".lock"
     lock_path.unlink(missing_ok=True)
@@ -117,7 +116,6 @@ def test_current_publication_reads_refuse_corrupt_historical_streams(
         pytest.fail("publication state must use the validated narrow publication-state API")
 
     monkeypatch.setattr(AuthoringIntentStore, "events", historical)
-    monkeypatch.setattr(AuthoringIntentStore, "latest_intents", historical)
     events = sorted((coordinator.store.root / intent_id / "events").glob("*.json"))
     assert len(events) > 1
     events[0].write_bytes(b"{}\n")

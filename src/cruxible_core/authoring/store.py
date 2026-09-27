@@ -661,16 +661,6 @@ class AuthoringIntentStore:
                 for event in self._validated_events(directory)
             )
 
-    def latest_intents(self) -> tuple[AuthoringIntentV1, ...]:
-        """Latest validated recorded snapshots, without replay history or refresh.
-
-        Read-only consumers do not recover staged writes. Writable consumers use
-        the existing writer lock and recovery boundary. Returned snapshots are
-        owned by the caller; protocol refresh remains the coordinator's job.
-        """
-
-        return self._latest_states(lambda intent: intent.model_copy(deep=True))
-
     def publication_states(self) -> tuple[AuthoringIntentPublicationState, ...]:
         """Validated current publication fields, detached from private history."""
 
@@ -713,28 +703,6 @@ class AuthoringIntentStore:
                 raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
             predecessor = None if len(events) == 1 else events[-2].intent.model_copy(deep=True)
             return predecessor, latest.model_copy(deep=True)
-
-    def operation_result(
-        self,
-        intent_id: str,
-        *,
-        actor_id: str,
-        operation_key: str,
-    ) -> AuthoringIntentV1 | None:
-        """Return a previously committed operation result without appending an event."""
-
-        with self._locked():
-            events = self._validated_events(self.root / intent_id)
-            if events[-1].intent.actor_id != actor_id:
-                raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
-            return next(
-                (
-                    event.intent.model_copy(deep=True)
-                    for event in events
-                    if event.operation_key == operation_key
-                ),
-                None,
-            )
 
     def transition(
         self,
@@ -982,11 +950,6 @@ class AuthoringIntentStore:
             for path in sorted(self.root.glob("AIT-*"), key=lambda item: item.name)
             if path.is_dir() and not path.is_symlink()
         )
-
-    def _load_events(self, directory: Path) -> tuple[AuthoringIntentEventAny, ...]:
-        """Caller-owned full history; narrow reads avoid copying old snapshots."""
-
-        return tuple(event.model_copy(deep=True) for event in self._validated_events(directory))
 
     def _event_paths(self, directory: Path) -> tuple[Path, ...]:
         if directory.is_symlink() or not directory.is_dir():

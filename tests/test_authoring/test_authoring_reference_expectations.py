@@ -155,7 +155,7 @@ def test_reference_assertions_are_event_committed_but_identity_excluded(tmp_path
         canonical_timestamp=TIMESTAMP,
         reference_expectations=expected,
     )
-    stored = coordinator.store._load_events(  # noqa: SLF001 - protocol persistence proof
+    stored = coordinator.store._validated_events(  # noqa: SLF001 - protocol persistence proof
         coordinator.store.root / view.intent.intent_id
     )
 

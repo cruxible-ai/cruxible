@@ -129,20 +129,12 @@ def test_unchanged_history_is_parsed_once_across_consumers_and_store_instances(
     readonly = AuthoringIntentStore(tmp_path / "exhaust", read_only=True)
     for reader in (store, reopened):
         assert _get(reader, latest) == latest.intent
-        assert reader.latest_intents() == (latest.intent,)
         assert reader.list_pending(actor_id="owner") == (latest.intent,)
         assert reader.events() == events
         assert reader.latest_transition(latest.intent.intent_id, actor_id="owner") == (
             events[-2].intent,
             latest,
         )
-        assert (
-            reader.operation_result(
-                latest.intent.intent_id, actor_id="owner", operation_key=events[0].operation_key
-            )
-            == events[0].intent
-        )
-    assert readonly.latest_intents() == (latest.intent,)
     assert readonly.events() == events
     assert store.create(_intent(token="3"), operation_key=_operation(99)) == latest.intent
     assert len(tuple(store.root.glob("AIT-*"))) == 1
@@ -159,7 +151,7 @@ def test_real_transition_only_parses_new_durable_event(tmp_path: Path, parsed: l
         transform=lambda intent: intent.model_copy(update={"intent_revision": 3}),
     )
     assert updated.intent_revision == 3
-    assert store.latest_intents() == (updated,)
+    assert _get(store, events[-1]) == updated
     assert len(parsed) == 4
     assert _get(AuthoringIntentStore(tmp_path / "exhaust"), events[-1]) == updated
     assert len(store.events()) == 4
@@ -244,10 +236,10 @@ def test_valid_shortened_prefix_retains_cold_reader_semantics(tmp_path: Path) ->
     store, events = _history(tmp_path / "exhaust")
     assert _get(store, events[-1]) == events[-1].intent
     _event_path(store, events[-1]).unlink()
-    assert store.latest_intents() == (events[-2].intent,)
+    assert _get(store, events[-1]) == events[-2].intent
     assert store.events() == events[:-1]
     store_module._reset_authoring_history_memo()
-    assert store.latest_intents() == (events[-2].intent,)
+    assert _get(store, events[-1]) == events[-2].intent
     assert store.events() == events[:-1]
 
 
@@ -334,7 +326,6 @@ def test_cache_identity_includes_exhaust_root(tmp_path: Path, parsed: list[bytes
 def test_warm_actor_filters_still_apply(tmp_path: Path, parsed: list[bytes]) -> None:
     store, owner_events = _history(tmp_path / "exhaust", token="1", actor="owner")
     _, reviewer_events = _history(tmp_path / "exhaust", token="2", actor="reviewer")
-    assert store.latest_intents() == (owner_events[-1].intent, reviewer_events[-1].intent)
     assert store.list_pending(actor_id="owner") == (owner_events[-1].intent,)
     assert store.list_pending(actor_id="reviewer") == (reviewer_events[-1].intent,)
     assert store.list_pending(actor_id="stranger") == ()
@@ -347,13 +338,10 @@ def test_warm_actor_filters_still_apply(tmp_path: Path, parsed: list[bytes]) -> 
     "route",
     [
         "get",
-        "latest",
         "pending",
         "events",
-        "load",
         "predecessor",
         "transition_event",
-        "operation",
         "dedup",
         "retry",
     ],
@@ -366,21 +354,13 @@ def test_returned_nested_containers_cannot_mutate_cached_history(
     _get(store, latest)
     if route == "get":
         returned = _get(store, latest)
-    elif route == "latest":
-        returned = store.latest_intents()[0]
     elif route == "pending":
         returned = store.list_pending(actor_id="owner")[0]
     elif route == "events":
         returned = store.events()[-1].intent
-    elif route == "load":
-        returned = store._load_events(store.root / latest.intent.intent_id)[-1].intent
     elif route in {"predecessor", "transition_event"}:
         predecessor, last = store.latest_transition(latest.intent.intent_id, actor_id="owner")
         returned = predecessor if route == "predecessor" else last.intent
-    elif route == "operation":
-        returned = store.operation_result(
-            latest.intent.intent_id, actor_id="owner", operation_key=latest.operation_key
-        )
     elif route == "dedup":
         returned = store.create(_intent(token="3"), operation_key=_operation(99))
     else:
@@ -520,7 +500,7 @@ def test_private_history_shares_only_validated_equal_payloads_across_revisions(
     detached = store.events()
     detached[0].intent.payload.statement.object.value["items"].clear()
     assert store.events() == (*events, next_event)
-    assert store.latest_intents() == (changed,)
+    assert _get(store, next_event) == changed
     assert len(parsed) == 4
 
 

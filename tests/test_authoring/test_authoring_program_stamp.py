@@ -57,7 +57,7 @@ def test_program_stamp_is_event_committed_and_identity_excluded(tmp_path: Path) 
         reference_expectations=(),
         program_stamp=_stamp("claim"),
     ).intent
-    first_events = coordinator.store._load_events(  # noqa: SLF001 - wire proof
+    first_events = coordinator.store._validated_events(  # noqa: SLF001 - wire proof
         coordinator.store.root / first.intent_id
     )
     repeated = coordinator.create(
@@ -74,7 +74,7 @@ def test_program_stamp_is_event_committed_and_identity_excluded(tmp_path: Path) 
         reference_expectations=(),
         program_stamp=_stamp("revise"),
     ).intent
-    events = coordinator.store._load_events(  # noqa: SLF001 - wire proof
+    events = coordinator.store._validated_events(  # noqa: SLF001 - wire proof
         coordinator.store.root / first.intent_id
     )
 
