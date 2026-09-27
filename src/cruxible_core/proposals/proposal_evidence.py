@@ -44,8 +44,6 @@ from cruxible_core.proposals.proposal_notes import (
     admission_bytes,
     evaluation_bytes,
     proposal_admission_id,
-    proposal_approval_note,
-    proposal_evaluation_note,
 )
 from cruxible_core.proposals.proposals import (
     ProposalAdmissionRecord,
@@ -350,24 +348,6 @@ class ProposalEvidenceStore:
             self._read_model(path, ProposalEvaluationRecord, label="proposal evaluation")
             for path in sorted(self.evaluations.glob("*.json"), key=lambda item: item.name)
         )
-
-    def evaluation_note(self, proposal_id: str) -> bytes:
-        """Render one admission/evaluation pair from the source of record.
-
-        Shared Git commits carry several such pairs through ProposalNoteIndex;
-        this helper preserves the original single-admission byte shape.
-        """
-
-        proposal_id = self.resolve_proposal_id(proposal_id)
-        return proposal_evaluation_note(
-            admission=self.read_admission(proposal_id),
-            evaluation=self.read_evaluation(proposal_id),
-        )
-
-    def approval_note(self, candidate_digest_value: str) -> bytes:
-        """Render one candidate's signed list; shared Git notes may combine lists."""
-
-        return proposal_approval_note(self.read_approvals(candidate_digest_value))
 
     def read_candidate(self, candidate_digest_value: str) -> CandidateRecordAnyVersion:
         """Read one canonical validated candidate by its frozen C_s digest."""

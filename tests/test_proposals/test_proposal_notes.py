@@ -67,7 +67,9 @@ def test_the_evaluation_note_is_the_evidence_store_byte_for_byte(tmp_path: Path)
     admission_file = evidence.proposals / f"{stored}.json"
     assert note.startswith(admission_file.read_bytes())
     assert note == admission_bytes(result.admission) + evaluation_bytes(result.evaluation)
-    assert note == evidence.evaluation_note(result.admission.proposal_id)
+    assert note == proposal_evaluation_note(
+        admission=result.admission, evaluation=result.evaluation
+    )
 
 
 def test_a_refused_proposal_projects_its_diagnostics_into_the_note(tmp_path: Path) -> None:

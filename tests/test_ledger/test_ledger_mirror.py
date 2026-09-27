@@ -15,6 +15,7 @@ from cruxible_client.contracts.ledger_mirror import (
 from cruxible_core.ledger import git as git_module
 from cruxible_core.ledger.git import NOTE_REFS
 from cruxible_core.ledger.ledger_mirror import MIRROR_STATE_FILE
+from cruxible_core.proposals.proposal_notes import proposal_approval_note, proposal_evaluation_note
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
@@ -283,7 +284,9 @@ def test_a_reviewer_cloning_the_mirror_can_read_the_evaluation_note(
 
     branch = f"origin/proposals/{digest}"
     note = _note_in_clone(clone, NOTE_REFS["evaluation"], branch)
-    assert note == instance.proposal_evidence().evaluation_note(result.admission.proposal_id)
+    assert note == proposal_evaluation_note(
+        admission=result.admission, evaluation=result.evaluation
+    )
     # New submissions are already standalone evaluated snapshots; the public
     # review alias is that exact candidate, without an intermediate commit.
     present = subprocess.run(
@@ -315,7 +318,9 @@ def test_a_reviewer_cloning_the_mirror_can_read_the_approval_note(tmp_path: Path
 
     clone = _clone(remote, tmp_path / "reviewer")
     note = _note_in_clone(clone, NOTE_REFS["approval"], f"origin/proposals/{digest}")
-    assert note == instance.proposal_evidence().approval_note(result.candidate.candidate_digest)
+    assert note == proposal_approval_note(
+        instance.proposal_evidence().read_approvals(result.candidate.candidate_digest)
+    )
     assert b"owner" in note
 
 
