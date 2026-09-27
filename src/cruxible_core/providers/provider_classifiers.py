@@ -204,14 +204,6 @@ class ProviderBucketClassifierRegistry:
         self.require(classifier_digest)
         return self._installations[classifier_digest]
 
-    def require_accepted(
-        self,
-        accepted: AcceptedProviderInterfaceRegistrationV1,
-    ) -> ProviderBucketClassifierProtocol:
-        """Require an operator-installed classifier for an accepted registration."""
-
-        return self.require(accepted.registration.classifier_digest)
-
 
 # The runtime and discovery surface share this daemon-local installation registry.
 # Accepted registrations remain governed; installed classifier code remains local.

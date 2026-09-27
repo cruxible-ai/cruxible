@@ -126,7 +126,7 @@ def test_production_catalog_carries_fixtures_but_no_demo_executable() -> None:
         *(fixture.fixture_id for fixture in WEB_FETCH_FIXTURES),
     }
     with pytest.raises(ProviderClassifierInstallationRefused) as absent:
-        registry.require_accepted(accepted)
+        registry.require(accepted.registration.classifier_digest)
     assert absent.value.code == "classifier_not_installed"
     assert registry.installed_classifier_digests == frozenset()
 
@@ -143,6 +143,6 @@ def test_accepted_registration_cannot_select_unshipped_classifier_code() -> None
     registry = ProviderBucketClassifierRegistry()
 
     with pytest.raises(ProviderClassifierInstallationRefused) as caught:
-        registry.require_accepted(changed)
+        registry.require(changed.registration.classifier_digest)
     assert caught.value.code == "classifier_not_installed"
     assert registry.installed_classifier_digests == frozenset()
