@@ -20,7 +20,6 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_core.exhaust.journal_index import JournalIndex, journal_locked
 from cruxible_core.exhaust.records import (
-    JournalHeadVectorV1,
     JournalPartitionHeadV1,
     JournalRangeV1,
     JournalStreamIdentityV1,
@@ -28,7 +27,6 @@ from cruxible_core.exhaust.records import (
     ProcedureJournalRecordV1,
     StoredProcedureJournalRecordV1,
     journal_genesis_digest,
-    journal_head_key,
     procedure_journal_record_digest,
     verify_journal_range,
 )
@@ -348,13 +346,6 @@ class LocalJournalBackend:
         partition_id: str,
     ) -> JournalPartitionHeadV1:
         return self.index.head(stream, partition_id)
-
-    def read_head_vector(
-        self,
-        partitions: tuple[tuple[JournalStreamIdentityV1, str], ...],
-    ) -> JournalHeadVectorV1:
-        heads = tuple(self.read_head(stream, partition) for stream, partition in partitions)
-        return JournalHeadVectorV1(partitions=tuple(sorted(heads, key=journal_head_key)))
 
     def _writer_state(
         self,

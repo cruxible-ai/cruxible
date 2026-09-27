@@ -483,7 +483,7 @@ def test_signed_head_authenticates_assertion_but_not_witness_role(tmp_path) -> N
     backend = _backend(tmp_path, "journal")
     _activate(backend)
     _append(backend, "first")
-    vector = backend.read_head_vector(((_stream(), "runs-2026-08"),))
+    vector = JournalHeadVectorV1(partitions=(backend.read_head(_stream(), "runs-2026-08"),))
     signer = _HeadSigner(Ed25519PrivateKey.generate())
     manifest = build_journal_head_manifest(vector, asserted_at=NOW, signer=signer)
     verify_journal_head_manifest(
