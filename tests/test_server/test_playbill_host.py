@@ -41,7 +41,12 @@ from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
-from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry, reset_registry
+from cruxible_core.server.registry import (
+    GOVERNED_DAEMON_BACKEND,
+    LOCAL_FILESYSTEM_BACKEND,
+    get_registry,
+    reset_registry,
+)
 from cruxible_core.server.routes.playbill import append_claim_attestation, run_procedure
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
@@ -125,7 +130,11 @@ def test_host_show_and_server_status_inspect_uninitialized_hosts_without_writing
     host_client: TestClient,
     tmp_path: Path,
 ) -> None:
-    get_registry().get_or_create_local_instance(tmp_path / "unrelated-local")
+    get_registry()._insert_instance(
+        backend=LOCAL_FILESYSTEM_BACKEND,
+        location=str(tmp_path / "unrelated-local"),
+        workspace_root=None,
+    )
     created = host_client.post(
         "/api/v1/runtime/instances",
         json={"instance_id": "inst_show_empty"},

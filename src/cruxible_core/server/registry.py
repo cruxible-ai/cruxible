@@ -98,18 +98,6 @@ class InstanceRegistry:
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
-    def get_or_create_local_instance(self, location: str | Path) -> RegisteredInstance:
-        resolved_location = str(Path(location).expanduser().resolve())
-        existing = self._get_by_backend_location(LOCAL_FILESYSTEM_BACKEND, resolved_location)
-        if existing is not None:
-            return RegisteredInstance(record=existing, created=False)
-
-        return self._insert_instance(
-            backend=LOCAL_FILESYSTEM_BACKEND,
-            location=resolved_location,
-            workspace_root=None,
-        )
-
     def get_governed_instance_by_workspace_root(
         self,
         workspace_root: str | Path,
@@ -134,15 +122,6 @@ class InstanceRegistry:
                 (GOVERNED_DAEMON_BACKEND,),
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
-
-    def create_governed_instance(
-        self,
-        workspace_root: str | Path | None = None,
-    ) -> RegisteredInstance:
-        resolved_workspace_root: str | None = None
-        if workspace_root is not None:
-            resolved_workspace_root = str(Path(workspace_root).expanduser().resolve())
-        return self._create_governed_instance(workspace_root=resolved_workspace_root)
 
     def generate_governed_instance_id(self) -> str:
         """Return an unused governed instance ID without inserting a registry row."""
@@ -232,20 +211,6 @@ class InstanceRegistry:
         record = self.get(instance_id)
         assert record is not None
         return record
-
-    def _create_governed_instance(
-        self,
-        *,
-        workspace_root: str | None,
-    ) -> RegisteredInstance:
-        instance_id = new_id("inst", length=16, separator="_")
-        location = str((self.state_root / "instances" / instance_id).resolve())
-        return self._insert_instance(
-            backend=GOVERNED_DAEMON_BACKEND,
-            location=location,
-            workspace_root=workspace_root,
-            preferred_instance_id=instance_id,
-        )
 
     def _insert_instance(
         self,

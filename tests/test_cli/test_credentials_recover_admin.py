@@ -58,7 +58,9 @@ def _seed_admin_state(
     for index in range(instance_count):
         workspace_root = tmp_path / f"workspace-{index}"
         workspace_root.mkdir()
-        registered = get_registry().create_governed_instance(workspace_root=workspace_root)
+        registered = get_registry().create_governed_instance_with_id(
+            f"inst_recover_{index}", workspace_root=workspace_root
+        )
         get_runtime_credential_store().create_credential(
             instance_id=registered.record.instance_id,
             label=f"existing-admin-{index}",
@@ -273,7 +275,9 @@ def test_recover_admin_refuses_instance_without_admin_credential(
     reset_runtime_credential_store()
     workspace_root = tmp_path / "workspace-no-admin"
     workspace_root.mkdir()
-    registered = get_registry().create_governed_instance(workspace_root=workspace_root)
+    registered = get_registry().create_governed_instance_with_id(
+        "inst_recover_no_admin", workspace_root=workspace_root
+    )
     get_runtime_credential_store().create_credential(
         instance_id=registered.record.instance_id,
         label="writer-only",
