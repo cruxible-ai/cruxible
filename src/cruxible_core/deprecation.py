@@ -1,4 +1,4 @@
-"""Structured deprecation notices and surface-specific emitters.
+"""Structured deprecation notices and the CLI emitter.
 
 The notice body is deliberately dependency-free and identical everywhere:
 ``surface``, ``replacement``, and ``removal_version``.  Transport adapters may
@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import asdict, dataclass, is_dataclass
-from typing import Any, TextIO
+from dataclasses import asdict, dataclass
+from typing import TextIO
 
 DEFAULT_REMOVAL_VERSION = "0.6.0"
 """Earliest release a NEWLY registered deprecation may honestly name.
@@ -75,7 +75,7 @@ DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
 
 
 def serialize_deprecation(notice: DeprecationNotice) -> str:
-    """Serialize one notice deterministically for line- and header-based idioms."""
+    """Serialize one notice deterministically as one line."""
     return json.dumps(notice.as_dict(), separators=(",", ":"), sort_keys=True)
 
 
@@ -89,44 +89,3 @@ def emit_cli_deprecation(
         f"Deprecation: {serialize_deprecation(notice)}",
         file=stream or sys.stderr,
     )
-
-
-def _payload_dict(result: Any) -> dict[str, Any]:
-    if hasattr(result, "model_dump"):
-        return dict(result.model_dump(mode="json"))
-    if is_dataclass(result) and not isinstance(result, type):
-        return asdict(result)
-    return dict(result)
-
-
-def attach_mcp_deprecations(
-    result: Any,
-    notices: list[DeprecationNotice] | tuple[DeprecationNotice, ...],
-) -> dict[str, Any]:
-    """Attach structured warnings using the MCP envelope's existing idiom."""
-    payload = _payload_dict(result)
-    if not notices:
-        return payload
-    key = "warnings" if "warnings" in payload else "deprecation_warnings"
-    existing = list(payload.get(key) or [])
-    payload[key] = [*existing, *(notice.as_dict() for notice in notices)]
-    return payload
-
-
-def emit_http_deprecations(
-    response: Any,
-    result: Any,
-    notices: list[DeprecationNotice] | tuple[DeprecationNotice, ...],
-) -> Any:
-    """Set response headers and add body entries only to existing warning envelopes."""
-    for notice in notices:
-        response.headers.append("Deprecation", serialize_deprecation(notice))
-    if not notices:
-        return result
-
-    payload = _payload_dict(result)
-    if "warnings" not in payload:
-        return result
-    existing = list(payload.get("warnings") or [])
-    payload["warnings"] = [*existing, *(notice.as_dict() for notice in notices)]
-    return payload
