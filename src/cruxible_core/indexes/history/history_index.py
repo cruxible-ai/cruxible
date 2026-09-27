@@ -325,16 +325,6 @@ class HistoryReader:
         ).fetchall()
         return AcceptedGenerationLocation(*rows[0]) if len(rows) == 1 else None
 
-    def candidate_accepted(self, candidate_digest: str) -> bool:
-        return (
-            self._connection.execute(
-                "SELECT 1 FROM accepted_generations "
-                "WHERE candidate_digest=? AND sequence<=? LIMIT 1",
-                (candidate_digest, self.sequence),
-            ).fetchone()
-            is not None
-        )
-
     def member_history(self, path: str) -> tuple[AcceptedMemberLocation, ...]:
         """All member occurrences, including evaluations with unchanged bytes."""
         return tuple(

@@ -61,13 +61,13 @@ def test_sparse_occurrences_reinstatement_rename_cutoff_and_queries(tmp_path, se
         assert reader.generation_for_oid("absent") is None
         assert latest.actor_id == state.head.record.actor_binding.actor_id
         assert latest.source_record_digest == state.head.record.changeset_digest
-        assert reader.candidate_accepted(latest.candidate_digest)
+        assert reader.generation_for_candidate(latest.candidate_digest) is not None
     checked = index.generations_checked
     written = index.artifact_rows_written
     with index.read(state, source, at=coordinate(state.history[1], seeded)) as reader:
         assert reader.sequence == 1
         assert reader.artifact("old").occurrence_sequence == 0
-        assert not reader.candidate_accepted(latest.candidate_digest)
+        assert reader.generation_for_candidate(latest.candidate_digest) is None
         with pytest.raises(PlaybillFormatError):
             reader.generation(2)
         with pytest.raises(PlaybillFormatError):
@@ -148,7 +148,7 @@ def test_external_changes_reconciled_and_failed_source_does_not_publish(tmp_path
         db.execute("UPDATE accepted_generations SET candidate_digest='fake' WHERE sequence=1")
     with index.read(state, lambda n, _prior: [envelope(str(n))]) as reader:
         assert reader.artifact("1").identity == "Claim:a"
-        assert not reader.candidate_accepted("fake")
+        assert reader.generation_for_candidate("fake") is None
     index.invalidate()
 
     def fail(n, _prior=None):
@@ -502,7 +502,10 @@ def test_real_successor_uses_only_changed_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(instance._ledger, "changed_tree_paths", diff)
     monkeypatch.setattr(instance._ledger, "read_tree", no_cold_tree)
     with instance.accepted_history_reader() as reader:
-        assert reader.candidate_accepted(proposal.proposal.proposal.candidate.candidate_digest)
+        assert (
+            reader.generation_for_candidate(proposal.proposal.proposal.candidate.candidate_digest)
+            is not None
+        )
     assert calls == [(old.git_oid, instance.accepted_coordinate().git_oid)]
     assert index.generations_checked == checked + 1
     with sqlite3.connect(index.path) as db:
