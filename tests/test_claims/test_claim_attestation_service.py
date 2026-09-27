@@ -7,6 +7,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from cruxible_client.authoring.attestations import LocalEd25519ClaimAttestationSigner
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV3,
@@ -47,7 +48,6 @@ from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.evidence.attestation_verification import _examined_capture_semantics
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.ledger.signing import LocalEd25519ClaimAttestationSigner
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,

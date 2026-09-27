@@ -4,8 +4,10 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from cruxible_client.authoring.attestations import LocalEd25519ClaimAttestationSigner
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
@@ -32,7 +34,6 @@ from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.providers import ProviderSigningKeyV1
 from cruxible_client.contracts.subjects import subject_digest
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.ledger.signing import LocalEd25519ClaimAttestationSigner
 from tests.core_support._pc_c_support import NOW, capture_contract, provider
 from tests.core_support._support import initialize_local
 from tests.test_claims.test_claims import OBSERVED_AT, _claim, _subject
@@ -67,6 +68,15 @@ def _accepted_claim(instance, claim_id: str = "CLM-0123456789abcdef0123456789abc
     return coordinate, capture, accepted
 
 
+def _sign_v1(private_key_path: Path, statement: ClaimAttestationStatement) -> ClaimAttestation:
+    private_key = serialization.load_ssh_private_key(private_key_path.read_bytes(), password=None)
+    assert isinstance(private_key, Ed25519PrivateKey)
+    return ClaimAttestation(
+        **statement.model_dump(mode="json"),
+        signature=private_key.sign(claim_attestation_statement_bytes(statement)).hex(),
+    )
+
+
 def _principals(instance, coordinate: AcceptedCoordinate) -> PrincipalRegistrySnapshot:
     return PrincipalRegistrySnapshot(
         semantic_root=coordinate.semantic_root,
@@ -89,14 +99,7 @@ def test_client_held_principal_signs_exact_claim_and_cas_round_trips(tmp_path: P
         capture_digests=(capture.capture_digest,),
         observed_at=NOW,
     )
-    signer = LocalEd25519ClaimAttestationSigner.open(
-        signer="Principal:owner",
-        signing_key_id=owner.principal.public_key_digest,
-        private_key_path=owner.private_key_path,
-        expected_public_key=owner.principal.public_key,
-        forbidden_roots=(tmp_path / "workspace", instance.root),
-    )
-    attestation = signer.sign_claim_attestation(statement)
+    attestation = _sign_v1(owner.private_key_path, statement)
     digest = store_claim_attestation(attestation, store=instance.body_store())
     assert read_claim_attestation(digest, store=instance.body_store()) == attestation
     verified = verify_claim_attestation(
@@ -114,8 +117,9 @@ def test_client_held_principal_signs_exact_claim_and_cas_round_trips(tmp_path: P
     assert verified.attestation_grade == "verified_principal"
     assert verified.coverage == "exact_subject"
 
-    future = signer.sign_claim_attestation(
-        statement.model_copy(update={"observed_at": NOW + timedelta(seconds=1)})
+    future = _sign_v1(
+        owner.private_key_path,
+        statement.model_copy(update={"observed_at": NOW + timedelta(seconds=1)}),
     )
     with pytest.raises(ClaimAttestationError, match="observed_at is in the future"):
         verify_claim_attestation(
@@ -205,14 +209,7 @@ def test_wrong_instance_tamper_and_missing_capture_fail_closed(tmp_path: Path) -
         capture_digests=(capture.capture_digest,),
         observed_at=NOW,
     )
-    signer = LocalEd25519ClaimAttestationSigner.open(
-        signer="Principal:owner",
-        signing_key_id=owner.principal.public_key_digest,
-        private_key_path=owner.private_key_path,
-        expected_public_key=owner.principal.public_key,
-        forbidden_roots=(tmp_path / "workspace", instance.root),
-    )
-    attestation = signer.sign_claim_attestation(statement)
+    attestation = _sign_v1(owner.private_key_path, statement)
     arguments = {
         "verification_time": NOW,
         "expected_instance_id": "other-instance",
