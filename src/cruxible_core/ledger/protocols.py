@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from cruxible_client.contracts.canonical import Sha256Value
-from cruxible_client.contracts.types import GitObjectFormat, PlaybillInspection
+from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_core.ledger.git import GitTreeEntry
 
 
@@ -28,22 +27,6 @@ class LedgerRepositoryProtocol(Protocol):
     def verify_commit(self, oid: str) -> bool: ...
 
 
-@runtime_checkable
-class CanonicalDigesterProtocol(Protocol):
-    """Domain-separated digest service used by roots and future artifacts."""
-
-    def digest(self, domain: str, payload: Mapping[str, object]) -> Sha256Value: ...
-
-
-@runtime_checkable
-class GenerationCoordinateInspectorProtocol(Protocol):
-    """Credential-safe inspection seam for service and future public surfaces."""
-
-    def inspect(self) -> PlaybillInspection: ...
-
-
 __all__ = [
-    "CanonicalDigesterProtocol",
-    "GenerationCoordinateInspectorProtocol",
     "LedgerRepositoryProtocol",
 ]

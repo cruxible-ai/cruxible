@@ -35,13 +35,6 @@ SearchStatus = Literal["accepted", "conflicted", "overturned", "refused", "retir
 SearchKindAvailability = Literal["installed", "not_installed"]
 
 SEARCH_KINDS: tuple[SearchKind, ...] = ("claim", "demand", "procedure")
-SEARCH_STATUSES: tuple[SearchStatus, ...] = (
-    "accepted",
-    "conflicted",
-    "overturned",
-    "refused",
-    "retired",
-)
 
 
 class _StrictSearchModel(BaseModel):
@@ -293,7 +286,6 @@ __all__ = [
     "SEARCH_KINDS",
     "SEARCH_RESULT_DOMAIN",
     "SEARCH_SELECTION_BASIS_DOMAIN",
-    "SEARCH_STATUSES",
     "PlaybillSearchBudgetsV1",
     "PlaybillSearchCountV1",
     "PlaybillSearchCursorV1",

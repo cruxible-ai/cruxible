@@ -25,7 +25,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_valid
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.repairs import ServedRepairV1, served_repair_for_refusal
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 
@@ -392,10 +391,6 @@ class PlaybillProcedureReadingsResultV1(_StrictReadingWireModel):
         return format_datetime(value)
 
 
-def measurement_repair_for_refusal(code: ProcedureMeasurementRefusalCodeV1) -> ServedRepairV1:
-    return served_repair_for_refusal(code)
-
-
 __all__ = [
     "PlaybillProcedureMeasureRequestV1",
     "PlaybillProcedureMeasureResultV1",
@@ -410,5 +405,4 @@ __all__ = [
     "ProcedureMeasurementVerdictV1",
     "ProcedureReadingStatusV1",
     "ProcedureReadingSummaryV1",
-    "measurement_repair_for_refusal",
 ]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -126,12 +126,6 @@ class FreezeRequirementV1(_StrictPolicyModel):
         for item in value:
             governance_identifier(item, label="freeze transition exception")
         return _sorted_unique(value, label="freeze transition exceptions")
-
-
-PolicyRequirementV1 = Annotated[
-    CorroborationRequirementV1 | FreezeRequirementV1,
-    Field(discriminator="tag"),
-]
 
 
 class ClaimAdmissionPolicyV1(_StrictPolicyModel):

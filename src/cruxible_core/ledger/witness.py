@@ -7,7 +7,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.canonical import GenerationRoot, SemanticRoot, canonical_bytes
+from cruxible_client.contracts.canonical import GenerationRoot, SemanticRoot
 from cruxible_client.contracts.types import GitObjectFormat
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -61,8 +61,4 @@ class WitnessSink(Protocol):
     def latest(self, instance_id: str) -> WitnessRecord | None: ...
 
 
-def render_witness_record(record: WitnessRecord) -> bytes:
-    return canonical_bytes(record.model_dump(mode="json")) + b"\n"
-
-
-__all__ = ["WitnessRecord", "WitnessSink", "render_witness_record"]
+__all__ = ["WitnessRecord", "WitnessSink"]

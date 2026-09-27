@@ -367,9 +367,6 @@ class LineSpecV5(LineSpecV3):
         return data
 
 
-TriggerInputLine: TypeAlias = LineSpecV4 | LineSpecV5
-
-
 def line_requested_rung(line: "LineSpecV1") -> Literal[1, 2, 3]:
     """The internal ordering value of what a Line asks to do, for either generation."""
 
@@ -883,7 +880,6 @@ __all__ = [
     "LineSpecV3",
     "LineSpecV4",
     "LineSpecV5",
-    "TriggerInputLine",
     "AUTHORITY_RUNG",
     "LineAuthority",
     "RUNG_AUTHORITY",

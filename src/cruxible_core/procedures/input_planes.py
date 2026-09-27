@@ -252,14 +252,6 @@ def validate_node_input_plane(
         )
 
 
-def node_input_plane(
-    node: ClaimTapNodeV6 | StateTapNodeV3 | SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3,
-) -> str:
-    """Return the one plane a graph input node may ever read."""
-
-    return _PLANE_FOR_NODE[node.kind]
-
-
 __all__ = [
     "AcceptedStateRunInputV1",
     "AcceptedStateRunInputV2",
@@ -267,7 +259,6 @@ __all__ = [
     "LandedCaptureRunInputV1",
     "ProcedureRunInputV1",
     "merge_run_input_vector",
-    "node_input_plane",
     "run_input_digest",
     "validate_node_input_plane",
     "validate_run_input_vector",

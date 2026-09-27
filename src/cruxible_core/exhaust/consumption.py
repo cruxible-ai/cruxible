@@ -41,7 +41,6 @@ def consumption_receipts_enabled() -> bool:
 CONSUMPTION_RECEIPT_ID_DOMAIN = "playbill-consumption-receipt-v1"
 # Keep the epoch's original locator; only new receipts get singleton partitions.
 CONSUMPTION_EPOCH_PARTITION_ID = "receipts"
-CONSUMPTION_EPOCH_EVENT_ID = "consumption-epoch"
 
 ConsumptionOperation: TypeAlias = Literal[
     "playbill.claim.get",

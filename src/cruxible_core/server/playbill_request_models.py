@@ -17,8 +17,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCreateRequestV1,
     AuthoringIntentCreateRequestV2,
     AuthoringIntentCreateRequestV3,
-    InsertionConfirmRequestV2,
-    InsertionPrepareRequestV2,
 )
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.declared_blocks import (
@@ -225,10 +223,6 @@ class PlaybillAuthoringSubmitRequest(_StrictPlaybillRequest):
 class PlaybillInsertionAbandonRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-insertion-abandon-request-v1"] = "playbill-insertion-abandon-request-v1"
     expectation_id: str | None = None
-
-
-PlaybillInsertionPrepareRequest = InsertionPrepareRequestV2
-PlaybillInsertionConfirmRequest = InsertionConfirmRequestV2
 
 
 class PlaybillBlockDeclareRequest(_StrictPlaybillRequest):

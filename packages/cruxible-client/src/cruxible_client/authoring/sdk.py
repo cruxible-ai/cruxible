@@ -191,7 +191,6 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.predictions import (
     ObservationSettlementEvidenceV2,
     PlaybillPredictRequestV2,
-    PredictionRuleV1,
     TerminalSettlementEvidenceV2,
 )
 from cruxible_client.contracts.procedures.artifacts import (
@@ -235,7 +234,6 @@ _SUBJECT_RE = re.compile(
 # Anything outside the set is skew, not caller error; see _claim_type_object_kind.
 _CLAIM_TYPE_OBJECT_KINDS = frozenset({"literal", "subject", "exact_content"})
 _CLAIM_ADAPTER: TypeAdapter[ClaimArtifactAny] = TypeAdapter(ClaimArtifactAny)
-_PREDICTION_RULE_ADAPTER: TypeAdapter[PredictionRuleV1] = TypeAdapter(PredictionRuleV1)
 _RETIRE_CLOSURE_MISMATCH_CODE = "playbill.claim.retire_closure_mismatch"
 _CLAIM_RETIRE_OPERATION_DOMAIN = "playbill-claim-retire-operation-v1"
 _RETIREMENT_SUBMISSION_CACHE_LIMIT = 128

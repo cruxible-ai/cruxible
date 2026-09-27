@@ -173,13 +173,6 @@ def canonical_digest(domain: str, payload: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical_bytes({"tag": domain, **payload})).hexdigest()
 
 
-class CanonicalDigester:
-    """Concrete structural implementation of the canonical digest seam."""
-
-    def digest(self, domain: str, payload: Mapping[str, object]) -> "Sha256Value":
-        return Sha256Value(canonical_digest(domain, payload))
-
-
 @dataclass(frozen=True)
 class Sha256Value:
     """A kind-distinct SHA-256 value with an explicit algorithm tag."""
@@ -526,7 +519,6 @@ __all__ = [
     "ApprovalDigest",
     "BootstrapRoot",
     "CandidateDigest",
-    "CanonicalDigester",
     "CasDigest",
     "ChangeSetDigest",
     "DependencyEdgeRoot",

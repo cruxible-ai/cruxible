@@ -361,12 +361,6 @@ def build_audit_cursor(
     )
 
 
-def audit_request_digest(request: Mapping[str, object]) -> str:
-    payload = dict(request)
-    payload.pop("tag", None)
-    return typed_digest(Sha256Value, AUDIT_REQUEST_DIGEST_DOMAIN, payload).tagged
-
-
 def audit_result_digest(result: BaseModel) -> str:
     payload = result.model_dump(mode="json")
     payload.pop("tag", None)
@@ -538,7 +532,6 @@ __all__ = [
     "AuditRunV1",
     "AuditScopeV1",
     "audit_cursor_digest",
-    "audit_request_digest",
     "audit_result_digest",
     "audit_row_order",
     "audit_run_id",

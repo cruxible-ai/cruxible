@@ -86,13 +86,8 @@ from cruxible_core.service.discovery.query import _AcceptedQueryFactsRead
 from cruxible_core.service.floor.floor_content import current_content, review_snapshot_oid
 from cruxible_core.storage.cas import BodyAccessContext
 
-FLOOR_FORMAT_V1 = "playbill-floor-export-v1"
-FLOOR_FORMAT_V2 = "playbill-floor-export-v2"
-FLOOR_FORMAT = "playbill-floor-export-v3"
 MANIFEST_PATH = "manifest.json"
 COVERAGE_MANIFEST_PATH = "coverage-manifest.json"
-FLOOR_DIGEST_DOMAIN_V1 = "playbill-floor-export-v1"
-FLOOR_DIGEST_DOMAIN = "playbill-floor-export-v2"
 DEFAULT_FLOOR_PRINCIPAL = "playbill-floor"
 SUBJECT_PATH_PREFIX = "subjects/"
 

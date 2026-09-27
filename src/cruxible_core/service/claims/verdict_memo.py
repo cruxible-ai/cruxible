@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-from collections import OrderedDict
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
@@ -136,13 +135,8 @@ def claim_set_digest(identities: tuple[str, ...]) -> str:
     return digest.hexdigest()
 
 
-def bounded_memo() -> "OrderedDict[tuple[str, str, str, str], object]":
-    return OrderedDict()
-
-
 __all__ = [
     "MEMO_CAPACITY",
-    "bounded_memo",
     "claim_set_digest",
     "interval_holds",
     "invariance_interval",

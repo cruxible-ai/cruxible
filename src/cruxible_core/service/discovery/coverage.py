@@ -126,29 +126,6 @@ def _resolve_coordinate(
     )
 
 
-def build_accepted_evidence_index(
-    instance: PlaybillInstance,
-    *,
-    at: PlaybillAcceptedCoordinate,
-) -> EvidenceCitationIndexV1:
-    """Export the frozen V1 digest input directly from accepted SQL relationships."""
-    at = _resolve_coordinate(instance, at)
-    internal = instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
-    )
-    with instance.bind_accepted_projection(internal) as projection:
-        index, _envelopes = coverage_rows(
-            projection.citations,
-            bodies=instance.body_store(),
-            at=at,
-            version=1,
-        )
-        return index
-
-
 def build_accepted_evidence_index_v2(
     instance: PlaybillInstance,
     *,
@@ -591,7 +568,6 @@ def service_resolve_playbill_coverage(
 __all__ = [
     "COVERAGE_ACCESS_PROFILE_ID",
     "accepted_evidence_sources",
-    "build_accepted_evidence_index",
     "build_accepted_evidence_index_v2",
     "coverage_access_profile",
     "service_resolve_playbill_coverage",

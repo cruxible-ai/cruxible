@@ -4,11 +4,6 @@ from __future__ import annotations
 
 from cruxible_core.errors import ConfigError
 
-TOOL_PROMPT_STYLE_RULE = (
-    'Tool descriptions must start with "Use when", name the user intent first, '
-    "and avoid implementation details that do not help a client choose a tool."
-)
-
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_provider_catalog": (
         "Use when you need to discover available provider packages and their node types."
@@ -380,6 +375,5 @@ def tool_description(tool_name: str) -> str:
 
 __all__ = [
     "TOOL_DESCRIPTIONS",
-    "TOOL_PROMPT_STYLE_RULE",
     "tool_description",
 ]

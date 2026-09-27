@@ -2003,24 +2003,6 @@ def update_insertion_expectation_v2(
     return build_insertion_expectation_v2(**values)
 
 
-def insertion_prepare_operation_v2_key(
-    expectation_id: str,
-    observation: PublicationSourceObservationV2,
-    *,
-    live_expectation_digest: str,
-) -> str:
-    _sha256(live_expectation_digest, label="live publication expectation digest")
-    return typed_digest(
-        Sha256Value,
-        INSERTION_PREPARE_OPERATION_V2_DOMAIN,
-        {
-            "expectation_id": expectation_id,
-            "live_expectation_digest": live_expectation_digest,
-            "observation_digest": publication_source_observation_v2_digest(observation),
-        },
-    ).tagged
-
-
 def insertion_prepare_terminal_operation_v2_key(
     expectation_id: str,
     observation: PublicationSourceObservationV2,
@@ -2033,20 +2015,6 @@ def insertion_prepare_terminal_operation_v2_key(
         {
             "expectation_id": expectation_id,
             "observation_digest": publication_source_observation_v2_digest(observation),
-        },
-    ).tagged
-
-
-def insertion_confirm_operation_v2_key(
-    expectation_id: str,
-    observation: InsertionConfirmationObservationV2,
-) -> str:
-    return typed_digest(
-        Sha256Value,
-        INSERTION_CONFIRM_OPERATION_V2_DOMAIN,
-        {
-            "expectation_id": expectation_id,
-            "observation_digest": insertion_confirmation_observation_v2_digest(observation),
         },
     ).tagged
 
@@ -3029,13 +2997,11 @@ __all__ = [
     "build_publication_preparation_v2",
     "build_preflight_certificate",
     "insertion_confirmation_observation_v2_digest",
-    "insertion_confirm_operation_v2_key",
     "insertion_expectation_id",
     "insertion_expectation_v2_digest",
     "insertion_result_key",
     "insertion_target_v2_digest",
     "insertion_terminal_tombstone_v2_digest",
-    "insertion_prepare_operation_v2_key",
     "insertion_prepare_terminal_operation_v2_key",
     "publication_block_id",
     "publication_preparation_v2_digest",

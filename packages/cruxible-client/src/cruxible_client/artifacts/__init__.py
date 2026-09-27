@@ -2,7 +2,6 @@
 
 from cruxible_client.artifacts.layers import pack_files, unpack_files
 from cruxible_client.artifacts.oci import (
-    INSTANCE_ARTIFACT_TYPE,
     ArtifactImage,
     ArtifactKind,
     Blob,
@@ -22,7 +21,6 @@ from cruxible_client.artifacts.registry import (
 
 __all__ = [
     "DEFAULT_NAMESPACE",
-    "INSTANCE_ARTIFACT_TYPE",
     "ArtifactImage",
     "ArtifactKind",
     "Blob",

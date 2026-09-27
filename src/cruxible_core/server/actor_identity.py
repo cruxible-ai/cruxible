@@ -10,11 +10,7 @@ from cruxible_core.actor_vocabulary import (
 from cruxible_core.actor_vocabulary import (
     LOCAL_OPERATOR_ACTOR_TYPE as LOCAL_OPERATOR_ACTOR_TYPE,
 )
-from cruxible_core.actor_vocabulary import LOCAL_OPERATOR_KIND as LOCAL_OPERATOR_KIND
 from cruxible_core.actor_vocabulary import LOCAL_OPERATOR_ORG_ID as LOCAL_OPERATOR_ORG_ID
-from cruxible_core.actor_vocabulary import (
-    LOCAL_OPERATOR_STATUS as LOCAL_OPERATOR_STATUS,
-)
 from cruxible_core.governance.actor_context import GovernedActorContext
 
 
@@ -32,8 +28,6 @@ def local_operator_actor_context(*, request_id: str | None = None) -> GovernedAc
 __all__ = [
     "LOCAL_OPERATOR_ACTOR_ID",
     "LOCAL_OPERATOR_ACTOR_TYPE",
-    "LOCAL_OPERATOR_KIND",
     "LOCAL_OPERATOR_ORG_ID",
-    "LOCAL_OPERATOR_STATUS",
     "local_operator_actor_context",
 ]

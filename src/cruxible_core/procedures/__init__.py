@@ -29,7 +29,6 @@ from cruxible_client.contracts.procedures.closure import (
     ProviderExtrasEnvironmentPinMapV1,
     ProviderImplementationClosureV1,
     close_procedure_pin_slots,
-    procedure_slot_interface_digest,
 )
 from cruxible_client.contracts.procedures.contracts import (
     OwnedProcedureContractValidator,
@@ -341,7 +340,6 @@ __all__ = [
     "line_spec_digest",
     "line_spec_path",
     "parse_line_spec",
-    "procedure_slot_interface_digest",
     "procedure_artifact_digest",
     "procedure_path",
     "render_procedure",

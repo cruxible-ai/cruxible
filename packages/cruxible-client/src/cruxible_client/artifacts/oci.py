@@ -62,11 +62,6 @@ class ArtifactKind(Generic[T]):
     unpack: Callable[[bytes, tuple[bytes, ...]], T]
 
 
-# Reserved for the instance snapshot a deploy will move (ledger, exhaust journal,
-# definitions); no kind is registered under it yet.
-INSTANCE_ARTIFACT_TYPE = "application/vnd.cruxible.instance.v1"
-
-
 @dataclass(frozen=True)
 class ArtifactImage:
     """One manifest and every blob it names, all digest-checked."""

@@ -193,12 +193,6 @@ class ProviderBudgetTranslationV1(_StrictProviderExecutionModel):
 PROVIDER_BUDGET_TRANSLATION_DOMAIN = "playbill-provider-budget-translation-v1"
 
 
-def provider_budget_translation_digest(translation: ProviderBudgetTranslationV1) -> str:
-    payload = translation.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(Sha256Value, PROVIDER_BUDGET_TRANSLATION_DOMAIN, payload).tagged
-
-
 _OBSERVER_BACKEND_RE = re.compile(r"^[a-z0-9]+(?:[.\-][a-z0-9]+)*$")
 
 
@@ -242,12 +236,6 @@ class ProviderEgressObservationV1(_StrictProviderExecutionModel):
 
 
 PROVIDER_EGRESS_OBSERVATION_DOMAIN = "playbill-provider-egress-observation-v1"
-
-
-def provider_egress_observation_digest(observation: ProviderEgressObservationV1) -> str:
-    payload = observation.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(Sha256Value, PROVIDER_EGRESS_OBSERVATION_DOMAIN, payload).tagged
 
 
 class VerifiedProviderBindingV1(_StrictProviderExecutionModel):
@@ -439,12 +427,6 @@ class ProviderInvocationOutcomeV1(_StrictProviderExecutionModel):
 
 
 PROVIDER_INVOCATION_OUTCOME_DOMAIN = "playbill-provider-invocation-outcome-v1"
-
-
-def provider_invocation_outcome_digest(outcome: ProviderInvocationOutcomeV1) -> str:
-    payload = outcome.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(Sha256Value, PROVIDER_INVOCATION_OUTCOME_DOMAIN, payload).tagged
 
 
 class ProviderInvocationReceiptV1(_StrictProviderExecutionModel):
@@ -693,11 +675,8 @@ __all__ = [
     "ProviderSecretResolutionPlanV1",
     "ProcedureDerivedSourceRequestV1",
     "VerifiedProviderBindingV1",
-    "provider_budget_translation_digest",
     "build_procedure_derived_source_request",
-    "provider_egress_observation_digest",
     "provider_external_occurrence_plan_digest",
-    "provider_invocation_outcome_digest",
     "provider_invocation_receipt_digest",
     "provider_invocation_output_digest",
     "procedure_derived_source_request_digest",

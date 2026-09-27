@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactPin
-from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
+from cruxible_client.contracts.canonical import ArtifactDigest
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactAny
 from cruxible_client.contracts.procedures.models import (
@@ -98,14 +98,6 @@ class ProcedureSlotInterfaceV1(_StrictClosureModel):
         return self
 
 
-def procedure_slot_interface_digest(interface: ProcedureSlotInterfaceV1) -> ArtifactDigest:
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-procedure-slot-interface-v1",
-        interface.model_dump(mode="json", exclude={"tag"}),
-    )
-
-
 @dataclass(frozen=True)
 class ClosedProcedurePinsV1:
     exact_pins: tuple[ArtifactPin, ...]
@@ -184,5 +176,4 @@ __all__ = [
     "ProcedurePinClosureError",
     "ProcedureSlotInterfaceV1",
     "close_procedure_pin_slots",
-    "procedure_slot_interface_digest",
 ]

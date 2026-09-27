@@ -218,65 +218,6 @@ PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
     **DONOR_OPERATION_PERMISSIONS,
 }
 
-# ---------------------------------------------------------------------------
-# Feedback action → minimum permission tier (per-ACTION, not per-tool)
-# ---------------------------------------------------------------------------
-#
-# The permission map above is per-TOOL, and ``cruxible_feedback`` (with its
-# batch/from_query siblings) is not one operation: it multiplexes RECORDING an
-# observation with ADJUDICATING a claim. Recording is a governed-operator act.
-# Adjudication is not: ``accept``/``correct`` make a non-live edge LIVE and
-# ``reject`` retracts one, which is the same authority a direct graph write or a
-# group resolution carries. Leaving every action at the tool's GOVERNED_WRITE
-# floor let a single GOVERNED_WRITE actor attest a pending edge and then
-# accept their own proposal — a live approved claim on a proposal_only type
-# with no reviewer above them (wi-feedback-approval-rail).
-#
-# So the adjudication verbs are gated at GRAPH_WRITE, the same tier that
-# ``cruxible_resolve_group`` and the direct-write verbs require, matching the
-# procedure-resolve/disposition precedent.
-#
-# ``flag`` was REMOVED in 2026-07 (dd-flag-superseded-by-attestation, brought
-# forward from "retires later"): it moved an edge to ``pending`` while storing
-# no annotation, so it destroyed the reviewer's signal. It was also the only
-# feedback action sitting at GOVERNED_WRITE, so EVERY remaining feedback action
-# is now an adjudication requiring GRAPH_WRITE. What still sits at the tool's
-# GOVERNED_WRITE floor is the RECORDING half of an action — persisting the
-# FeedbackRecord — which is what an adjudication refusal rolls back along with
-# the transition. A GOVERNED_WRITE actor who wants to register a doubt uses
-# ``cruxible_attest`` with stance ``contradict``, which records the observation,
-# its evidence, and its actor and changes no status.
-#
-# Enforced in ``service/feedback.py`` (the single service chokepoint every
-# surface funnels through), not here, because the requirement is a property of
-# the payload's action rather than of the tool name.
-FEEDBACK_ACTION_PERMISSIONS: dict[str, PermissionMode] = {
-    "accept": PermissionMode.GRAPH_WRITE,
-    "reject": PermissionMode.GRAPH_WRITE,
-    "correct": PermissionMode.GRAPH_WRITE,
-}
-
-# Audited operation name the adjudication check reports under. It is a runtime
-# operation rather than a registered MCP tool, so the denial message names the
-# adjudication act instead of whichever feedback tool carried it.
-FEEDBACK_ADJUDICATION_OPERATION = "cruxible_feedback_adjudicate"
-
-# ---------------------------------------------------------------------------
-# Group resolution — the same adjudication act, reached by a second door
-# ---------------------------------------------------------------------------
-#
-# ``cruxible_resolve_group`` remains GRAPH_WRITE in the donor-operation map
-# above even though its MCP/HTTP surface is gone. The exported
-# ``service_resolve_group`` can still be called by donor parity code: a direct
-# library caller holding only GOVERNED_WRITE could otherwise reach the
-# transition (and with ``stamp_existing=True`` bless a pending edge) with no
-# tier check at all. Since wi-feedback-approval-rail chose
-# the SERVICE layer as the enforcement seam for adjudication, group resolution
-# is made consistent with it: the transition re-asserts the requirement inside
-# its own mutation-receipt scope, so the refusal is receipted and every door
-# into the act is gated the same way.
-GROUP_RESOLUTION_OPERATION = "cruxible_resolve_group"
-GROUP_RESOLUTION_PERMISSION = PermissionMode.GRAPH_WRITE
 
 # ---------------------------------------------------------------------------
 # Cached state

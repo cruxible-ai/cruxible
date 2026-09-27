@@ -295,10 +295,6 @@ def merge_source_catalogs(
         raise PlaybillFormatError("merged source catalogs are ambiguous") from exc
 
 
-def source_catalog_digest(catalog: SourceCatalog) -> str:
-    return _source_catalog_entries_digest(catalog.catalog_kind, catalog.entries)
-
-
 def _source_catalog_entries_digest(
     catalog_kind: SourceCatalogKind,
     entries: tuple[SourceCatalogEntryAny, ...],
@@ -529,5 +525,4 @@ __all__ = [
     "compile_source_catalog",
     "content_digest_bytes",
     "merge_source_catalogs",
-    "source_catalog_digest",
 ]

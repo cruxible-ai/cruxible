@@ -30,10 +30,6 @@ from cruxible_core.service.claims.subjects import (
 from cruxible_core.storage.cas import BodyAccessContext
 
 PlaybillExplainDetail = Literal["summary", "evidence", "proof"]
-PLAYBILL_EXPLAIN_SUPPORTED_DETAILS: tuple[Literal["summary", "evidence"], ...] = (
-    "summary",
-    "evidence",
-)
 
 
 class _StrictExplainModel(BaseModel):
@@ -279,7 +275,6 @@ def service_explain_playbill_subject(
 
 
 __all__ = [
-    "PLAYBILL_EXPLAIN_SUPPORTED_DETAILS",
     "PlaybillExplainDetail",
     "PlaybillExplainResponse",
     "PlaybillExplainResult",

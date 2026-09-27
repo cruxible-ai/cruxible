@@ -21,7 +21,6 @@ from cruxible_client.contracts.actor_types import (
     TransportCapability,
 )
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
-from cruxible_core.errors import ConfigError
 
 _ACTOR_KIND_BY_TYPE: dict[str, DerivedActorKind] = {
     "human_user": "human",
@@ -89,17 +88,6 @@ def derived_actor_kind(actor: GovernedActorContext | None) -> DerivedActorKind:
     return _ACTOR_KIND_BY_TYPE.get(actor.actor_type, "unknown")
 
 
-def require_hosted_actor_context(value: Any) -> GovernedActorContext:
-    if isinstance(value, GovernedActorContext):
-        return value
-    if hasattr(value, "model_dump"):
-        value = value.model_dump(mode="json")
-    try:
-        return GovernedActorContext.model_validate(value)
-    except ValidationError as exc:
-        raise ConfigError("hosted governed actor context is required") from exc
-
-
 __all__ = [
     "ActorType",
     "DerivedActorKind",
@@ -109,5 +97,4 @@ __all__ = [
     "derived_actor_kind",
     "dump_actor_context",
     "load_actor_context",
-    "require_hosted_actor_context",
 ]

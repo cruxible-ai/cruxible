@@ -747,7 +747,6 @@ class CandidateRecordV3(_StrictCandidateModel):
         return self
 
 
-CandidateRecordLike = CandidateRecord | CandidateRecordV2
 CandidateRecordAnyVersion = CandidateRecord | CandidateRecordV2 | CandidateRecordV3
 
 CandidateWireVersion = Literal[
@@ -779,7 +778,6 @@ __all__ = [
     "CandidateWireVersion",
     "CandidateRecord",
     "CandidateRecordAnyVersion",
-    "CandidateRecordLike",
     "CandidateRecordV2",
     "CandidateRecordV3",
     "CandidateMemberEvidence",

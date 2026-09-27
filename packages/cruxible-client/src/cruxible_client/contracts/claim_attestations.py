@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 
 ClaimStance = Literal["support", "contradict", "unsure"]
 ClaimAttestationBasis: TypeAlias = Literal["examined_existing", "new_capture"]
-ClaimAttestationLineageStatus: TypeAlias = Literal["proven", "incomplete"]
 AttestationGrade = Literal["verified_provider", "verified_principal"]
 ClaimAttestationCoverage = Literal["exact_subject", "shell_stale"]
 
@@ -746,7 +745,6 @@ __all__ = [
     "ClaimAttestationCaptureReferenceV1",
     "ClaimAttestationCoverage",
     "ClaimAttestationError",
-    "ClaimAttestationLineageStatus",
     "ClaimAttestationResolvedArtifactV1",
     "ClaimAttestationStatement",
     "ClaimAttestationStatementV2",

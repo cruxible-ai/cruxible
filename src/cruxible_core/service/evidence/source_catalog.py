@@ -192,24 +192,6 @@ def service_check_playbill_source_bundle(
     )
 
 
-def service_check_playbill_sources(
-    instance: PlaybillInstance,
-    *,
-    catalog: SourceCatalog,
-    repository_root: Path,
-    root_aliases: dict[str, Path] | None = None,
-) -> PlaybillSourceCheckResult:
-    """Snapshot/hash declared bytes, then compare the frozen result with state."""
-
-    bundle = service_compile_playbill_sources(
-        instance,
-        catalog=catalog,
-        repository_root=repository_root,
-        root_aliases=root_aliases,
-    )
-    return service_check_playbill_source_bundle(instance, bundle=bundle)
-
-
 def _compiled_document(
     bundle: SourceCompilationBundle,
     source_name: str,
@@ -260,7 +242,6 @@ __all__ = [
     "PlaybillSourceContext",
     "PlaybillSourceCheckResult",
     "service_check_playbill_source_bundle",
-    "service_check_playbill_sources",
     "service_compile_playbill_sources",
     "service_propose_playbill_source_bundle",
     "service_playbill_source_context",

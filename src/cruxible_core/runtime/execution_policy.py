@@ -30,8 +30,6 @@ from cruxible_core.errors import (
 )
 
 SHARED_HOSTED_SERVER_PROFILE = "shared"
-CUSTOMER_CODE_EXECUTION_UNSUPPORTED = "customer_code_execution_unsupported"
-HOSTED_PROFILE_UNKNOWN = "hosted_profile_unknown"
 
 #: Hosted server profiles this build declares. Unset (or empty) is the ordinary
 #: single-tenant runtime and is deliberately not a member: it is the ABSENCE of

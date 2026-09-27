@@ -47,7 +47,6 @@ from cruxible_client.contracts.claim_verdicts import (
     evaluate_claim_verdict,
 )
 from cruxible_client.contracts.claims import AcceptedClaim, SubjectClaimObject
-from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.query.definitions import (
     QueryDefinitionV1,
@@ -59,10 +58,6 @@ from cruxible_client.contracts.subjects import AcceptedSubject
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 
 VIEW_DIGEST_DOMAIN = "playbill-subject-query-view-v1"
-
-
-class ClaimQueryBackendError(PlaybillError):
-    """A query backend was read outside the lifetime of its materialization."""
 
 
 class _StrictQueryBackendModel(BaseModel):
@@ -598,7 +593,6 @@ class DirectClaimFactIndex:
 __all__ = [
     "VIEW_DIGEST_DOMAIN",
     "ClaimFactRowV1",
-    "ClaimQueryBackendError",
     "ClaimQueryBackendFactoryV1",
     "ClaimQueryBackendV1",
     "ClaimQueryFactsV1",
