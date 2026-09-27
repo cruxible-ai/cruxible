@@ -73,13 +73,9 @@ from cruxible_core.coverage.indexes import (
 )
 from cruxible_core.coverage.manifest import (
     COVERAGE_DIRECTORY,
-    CoverageManifestBodyV1,
     CoverageManifestBodyV2,
-    coverage_manifest_body,
     coverage_manifest_body_v2,
-    load_coverage_manifest_file,
     load_coverage_manifest_file_v2,
-    write_coverage_manifest,
     write_coverage_manifest_v2,
 )
 from cruxible_core.coverage.resolver import (
@@ -397,48 +393,6 @@ def _capture_envelopes(
             {capture for citation in index.citations for capture in citation.capture_digests}
         )
     }
-
-
-def _publish_manifest(
-    instance: PlaybillInstance,
-    *,
-    instance_id: str,
-    index: EvidenceCitationIndexV1,
-    overlay: WorkingOccurrenceOverlayV1,
-    access_profile: CoverageAccessProfileV1,
-) -> CoverageManifestBodyV1:
-    """Publish the freshness manifest, advancing the epoch only when it moved.
-
-    The epoch is a counter over *observations*, not over calls. Two resolves of
-    an unchanged working set at an unchanged accepted coordinate are the same
-    observation, and republishing them would make the epoch a call counter that
-    no reader could use to order two snapshots.
-    """
-
-    directory = instance.root / COVERAGE_DIRECTORY
-    existing = load_coverage_manifest_file(directory)
-    epoch = 0 if existing is None else existing.body.epoch + 1
-    candidate = coverage_manifest_body(
-        instance_id=instance_id,
-        index=index,
-        overlay=overlay,
-        access_profile=access_profile,
-        epoch=epoch,
-    )
-    if existing is not None:
-        previous = existing.body
-        unchanged = (
-            previous.instance_id == candidate.instance_id
-            and previous.at == candidate.at
-            and previous.index_digest == candidate.index_digest
-            and previous.overlay_digest == candidate.overlay_digest
-            and previous.scope == candidate.scope
-            and previous.access_profile == candidate.access_profile
-        )
-        if unchanged:
-            return previous
-    write_coverage_manifest(directory, candidate)
-    return candidate
 
 
 def _publish_manifest_v2(

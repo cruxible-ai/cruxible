@@ -22,7 +22,6 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import PlaybillExecutionError
 
 PROVIDER_RUNTIME_PROTOCOL = "1.0"
@@ -246,9 +245,6 @@ class ProviderRuntimeRunContextV1(_StrictRuntimeModel):
 
     def to_json(self) -> bytes:
         return self.model_dump_json().encode("utf-8")
-
-    def to_canonical_json(self) -> bytes:
-        return canonical_bytes(self.model_dump(mode="json"))
 
 
 class ProviderRuntimeTraceV1(_StrictRuntimeModel):

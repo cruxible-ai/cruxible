@@ -296,7 +296,6 @@ from cruxible_core.storage.material_reservations import (
     reserve_admission_material_body,
 )
 
-PROCEDURE_RUN_ID_DOMAIN = "playbill-procedure-run-id-v1"
 PROCEDURE_RUN_STREAM_ID = "procedures"
 PROCEDURE_RUN_FENCING_TOKEN = "playbill-procedure-direct-run-v1"
 DIRECT_RECEIPT_REDUCER_DOMAIN = "playbill-direct-procedure-receipt-reducer-v1"
@@ -527,22 +526,6 @@ class ProcedureBindResultV2(_StrictProcedureSurfaceModel):
     accepted_readiness: ProcedureReadinessResultV1
     pending: ProcedurePendingSuccessorV1 | None = None
     workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
-
-
-class ProcedureRunRequestV1(_StrictProcedureSurfaceModel):
-    tag: Literal["playbill-procedure-run-request-v1"] = "playbill-procedure-run-request-v1"
-    evaluation_time: datetime
-    input: object
-
-    @field_validator("evaluation_time")
-    @classmethod
-    def _time(cls, value: datetime) -> datetime:
-        return ensure_utc(value)
-
-    @field_validator("input", mode="before")
-    @classmethod
-    def _input(cls, value: object) -> CanonicalValue:
-        return normalize_canonical(value)
 
 
 class ProcedureRunRequestV2(_StrictProcedureSurfaceModel):
@@ -1908,31 +1891,6 @@ def _activate_writer(
         fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
         expected_head=journal.read_head(stream, partition_id),
     )
-
-
-def _run_id(
-    instance: PlaybillInstance,
-    *,
-    actor_id: str,
-    accepted: AcceptedProcedureV1,
-    coordinate: AcceptedProjectionCoordinate,
-    request: ProcedureRunRequestV1,
-) -> str:
-    digest = typed_digest(
-        Sha256Value,
-        PROCEDURE_RUN_ID_DOMAIN,
-        {
-            "instance_id": instance.descriptor.instance_id,
-            "actor_id": actor_id,
-            "procedure_artifact_digest": accepted.artifact_digest,
-            "accepted_coordinate": AcceptedCoordinate.from_internal(coordinate).model_dump(
-                mode="json"
-            ),
-            "evaluation_time": format_datetime(request.evaluation_time),
-            "canonical_input": request.input,
-        },
-    ).tagged
-    return "RUN-" + digest.removeprefix("sha256:")
 
 
 def _records_for_run(instance: PlaybillInstance, run_id: str):  # type: ignore[no-untyped-def]
@@ -4732,7 +4690,6 @@ __all__ = [
     "LineRunIdentityMismatch",
     "LineRunNotAccepted",
     "LineRunRequestV1",
-    "PROCEDURE_RUN_ID_DOMAIN",
     "ProcedureBindRequestV1",
     "ProcedureBindResultV2",
     "ProcedureBindingGraphV4LineClosureRequired",

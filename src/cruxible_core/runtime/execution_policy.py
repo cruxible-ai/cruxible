@@ -190,11 +190,6 @@ def hosted_server_profile(environ: Mapping[str, str] | None = None) -> str | Non
     return profile or None
 
 
-def is_shared_hosted_profile(environ: Mapping[str, str] | None = None) -> bool:
-    """Return whether this process is running the shared hosted server profile."""
-    return hosted_server_profile(environ) == SHARED_HOSTED_SERVER_PROFILE
-
-
 def isolated_execution_backend(environ: Mapping[str, str] | None = None) -> str | None:
     """Return the configured isolated execution backend, normalized for comparison."""
     env = environ or os.environ

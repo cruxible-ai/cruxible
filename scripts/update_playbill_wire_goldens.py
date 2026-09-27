@@ -48,7 +48,6 @@ from cruxible_client.contracts.merkle import (
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
-    ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicyV1,
 )
 from cruxible_client.contracts.query.definitions import (
@@ -98,37 +97,6 @@ def _remove_retired_claim_type_fields(payload: dict[str, object]) -> dict[str, o
     resolution.pop("authority_rule_digest", None)
     payload.pop("authority", None)
     return payload
-
-
-def _direct_claim_type() -> ClaimType:
-    contract_digest = capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
-    return ClaimType(
-        identity=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
-        predicate="project.work_item.status",
-        allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"enum": ["blocked", "done", "ready"], "type": "string"},
-        cardinality="one",
-        permitted_roles=("normative", "observation"),
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(
-            rules=(
-                ClaimEvidenceAdmissionRuleV1(
-                    rule_id="direct-self-asserted",
-                    claim_roles=("normative", "observation"),
-                    capture_contract_digests=(contract_digest,),
-                    evidence_kinds=("self_asserted",),
-                    admission="direct",
-                    subject_binding="exact_claim_subject",
-                ),
-            )
-        ),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
-        ),
-    )
 
 
 def _query_claim_type(predicate: str, *, object_kind: str = "literal") -> ClaimType:

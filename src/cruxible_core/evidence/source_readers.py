@@ -342,20 +342,6 @@ class FakeVersionedExternalSourceReader:
             raise ExternalSourceError("fake source version is immutable once seeded")
         self._records[key] = record
 
-    def prune_fixture_version(self, source: ExternalSourceReferenceV1) -> None:
-        """Simulate WAL/version-retention loss in tests; not part of the reader protocol."""
-
-        self._records.pop(
-            _selection_key(
-                source.source_identity,
-                source.coordinate_type,
-                source.coordinate,
-                source.selector_type,
-                source.selector,
-            ),
-            None,
-        )
-
     def replay_available(self, source: ExternalSourceReferenceV1) -> bool:
         if source.replayability != "exact":
             return False

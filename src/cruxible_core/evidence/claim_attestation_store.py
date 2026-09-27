@@ -447,15 +447,6 @@ class ClaimAttestationEvidenceStore:
             previous = event.event_digest
         return events
 
-    def _all_markers(self) -> tuple[ClaimAttestationEventV1, ...]:
-        events: list[ClaimAttestationEventV1] = []
-        partitions = self.root / "partitions"
-        for directory in sorted(partitions.iterdir(), key=lambda item: item.name):
-            if directory.is_symlink() or not directory.is_dir():
-                raise _error("store_corrupt", "attestation partition directory is invalid")
-            events.extend(self._partition_events("sha256:" + directory.name))
-        return tuple(events)
-
     def _ensure_partition_tips(self) -> None:
         """Verify every durable chain once, then use one mutable tip per partition."""
 

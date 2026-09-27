@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import sys
-import warnings
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, TextIO
 
@@ -89,15 +88,6 @@ def emit_cli_deprecation(
     print(
         f"Deprecation: {serialize_deprecation(notice)}",
         file=stream or sys.stderr,
-    )
-
-
-def emit_python_deprecation(notice: DeprecationNotice, *, stacklevel: int = 2) -> None:
-    """Warn direct Python callers without making transport adapters depend on them."""
-    warnings.warn(
-        serialize_deprecation(notice),
-        DeprecationWarning,
-        stacklevel=stacklevel,
     )
 
 

@@ -86,12 +86,6 @@ class InstanceRegistry:
             return None
         return self._row_to_record(row)
 
-    def count_instances(self) -> int:
-        with self._connect() as conn:
-            row = conn.execute("SELECT COUNT(*) AS count FROM instances").fetchone()
-        assert row is not None
-        return int(row["count"])
-
     def list_instances(self) -> list[InstanceRecord]:
         """Return all registered instances ordered by instance ID."""
         with self._connect() as conn:
@@ -116,19 +110,6 @@ class InstanceRegistry:
             workspace_root=None,
         )
 
-    def get_or_create_governed_instance(
-        self,
-        workspace_root: str | Path,
-    ) -> RegisteredInstance:
-        resolved_workspace_root = str(Path(workspace_root).expanduser().resolve())
-        existing = self._get_by_backend_workspace_root(
-            GOVERNED_DAEMON_BACKEND,
-            resolved_workspace_root,
-        )
-        if existing is not None:
-            return RegisteredInstance(record=existing, created=False)
-        return self._create_governed_instance(workspace_root=resolved_workspace_root)
-
     def get_governed_instance_by_workspace_root(
         self,
         workspace_root: str | Path,
@@ -138,17 +119,6 @@ class InstanceRegistry:
         return self._get_by_backend_workspace_root(
             GOVERNED_DAEMON_BACKEND,
             resolved_workspace_root,
-        )
-
-    def get_governed_instance_by_location(
-        self,
-        location: str | Path,
-    ) -> InstanceRecord | None:
-        """Return the governed instance registered at *location*, if any."""
-        resolved_location = str(Path(location).expanduser().resolve())
-        return self._get_by_backend_location(
-            GOVERNED_DAEMON_BACKEND,
-            resolved_location,
         )
 
     def list_governed_instances(self) -> list[InstanceRecord]:
@@ -206,36 +176,6 @@ class InstanceRegistry:
             workspace_root=resolved_workspace_root,
             preferred_instance_id=instance_id,
         )
-
-    def update_governed_instance_location(
-        self,
-        instance_id: str,
-        location: str | Path,
-        workspace_root: str | Path | None = None,
-    ) -> InstanceRecord:
-        """Update an existing governed instance registry row after restore repair."""
-        _validate_instance_id(instance_id)
-        resolved_location = str(Path(location).expanduser().resolve())
-        resolved_workspace_root: str | None = None
-        if workspace_root is not None:
-            resolved_workspace_root = str(Path(workspace_root).expanduser().resolve())
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE instances
-                SET backend = ?, location = ?, workspace_root = ?
-                WHERE instance_id = ?
-                """,
-                (
-                    GOVERNED_DAEMON_BACKEND,
-                    resolved_location,
-                    resolved_workspace_root,
-                    instance_id,
-                ),
-            )
-        record = self.get(instance_id)
-        assert record is not None
-        return record
 
     def attach_governed_workspace(
         self,

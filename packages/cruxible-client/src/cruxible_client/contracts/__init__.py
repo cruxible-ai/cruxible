@@ -1206,21 +1206,6 @@ class PlaybillClaimRetireResult(BaseModel):
 PlaybillClaimRetireResponse: TypeAlias = PlaybillClaimRetirePreflight | PlaybillClaimRetireResult
 
 
-class PlaybillClaimExplanation(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-claim-explanation-v1"] = "playbill-claim-explanation-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    evaluation_time: str
-    claim: PlaybillClaimView
-    law_evidence: dict[str, Any]
-    verdict: dict[str, Any]
-    exact_attestations: list[dict[str, Any]]
-    approval_coverage: Literal["containing_change_set"] = "containing_change_set"
-    source_handles: list[dict[str, Any]]
-    coverage: dict[str, Any]
-
-
 class PlaybillClaimExplanationV2(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1348,27 +1333,6 @@ class PlaybillAuthoringSubmitResult(BaseModel):
     )
 
 
-class PlaybillInsertionPrepareResult(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-insertion-prepare-result-v2"]
-    outcome: Literal[
-        "prepared",
-        "already_prepared",
-        "bound",
-        "expired",
-        "claim_currency_changed",
-    ]
-    intent: dict[str, Any]
-    expectation: dict[str, Any]
-    preparation: dict[str, Any] | None = None
-    inserted_block_base64: str | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-    warnings: list["PlaybillPublicationPrepareWarning"] = Field(default_factory=list)
-
-
 class PlaybillPublicationPrepareWarning(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1385,15 +1349,6 @@ class PlaybillPublicationPrepareWarning(BaseModel):
         for item in value:
             Sha256Value.from_tagged(item)
         return value
-
-
-class PlaybillInsertionConfirmResultV2(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-insertion-confirm-result-v2"]
-    outcome: Literal["bound", "already_bound", "expired", "claim_currency_changed"]
-    intent: dict[str, Any]
-    expectation: dict[str, Any]
 
 
 class PlaybillInsertionAbandonResult(BaseModel):

@@ -177,7 +177,7 @@ def create_app() -> FastAPI:
             detail=str(exc),
         )
         body = ErrorResponse(
-            error_type="ConstraintViolationError",
+            error_type="DatabaseIntegrityError",
             message=_DB_CONSTRAINT_MESSAGE,
         )
         return JSONResponse(status_code=409, content=body.model_dump(mode="json"))
@@ -195,7 +195,7 @@ def create_app() -> FastAPI:
             detail=str(exc),
         )
         body = ErrorResponse(
-            error_type="MutationError",
+            error_type="DatabaseError",
             message=_DB_ERROR_MESSAGE,
         )
         return JSONResponse(status_code=500, content=body.model_dump(mode="json"))

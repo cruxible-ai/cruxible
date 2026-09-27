@@ -867,30 +867,6 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
     return observation
 
 
-def _unobserved_projection_source(
-    source_id: str,
-    *,
-    document_id: str | None,
-    content: bytes,
-    scan_notes: Sequence[str],
-    marker_summaries: Sequence[dict[str, object]] = (),
-    marker_notes: Sequence[str] = (),
-) -> dict[str, object]:
-    return {
-        "tag": "playbill-next-source-observation-v4",
-        "source_id": source_id,
-        "document_id": document_id,
-        "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
-        "byte_length": len(content),
-        "marker_summaries": list(marker_summaries),
-        "occurrences": [],
-        "commitment_scan_proofs": [],
-        "citation_window_observations": [],
-        "scan_notes": sorted(set(scan_notes), key=lambda item: item.encode("utf-8")),
-        "marker_notes": sorted(set(marker_notes), key=lambda item: item.encode("utf-8")),
-    }
-
-
 def _manifest_observation(root: Path, content: bytes) -> dict[str, object]:
     try:
         manifests = load_projection_manifests(root, content)

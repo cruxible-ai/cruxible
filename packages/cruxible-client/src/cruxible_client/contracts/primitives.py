@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Iterable
 from typing import Any, Callable
 
 _JSON_TYPE_NAMES: dict[type[Any], str] = {
@@ -82,15 +81,3 @@ def json_type_name(value: Any) -> str:
 def new_id(prefix: str, *, length: int = 12, separator: str = "-") -> str:
     """Return a new identifier with a hex UUID suffix."""
     return f"{prefix}{separator}{uuid.uuid4().hex[:length]}"
-
-
-def ordered_unique(values: Iterable[str]) -> list[str]:
-    """Return unique string values preserving first-seen order."""
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        result.append(value)
-    return result

@@ -67,7 +67,7 @@ from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     PlaybillWorkspaceAdvertisement,
 )
-from cruxible_core.compiler.assembler import ProjectionAssembler, ProjectionCrashHook
+from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import (
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     SUPPORTED_COMPILERS,
@@ -106,7 +106,6 @@ from cruxible_core.indexes.history.history_index import (
 from cruxible_core.indexes.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
-    AssemblerResult,
     projection_manifest_name,
 )
 from cruxible_core.indexes.proposals.proposal_note_projection import ProposalNoteIndex
@@ -2221,20 +2220,6 @@ class PlaybillInstance:
                 # outcome. Preserve the caller's failure even if repair succeeds.
                 self.refresh()
                 raise
-
-    def assemble_projection(
-        self,
-        *,
-        crash_hook: ProjectionCrashHook | None = None,
-    ) -> AssemblerResult:
-        """Build and publish the current verified generation for internal serving."""
-
-        assembler = self.projection_assembler()
-        staging = assembler.publication_directory / f".stage-{secrets.token_hex(12)}"
-        return assembler.assemble(
-            assembler.request(output_staging_directory=staging),
-            crash_hook=crash_hook,
-        )
 
 
 __all__ = ["DESCRIPTOR_FILE", "PlaybillInstance"]

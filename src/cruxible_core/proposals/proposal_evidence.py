@@ -229,22 +229,6 @@ class ProposalEvidenceStore:
                 withdrawn_at=record.withdrawn_at,
             )
 
-    def withdrawn_proposal_ids(self) -> frozenset[str]:
-        """Return every withdrawn proposal id, read from its own evidence."""
-
-        if self.index is not None:
-            return frozenset(
-                row["proposal_id"] for row in self.index.rows(self, "withdrawal_path IS NOT NULL")
-            )
-        return frozenset(
-            self._read_model(
-                path,
-                ProposalWithdrawalRecordV1,
-                label="proposal withdrawal",
-            ).proposal_id
-            for path in sorted(self.withdrawals.glob("*.json"), key=lambda item: item.name)
-        )
-
     def write_source_compilation(self, manifest: SourceCompilationManifest) -> Path:
         """Persist a path-free immutable compile receipt beside proposal exhaust."""
 
@@ -384,16 +368,6 @@ class ProposalEvidenceStore:
         """Render one candidate's signed list; shared Git notes may combine lists."""
 
         return proposal_approval_note(self.read_approvals(candidate_digest_value))
-
-    def read_candidate_if_present(
-        self, candidate_digest_value: str
-    ) -> CandidateRecordAnyVersion | None:
-        """Distinguish an interrupted evidence write from malformed present bytes."""
-        CandidateDigest.from_tagged(candidate_digest_value)
-        path = self.candidates / f"{candidate_digest_value.removeprefix('sha256:')}.json"
-        if not path.exists() and not path.is_symlink():
-            return None
-        return self.read_candidate(candidate_digest_value)
 
     def read_candidate(self, candidate_digest_value: str) -> CandidateRecordAnyVersion:
         """Read one canonical validated candidate by its frozen C_s digest."""

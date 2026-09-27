@@ -6,18 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from cruxible_client._error_base import (
-    ConcurrentStateDriftError as ConcurrentStateDriftError,
-)
-from cruxible_client._error_base import (
-    CoreError as CoreError,
-)
-from cruxible_client._error_base import (
-    InvalidContinuationError as InvalidContinuationError,
-)
-from cruxible_client._error_base import (
-    StaleContinuationError as StaleContinuationError,
-)
+from cruxible_client._error_base import CoreError as CoreError
 from cruxible_client.contracts.errors import (
     PlaybillInstanceDecommissioned,
     PlaybillObjectFormatConflict,
@@ -31,11 +20,7 @@ from cruxible_client.contracts.repairs import ServedRepairV1
 _MAX_DISPLAY_ERRORS = 10
 
 
-class SchemaError(CoreError):
-    """Base for errors in public schema/config definitions."""
-
-
-class ConfigError(SchemaError):
+class ConfigError(CoreError):
     """Client-side config or validation error."""
 
     def __init__(
@@ -60,40 +45,7 @@ class ConfigError(SchemaError):
         return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
 
 
-class EntityTypeNotFoundError(SchemaError):
-    def __init__(self, entity_type: str, *, known_entity_types: list[str] | None = None):
-        self.entity_type = entity_type
-        self.known_entity_types = sorted(known_entity_types or [])
-        message = f"Entity type '{entity_type}' not found in schema"
-        if self.known_entity_types:
-            message += f". Known entity types: {', '.join(self.known_entity_types)}"
-        super().__init__(message)
-
-
-class RelationshipNotFoundError(SchemaError):
-    def __init__(self, relationship_name: str):
-        self.relationship_name = relationship_name
-        super().__init__(f"Relationship '{relationship_name}' not found in schema")
-
-
-class QueryNotFoundError(SchemaError):
-    def __init__(self, query_name: str):
-        self.query_name = query_name
-        super().__init__(f"Named query '{query_name}' not found in schema")
-
-
-class GraphError(CoreError):
-    """Base for errors in graph data visible to the client."""
-
-
-class EntityNotFoundError(GraphError):
-    def __init__(self, entity_type: str, entity_id: str):
-        self.entity_type = entity_type
-        self.entity_id = entity_id
-        super().__init__(f"{entity_type} '{entity_id}' not found in graph")
-
-
-class DataValidationError(GraphError):
+class DataValidationError(CoreError):
     def __init__(
         self,
         message: str,
@@ -116,63 +68,7 @@ class DataValidationError(GraphError):
         return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
 
 
-class RelationshipAmbiguityError(GraphError):
-    def __init__(
-        self,
-        from_type: str,
-        from_id: str,
-        to_type: str,
-        to_id: str,
-        relationship_type: str,
-    ) -> None:
-        self.from_type = from_type
-        self.from_id = from_id
-        self.to_type = to_type
-        self.to_id = to_id
-        self.relationship_type = relationship_type
-        super().__init__(
-            "Ambiguous edge target for "
-            f"{from_type}:{from_id}:{relationship_type}:{to_type}:{to_id}; "
-            "specify edge_key to target a single edge"
-        )
-
-
-class ConstraintViolationError(GraphError):
-    def __init__(
-        self,
-        message: str,
-        violations: list[str] | None = None,
-        *,
-        mutation_receipt_id: str | None = None,
-    ) -> None:
-        self.summary = message
-        self.violations = violations or []
-        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
-
-    def __str__(self) -> str:
-        if not self.violations:
-            return self.summary + self._receipt_suffix()
-        detail = "; ".join(self.violations)
-        return f"{self.summary}: {detail}" + self._receipt_suffix()
-
-
-class ExecutionError(CoreError):
-    """Base for operation failures visible to the client."""
-
-
-class IngestionError(ExecutionError):
-    pass
-
-
-class MutationError(ExecutionError):
-    pass
-
-
-class QueryExecutionError(ExecutionError):
-    pass
-
-
-class CustomerCodeExecutionUnsupportedError(ExecutionError):
+class CustomerCodeExecutionUnsupportedError(CoreError):
     error_code = "customer_code_execution_unsupported"
 
     def __init__(self, detail: str | None = None) -> None:
@@ -181,7 +77,7 @@ class CustomerCodeExecutionUnsupportedError(ExecutionError):
         super().__init__(message if detail is None else f"{message} ({detail})")
 
 
-class HostedProfileUnknownError(ExecutionError):
+class HostedProfileUnknownError(CoreError):
     error_code = "hosted_profile_unknown"
 
     def __init__(self, profile: str) -> None:
@@ -193,74 +89,10 @@ class HostedProfileUnknownError(ExecutionError):
         )
 
 
-class OwnershipError(CoreError):
-    def __init__(self, message: str, *, blocked_types: list[str] | None = None) -> None:
-        self.blocked_types = blocked_types or []
-        super().__init__(message)
-
-
-class ReceiptNotFoundError(CoreError):
-    def __init__(self, receipt_id: str):
-        self.receipt_id = receipt_id
-        super().__init__(f"Receipt '{receipt_id}' not found")
-
-
-class TraceNotFoundError(CoreError):
-    def __init__(self, trace_id: str):
-        self.trace_id = trace_id
-        super().__init__(f"Trace '{trace_id}' not found")
-
-
-class OutcomeNotFoundError(CoreError):
-    def __init__(self, receipt_id: str):
-        self.receipt_id = receipt_id
-        super().__init__(f"No outcome found for receipt '{receipt_id}'")
-
-
 class InstanceNotFoundError(CoreError):
     def __init__(self, instance_id: str):
         self.instance_id = instance_id
         super().__init__(f"Instance '{instance_id}' not found")
-
-
-class GroupNotFoundError(CoreError):
-    def __init__(self, group_id: str):
-        self.group_id = group_id
-        super().__init__(f"Group '{group_id}' not found")
-
-
-class ProcedureNotFoundError(CoreError):
-    def __init__(self, procedure_id: str):
-        self.procedure_id = procedure_id
-        super().__init__(f"Procedure '{procedure_id}' not found")
-
-
-class SourceArtifactNotFoundError(CoreError):
-    def __init__(self, source_artifact_id: str):
-        self.source_artifact_id = source_artifact_id
-        super().__init__(f"Source artifact '{source_artifact_id}' not found")
-
-
-class CitationHandleResolutionError(CoreError):
-    """A source-evidence citation handle could not be resolved safely."""
-
-    error_code = "citation_handle_resolution_failed"
-
-    def __init__(
-        self,
-        handle: str,
-        failure_kind: str,
-        *,
-        detail: str,
-        message: str | None = None,
-    ) -> None:
-        self.handle = handle
-        self.failure_kind = failure_kind
-        self.detail = detail
-        super().__init__(
-            message
-            or f"Citation handle resolution failed ({failure_kind}) for '{handle}': {detail}"
-        )
 
 
 class RuntimeCredentialNotFoundError(CoreError):
@@ -326,94 +158,6 @@ class PermissionDeniedError(CoreError):
         )
 
 
-class DirectWriteRefusedError(CoreError):
-    """Direct graph write refused because the target is governed proposal_only."""
-
-    error_code = "direct_write_refused"
-
-    def __init__(self, kind: str, type_name: str, source: str, message: str | None = None):
-        self.kind = kind
-        self.type_name = type_name
-        self.source = source
-        super().__init__(
-            message
-            or (f"Direct write to {kind} '{type_name}' is refused (write_policy=proposal_only).")
-        )
-
-
-class TerminalLifecycleWriteRefusedError(CoreError):
-    """A terminal lifecycle status was refused on a free-form add/update."""
-
-    error_code = "terminal_lifecycle_write_refused"
-
-    def __init__(self, kind: str, status: str, writable: str, message: str | None = None):
-        self.kind = kind
-        self.status = status
-        self.writable = writable
-        super().__init__(
-            message
-            or (
-                f"Refusing to write terminal {kind} lifecycle status '{status}' through "
-                "a plain add/update."
-            )
-        )
-
-
-class ProcedureWithdrawalRefusedError(CoreError):
-    """Withdraw refused: the actor is neither the proposal's author nor a reviewer."""
-
-    error_code = "procedure_withdrawal_refused"
-
-    def __init__(
-        self,
-        procedure_id: str,
-        *,
-        current_mode: str,
-        required_mode: str,
-        message: str | None = None,
-    ):
-        self.procedure_id = procedure_id
-        self.current_mode = current_mode
-        self.required_mode = required_mode
-        super().__init__(
-            message
-            or (
-                f"procedure '{procedure_id}' may be withdrawn only by its proposing author "
-                f"at their own tier, or by a reviewer holding {required_mode}; "
-                f"the current actor is neither (current mode {current_mode})"
-            )
-        )
-
-
-class PendingEdgeWriteRefusedError(CoreError):
-    """A non-pending write was refused because the target edge is still PENDING."""
-
-    error_code = "pending_edge_write_refused"
-
-    def __init__(
-        self,
-        relationship_type: str,
-        from_type: str,
-        from_id: str,
-        to_type: str,
-        to_id: str,
-        message: str | None = None,
-    ):
-        self.relationship_type = relationship_type
-        self.from_type = from_type
-        self.from_id = from_id
-        self.to_type = to_type
-        self.to_id = to_id
-        super().__init__(
-            message
-            or (
-                f"Write to relationship '{relationship_type}' "
-                f"({from_type}:{from_id} -> {to_type}:{to_id}) is refused: the edge is a "
-                "PENDING proposal awaiting review."
-            )
-        )
-
-
 class ErrorResponse(BaseModel):
     """Structured error payload returned by the HTTP server."""
 
@@ -460,10 +204,6 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             tuple(str(item) for item in context.get("candidates", [])),
             message=body.message,
         )
-    elif body.error_type == "ConstraintViolationError":
-        exc = ConstraintViolationError(body.message, violations=context.get("violations", []))
-    elif body.error_type == "OwnershipError":
-        exc = OwnershipError(body.message, blocked_types=context.get("blocked_types", []))
     elif body.error_type == "PermissionDeniedError":
         exc = PermissionDeniedError(
             context.get("tool_name", "unknown"),
@@ -471,79 +211,8 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             context.get("required_mode", "unknown"),
             ceiling_mode=context.get("ceiling_mode"),
         )
-    elif body.error_type == "DirectWriteRefusedError":
-        exc = DirectWriteRefusedError(
-            context.get("kind", "unknown"),
-            context.get("type_name", "unknown"),
-            context.get("source", "unknown"),
-            message=body.message,
-        )
-    elif body.error_type == "TerminalLifecycleWriteRefusedError":
-        exc = TerminalLifecycleWriteRefusedError(
-            context.get("kind", "unknown"),
-            context.get("status", "unknown"),
-            context.get("writable", "unknown"),
-            message=body.message,
-        )
-    elif body.error_type == "PendingEdgeWriteRefusedError":
-        exc = PendingEdgeWriteRefusedError(
-            context.get("relationship_type", "unknown"),
-            context.get("from_type", "unknown"),
-            context.get("from_id", "unknown"),
-            context.get("to_type", "unknown"),
-            context.get("to_id", "unknown"),
-            message=body.message,
-        )
-    elif body.error_type == "EntityTypeNotFoundError":
-        exc = EntityTypeNotFoundError(
-            context.get("entity_type", body.message),
-            known_entity_types=context.get("known_entity_types", []),
-        )
-    elif body.error_type == "RelationshipNotFoundError":
-        exc = RelationshipNotFoundError(context.get("relationship_name", body.message))
-    elif body.error_type == "QueryNotFoundError":
-        exc = QueryNotFoundError(context.get("query_name", body.message))
-    elif body.error_type == "EntityNotFoundError":
-        exc = EntityNotFoundError(
-            context.get("entity_type", "unknown"),
-            context.get("entity_id", "unknown"),
-        )
-    elif body.error_type == "RelationshipAmbiguityError":
-        exc = RelationshipAmbiguityError(
-            from_type=context.get("from_type", "unknown"),
-            from_id=context.get("from_id", "unknown"),
-            to_type=context.get("to_type", "unknown"),
-            to_id=context.get("to_id", "unknown"),
-            relationship_type=context.get("relationship_type", "unknown"),
-        )
-    elif body.error_type == "ReceiptNotFoundError":
-        exc = ReceiptNotFoundError(context.get("receipt_id", "unknown"))
-    elif body.error_type == "TraceNotFoundError":
-        exc = TraceNotFoundError(context.get("trace_id", "unknown"))
-    elif body.error_type == "OutcomeNotFoundError":
-        exc = OutcomeNotFoundError(context.get("receipt_id", "unknown"))
     elif body.error_type == "InstanceNotFoundError":
         exc = InstanceNotFoundError(context.get("instance_id", "unknown"))
-    elif body.error_type == "GroupNotFoundError":
-        exc = GroupNotFoundError(context.get("group_id", "unknown"))
-    elif body.error_type == "ProcedureNotFoundError":
-        exc = ProcedureNotFoundError(context.get("procedure_id", "unknown"))
-    elif body.error_type == "ProcedureWithdrawalRefusedError":
-        exc = ProcedureWithdrawalRefusedError(
-            context.get("procedure_id", "unknown"),
-            current_mode=context.get("current_mode", "unknown"),
-            required_mode=context.get("required_mode", "unknown"),
-            message=body.message,
-        )
-    elif body.error_type == "SourceArtifactNotFoundError":
-        exc = SourceArtifactNotFoundError(context.get("source_artifact_id", "unknown"))
-    elif body.error_type == "CitationHandleResolutionError":
-        exc = CitationHandleResolutionError(
-            context.get("handle", "unknown"),
-            context.get("failure_kind", "unknown"),
-            detail=context.get("detail", body.message),
-            message=body.message,
-        )
     elif body.error_type == "RuntimeCredentialNotFoundError":
         exc = RuntimeCredentialNotFoundError(context.get("credential_id", "unknown"))
     elif body.error_type == "AuthenticationError":
@@ -553,27 +222,10 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             context.get("instance_id", "unknown"),
             context.get("credential_scope", "unknown"),
         )
-    elif body.error_type == "QueryExecutionError":
-        exc = QueryExecutionError(body.message)
     elif body.error_type == "CustomerCodeExecutionUnsupportedError":
         exc = CustomerCodeExecutionUnsupportedError(context.get("detail"))
     elif body.error_type == "HostedProfileUnknownError":
         exc = HostedProfileUnknownError(str(context.get("profile", "unknown")))
-    elif body.error_type == "IngestionError":
-        exc = IngestionError(body.message)
-    elif body.error_type == "InvalidContinuationError":
-        exc = InvalidContinuationError(context.get("reason", body.message))
-    elif body.error_type == "StaleContinuationError":
-        exc = StaleContinuationError(
-            token_read_revision=context.get("token_read_revision"),
-            current_read_revision=context.get("current_read_revision"),
-            reason=context.get("reason"),
-        )
-    elif body.error_type == "ConcurrentStateDriftError":
-        exc = ConcurrentStateDriftError(
-            int(context.get("opening_revision") or 0),
-            int(context.get("closing_revision") or 0),
-        )
     elif body.error_type == "PlaybillObjectFormatConflict":
         exc = PlaybillObjectFormatConflict(
             body.message,
@@ -585,8 +237,6 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             reason=context.get("reason", "unknown"),
             decommissioned_at=context.get("decommissioned_at", "unknown"),
         )
-    elif body.error_type == "MutationError":
-        exc = MutationError(body.message)
     else:
         exc = CoreError(body.message)
     if body.error_code is not None:

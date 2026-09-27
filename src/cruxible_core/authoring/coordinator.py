@@ -171,18 +171,6 @@ def _replaced_expectation(
     }
 
 
-def _matching_expectation(
-    intent: AuthoringIntentV1 | None,
-    expectation_id: str,
-) -> InsertionExpectationV2 | None:
-    if intent is None:
-        return None
-    for item in intent.insertion_expectations:
-        if item.expectation_id == expectation_id:
-            return item
-    return None
-
-
 def _live_expectation(
     intent: AuthoringIntentV1,
     expectation: InsertionExpectationV2,
@@ -1281,20 +1269,6 @@ class AuthoringIntentCoordinator:
         path = claim_path(claim_identity)
         content = self.instance.blob_at(self.instance.accepted_coordinate().git_oid, path)
         return None if content is None else parse_claim(content, path=path)
-
-    def _publication_guard_state(
-        self,
-        intent: AuthoringIntentV1,
-        expectation: InsertionExpectationV2,
-        *,
-        evaluation_time: datetime,
-    ) -> Literal["expired", "claim_currency_changed"] | None:
-        del intent
-        if ensure_utc(evaluation_time) >= expectation.expires_at:
-            return "expired"
-        if not self._publication_claim_current(expectation):
-            return "claim_currency_changed"
-        return None
 
     def _transition_publication_terminal(
         self,

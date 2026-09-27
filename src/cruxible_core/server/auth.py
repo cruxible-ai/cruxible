@@ -124,16 +124,6 @@ def get_current_auth_context() -> ResolvedAuthContext | None:
     return _AUTH_CONTEXT.get()
 
 
-def is_http_request_in_flight() -> bool:
-    """Return whether the calling code is serving a daemon HTTP request.
-
-    False for embedded/CLI/in-process callers, which reach the runtime facade
-    directly. Callers use this to distinguish "identity asserted by a remote
-    request body" from "identity asserted by the local process".
-    """
-    return _REQUEST_CONTEXT.get() is not None
-
-
 def set_current_operation_id(operation_id: str) -> None:
     """Record the effective governed operation id for request logging."""
     _REQUEST_OPERATION_ID.set(operation_id)
