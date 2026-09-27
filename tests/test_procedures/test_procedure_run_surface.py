@@ -1033,7 +1033,8 @@ def test_served_get_preserves_leases_until_the_next_write_recovers_them(
         body_digest=metadata.digest,
     )
     store = ProcedureMaterialReservationStore(bodies.reservation_root)
-    store.reserve(reservation)
+    with store.locked():
+        store.reserve_locked(reservation)
     pending = make_pending_reservation(
         instance_id=instance.descriptor.instance_id,
         run_id="RUN-pending-admission",
@@ -1042,7 +1043,8 @@ def test_served_get_preserves_leases_until_the_next_write_recovers_them(
         plane="landed_capture",
         body_digest="sha256:" + "7" * 64,
     )
-    store.reserve(pending)
+    with store.locked():
+        store.reserve_locked(pending)
     assert set(store.active()) == {pending, reservation}
 
     with pytest.raises(ProcedureRunNotFound):

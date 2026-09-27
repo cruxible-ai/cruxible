@@ -291,7 +291,8 @@ def test_run_reservation_recovery_reproduces_partition_bound_invocation_id(tmp_p
         body_digest=metadata.digest,
     )
     store = ProcedureMaterialReservationStore(bodies.reservation_root)
-    store.reserve(reservation)
+    with store.locked():
+        store.reserve_locked(reservation)
 
     records = []
     for partition_id in ("partition-a", "partition-b"):
@@ -403,8 +404,8 @@ def test_reservation_collision_and_corrupt_sidecar_fail_closed(tmp_path) -> None
     sidecar = bodies.reservation_root / f"{reservation.reservation_id.removeprefix('sha256:')}.json"
     sidecar.write_bytes(b"{}\n")
 
-    with pytest.raises(ProcedureMaterialReservationError, match="collides"):
-        store.reserve(reservation)
+    with pytest.raises(ProcedureMaterialReservationError, match="collides"), store.locked():
+        store.reserve_locked(reservation)
     with pytest.raises(ProcedureMaterialRecoveryRequired, match="sidecar is corrupt"):
         store.active()
 

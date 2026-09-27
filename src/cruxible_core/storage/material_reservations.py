@@ -398,10 +398,6 @@ class ProcedureMaterialReservationStore:
             if temp.exists():
                 temp.unlink()
 
-    def reserve(self, record: MaterialReservationV1) -> None:
-        with self.locked():
-            self.reserve_locked(record)
-
     def release_locked(self, reservation_id: str) -> None:
         path = self._path(reservation_id)
         if not path.exists() and not path.is_symlink():
