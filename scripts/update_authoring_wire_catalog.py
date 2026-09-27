@@ -5,30 +5,29 @@ from __future__ import annotations
 import ast
 import hashlib
 import re
+import sys
 from pathlib import Path
 from typing import Any, cast
 
 from pydantic import BaseModel
 
-from cruxible_client.contracts.authoring import models
-from cruxible_client.contracts.authoring.wire_catalog import (
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from tests.support.authoring_wire_catalog import (  # noqa: E402
     AUTHORING_WIRE_CATALOG_VERSION,
     discovered_authoring_wire_model_names,
 )
-from cruxible_client.contracts.claim_attestation_wire_catalog import (
+from tests.support.claim_attestation_wire_catalog import (  # noqa: E402
     claim_attestation_wire_contract_catalog_digest,
 )
-from cruxible_client.contracts.primitives import canonical_json
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-CATALOG_MODULE = (
-    REPO_ROOT / "packages/cruxible-client/src/cruxible_client/contracts/authoring/wire_catalog.py"
-)
+from cruxible_client.contracts.authoring import models  # noqa: E402
+from cruxible_client.contracts.primitives import canonical_json  # noqa: E402
+
+CATALOG_MODULE = REPO_ROOT / "tests/support/authoring_wire_catalog.py"
 CROSS_CHECK_TEST = REPO_ROOT / "tests/test_client/test_claim_attestation_contract_catalog.py"
-CLAIM_ATTESTATION_CATALOG_MODULE = (
-    REPO_ROOT
-    / "packages/cruxible-client/src/cruxible_client/contracts/claim_attestation_wire_catalog.py"
-)
+CLAIM_ATTESTATION_CATALOG_MODULE = REPO_ROOT / "tests/support/claim_attestation_wire_catalog.py"
 
 
 def _catalog_digest(model_names: tuple[str, ...]) -> str:

@@ -7,11 +7,11 @@ import inspect
 from pydantic import BaseModel
 
 from cruxible_client.contracts import claim_attestation_store, claim_attestations
-from cruxible_client.contracts.authoring.wire_catalog import (
+from tests.support.authoring_wire_catalog import (
     AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST,
     authoring_wire_contract_catalog_digest,
 )
-from cruxible_client.contracts.claim_attestation_wire_catalog import (
+from tests.support.claim_attestation_wire_catalog import (
     CLAIM_ATTESTATION_WIRE_CONTRACT_CATALOG_DIGEST,
     CLAIM_ATTESTATION_WIRE_MODEL_NAMES,
     claim_attestation_wire_contract_catalog_digest,

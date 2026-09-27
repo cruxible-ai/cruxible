@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from cruxible_client.contracts.clock_taxonomy import (
+from tests.support.clock_taxonomy import (
     CLOCK_DOMAINS,
     CLOCK_FIELD_DECLARATIONS,
     NON_CLOCK_DECLARED_FIELDS,
@@ -14,6 +14,7 @@ from cruxible_client.contracts.clock_taxonomy import (
     declared_clock,
     is_time_bearing_field,
 )
+
 from cruxible_core.cli.commands.playbill import (
     procedure_readiness,
     run_line,

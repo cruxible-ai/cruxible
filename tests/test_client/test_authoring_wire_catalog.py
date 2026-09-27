@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cruxible_client.contracts.authoring.wire_catalog import (
+from tests.support.authoring_wire_catalog import (
     AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST,
     AUTHORING_WIRE_MODEL_NAMES,
     authoring_wire_contract_catalog_digest,
