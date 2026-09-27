@@ -60708,6 +60708,76 @@
         "value"
       ]
     },
+    "PlaybillSettleExampleV1": {
+      "fields": {
+        "bound_contract_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "bound_contract_id",
+          "required": true,
+          "schema": {
+            "title": "Bound Contract Id",
+            "type": "string"
+          }
+        },
+        "request": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "request",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Request",
+            "type": "object"
+          }
+        },
+        "tag": {
+          "default": "playbill-settle-example-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-settle-example-v1",
+            "default": "playbill-settle-example-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "A settle request for one bound prediction window, evidence left to fill in.\n\nServed as a view that carries the request as a JSON object, so the request\nmodel is never both a request body and a response schema.",
+        "properties": {
+          "bound_contract_id": {
+            "title": "Bound Contract Id",
+            "type": "string"
+          },
+          "request": {
+            "additionalProperties": true,
+            "title": "Request",
+            "type": "object"
+          },
+          "tag": {
+            "const": "playbill-settle-example-v1",
+            "default": "playbill-settle-example-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bound_contract_id",
+          "request"
+        ],
+        "title": "PlaybillSettleExampleV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "bound_contract_id",
+        "request"
+      ]
+    },
     "PlaybillSettleRequestV2": {
       "fields": {
         "contract": {

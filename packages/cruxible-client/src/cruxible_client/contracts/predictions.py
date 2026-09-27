@@ -30,7 +30,10 @@ from cruxible_client.contracts.resolution_rules import (
 )
 
 PredictionRefusalCodeV1: TypeAlias = Literal[
-    "prediction_unsettleable_rule", "prediction_deadline_passed", "settlement_evidence_mismatch"
+    "prediction_unsettleable_rule",
+    "prediction_deadline_passed",
+    "settlement_evidence_mismatch",
+    "prediction_window_unknown",
 ]
 
 
@@ -84,6 +87,18 @@ class PlaybillSettleRequestV2(_StrictPredictionModel):
     contract: ResolutionContractReferenceV1
     trigger_event: TriggerEventReferenceV1 | None = None
     evidence: PredictionSettlementEvidenceV2
+
+
+class PlaybillSettleExampleV1(_StrictPredictionModel):
+    """A settle request for one bound prediction window, evidence left to fill in.
+
+    Served as a view that carries the request as a JSON object, so the request
+    model is never both a request body and a response schema.
+    """
+
+    tag: Literal["playbill-settle-example-v1"] = "playbill-settle-example-v1"
+    bound_contract_id: str
+    request: dict[str, Any]
 
 
 class PlaybillSettleResultV2(_StrictPredictionModel):

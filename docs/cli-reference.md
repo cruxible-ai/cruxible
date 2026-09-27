@@ -1203,7 +1203,7 @@ under a new operation key.
 cruxible playbill resolution-contracts REQUEST_FILE [--json]
 cruxible playbill predict REQUEST_FILE [--json]
 cruxible playbill settle PREDICTION_ID REQUEST_FILE [--json]
-cruxible playbill settle --example PREDICTION_ID [--contract JSON] [--trigger-event JSON]
+cruxible playbill settle --example PREDICTION_ID
 ~~~
 
 `predict` submits a governed ResolutionContract for an already accepted, exact
@@ -1211,7 +1211,9 @@ hypothesis Claim version and returns the proposal ID and authoring intent. The
 contract must be accepted before it can bind an investigation or settlement.
 `resolution-contracts` finds accepted contracts for an exact hypothesis version.
 
-`settle` names that contract by ID and exact accepted reference. It checks later
+`settle` names that contract by ID, or one of its bound windows by its bound
+contract ID (`RSC-...`), and gives its exact accepted reference; a bound window
+ID must be the one the request's contract and window rebuild. It checks later
 accepted observation evidence against the contract's selector, mechanical rule,
 and bound window. Terminal-backed settlement additionally requires one delivered
 `settle_change_set` receipt from the same investigation whose outcome is
@@ -1221,11 +1223,23 @@ mutate Claims. A failed attempt or an unevaluable
 observation does not settle the hypothesis as false. Effectful terminal nodes
 remain disabled in the public Procedure runner.
 
-`settle --example` prints a settlement request without contacting the daemon.
-`--contract` and `--trigger-event` fill in the exact accepted contract reference
-and, for an event window, the anchor event its window is bound to. The
-`prediction_settleable` row in `playbill next` renders this command with both
-filled in, so only the evidence Claim reference is left to replace.
+`settle --example` prints a settlement request. Given a bound window ID
+(`RSC-...`), it asks the daemon for the prediction worker's window and fills in
+the exact accepted contract reference and, for an event window, the anchor event
+the window is bound to, so only the evidence Claim reference is left to replace.
+A window the worker does not hold, or whose contract version is no longer live
+at the accepted head, is refused with `prediction_window_unknown`. Submit the
+filled request with `cruxible playbill settle RSC-... REQUEST_FILE`.
+Given any other ID it prints a placeholder template without contacting the
+daemon. The `prediction_settleable` row in `playbill next` renders this command
+with its bound window ID.
+
+A window that closed with no accepted observation inside it cannot settle:
+`settle` refuses with `prediction_deadline_passed`, and the
+`prediction_settleable` row stays until the contract is retired. Cruxible does
+not assign a meaning to a window that closed unobserved (a lapse, or a
+resolution where the contract declares absence decisive); retire the contract
+to clear the row.
 
 ## playbill block
 
@@ -1424,8 +1438,10 @@ last check:
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the
   `bound_contract_id`, and `evaluated_at`. An event window has one row per
-  anchor. The repair is `cruxible playbill settle --example` with the contract
-  and window filled in; settle from an accepted observation inside the window.
+  anchor. The repair is `cruxible playbill settle --example RSC-...`, which
+  fills in the contract and window; settle from an accepted observation inside
+  the window. The worker does not check that such an observation exists; if
+  none does, see the note under `playbill settle`.
   The worker clears the row when the settlement lands, and restores it if that
   answer is overturned.
 - `prediction_window_unbindable` names a ResolutionContract with a matching
@@ -1490,6 +1506,11 @@ the proposal's author in `detail.actor_id`; its repair is
 `cruxible playbill proposal readmit PROPOSAL_ID`, which only that author may
 run, and `proposal withdraw` is the alternative when the change is no longer
 wanted. A readmission at the same coordinate, or a withdrawal, closes the row.
+A proposal a settle terminal made carries `detail.settle_submission` (`mode`
+and `mandate_digest`). A `delegated` settle that went stale is automation that
+did not finish: readmitting it re-evaluates it as an ordinary proposal that
+needs approval, because the mandate authorized the submission it was, not a
+rebased one, so its repair says so.
 
 A `proposal_awaiting_approval` row is an open candidate whose parent is the
 coordinate's semantic root and whose approval requirement is not yet met, and

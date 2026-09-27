@@ -256,6 +256,29 @@ def settleable_windows(instance: Any) -> tuple[SettleableWindow, ...]:
     )
 
 
+def bound_window(instance: Any, bound_contract_id: str) -> SettleableWindow | None:
+    """One bound window the worker holds, by its bound contract id, whatever its status."""
+
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return None
+        row = connection.execute(
+            "SELECT c.reference,c.hypothesis,w.contract_id,w.window,w.checked_at "
+            "FROM windows w JOIN contracts c ON c.identity=w.identity WHERE w.contract_id=?",
+            (bound_contract_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    reference, hypothesis, contract_id, window, checked_at = row
+    return SettleableWindow(
+        contract=ResolutionContractReferenceV1.model_validate_json(reference),
+        hypothesis=hypothesis,
+        bound_contract_id=contract_id,
+        window=BoundObservationWindowV1.model_validate_json(window),
+        checked_at=_instant(checked_at) if checked_at else _instant("1970-01-01T00:00:00Z"),
+    )
+
+
 def unbindable_anchors(instance: Any) -> tuple[UnbindableAnchor, ...]:
     """Matching anchors whose material could not bind a window at the last look."""
 

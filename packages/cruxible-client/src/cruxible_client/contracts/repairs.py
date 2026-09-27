@@ -77,6 +77,7 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
         "revise_the_resolution_contract_rule_or_hypothesis_and_submit_a_successor"
     ),
     "prediction_deadline_passed": "use_evidence_within_the_bound_window_or_accept_a_new_contract",
+    "prediction_window_unknown": "read_playbill_next_for_the_bound_contract_ids_the_worker_holds",
     "settlement_evidence_mismatch": "bind_the_exact_contract_and_matching_accepted_observation",
     "line_not_accepted": "accept_the_line_before_triggering_it",
     "line_closure_incomplete": "restore_or_succeed_the_missing_accepted_closure_member",

@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-26:distribution-d2-kit-transport",
-    "surface_digest": "sha256:0ef978c602d689541aa601e3cd3b47240b76d46cee7e9300961c0d53934b5d35"
+    "register_entry": "2026-09-27:settle-ergonomics",
+    "surface_digest": "sha256:b12b8ddc1818149d7c62c70715d012e31bc433f8a9d2b9ef941e81bf0891e017"
   },
   "surface": {
     "cli_leaves": [
@@ -754,6 +754,7 @@
       },
       {
         "client_operations": [
+          "example_playbill_settlement",
           "settle_playbill_prediction"
         ],
         "command": "playbill settle",
@@ -944,6 +945,7 @@
       "playbill_next",
       "playbill_policies_in_force",
       "playbill_predict",
+      "playbill_prediction_settle_example",
       "playbill_prepare_approval",
       "playbill_procedure_bind",
       "playbill_procedure_measure",
@@ -1756,6 +1758,18 @@
         "request_schema_digest": "sha256:b953dbbbd8dccdd50b03bdc44ecca4a72f3d495672d96912335541c709b076a4",
         "response_model": "cruxible_client.contracts.predictions.PlaybillPredictResultV2",
         "response_schema_digest": "sha256:7ee456590c6d771dcdc5aa509480e9be55185a0c99432e74aa1b52780173d124"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.prediction_settle_example",
+        "facade_operations": [
+          "playbill_prediction_settle_example"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/playbill/predictions/{bound_contract_id}/settle-example",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.predictions.PlaybillSettleExampleV1",
+        "response_schema_digest": "sha256:b69db8193c3a300e918b526551bf6756c64265850f96f82be49e3ecc403fa5ba"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.settle_prediction",

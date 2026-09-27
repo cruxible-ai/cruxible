@@ -20,12 +20,6 @@ CONTRACT = {
         "compiler_digest": "sha256:" + "5" * 64,
     },
 }
-EVENT = {
-    "run_id": "RUN-anchor",
-    "partition_id": "run:anchor",
-    "sequence": 3,
-    "record_digest": "sha256:" + "6" * 64,
-}
 
 
 @pytest.fixture(autouse=True)
@@ -40,22 +34,38 @@ def _settle(*args: str):  # type: ignore[no-untyped-def]
     return CliRunner().invoke(cli, ["playbill", "settle", *args])
 
 
-def test_the_binding_a_next_row_carries_fills_the_request_but_its_evidence() -> None:
-    result = _settle(
-        "--example",
-        "status-test",
-        "--contract",
-        json.dumps(CONTRACT),
-        "--trigger-event",
-        json.dumps(EVENT),
+def test_a_bound_window_id_asks_the_daemon_for_its_exact_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_core.cli.commands.playbill import _settle_example
+
+    # What the daemon would serve: any exact request; the CLI only relays it.
+    template = _settle_example("status-test")
+    asked: list[tuple[str, str]] = []
+
+    class StubClient:
+        def example_playbill_settlement(self, instance_id: str, bound: str):  # type: ignore[no-untyped-def]
+            asked.append((instance_id, bound))
+            return template
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://settle.example.test",
+            "--instance-id",
+            "inst_settle",
+            "playbill",
+            "settle",
+            "--example",
+            "RSC-" + "a" * 32,
+        ],
     )
 
     assert result.exit_code == 0, result.output
-    request = PlaybillSettleRequestV2.model_validate(json.loads(result.output))
-    assert request.contract.model_dump(mode="json", exclude={"coordinate": {"tag"}}) == CONTRACT
-    assert request.trigger_event is not None
-    assert request.trigger_event.model_dump(mode="json") == EVENT
-    assert request.evidence.claim.identity.name == "CLM-" + "0" * 32
+    assert asked == [("inst_settle", "RSC-" + "a" * 32)]
+    assert PlaybillSettleRequestV2.model_validate(json.loads(result.stdout)) == template
 
 
 def test_a_bare_example_names_the_prediction_and_placeholders_the_rest() -> None:
@@ -70,9 +80,6 @@ def test_a_bare_example_names_the_prediction_and_placeholders_the_rest() -> None
 @pytest.mark.parametrize(
     ("args", "message"),
     [
-        (("--example", "other", "--contract", json.dumps(CONTRACT)), "different prediction"),
-        (("--example", "status-test", "--trigger-event", "{}"), "Invalid settlement binding"),
-        (("status-test", "--contract", json.dumps(CONTRACT)), "require --example"),
         (("status-test",), "REQUEST_FILE or --example"),
     ],
 )

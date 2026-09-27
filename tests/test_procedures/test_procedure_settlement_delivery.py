@@ -622,3 +622,73 @@ def test_an_armed_capture_triggered_line_settles_or_falls_back_on_its_own(
         assert instance.accepted_coordinate().git_oid == egress.accepted_git_oid
     else:
         assert instance.accepted_coordinate() == base and egress.proposal_id is not None
+
+
+def _stale_row(instance, proposal_id: str):  # type: ignore[no-untyped-def]
+    from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+    from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
+
+    # Head moves past the proposal's base, so it can no longer activate.
+    moved = _subject().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="Subject", name=f"{SUBJECT_KIND}/moved-on"),
+            "subject_id": "moved-on",
+        }
+    )
+    fixtures._accept_more(
+        instance,
+        OWNERS[instance.root],
+        {subject_path(SUBJECT_KIND, "moved-on"): render_subject(moved)},
+        name="head-moves-on",
+    )
+    result = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(
+            evaluation_time=fixtures.NOW,
+            access_profile=CoverageAccessProfileV1(
+                profile_id="settle-stale", permitted_access_classes=("instance",)
+            ),
+        ),
+    )
+    (row,) = [
+        item
+        for item in result.items
+        if item.reason == "proposal_stale" and item.subject_identity == proposal_id
+    ]
+    return row
+
+
+def test_a_stale_fallback_settle_names_how_it_was_submitted(tmp_path: Path) -> None:
+    instance, root, line = settle_world(tmp_path, only_subject="someone-else")
+    egress = _egress(run_settle(instance, root, line))
+    assert egress.settle_outcome == "proposed" and egress.proposal_id is not None
+
+    row = _stale_row(instance, egress.proposal_id)
+
+    assert row.detail["settle_submission"]["mode"] == "fallback"
+    assert row.detail["settle_submission"]["mandate_digest"] == egress.procedure_mandate_digest
+    assert row.repair.required_change == "readmit_as_its_author_or_withdraw_the_stale_proposal"
+
+
+def test_a_delegated_settle_that_lost_its_race_says_readmit_routes_it_for_approval(
+    tmp_path: Path, monkeypatch
+) -> None:
+    instance, root, line = settle_world(tmp_path)
+    _crash_settle(monkeypatch, after_activation=False)
+    with pytest.raises(_Crash):
+        run_settle(instance, root, line)
+    monkeypatch.undo()
+    (pending,) = [
+        admission
+        for admission in instance.proposal_evidence().list_admissions()
+        if admission.settle_submission is not None
+    ]
+    assert pending.settle_submission is not None and pending.settle_submission.mode == "delegated"
+
+    row = _stale_row(instance, pending.proposal_id)
+
+    assert row.detail["settle_submission"]["mode"] == "delegated"
+    assert row.repair.required_change == (
+        "readmit_to_route_the_delegated_settle_for_approval_or_withdraw_it"
+    )
+    assert row.repair.command == f"cruxible playbill proposal readmit {pending.proposal_id}"
