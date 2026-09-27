@@ -2658,12 +2658,6 @@ class GitLedger:
         fields = self._allowed_signer_entry(principal_id).split()
         return raw_public_key_hex_from_openssh(b" ".join(fields[1:3]))
 
-    def durability_policy(self) -> tuple[str, str]:
-        return (
-            self._config_read(["config", "--get", "core.fsync"]).decode().strip(),
-            self._config_read(["config", "--get", "core.fsyncMethod"]).decode().strip(),
-        )
-
     def _config_read(
         self, arguments: Sequence[str], *, environment: Mapping[str, str] | None = None
     ) -> bytes:

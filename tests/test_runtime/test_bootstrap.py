@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -48,7 +49,16 @@ def test_opt_in_initialization_creates_managed_layout_and_exact_genesis(
 
     daemon_key = instance.root / descriptor.storage.credentials / DAEMON_PRIVATE_KEY_FILE
     assert stat.S_IMODE(daemon_key.stat().st_mode) == 0o600
-    assert instance._ledger.durability_policy() == ("committed,reference", "fsync")
+    ledger_config = instance._ledger.path / "config"
+    assert [
+        subprocess.run(
+            ["git", "config", "--file", str(ledger_config), "--get", key],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        for key in ("core.fsync", "core.fsyncMethod")
+    ] == ["committed,reference", "fsync"]
 
 
 def test_reopen_requires_only_out_of_band_trust_root_and_managed_state(
