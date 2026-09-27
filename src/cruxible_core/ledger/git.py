@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import bisect
 import fcntl
 import hashlib
@@ -3417,6 +3418,14 @@ if hasattr(os, "register_at_fork"):
         after_in_parent=_after_fork_in_parent,
         after_in_child=_after_fork_in_child,
     )
+
+
+@atexit.register
+def _close_batch_readers() -> None:
+    with _BATCH_READERS_LOCK:
+        readers = tuple(_BATCH_READERS.values())
+    for reader in readers:
+        reader.close()
 
 
 def _command(
