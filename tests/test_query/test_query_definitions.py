@@ -292,7 +292,7 @@ def test_query_definition_identity_and_semantic_address_follow_the_pc_a1_grammar
 
 def test_pc_f_activates_the_query_definition_path_kind_and_fails_closed_elsewhere() -> None:
     assert registered_path_kind(QUERY_PATH) == "query-definition"
-    assert "query-definition" in PLAYBILL_ARTIFACT_KINDS.implemented_kinds()
+    assert "query-definition" in {entry.kind for entry in PLAYBILL_ARTIFACT_KINDS.entries()}
     with pytest.raises(ProjectionFormatError, match="no registered format"):
         registered_path_kind("query-definitions/Project.json")
     with pytest.raises(ProjectionFormatError, match="no registered format"):

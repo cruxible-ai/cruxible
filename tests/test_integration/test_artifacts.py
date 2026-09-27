@@ -73,19 +73,12 @@ def test_document_adapter_does_not_change_frozen_document_bytes_or_digest() -> N
     assert document_digest(shell) == digest_before
 
 
-def test_artifact_kind_reservations_and_unknown_paths_refuse() -> None:
+def test_artifact_kind_registry_refuses_unknown_paths() -> None:
     registry = ArtifactKindRegistry(
         (ArtifactPathKind("document", re.compile(r"^documents/[a-z]+\.json$")),)
     )
-    reserved = registry.reserve(
-        kind="claim-type",
-        path_pattern=r"^claim-types/[a-z]+/[a-z]+\.json$",
-    )
-    assert reserved.reserved_kinds() == ("claim-type",)
-    with pytest.raises(ProjectionFormatError, match="reserved but unimplemented"):
-        reserved.resolve_path("claim-types/project/status.json")
+    assert registry.resolve_path("documents/design.json") == "document"
     with pytest.raises(ProjectionFormatError, match="no registered"):
-        reserved.resolve_path("unknown/value.yaml")
-
-    activated = reserved.activate(kind="claim-type")
-    assert activated.resolve_path("claim-types/project/status.json") == "claim-type"
+        registry.resolve_path("claim-types/project/status.json")
+    with pytest.raises(ProjectionFormatError, match="no registered"):
+        registry.resolve_path("unknown/value.yaml")

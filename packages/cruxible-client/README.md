@@ -7346,7 +7346,7 @@ fields are documented above; these links keep wire schema definitions singular.
 
 **`contracts.approval_policy`** — [ApprovalPolicyFormatError](src/cruxible_client/contracts/approval_policy.py#L29), [ApprovalPolicyV1](src/cruxible_client/contracts/approval_policy.py#L33).
 
-**`contracts.artifacts`** — [ArtifactIdentity](src/cruxible_client/contracts/artifacts.py#L30), [ArtifactPin](src/cruxible_client/contracts/artifacts.py#L66), [ArtifactLifecycle](src/cruxible_client/contracts/artifacts.py#L86), [GovernedArtifactProtocol](src/cruxible_client/contracts/artifacts.py#L106), [ArtifactPathKind](src/cruxible_client/contracts/artifacts.py#L123), [ArtifactFormatTag](src/cruxible_client/contracts/artifacts.py#L130), [ArtifactFormatRegistry](src/cruxible_client/contracts/artifacts.py#L137), [ArtifactKindRegistry](src/cruxible_client/contracts/artifacts.py#L183).
+**`contracts.artifacts`** — [ArtifactIdentity](src/cruxible_client/contracts/artifacts.py#L30), [ArtifactPin](src/cruxible_client/contracts/artifacts.py#L66), [ArtifactLifecycle](src/cruxible_client/contracts/artifacts.py#L86), [GovernedArtifactProtocol](src/cruxible_client/contracts/artifacts.py#L106), [ArtifactPathKind](src/cruxible_client/contracts/artifacts.py#L123), [ArtifactKindRegistry](src/cruxible_client/contracts/artifacts.py#L128).
 
 **`contracts.attestations`** — [ApprovalStatement](src/cruxible_client/contracts/attestations.py#L37), [ApprovalAttestation](src/cruxible_client/contracts/attestations.py#L70), [ApprovalSubmission](src/cruxible_client/contracts/attestations.py#L91), [VerifiedApproval](src/cruxible_client/contracts/attestations.py#L125).
 

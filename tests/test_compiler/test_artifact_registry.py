@@ -32,7 +32,6 @@ from cruxible_core.compiler.projection_artifacts import (
     P2_B0_ARTIFACT_KINDS,
     P2_C_ARTIFACT_KINDS,
     PLAYBILL_ARTIFACT_KINDS,
-    PLAYBILL_FORMAT_RESERVATIONS,
     registered_path_kind,
 )
 
@@ -44,13 +43,11 @@ def test_pc_d_activates_procedure_and_line_paths() -> None:
     assert registered_path_kind("claims/12/CLM-12" + "ab" * 15 + ".json") == "claim"
     assert registered_path_kind("procedures/product-lot-release.json") == "procedure"
     assert registered_path_kind("lines/product-lot-release.json") == "line"
-    assert PLAYBILL_ARTIFACT_KINDS.reserved_kinds() == ()
 
 
 def test_pc_f_activates_the_query_definition_path_kind() -> None:
     assert registered_path_kind("query-definitions/project.active_work.json") == "query-definition"
-    assert "query-definition" in PLAYBILL_ARTIFACT_KINDS.implemented_kinds()
-    assert PLAYBILL_ARTIFACT_KINDS.reserved_kinds() == ()
+    assert "query-definition" in {entry.kind for entry in PLAYBILL_ARTIFACT_KINDS.entries()}
 
 
 def test_p2_b1_activates_provider_interface_only_at_the_successor_compiler() -> None:
@@ -171,7 +168,7 @@ def test_p2_b0_compact_bytes_are_pinned_for_every_non_changeset_governed_kind() 
             raise AssertionError(f"unverified P2-B0 artifact kind: {kind}")
         seen.add(kind)
 
-    assert seen == set(P2_B0_ARTIFACT_KINDS.implemented_kinds()) - {"changeset"}
+    assert seen == {entry.kind for entry in P2_B0_ARTIFACT_KINDS.entries()} - {"changeset"}
 
 
 def test_historical_claim_type_path_error_names_the_historical_spelling() -> None:
@@ -189,121 +186,10 @@ def test_historical_claim_type_path_error_names_the_historical_spelling() -> Non
         )
 
 
-def test_p2_b2_reserves_every_current_artifact_tag() -> None:
-    assert PLAYBILL_FORMAT_RESERVATIONS.implemented_tags() == (
-        "playbill-accepted-state-run-input-v1",
-        "playbill-approval-policy-v1",
-        "playbill-capture-contract-v1",
-        "playbill-capture-envelope-v1",
-        "playbill-capture-envelope-v2",
-        "playbill-capture-procedure-egress-evidence-v1",
-        "playbill-capture-provider-invocation-evidence-v1",
-        "playbill-claim-attestation-envelope-v2",
-        "playbill-claim-v2",
-        "playbill-claim-v3",
-        "playbill-compiler-upgrade-v1",
-        "playbill-exhaust-promotion-v1",
-        "playbill-exhaust-run-input-v1",
-        "playbill-landed-capture-run-input-v1",
-        "playbill-line-slot-binding-v1",
-        "playbill-line-v1",
-        "playbill-line-v2",
-        "playbill-line-v3",
-        "playbill-line-v4",
-        "playbill-line-v5",
-        "playbill-pending-admission-material-reservation-v1",
-        "playbill-prepared-procedure-run-v4",
-        "playbill-prepared-procedure-run-v5",
-        "playbill-procedure-acquisition-plan-v2",
-        "playbill-procedure-admission-bound-payload-v4",
-        "playbill-procedure-admission-bound-payload-v5",
-        "playbill-procedure-admission-bound-payload-v6",
-        "playbill-procedure-admission-bound-payload-v7",
-        "playbill-procedure-admission-bound-payload-v8",
-        "playbill-procedure-calibration-cohort-membership-witness-v1",
-        "playbill-procedure-calibration-cohort-v1",
-        "playbill-procedure-calibration-reading-artifact-v1",
-        "playbill-procedure-calibration-reading-identity-v1",
-        "playbill-procedure-calibration-reading-v1",
-        "playbill-procedure-calibration-reading-v2",
-        "playbill-procedure-calibration-relation-cohort-witness-v1",
-        "playbill-procedure-calibration-score-v1",
-        "playbill-procedure-derived-source-request-v1",
-        "playbill-procedure-mandate-v1",
-        "playbill-procedure-mandate-v2",
-        "playbill-procedure-pin-slot-ref-v1",
-        "playbill-procedure-pin-slot-v1",
-        "playbill-procedure-producer-receipt-v1",
-        "playbill-procedure-provider-binding-v2",
-        "playbill-procedure-resolution-v2",
-        "playbill-procedure-run-admission-v4",
-        "playbill-procedure-run-admission-v5",
-        "playbill-procedure-run-admission-v6",
-        "playbill-procedure-run-admission-v7",
-        "playbill-procedure-run-admission-v8",
-        "playbill-procedure-run-receipt-v5",
-        "playbill-procedure-run-receipt-v6",
-        "playbill-procedure-runtime-policy-v1",
-        "playbill-procedure-source-capture-association-v1",
-        "playbill-procedure-v1",
-        "playbill-procedure-v2",
-        "playbill-provider-bucket-classification-plan-v1",
-        "playbill-provider-bucket-classifier-installation-v1",
-        "playbill-provider-bucket-conformance-fixture-proof-v1",
-        "playbill-provider-bucket-conformance-fixture-v1",
-        "playbill-provider-budget-translation-v1",
-        "playbill-provider-container-materialization-reference-v1",
-        "playbill-provider-egress-observation-v1",
-        "playbill-provider-external-occurrence-plan-v1",
-        "playbill-provider-extras-environment-pin-map-v1",
-        "playbill-provider-implementation-closure-v1",
-        "playbill-provider-implementation-v1",
-        "playbill-provider-interface-v1",
-        "playbill-provider-interface-v2",
-        "playbill-provider-invocation-completed-v1",
-        "playbill-provider-invocation-outcome-v1",
-        "playbill-provider-invocation-output-digest-v1",
-        "playbill-provider-invocation-receipt-v1",
-        "playbill-provider-invocation-started-v1",
-        "playbill-provider-local-materialization-reference-v1",
-        "playbill-provider-result-to-external-capture-v1",
-        "playbill-provider-secret-binding-identity-v1",
-        "playbill-provider-secret-receipt-reference-v1",
-        "playbill-provider-secret-reference-v1",
-        "playbill-provider-secret-resolution-plan-v1",
-        "playbill-provider-v1",
-        "playbill-provider-v2",
-        "playbill-provider-v3",
-        "playbill-query-definition-v1",
-        "playbill-query-definition-v2",
-        "playbill-resolution-claim-endpoint-v1",
-        "playbill-resolution-contract-activation-v2",
-        "playbill-resolution-contract-activation-v3",
-        "playbill-resolution-contract-v1",
-        "playbill-resolution-v3",
-        "playbill-run-material-reservation-v1",
-        "playbill-settled-outcome-history-v1",
-        "playbill-settled-outcome-relation-v1",
-        "playbill-settled-outcome-row-v1",
-        "playbill-settled-outcomes-access-profile-v1",
-        "playbill-settled-outcomes-query-receipt-v1",
-        "playbill-settled-outcomes-query-request-v1",
-        "playbill-settled-outcomes-query-result-v1",
-        "playbill-source-acquisition-policy-v1",
-        "playbill-source-read-receipt-v1",
-        "playbill-verified-provider-binding-v1",
-        "playbill-workspace-file-source-request-v1",
-    )
-    assert PLAYBILL_FORMAT_RESERVATIONS.reserved_tags() == ("playbill-run-material-reservation-v2",)
-    for implemented_tag in (
-        "playbill-pending-admission-material-reservation-v1",
-        "playbill-run-material-reservation-v1",
-    ):
-        with pytest.raises(ValueError, match="already implemented"):
-            PLAYBILL_FORMAT_RESERVATIONS.activate(implemented_tag)
+def test_calibration_readings_have_no_governed_path_kind() -> None:
     # Calibration readings are compute-produced, CAS-pinned artifacts. Registering a
     # governed tree path would collapse the ratified policy/readings/mandates split.
-    assert "calibration-reading" not in P2_C_ARTIFACT_KINDS.implemented_kinds()
+    assert "calibration-reading" not in {entry.kind for entry in P2_C_ARTIFACT_KINDS.entries()}
 
 
 def test_descriptor_claim_type_identity_seed_list_is_exact() -> None:
