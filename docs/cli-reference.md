@@ -1917,4 +1917,6 @@ projection before advancing the signed ledger. Installing or restarting a daemon
 does not upgrade an instance. Historical generations keep their original compiler.
 The instance descriptor retains its genesis compiler; inspection reports the
 active compiler from accepted history. Unsupported transitions and downgrades are
-refused. Artifact format migrations are separate work.
+refused. Artifact format migrations are separate work. See
+[Upgrading](upgrading.md) for the whole flow, from installing a release to
+activating a compiler upgrade.
