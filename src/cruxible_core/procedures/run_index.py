@@ -286,23 +286,6 @@ class ProcedureRunIndex:
             )
         self._conn.commit()
 
-    def rebuild(
-        self,
-        records: tuple[StoredProcedureJournalRecordV1, ...],
-        *,
-        bodies: ContentAddressedBodyStore,
-    ) -> None:
-        """Reproduce the cache from authenticated records plus effective CAS coverage."""
-
-        access = BodyAccessContext(principal_id="procedure-run-index", can_read_body=True)
-        self._conn.execute("DELETE FROM procedure_run_index")
-        self._conn.execute("DELETE FROM procedure_provider_invocation_index")
-        self._conn.commit()
-        for stored in records:
-            content = bodies.read(stored.record.payload_digest, access=access)
-            payload = parse_journal_payload(content)
-            self.apply_record(stored, payload=payload)
-
     def rebuild_run(
         self,
         run_id: str,
