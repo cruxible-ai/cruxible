@@ -5,7 +5,9 @@ HTTP and CLI.
 
 The unset/default MCP profile advertises the writer path: authoring, discovery,
 search/list/orient, expansion, source context, coverage, floor export, proposal
-approval/activation, and runtime identity/version reads. Set
+approval/activation, and runtime identity/version reads. There is no separate
+version tool: `cruxible_playbill_whoami` and `cruxible_server_info` both report
+the MCP adapter's package version and the daemon's (`GET /version`). Set
 `CRUXIBLE_MCP_PROFILE=expert` (aliases: `full`, `all`) to advertise the complete
 catalog below. Curation changes discoverability only; permission tiers still gate
 every call, and hidden expert tools remain available through the API.
@@ -42,7 +44,7 @@ The list is a reachability closure, not a read of the handler's own body: it
 covers the verbs the handler names itself, the verbs reached through a local
 adapter object it constructs, and the verbs reached through a sibling handler
 it delegates to. An empty list therefore means the tool reaches no facade verb
-at all -- three tools are in that position today, and all three are
+at all -- two tools are in that position today, and both are
 `READ_ONLY`. A mutating tool may not publish an empty list without a declared
 exception naming its reason
 (`tests/test_guardrails/test_playbill_v1_served_surface.py`), because an
@@ -55,8 +57,7 @@ that starts reaching one more verb moves the pin.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_version` | Return package/runtime version information | `READ_ONLY` |
-| `cruxible_server_info` | Return daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
+| `cruxible_server_info` | Return the adapter and daemon versions with daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
 
 ## Host and initialization
 
@@ -99,7 +100,7 @@ approval stay the ordinary steps.
 | `cruxible_playbill_proposal_list` | List open and terminal proposal evidence | `READ_ONLY` |
 | `cruxible_playbill_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
 | `cruxible_playbill_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
-| `cruxible_playbill_whoami` | Name the resolved instance and the credential-derived actor's identity and registration there | `READ_ONLY` |
+| `cruxible_playbill_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, and the adapter and daemon versions | `READ_ONLY` |
 
 MCP never accepts a client private key. Signing occurs outside the server and
 outside the language server/MCP process.

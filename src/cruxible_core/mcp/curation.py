@@ -25,7 +25,6 @@ _PROFILE_ALIASES = {
 }
 
 _DEFAULT_TOOLS = {
-    "cruxible_version",
     "cruxible_server_info",
     "cruxible_playbill_kit_status",
     "cruxible_playbill_kit_add",
@@ -75,7 +74,6 @@ _DEFAULT_TOOLS = {
 }
 
 _COMMON_READS = {
-    "cruxible_version",
     "cruxible_server_info",
     "cruxible_playbill_inspect_proposal",
     "cruxible_playbill_inspect_refusal",

@@ -11,6 +11,7 @@ from mcp.shared.memory import create_connected_server_and_client_session
 
 from cruxible_client import contracts
 from cruxible_client.errors import DaemonOperationScopeError, ErrorResponse, response_to_error
+from cruxible_core import __version__
 from cruxible_core.errors import ConfigError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
@@ -54,6 +55,9 @@ class _ScopedClient:
 
     def server_info(self) -> contracts.ServerInfoResult:
         raise DaemonOperationScopeError("cruxible_server_info", "inst_scoped")
+
+    def version(self) -> str:
+        return "9.9.9"
 
     def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspectionV1:
         return _host(instance_id)
@@ -112,6 +116,8 @@ def test_whoami_without_instance_id_reports_the_configured_instance(
     assert not is_error, text
     payload = json.loads(text)
     assert payload["instance_id"] == "inst_env"
+    assert payload["adapter_version"] == __version__
+    assert payload["daemon_version"] == "9.9.9"
     assert payload["identity"]["actor_id"] == "agent-a"
     assert client.whoami_calls == ["inst_env"]
 
@@ -136,6 +142,7 @@ def test_server_info_answers_an_instance_scoped_credential(
 
     assert result.scope == "instance"
     assert result.instance_id == "inst_scoped"
+    assert (result.adapter_version, result.daemon_version) == (__version__, "9.9.9")
     assert result.daemon is None
     assert result.host is not None and result.host.instance_id == "inst_scoped"
     assert result.identity is not None and result.identity.actor_id == "agent-a"
@@ -150,6 +157,7 @@ def test_server_info_keeps_daemon_fields_for_a_daemon_scope_caller(
 
     assert result.scope == "daemon"
     assert result.instance_id == "inst_env"
+    assert result.adapter_version == result.daemon_version == __version__
     assert result.daemon is not None
     assert result.host is None and result.identity is None
 

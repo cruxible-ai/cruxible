@@ -28,10 +28,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you want to retire what a kit installed. It only proposes; live Claims "
         "that depend on those definitions block it."
     ),
-    "cruxible_version": "Use when you need to confirm which cruxible build is running.",
     "cruxible_server_info": (
-        "Use when you need daemon version, state, auth, and host metadata; an "
-        "instance-scoped credential gets its own instance's host and identity."
+        "Use when you need adapter and daemon versions with state, auth, and host metadata; "
+        "an instance-scoped credential gets its own instance's host and identity."
     ),
     "cruxible_playbill_host_create": (
         "Use when you need an empty daemon-owned host before Playbill bootstrap; "
@@ -70,8 +69,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "is ready to settle."
     ),
     "cruxible_playbill_whoami": (
-        "Use when you need which instance this server acts on and who you are there: "
-        "actor, permission mode, and principal status."
+        "Use when you need which instance this server acts on, who you are there, and "
+        "the adapter and daemon versions."
     ),
     "cruxible_playbill_proposal_list": (
         "Use when you need to find open proposals or inspect terminal proposal outcomes."

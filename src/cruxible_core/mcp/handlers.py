@@ -64,6 +64,7 @@ from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
 from cruxible_client.errors import ServerUnreachableError
+from cruxible_core import __version__
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputV1,
 )
@@ -381,6 +382,16 @@ def _dispatch_remote_or_local(
     return local_call()
 
 
+def _daemon_version() -> str:
+    """The daemon's public version probe; in library mode this process is the daemon."""
+
+    return _dispatch_remote_or_local(
+        lambda client: client.version(),
+        lambda: __version__,
+        operation_name="daemon version probe (GET /version)",
+    )
+
+
 def handle_server_info() -> McpServerInfoResult:
     """Answer a daemon-scope caller with daemon metadata, a scoped one with its instance."""
 
@@ -395,6 +406,8 @@ def handle_server_info() -> McpServerInfoResult:
         return McpServerInfoResult(
             scope="instance",
             instance_id=scope,
+            adapter_version=__version__,
+            daemon_version=_daemon_version(),
             host=_dispatch_remote_or_local(
                 lambda client: client.show_playbill_host(scope),
                 lambda: host_api.show_playbill_host(scope),
@@ -405,6 +418,8 @@ def handle_server_info() -> McpServerInfoResult:
     return McpServerInfoResult(
         scope="daemon",
         instance_id=configured_instance_id(),
+        adapter_version=__version__,
+        daemon_version=daemon.version,
         daemon=daemon,
     )
 
@@ -684,7 +699,12 @@ def _playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
 
 
 def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
-    return McpWhoAmIResult(instance_id=instance_id, identity=_playbill_whoami(instance_id))
+    return McpWhoAmIResult(
+        instance_id=instance_id,
+        adapter_version=__version__,
+        daemon_version=_daemon_version(),
+        identity=_playbill_whoami(instance_id),
+    )
 
 
 def handle_playbill_list_proposals(

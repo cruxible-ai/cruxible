@@ -73,13 +73,13 @@ def test_protocol_call_allows_advertised_tool(
     async def exercise() -> tuple[bool, str]:
         async with _protocol_session(server) as session:
             await session.initialize()
-            result = await session.call_tool("cruxible_version", {})
+            result = await session.call_tool("cruxible_server_info", {})
             text = " ".join(block.text for block in result.content if hasattr(block, "text"))
             return bool(result.isError), text
 
     is_error, message = _run(exercise())
     assert not is_error
-    assert "version" in message
+    assert "adapter_version" in message
 
 
 def test_protocol_explicit_allowlist_is_enforced_on_list_and_call(
@@ -88,7 +88,7 @@ def test_protocol_explicit_allowlist_is_enforced_on_list_and_call(
     monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
     monkeypatch.setenv(
         "CRUXIBLE_MCP_TOOLS",
-        "cruxible_version,cruxible_playbill_get_document",
+        "cruxible_server_info,cruxible_playbill_get_document",
     )
     server = create_server()
 
@@ -111,7 +111,7 @@ def test_protocol_explicit_allowlist_is_enforced_on_list_and_call(
             return {tool.name for tool in listed.tools}, bool(result.isError), text
 
     names, is_error, message = _run(exercise())
-    assert names == {"cruxible_version", "cruxible_playbill_get_document"}
+    assert names == {"cruxible_server_info", "cruxible_playbill_get_document"}
     assert is_error
     assert "cruxible_playbill_explain" in message
 
@@ -141,7 +141,7 @@ def test_protocol_permission_tier_hides_and_refuses_write(
 
 
 def test_unknown_allowlist_name_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CRUXIBLE_MCP_TOOLS", "cruxible_version,cruxible_query")
+    monkeypatch.setenv("CRUXIBLE_MCP_TOOLS", "cruxible_server_info,cruxible_query")
 
     with pytest.raises(ConfigError, match="Unknown MCP tools"):
         create_server()

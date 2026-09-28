@@ -16,6 +16,8 @@ class McpWhoAmIResult(BaseModel):
 
     tag: Literal["cruxible-mcp-whoami-v1"] = "cruxible-mcp-whoami-v1"
     instance_id: str
+    adapter_version: str
+    daemon_version: str
     identity: contracts.PlaybillWhoAmI
 
 
@@ -27,6 +29,8 @@ class McpServerInfoResult(BaseModel):
     tag: Literal["cruxible-mcp-server-info-v1"] = "cruxible-mcp-server-info-v1"
     scope: Literal["daemon", "instance"]
     instance_id: str | None
+    adapter_version: str
+    daemon_version: str
     daemon: contracts.ServerInfoResult | None = None
     host: contracts.PlaybillHostInspectionV1 | None = None
     identity: contracts.PlaybillWhoAmI | None = None

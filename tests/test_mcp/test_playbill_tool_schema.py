@@ -103,8 +103,6 @@ def test_agent_schema_never_accepts_private_keys_or_local_paths() -> None:
 def test_playbill_tools_publish_typed_output_schemas() -> None:
     schemas = _schemas()
     for name, tool in schemas.items():
-        if name == "cruxible_version":
-            continue
         assert tool.outputSchema is not None, name
 
 

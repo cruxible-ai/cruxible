@@ -32,7 +32,6 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallResultV1,
 )
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
-from cruxible_core import __version__
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_DEFAULT_MAX_BYTES,
@@ -72,11 +71,6 @@ def register_tools(
         server.tool(description=tool_description(fn.__name__))(registered_fn)
         registered.append(fn.__name__)
         return fn
-
-    @_tool
-    def cruxible_version() -> dict[str, str]:
-        """Return the running cruxible-core version."""
-        return {"version": __version__}
 
     @_tool
     def cruxible_server_info() -> McpServerInfoResult:
