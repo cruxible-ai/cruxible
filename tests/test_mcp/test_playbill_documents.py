@@ -28,7 +28,7 @@ PLAYBILL_DOCUMENT_TOOLS = {
     "cruxible_playbill_dereference",
     "cruxible_playbill_history",
     "cruxible_playbill_source_context",
-    "cruxible_playbill_check_source_bundle",
+    "cruxible_playbill_source_check",
     "cruxible_playbill_propose_source_bundle",
     "cruxible_playbill_list_principals",
     "cruxible_playbill_propose_principal_change",

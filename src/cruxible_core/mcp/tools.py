@@ -352,12 +352,29 @@ def register_tools(
         return handlers.handle_playbill_source_context(require_instance_id(instance_id))
 
     @_tool
-    def cruxible_playbill_check_source_bundle(
-        instance_id: InstanceId = None, *, bundle: dict[str, Any]
+    def cruxible_playbill_source_check(
+        instance_id: InstanceId = None,
+        *,
+        bundle: Annotated[
+            dict[str, Any] | None,
+            Field(description="A compiled source bundle; omit when passing catalog_path."),
+        ] = None,
+        catalog_path: Annotated[
+            str | None,
+            Field(description="Workspace source catalog to compile first; omit with bundle."),
+        ] = None,
+        repository_root: str = ".",
+        local_catalog_path: str | None = None,
+        root_aliases: dict[str, str] | None = None,
     ) -> contracts.PlaybillSourceCheckResult:
-        """Compare a compiled source bundle with accepted state."""
-        return handlers.handle_playbill_check_source_bundle(
-            require_instance_id(instance_id), bundle
+        """Compare a compiled bundle or catalog-declared workspace sources with accepted state."""
+        return handlers.handle_playbill_source_check(
+            require_instance_id(instance_id),
+            bundle=bundle,
+            catalog_path=catalog_path,
+            repository_root=repository_root,
+            local_catalog_path=local_catalog_path,
+            root_aliases=root_aliases,
         )
 
     @_tool
@@ -1157,17 +1174,40 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_resolve_coverage(
+    def cruxible_playbill_coverage(
         instance_id: InstanceId = None,
         *,
-        observations: list[dict[str, Any]],
+        observations: Annotated[
+            list[dict[str, Any]] | None,
+            Field(description="Working-source observations you built; omit with bindings."),
+        ] = None,
+        bindings: Annotated[
+            dict[str, str] | None,
+            Field(
+                description=(
+                    "Logical source bindings; the adapter reads the selected workspace "
+                    "files (files, ranges, grep_results_path, or whole_working_set)."
+                )
+            ),
+        ] = None,
+        files: list[str] | None = None,
+        ranges: list[str] | None = None,
+        grep_results_path: str | None = None,
+        whole_working_set: Annotated[
+            bool, Field(description="With bindings, cover every declared workspace file.")
+        ] = False,
         budget: dict[str, Any] | None = None,
         scan_budget: dict[str, Any] | None = None,
     ) -> contracts.PlaybillCoverageResult:
-        """Resolve what observed working sources have to do with accepted state."""
-        return handlers.handle_playbill_resolve_coverage(
+        """Resolve what working sources have to do with accepted state."""
+        return handlers.handle_playbill_coverage(
             require_instance_id(instance_id),
-            observations,
+            observations=observations,
+            bindings=bindings,
+            files=tuple(files or ()),
+            ranges=tuple(ranges or ()),
+            grep_results_path=grep_results_path,
+            whole_working_set=whole_working_set,
             budget=budget,
             scan_budget=scan_budget,
         )
@@ -1191,64 +1231,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_workspace_source_check(
-        instance_id: InstanceId = None,
-        *,
-        catalog_path: str,
-        repository_root: str = ".",
-        local_catalog_path: str | None = None,
-        root_aliases: dict[str, str] | None = None,
-    ) -> contracts.PlaybillSourceCheckResult:
-        """Compile workspace sources and report their alignment to accepted state."""
-        return handlers.handle_playbill_workspace_source_check(
-            require_instance_id(instance_id),
-            catalog_path=catalog_path,
-            repository_root=repository_root,
-            local_catalog_path=local_catalog_path,
-            root_aliases=root_aliases or {},
-        )
-
-    @_tool
-    def cruxible_playbill_workspace_coverage_resolve(
-        instance_id: InstanceId = None,
-        *,
-        bindings: dict[str, str],
-        files: list[str] | None = None,
-        ranges: list[str] | None = None,
-        grep_results_path: str | None = None,
-        whole_working_set: bool = False,
-        budget: dict[str, Any] | None = None,
-        scan_budget: dict[str, Any] | None = None,
-    ) -> contracts.PlaybillCoverageResult:
-        """Resolve selected workspace files while the adapter derives observations."""
-        return handlers.handle_playbill_workspace_coverage_resolve(
-            require_instance_id(instance_id),
-            bindings=bindings,
-            files=tuple(files or ()),
-            ranges=tuple(ranges or ()),
-            grep_results_path=grep_results_path,
-            whole_working_set=whole_working_set,
-            budget=budget,
-            scan_budget=scan_budget,
-        )
-
-    @_tool
-    def cruxible_playbill_workspace_coverage_status(
-        instance_id: InstanceId = None,
-        *,
-        bindings: dict[str, str],
-        budget: dict[str, Any] | None = None,
-        scan_budget: dict[str, Any] | None = None,
-    ) -> contracts.PlaybillCoverageResult:
-        """Resolve the complete declared workspace scope as one coverage status."""
-        return handlers.handle_playbill_workspace_coverage_status(
-            require_instance_id(instance_id),
-            bindings=bindings,
-            budget=budget,
-            scan_budget=scan_budget,
-        )
-
-    @_tool
     def cruxible_playbill_seed_plan(
         bundle_path: str,
         proposal_name: str,
@@ -1260,29 +1242,32 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_export_floor(
-        instance_id: InstanceId = None,
-    ) -> contracts.PlaybillFloorExport:
-        """Export the deterministic greppable floor as base64 bytes per path."""
-        return handlers.handle_playbill_export_floor(require_instance_id(instance_id))
-
-    @_tool
-    def cruxible_playbill_workspace_floor_export(
+    def cruxible_playbill_floor_export(
         instance_id: InstanceId = None,
         *,
-        force: bool = False,
-    ) -> contracts.PlaybillWorkspaceFloorWriteResult:
-        """Verify and write the floor under the configured MCP workspace."""
-        return handlers.handle_playbill_workspace_floor_export(
+        mode: Annotated[
+            handlers.FloorExportMode,
+            Field(
+                description=(
+                    "bytes: return base64 files per floor path; write: verify and write "
+                    ".playbill/floor in the MCP workspace; status: report whether that "
+                    "floor is current, stale, or missing."
+                )
+            ),
+        ],
+        force: Annotated[
+            bool, Field(description="write only: replace a non-empty floor directory.")
+        ] = False,
+    ) -> (
+        contracts.PlaybillFloorExport
+        | contracts.PlaybillWorkspaceFloorWriteResult
+        | contracts.PlaybillWorkspaceFloorStatus
+    ):
+        """Export the accepted greppable floor as bytes, write it locally, or report its status."""
+        return handlers.handle_playbill_floor_export(
             require_instance_id(instance_id),
+            mode=mode,
             force=force,
         )
-
-    @_tool
-    def cruxible_playbill_workspace_floor_status(
-        instance_id: InstanceId = None,
-    ) -> contracts.PlaybillWorkspaceFloorStatus:
-        """Report whether the configured local floor is current, stale, or missing."""
-        return handlers.handle_playbill_workspace_floor_status(require_instance_id(instance_id))
 
     return registered

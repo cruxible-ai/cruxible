@@ -104,8 +104,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_source_context": (
         "Use when a local client needs path-free accepted inputs before compiling sources."
     ),
-    "cruxible_playbill_check_source_bundle": (
-        "Use when you need to compare compiled source bytes with accepted state."
+    "cruxible_playbill_source_check": (
+        "Use when you need to check sources against accepted state: a compiled bundle, "
+        "or catalog-declared workspace files."
     ),
     "cruxible_playbill_propose_source_bundle": (
         "Use when you need to propose frozen source bytes without sending a local path."
@@ -329,34 +330,17 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_expand": (
         "Use when you need one address's bounded governance, provenance, and relation context."
     ),
-    "cruxible_playbill_export_floor": (
-        "Use when you need the whole accepted floor as greppable files rather than one read."
+    "cruxible_playbill_floor_export": (
+        "Use when you need the accepted floor as greppable files: return the bytes, write "
+        "them to the workspace, or check that copy's status."
     ),
-    "cruxible_playbill_workspace_floor_export": (
-        "Use when you need the accepted floor verified and written under this MCP client's "
-        "configured workspace."
-    ),
-    "cruxible_playbill_workspace_floor_status": (
-        "Use when you need to know whether this MCP client's configured floor is current, "
-        "stale, missing, or invalid."
-    ),
-    "cruxible_playbill_resolve_coverage": (
+    "cruxible_playbill_coverage": (
         "Use when you have read or changed working files and need what they have to do with "
         "accepted state."
     ),
     "cruxible_playbill_workspace_source_compile": (
         "Use to compile catalog-declared files under this MCP client's workspace without "
         "constructing source digests or compilation wire."
-    ),
-    "cruxible_playbill_workspace_source_check": (
-        "Use to compile catalog-declared workspace files and compare them with accepted state."
-    ),
-    "cruxible_playbill_workspace_coverage_resolve": (
-        "Use after reading or changing selected workspace files; supply logical bindings and "
-        "the selections while the adapter derives byte observations."
-    ),
-    "cruxible_playbill_workspace_coverage_status": (
-        "Use for one coverage answer over every file in the declared workspace binding set."
     ),
     "cruxible_playbill_seed_plan": (
         "Use to inspect the deterministic proposal sequence for a workspace seed bundle; this "

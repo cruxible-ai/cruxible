@@ -121,14 +121,14 @@ outside the language server/MCP process.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_playbill_source_context` | Return source alignment context | `READ_ONLY` |
-| `cruxible_playbill_check_source_bundle` | Validate a compiled bundle | `READ_ONLY` |
+| `cruxible_playbill_source_check` | Check a compiled `bundle`, or the sources a workspace `catalog_path` declares, against accepted state | `READ_ONLY` |
 | `cruxible_playbill_propose_source_bundle` | Propose a frozen compiled bundle | `GOVERNED_WRITE` |
 | `cruxible_playbill_workspace_source_compile` | Read catalog-declared workspace bytes and derive a source bundle | `READ_ONLY` |
-| `cruxible_playbill_workspace_source_check` | Compile workspace sources and check accepted alignment | `READ_ONLY` |
 
-The raw bundle tools remain for programmatic clients. Workspace tools own local
-path traversal and digest construction so an agent supplies catalog paths and
-root aliases, not compilation wire.
+`cruxible_playbill_source_check` takes exactly one of `bundle` (for programmatic
+clients that compiled one) or `catalog_path`. With a catalog path the adapter
+owns local path traversal and digest construction, so an agent supplies catalog
+paths and root aliases, not compilation wire.
 
 ## Principals
 
@@ -249,12 +249,8 @@ Claims. It does not create a second authority plane beside accepted state.
 | `cruxible_playbill_curation_accept_fixed` | Link an item to an exact related accepted ChangeSet | `GOVERNED_WRITE` |
 | `cruxible_playbill_curation_suppress` | Hide open work by item, pattern, or instance without resolving it | `GOVERNED_WRITE` |
 | `cruxible_playbill_expand` | Expand one address into a context capsule | `READ_ONLY` |
-| `cruxible_playbill_export_floor` | Export the greppable floor as base64 bytes | `READ_ONLY` |
-| `cruxible_playbill_resolve_coverage` | Resolve observed working sources against accepted state | `READ_ONLY` |
-| `cruxible_playbill_workspace_floor_export` | Verify and exactly replace a floor directory under the MCP workspace | `READ_ONLY` |
-| `cruxible_playbill_workspace_floor_status` | Report whether the installed workspace floor is current, stale, or absent | `READ_ONLY` |
-| `cruxible_playbill_workspace_coverage_resolve` | Derive observations from selected workspace files and resolve coverage | `READ_ONLY` |
-| `cruxible_playbill_workspace_coverage_status` | Resolve coverage for the full declared workspace binding set | `READ_ONLY` |
+| `cruxible_playbill_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.playbill/floor` under the MCP workspace; `mode=status` reports whether that floor is current, stale, or absent | `READ_ONLY` |
+| `cruxible_playbill_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, `grep_results_path`, or `whole_working_set`) | `READ_ONLY` |
 
 Query execution is a read: it returns the result together with its
 `playbill-query-execution-receipt-v1`. Qualifying direct reads, query/search

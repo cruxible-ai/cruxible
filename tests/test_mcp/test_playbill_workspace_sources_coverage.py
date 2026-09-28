@@ -6,8 +6,11 @@ import base64
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from cruxible_client import contracts
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCatalogEntry
+from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
 
 
@@ -78,13 +81,7 @@ def test_workspace_source_compile_and_check_read_bytes_and_derive_bundle(
         local_catalog_path=None,
         root_aliases={},
     )
-    result = handlers.handle_playbill_workspace_source_check(
-        "inst_test",
-        catalog_path="catalog.json",
-        repository_root=".",
-        local_catalog_path=None,
-        root_aliases={},
-    )
+    result = handlers.handle_playbill_source_check("inst_test", catalog_path="catalog.json")
 
     assert base64.b64decode(bundle.documents[0].body_base64) == b"status: ready\n"
     assert result.compilation_digest == bundle.manifest.compilation_digest
@@ -120,15 +117,10 @@ def test_workspace_coverage_derives_observations_from_decision_bearing_selection
 
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
 
-    handlers.handle_playbill_workspace_coverage_resolve(
+    handlers.handle_playbill_coverage(
         "inst_test",
         bindings={"docs/decision.md": "external:workspace.decision"},
-        files=(),
         ranges=("docs/decision.md:2-2",),
-        grep_results_path=None,
-        whole_working_set=False,
-        budget=None,
-        scan_budget=None,
     )
 
     assert len(captured) == 1
@@ -170,14 +162,28 @@ def test_workspace_coverage_status_observes_every_declared_binding(
 
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
 
-    handlers.handle_playbill_workspace_coverage_status(
+    handlers.handle_playbill_coverage(
         "inst_test",
         bindings={
             "one.md": "external:one",
             "two.md": "ledger:two",
         },
-        budget=None,
-        scan_budget=None,
+        whole_working_set=True,
     )
 
     assert counts == [2]
+
+
+def test_merged_tools_take_exactly_one_input_shape() -> None:
+    with pytest.raises(DataValidationError, match="exactly one of observations or bindings"):
+        handlers.handle_playbill_coverage("inst_test")
+    with pytest.raises(DataValidationError, match="exactly one of observations or bindings"):
+        handlers.handle_playbill_coverage("inst_test", observations=[], bindings={})
+    with pytest.raises(DataValidationError, match="apply only with bindings"):
+        handlers.handle_playbill_coverage("inst_test", observations=[], whole_working_set=True)
+    with pytest.raises(DataValidationError, match="exactly one of bundle or catalog_path"):
+        handlers.handle_playbill_source_check("inst_test")
+    with pytest.raises(DataValidationError, match="apply only with catalog_path"):
+        handlers.handle_playbill_source_check("inst_test", bundle={}, root_aliases={"a": "b"})
+    with pytest.raises(DataValidationError, match="force applies only"):
+        handlers.handle_playbill_floor_export("inst_test", mode="bytes", force=True)

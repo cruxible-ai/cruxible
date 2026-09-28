@@ -826,16 +826,44 @@ def handle_playbill_source_context(instance_id: str) -> contracts.PlaybillSource
     )
 
 
-def handle_playbill_check_source_bundle(
-    instance_id: str, bundle: dict[str, Any]
+def handle_playbill_source_check(
+    instance_id: str,
+    *,
+    bundle: dict[str, Any] | None = None,
+    catalog_path: str | None = None,
+    repository_root: str = ".",
+    local_catalog_path: str | None = None,
+    root_aliases: Mapping[str, str] | None = None,
 ) -> contracts.PlaybillSourceCheckResult:
-    frozen = SourceCompilationBundle.model_validate(bundle)
+    """Check a compiled bundle, or compile catalog-declared workspace sources first."""
+
+    if (bundle is None) == (catalog_path is None):
+        raise DataValidationError(
+            "source check takes exactly one of bundle or catalog_path (workspace sources)"
+        )
+    if bundle is not None and (
+        repository_root != "." or local_catalog_path is not None or root_aliases
+    ):
+        raise DataValidationError(
+            "repository_root, local_catalog_path, and root_aliases apply only with catalog_path"
+        )
+    frozen = (
+        SourceCompilationBundle.model_validate(bundle)
+        if catalog_path is None
+        else handle_playbill_workspace_source_compile(
+            instance_id,
+            catalog_path=catalog_path,
+            repository_root=repository_root,
+            local_catalog_path=local_catalog_path,
+            root_aliases=root_aliases or {},
+        )
+    )
     return _dispatch_remote_or_local(
         lambda client: client.check_playbill_source_bundle(
             instance_id, bundle=frozen.model_dump(mode="json")
         ),
         lambda: playbill_api.playbill_check_source_bundle(instance_id, bundle=frozen),
-        operation_name="cruxible_playbill_check_source_bundle",
+        operation_name="cruxible_playbill_source_check",
     )
 
 
@@ -2106,14 +2134,40 @@ def handle_playbill_expand(
     )
 
 
-def handle_playbill_resolve_coverage(
+def handle_playbill_coverage(
     instance_id: str,
-    observations: list[dict[str, Any]],
     *,
+    observations: list[dict[str, Any]] | None = None,
+    bindings: Mapping[str, str] | None = None,
+    files: tuple[str, ...] = (),
+    ranges: tuple[str, ...] = (),
+    grep_results_path: str | None = None,
+    whole_working_set: bool = False,
     budget: dict[str, Any] | None = None,
     scan_budget: dict[str, Any] | None = None,
 ) -> contracts.PlaybillCoverageResult:
-    observed = tuple(WorkingSourceObservationV1.model_validate(item) for item in observations)
+    """Resolve caller observations, or ones the adapter derives from workspace files."""
+
+    if (observations is None) == (bindings is None):
+        raise DataValidationError(
+            "coverage takes exactly one of observations or bindings (workspace files)"
+        )
+    if bindings is not None:
+        observed = _workspace_observations(
+            bindings,
+            files=files,
+            ranges=ranges,
+            grep_results_path=grep_results_path,
+            whole_working_set=whole_working_set,
+        )
+    elif files or ranges or grep_results_path is not None or whole_working_set:
+        raise DataValidationError(
+            "files, ranges, grep_results_path, and whole_working_set apply only with bindings"
+        )
+    else:
+        observed = tuple(
+            WorkingSourceObservationV1.model_validate(item) for item in observations or ()
+        )
     cards = None if budget is None else CoverageCardBudgetV1.model_validate(budget)
     scan = None if scan_budget is None else CoverageScanBudgetV1.model_validate(scan_budget)
     return _dispatch_remote_or_local(
@@ -2129,7 +2183,7 @@ def handle_playbill_resolve_coverage(
             budget=cards,
             scan_budget=scan,
         ),
-        operation_name="cruxible_playbill_resolve_coverage",
+        operation_name="cruxible_playbill_coverage",
     )
 
 
@@ -2178,42 +2232,14 @@ def handle_playbill_workspace_source_compile(
     )
 
 
-def handle_playbill_workspace_source_check(
-    instance_id: str,
-    *,
-    catalog_path: str,
-    repository_root: str,
-    local_catalog_path: str | None,
-    root_aliases: Mapping[str, str],
-) -> contracts.PlaybillSourceCheckResult:
-    bundle = handle_playbill_workspace_source_compile(
-        instance_id,
-        catalog_path=catalog_path,
-        repository_root=repository_root,
-        local_catalog_path=local_catalog_path,
-        root_aliases=root_aliases,
-    )
-    return _dispatch_remote_or_local(
-        lambda client: client.check_playbill_source_bundle(
-            instance_id,
-            bundle=bundle.model_dump(mode="json"),
-        ),
-        lambda: playbill_api.playbill_check_source_bundle(instance_id, bundle=bundle),
-        operation_name="cruxible_playbill_workspace_source_check",
-    )
-
-
-def handle_playbill_workspace_coverage_resolve(
-    instance_id: str,
-    *,
+def _workspace_observations(
     bindings: Mapping[str, str],
+    *,
     files: tuple[str, ...],
     ranges: tuple[str, ...],
     grep_results_path: str | None,
     whole_working_set: bool,
-    budget: dict[str, Any] | None,
-    scan_budget: dict[str, Any] | None,
-) -> contracts.PlaybillCoverageResult:
+) -> tuple[WorkingSourceObservationV1, ...]:
     """Read selected workspace bytes and lower them to existing coverage wire."""
 
     workspace = mcp_workspace_root()
@@ -2226,38 +2252,15 @@ def handle_playbill_workspace_coverage_resolve(
             kind="file",
         ).read_text(encoding="utf-8")
     )
-    observations = observe_workspace(
-        bindings_from_mapping(bindings),
-        root=workspace,
-        files=files,
-        ranges=ranges,
-        grep_text=grep_text,
-        whole_working_set=whole_working_set,
-    )
-    return handle_playbill_resolve_coverage(
-        instance_id,
-        [item.model_dump(mode="json") for item in observations],
-        budget=budget,
-        scan_budget=scan_budget,
-    )
-
-
-def handle_playbill_workspace_coverage_status(
-    instance_id: str,
-    *,
-    bindings: Mapping[str, str],
-    budget: dict[str, Any] | None,
-    scan_budget: dict[str, Any] | None,
-) -> contracts.PlaybillCoverageResult:
-    return handle_playbill_workspace_coverage_resolve(
-        instance_id,
-        bindings=bindings,
-        files=(),
-        ranges=(),
-        grep_results_path=None,
-        whole_working_set=True,
-        budget=budget,
-        scan_budget=scan_budget,
+    return tuple(
+        observe_workspace(
+            bindings_from_mapping(bindings),
+            root=workspace,
+            files=files,
+            ranges=ranges,
+            grep_text=grep_text,
+            whole_working_set=whole_working_set,
+        )
     )
 
 
@@ -2274,37 +2277,43 @@ def handle_playbill_seed_plan(
     return plan_seed_directory(root, proposal_name=proposal_name)
 
 
-def handle_playbill_export_floor(instance_id: str) -> contracts.PlaybillFloorExport:
-    return _dispatch_remote_or_local(
-        lambda client: client.export_playbill_floor(instance_id),
-        lambda: playbill_api.playbill_export_floor(instance_id),
-        operation_name="cruxible_playbill_export_floor",
-    )
+FloorExportMode = Literal["bytes", "write", "status"]
 
 
-def handle_playbill_workspace_floor_export(
+def handle_playbill_floor_export(
     instance_id: str,
     *,
-    force: bool,
-) -> contracts.PlaybillWorkspaceFloorWriteResult:
-    workspace = mcp_git_workspace_root()
-    export = handle_playbill_export_floor(instance_id)
+    mode: FloorExportMode,
+    force: bool = False,
+) -> (
+    contracts.PlaybillFloorExport
+    | contracts.PlaybillWorkspaceFloorWriteResult
+    | contracts.PlaybillWorkspaceFloorStatus
+):
+    """Return floor bytes, write them under the MCP workspace, or report that floor's status."""
+
+    if force and mode != "write":
+        raise DataValidationError("force applies only to floor export mode 'write'")
+    if mode == "status":
+        search = _dispatch_remote_or_local(
+            lambda client: client.search_playbill(instance_id, mode="orient"),
+            lambda: playbill_api.playbill_search(instance_id, mode="orient"),
+            operation_name="cruxible_playbill_floor_export",
+        )
+        return inspect_workspace_floor(
+            mcp_git_workspace_root(),
+            current_coordinate=search.coordinate,
+        )
+    workspace = mcp_git_workspace_root() if mode == "write" else None
+    export = _dispatch_remote_or_local(
+        lambda client: client.export_playbill_floor(instance_id),
+        lambda: playbill_api.playbill_export_floor(instance_id),
+        operation_name="cruxible_playbill_floor_export",
+    )
+    if workspace is None:
+        return export
     return materialize_playbill_floor(
         workspace,
         export=export,
         force=force,
-    )
-
-
-def handle_playbill_workspace_floor_status(
-    instance_id: str,
-) -> contracts.PlaybillWorkspaceFloorStatus:
-    search = _dispatch_remote_or_local(
-        lambda client: client.search_playbill(instance_id, mode="orient"),
-        lambda: playbill_api.playbill_search(instance_id, mode="orient"),
-        operation_name="cruxible_playbill_workspace_floor_status",
-    )
-    return inspect_workspace_floor(
-        mcp_git_workspace_root(),
-        current_coordinate=search.coordinate,
     )
