@@ -50,14 +50,14 @@ def test_playbill_read_against_dead_port_emits_friendly_error(
     assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
-def test_server_info_against_dead_port_emits_friendly_error(
+def test_server_status_against_dead_port_emits_friendly_error(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
 ) -> None:
     dead_url = "http://127.0.0.1:1"
     monkeypatch.setenv("CRUXIBLE_SERVER_URL", dead_url)
 
-    result = runner.invoke(cli, ["server", "info"])
+    result = runner.invoke(cli, ["server", "status"])
 
     assert result.exit_code == 1
     assert f"Error: could not reach Cruxible server at {dead_url}:" in result.output

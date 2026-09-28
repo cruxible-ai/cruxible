@@ -942,10 +942,12 @@ Reads a bounded ranking of visible Claim-verification work.
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-curation_list() -> api.PlaybillCurationListResult
+curation_list(*, limit: int | None = None, cursor: str | None = None) -> api.PlaybillCurationListResult
 ```
 
-Performs an attributed workspace scan and reads current operational curation work.
+Performs an attributed workspace scan and reads one page of current operational
+curation work (default 25 items). A truncated page carries `next_cursor`; pass it
+back as `cursor`.
 
 **Conditions and effects:** Operational state stays live even through a pinned accepted-reading context.
 
@@ -2364,7 +2366,7 @@ values(
 Each live Claim's value and verdict for these Subjects, in one request and
 without full Claim views -- the cheaper read when only values and verdicts are
 needed. Every live contender of each selected slot is returned. Each
-`ClaimValueV1` carries `claim_id`, `subject_path`, `predicate`, `qualifier`,
+`ClaimValueV1` carries `claim_id`, `subject_path`, `subject_id`, `predicate`, `qualifier`,
 `role`, `object_kind` (`literal`, `subject` or `exact_content`), `object` (the
 statement object exactly as accepted, including a Subject object's selector or
 an exact-content span), `value` (the literal, the object Subject's artifact

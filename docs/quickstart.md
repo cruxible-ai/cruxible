@@ -16,17 +16,21 @@ In shell one:
 
 ~~~bash
 uv run cruxible server start \
-  --socket /tmp/cruxible-playbill.sock \
+  --socket /tmp/cruxible-playbill-run/daemon.sock \
   --state-root /tmp/cruxible-playbill-dev \
   --bootstrap-secret-file /tmp/cruxible-playbill-bootstrap
 ~~~
 
-The daemon creates a one-time bootstrap secret with mode 0600.
+The daemon creates a one-time bootstrap secret with mode 0600. It binds the
+socket with mode 0600 in a directory it creates with mode 0700. It refuses to
+start unless the socket's directory is yours and owner-only, and no ancestor
+lets another user replace it (a sticky root-owned `/tmp` is fine; a socket
+directly in `/tmp` is not).
 
 In shell two:
 
 ~~~bash
-export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-playbill.sock
+export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-playbill-run/daemon.sock
 export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat /tmp/cruxible-playbill-bootstrap)"
 ~~~
 

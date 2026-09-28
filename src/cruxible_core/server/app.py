@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import faulthandler
 import os
+import socket
 import sqlite3
+import stat
 import sys
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -25,7 +27,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.temporal import ISO_8601_FORMAT_HINT
 from cruxible_core import __version__
-from cruxible_core.errors import CoreError
+from cruxible_core.errors import ConfigError, CoreError
 from cruxible_core.ledger.checkpoints import QUIET_CHECKPOINT_SECONDS
 from cruxible_core.runtime.execution_policy import discover_isolated_executors
 from cruxible_core.runtime.permissions import init_permissions
@@ -343,9 +345,233 @@ def enable_fatal_fault_handler(path: Path | None = None) -> Path | None:
     return resolved
 
 
+_SOCKET_LOCATION_REPAIR = (
+    "pass a --socket path inside a directory only you own and can access (mode 0700), "
+    "under ancestors other users cannot write"
+)
+
+
+def _refuse_socket_location(detail: str) -> ConfigError:
+    return ConfigError(
+        f"Unsafe daemon socket location: {detail}. Repair: {_SOCKET_LOCATION_REPAIR}."
+    )
+
+
+def _check_socket_ancestor(path: Path, status: os.stat_result) -> None:
+    """An ancestor no other user can use to replace the directory below it.
+
+    Only root or this user may own it, and group/other write is allowed only on
+    a sticky root-owned directory such as ``/tmp``, where nobody but the entry's
+    owner (or root) may rename or remove an entry.
+    """
+    uid = os.getuid()
+    if status.st_uid not in (0, uid):
+        raise _refuse_socket_location(
+            f"{path} is owned by uid {status.st_uid}, who could replace the directory below it"
+        )
+    writable = status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    sticky_root = bool(status.st_mode & stat.S_ISVTX) and status.st_uid == 0
+    if writable and not sticky_root:
+        raise _refuse_socket_location(
+            f"{path} is writable by group or others (mode {stat.S_IMODE(status.st_mode):04o}), "
+            "so the directory below it could be replaced"
+        )
+
+
+def _check_socket_parent(path: Path, status: os.stat_result) -> None:
+    """The socket's own directory: a real directory this user owns, owner-only."""
+    if not stat.S_ISDIR(status.st_mode):
+        raise _refuse_socket_location(f"{path} is not a directory (a symlink is refused)")
+    if status.st_uid != os.getuid():
+        raise _refuse_socket_location(f"{path} is owned by uid {status.st_uid}, not by you")
+    if stat.S_IMODE(status.st_mode) & 0o077:
+        raise _refuse_socket_location(
+            f"{path} is not owner-only (mode {stat.S_IMODE(status.st_mode):04o}); "
+            f"run `chmod 700 {path}`"
+        )
+
+
+_MAX_SOCKET_PATH_SYMLINKS = 40
+
+
+def _inspect_socket_path_entry(path: Path) -> os.stat_result:
+    try:
+        return os.lstat(path)
+    except OSError as exc:
+        raise _refuse_socket_location(f"could not inspect {path}: {exc}") from exc
+
+
+def _check_socket_ancestors(directory: Path) -> None:
+    """Apply the ancestor rule to every directory the path actually traverses.
+
+    The path is walked one component at a time and each symlink is resolved
+    here, so every directory a lookup passes through -- including the ones a
+    symlink target leads through on the way to the next symlink -- is checked.
+    A directory another user could write would let them replace whatever the
+    path resolves through it. The socket's own directory is checked separately.
+    """
+    current = Path(os.sep)
+    _check_socket_ancestor(current, _inspect_socket_path_entry(current))
+    remaining = list(directory.parts[1:])
+    followed = 0
+    while remaining:
+        part = remaining.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            current = current.parent
+            continue
+        entry = current / part
+        status = _inspect_socket_path_entry(entry)
+        if stat.S_ISLNK(status.st_mode):
+            # A link's owner can repoint it at any time, whatever its directory
+            # allows (a sticky /tmp keeps others from removing the link, not its
+            # owner from replacing it).
+            if status.st_uid not in (0, os.getuid()):
+                raise _refuse_socket_location(
+                    f"{entry} is a symlink owned by uid {status.st_uid}, who could repoint it"
+                )
+            followed += 1
+            if followed > _MAX_SOCKET_PATH_SYMLINKS:
+                raise _refuse_socket_location(f"{directory} passes through too many symlinks")
+            target = Path(os.readlink(entry))
+            if target.is_absolute():
+                current = Path(os.sep)
+                remaining = list(target.parts[1:]) + remaining
+            else:
+                remaining = list(target.parts) + remaining
+            continue
+        if not stat.S_ISDIR(status.st_mode):
+            raise _refuse_socket_location(f"{entry} is not a directory")
+        if remaining:
+            _check_socket_ancestor(entry, status)
+        current = entry
+
+
+def _socket_location(path: str | os.PathLike[str]) -> Path:
+    """The path exactly as a client will look it up, never lexically normalized.
+
+    A relative path is joined to the working directory without normalizing it.
+    ``..`` is refused outright: collapsing it lexically, before the symlinks
+    ahead of it are resolved, names a different directory than the one a
+    lookup actually walks.
+    """
+    raw = os.fspath(path)
+    located = Path(raw if os.path.isabs(raw) else os.path.join(os.getcwd(), raw))
+    if ".." in located.parts:
+        raise _refuse_socket_location(
+            f"{raw} contains a `..` component; name the socket path without `..`"
+        )
+    return located
+
+
+def prepare_socket_directory(directory: Path) -> None:
+    """Make sure no other user can create or replace the daemon socket.
+
+    A missing directory is created 0700. The socket's own directory must be a
+    real directory this user owns with no group or other access, and no
+    ancestor may let another user replace it: anyone who can swap the socket
+    receives every bearer token clients send.
+    """
+    directory = _socket_location(directory)
+    if not os.path.lexists(directory):
+        directory.mkdir(mode=0o700, parents=True)
+    try:
+        status = os.lstat(directory)
+    except OSError as exc:
+        raise _refuse_socket_location(f"could not inspect {directory}: {exc}") from exc
+    _check_socket_parent(directory, status)
+    _check_socket_ancestors(directory)
+
+
+def _bind_socket_path(sock: socket.socket, path: str) -> None:
+    sock.bind(path)
+
+
+def bind_private_unix_socket(socket_file: Path) -> socket.socket:
+    """Bind the daemon socket owner-only (0600) inside the directory it validated.
+
+    uvicorn's own bind makes the socket 0666, so the daemon binds it and hands
+    uvicorn the descriptor. The validated directory is held open; after the
+    bind, the path must still name that same directory and the bound entry must
+    be the one inside it, or the socket is unlinked and startup is refused.
+    """
+    socket_file = _socket_location(socket_file)
+    directory, name = socket_file.parent, socket_file.name
+    prepare_socket_directory(directory)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        dir_fd = os.open(directory, flags)
+    except OSError as exc:
+        raise _refuse_socket_location(f"could not open {directory}: {exc}") from exc
+    try:
+        pinned = os.fstat(dir_fd)
+        _check_socket_parent(directory, pinned)
+        try:
+            os.unlink(name, dir_fd=dir_fd)
+        except FileNotFoundError:
+            pass
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        previous_umask = os.umask(0o177)
+        try:
+            _bind_socket_path(sock, str(socket_file))
+        except OSError:
+            sock.close()
+            raise
+        finally:
+            os.umask(previous_umask)
+        try:
+            _verify_bound_socket(socket_file, name=name, dir_fd=dir_fd, pinned=pinned)
+        except ConfigError:
+            sock.close()
+            raise
+        # The entry was just verified to be our socket, not a link.
+        os.chmod(name, 0o600, dir_fd=dir_fd)
+        sock.set_inheritable(True)
+        return sock
+    finally:
+        os.close(dir_fd)
+
+
+def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
+    return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+
+
+def _verify_bound_socket(
+    socket_file: Path, *, name: str, dir_fd: int, pinned: os.stat_result
+) -> None:
+    """Refuse, and remove what was bound, unless the bind landed in the pinned directory."""
+    try:
+        current = os.stat(socket_file.parent)
+        inside = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        at_path = os.lstat(socket_file)
+        intact = (
+            _same_file(current, pinned)
+            and _same_file(inside, at_path)
+            and stat.S_ISSOCK(at_path.st_mode)
+            and at_path.st_uid == os.getuid()
+        )
+    except OSError:
+        intact = False
+    if intact:
+        return
+    try:
+        stray = os.lstat(socket_file)
+        if stat.S_ISSOCK(stray.st_mode) and stray.st_uid == os.getuid():
+            os.unlink(socket_file)
+    except OSError:
+        pass
+    raise _refuse_socket_location(
+        f"the socket directory {socket_file.parent} changed while the socket was being bound"
+    )
+
+
 def _serve(resolved_socket: str | None) -> None:
     """Start uvicorn under an already-held state-root lock."""
     enable_fatal_fault_handler()
+    if resolved_socket:
+        # Refuse an unsafe socket directory before any store is opened.
+        prepare_socket_directory(Path(resolved_socket).parent)
     # Resolve and freeze the process ceiling before registry/config access or
     # uvicorn startup. Unknown names and attempts to reinitialize this process
     # at a different tier therefore fail closed before the daemon serves.
@@ -376,9 +602,12 @@ def _serve(resolved_socket: str | None) -> None:
 
     if resolved_socket:
         socket_file = Path(resolved_socket)
-        socket_file.parent.mkdir(parents=True, exist_ok=True)
-        socket_file.unlink(missing_ok=True)
-        uvicorn.run(app, uds=str(socket_file))
+        sock = bind_private_unix_socket(socket_file)
+        try:
+            uvicorn.run(app, fd=sock.fileno())
+        finally:
+            sock.close()
+            socket_file.unlink(missing_ok=True)
         return
 
     resolved_host = os.environ.get("CRUXIBLE_HOST", "127.0.0.1")

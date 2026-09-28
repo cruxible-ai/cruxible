@@ -133,6 +133,12 @@ def test_budget_clipping_is_stated_rather_than_silently_narrowing(tmp_path: Path
     assert len(result.page.hits) == 1
     assert result.page.coverage.truncated_facets == ("hits",)
     assert "hit_budget_exceeded" in result.page.coverage.reason_codes
+    # The cut is also stated at the top level, not only inside coverage.
+    assert result.truncated is True
+    whole = service_discover_playbill_semantic(
+        instance, query="work_item", evaluation_time=EVALUATION_TIME, profile="all"
+    )
+    assert whole.truncated is False
 
 
 def test_empty_interfaces_request_returns_an_honest_not_installed_inventory(

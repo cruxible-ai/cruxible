@@ -15,8 +15,11 @@ def test_mcp_policies_in_force_delegates_to_the_shared_runtime(monkeypatch) -> N
         policies=[],
     )
 
-    def stub(instance_id: str) -> contracts.PlaybillPolicyInForceList:
+    def stub(
+        instance_id: str, *, limit: int, cursor: str | None
+    ) -> contracts.PlaybillPolicyInForceList:
         assert instance_id == "inst_policy"
+        assert (limit, cursor) == (contracts.PLAYBILL_POLICY_LIST_DEFAULT_LIMIT, None)
         return expected
 
     monkeypatch.setattr(

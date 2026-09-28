@@ -8,7 +8,8 @@ everyday agent loop:
 
 - orient and pick work: `cruxible_playbill_search` (its `orient` mode),
   `cruxible_playbill_next`, and `cruxible_playbill_expand`;
-- Claim, ClaimType, and Subject reads: `cruxible_playbill_list_claims`,
+- Claim, ClaimType, and Subject reads: `cruxible_playbill_claim_values` (a status
+  table for one Subject kind), `cruxible_playbill_list_claims`,
   `cruxible_playbill_get_claim`, `cruxible_playbill_explain_claim`,
   `cruxible_playbill_list_claim_types`, `cruxible_playbill_get_claim_type`,
   `cruxible_playbill_list_subjects`, `cruxible_playbill_get_subject`, and
@@ -115,7 +116,7 @@ approval stay the ordinary steps.
 | `cruxible_playbill_prepare_approval` | Return the exact approval challenge | `READ_ONLY` |
 | `cruxible_playbill_submit_approval` | Submit a public signed attestation | `GRAPH_WRITE` |
 | `cruxible_playbill_activate` | Activate by compare-and-set and refresh any configured workspace floor | `GRAPH_WRITE` |
-| `cruxible_playbill_proposal_list` | List open and terminal proposal evidence | `READ_ONLY` |
+| `cruxible_playbill_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_playbill_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
 | `cruxible_playbill_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
 | `cruxible_playbill_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, and the adapter and daemon versions | `READ_ONLY` |
@@ -160,7 +161,7 @@ paths and root aliases, not compilation wire.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_list_subjects` | List accepted Subjects and coordinate | `READ_ONLY` |
+| `cruxible_playbill_list_subjects` | List accepted Subjects and coordinate, optionally of one `subject_kind` | `READ_ONLY` |
 | `cruxible_playbill_get_subject` | Read one accepted Subject | `READ_ONLY` |
 | `cruxible_playbill_subject_history` | Read one Subject's accepted lineage | `READ_ONLY` |
 | `cruxible_playbill_propose_claim_type` | Propose a governed predicate interface | `GOVERNED_WRITE` |
@@ -169,7 +170,8 @@ paths and root aliases, not compilation wire.
 | `cruxible_playbill_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
 | `cruxible_playbill_claim_retire` | Preflight or submit one attributed, dependency-closed Claim retirement | `GOVERNED_WRITE` |
 | `cruxible_playbill_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
-| `cruxible_playbill_list_claims` | List accepted Claims by Subject or predicate | `READ_ONLY` |
+| `cruxible_playbill_list_claims` | List accepted Claims by Subject, `subject_kind` or predicate | `READ_ONLY` |
+| `cruxible_playbill_claim_values` | Status table: each live Claim's `subject_id`, value and verdict for every Subject of one kind (or named `subject_ids`) and the given predicates | `READ_ONLY` |
 | `cruxible_playbill_get_claim` | Read one accepted Claim | `READ_ONLY` |
 | `cruxible_playbill_claim_history` | Read one Claim's accepted lineage | `READ_ONLY` |
 | `cruxible_playbill_explain_claim` | Explain a Claim's verdict and evidence | `READ_ONLY` |
@@ -259,15 +261,23 @@ Claims. It does not create a second authority plane beside accepted state.
 | `cruxible_playbill_search` | Search, list, or orient over accepted state | `READ_ONLY` |
 | `cruxible_playbill_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
 | `cruxible_playbill_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible playbill next` does | `READ_ONLY` |
-| `cruxible_playbill_policies_in_force` | List live standalone and embedded governed policies | `READ_ONLY` |
+| `cruxible_playbill_policies_in_force` | List one page of live standalone and embedded governed policies (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_playbill_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
-| `cruxible_playbill_curation_list` | List curation patterns and ingest an explicit declared-block observation | `READ_ONLY` |
+| `cruxible_playbill_curation_list` | List one page of curation patterns (`limit`, `cursor`) and ingest an explicit declared-block observation | `READ_ONLY` |
 | `cruxible_playbill_curation_overrule` | Close an inapplicable detector-version item with attribution | `GOVERNED_WRITE` |
 | `cruxible_playbill_curation_accept_fixed` | Link an item to an exact related accepted ChangeSet | `GOVERNED_WRITE` |
 | `cruxible_playbill_curation_suppress` | Hide open work by item, pattern, or instance without resolving it | `GOVERNED_WRITE` |
 | `cruxible_playbill_expand` | Expand one address into a context capsule | `READ_ONLY` |
 | `cruxible_playbill_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.playbill/floor` under the MCP workspace; `mode=status` reports whether that floor is current, stale, or absent | `READ_ONLY` |
 | `cruxible_playbill_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, `grep_results_path`, or `whole_working_set`) | `READ_ONLY` |
+
+Lists that can outgrow one answer are paged. `proposal_list`,
+`policies_in_force` and `curation_list` take `limit` and `cursor`; a cut page
+carries top-level `truncated: true` and a `next_cursor` to pass back as `cursor`.
+A cursor whose listing changed since its first page is refused as
+`playbill.list.cursor_stale`; list again without it.
+`search` pages the same way with its structured cursor. `discover` has no
+cursor; its top-level `truncated` says a budget clipped the hits.
 
 Query execution is a read: it returns the result together with its
 `playbill-query-execution-receipt-v1`. Qualifying direct reads, query/search

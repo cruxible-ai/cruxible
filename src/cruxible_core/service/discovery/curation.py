@@ -9,6 +9,10 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from cruxible_client.contracts import (
+    PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
+    PLAYBILL_CURATION_LIST_MAX_LIMIT,
+)
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import ProjectionMarkerSummaryV1
@@ -47,6 +51,13 @@ from cruxible_core.service.discovery.next import (
     PlaybillNextWorkspaceObservationV1,
 )
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+from cruxible_core.service.list_pages import (
+    PlaybillListCursorStale,
+    decode_list_cursor,
+    encode_list_cursor,
+    list_snapshot,
+    page_after_boundary,
+)
 
 BLOCK_OBSERVATION_ID_DOMAIN = "playbill-block-observation-v1"
 CURATION_RESULT_DIGEST_DOMAIN = "playbill-curation-list-result-v1"
@@ -102,6 +113,10 @@ class PlaybillCurationListRequestV1(_StrictCurationModel):
     evaluation_time: datetime
     access_profile: CoverageAccessProfileV1
     workspace_observation: PlaybillNextWorkspaceObservationV1 | None = None
+    limit: int = Field(
+        default=PLAYBILL_CURATION_LIST_DEFAULT_LIMIT, ge=1, le=PLAYBILL_CURATION_LIST_MAX_LIMIT
+    )
+    cursor: str | None = Field(default=None, max_length=4096)
 
     @field_validator("evaluation_time")
     @classmethod
@@ -239,6 +254,8 @@ class PlaybillCurationListResultV1(_StrictCurationModel):
     items: tuple[CurationItemV1, ...] = ()
     detector_coverage: tuple[CurationDetectorCoverageV1, ...]
     observation_coverage: PlaybillCurationObservationCoverageV1
+    truncated: bool = False
+    next_cursor: str | None = None
     result_digest: str
 
     @field_validator("operational_head_digest", "result_digest")
@@ -594,10 +611,25 @@ def service_list_playbill_curation(
     request: PlaybillCurationListRequestV1,
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationListResultV1:
-    """Refresh mechanical detections and return the visible current queue."""
+    """Refresh mechanical detections and return one page of the visible queue.
+
+    A cursor continues its first page only while the accepted coordinate is
+    unchanged; each page re-runs the same detection and observation pass.
+    """
 
     internal_coordinate = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(internal_coordinate)
+    selection = {"access_profile": request.access_profile.model_dump(mode="json")}
+    continuation = (
+        None
+        if request.cursor is None
+        else decode_list_cursor(request.cursor, list_name=_CURATION_LIST, selection=selection)
+    )
+    if continuation is not None and continuation.coordinate != coordinate.model_dump(mode="json"):
+        raise PlaybillListCursorStale(
+            f"{PlaybillListCursorStale.error_code}: accepted state moved since the "
+            "cursor's first page; list the curation queue again without a cursor"
+        )
     generation = _generation(instance, coordinate)
     store = instance.review_operational_store()
     # G9 visibility note: all present curation facts are instance-class.  Until
@@ -749,12 +781,30 @@ def service_list_playbill_curation(
                 if item.status in {"open", "quarantined"}
                 and not item.suppressed_at(generation, all_items=all_items)
             ),
-            key=lambda item: (
-                item.pattern_kind.encode("ascii"),
-                item.subject.qualified.encode("utf-8"),
-                item.item_id.encode("ascii"),
-            ),
+            key=_curation_sort_key,
         )
+    )
+    # The queue is operational and re-detected on every call: an item appended
+    # or resolved between pages changes it, and the cursor is then stale.
+    snapshot = list_snapshot([[item.item_id, item.status] for item in items])
+    page, truncated = page_after_boundary(
+        items,
+        keys=tuple(_curation_key(item) for item in items),
+        snapshot=snapshot,
+        continuation=continuation,
+        limit=request.limit,
+        list_name=_CURATION_LIST,
+    )
+    next_cursor = (
+        encode_list_cursor(
+            list_name=_CURATION_LIST,
+            coordinate=coordinate.model_dump(mode="json"),
+            selection=selection,
+            snapshot=snapshot,
+            last_key=_curation_key(page[-1]),
+        )
+        if truncated and page
+        else None
     )
     head = store.head()
     provisional = PlaybillCurationListResultV1.model_construct(
@@ -763,9 +813,11 @@ def service_list_playbill_curation(
         generation=generation,
         evaluation_time=request.evaluation_time,
         operational_head_digest=head.head_digest,
-        items=items,
+        items=page,
         detector_coverage=detected.coverage,
         observation_coverage=observation_coverage,
+        truncated=truncated,
+        next_cursor=next_cursor,
         result_digest="sha256:" + "0" * 64,
     )
     return PlaybillCurationListResultV1(
@@ -773,11 +825,28 @@ def service_list_playbill_curation(
         generation=generation,
         evaluation_time=request.evaluation_time,
         operational_head_digest=head.head_digest,
-        items=items,
+        items=page,
         detector_coverage=detected.coverage,
         observation_coverage=observation_coverage,
+        truncated=truncated,
+        next_cursor=next_cursor,
         result_digest=curation_list_result_digest(provisional),
     )
+
+
+_CURATION_LIST = "curation"
+
+
+def _curation_sort_key(item: CurationItemV1) -> tuple[bytes, bytes, bytes]:
+    return (
+        item.pattern_kind.encode("ascii"),
+        item.subject.qualified.encode("utf-8"),
+        item.item_id.encode("ascii"),
+    )
+
+
+def _curation_key(item: CurationItemV1) -> tuple[str, str, str]:
+    return (item.pattern_kind, item.subject.qualified, item.item_id)
 
 
 def _open_item(

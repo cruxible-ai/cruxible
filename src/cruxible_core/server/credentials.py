@@ -14,7 +14,7 @@ from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_core.actor_vocabulary import LOCAL_OPERATOR_ACTOR_ID
 from cruxible_core.errors import (
-    AuthenticationError,
+    BootstrapClaimRefusedError,
     ConfigError,
     InstanceNotFoundError,
     RuntimeCredentialNotFoundError,
@@ -301,7 +301,9 @@ class RuntimeCredentialStore:
             bootstrap_secret,
             expected_bootstrap_secret,
         ):
-            raise AuthenticationError("Invalid bootstrap secret")
+            raise BootstrapClaimRefusedError(
+                "runtime_bootstrap.secret_invalid", instance_id=instance_id
+            )
 
         bootstrap_secret_hash = _hash_token(bootstrap_secret)
         with self._connect() as conn:
@@ -354,7 +356,10 @@ class RuntimeCredentialStore:
                     ),
                 )
         except sqlite3.IntegrityError as exc:
-            raise AuthenticationError("Invalid bootstrap secret") from exc
+            raise BootstrapClaimRefusedError(
+                "runtime_bootstrap.claim_conflict",
+                instance_id=created.record.instance_id,
+            ) from exc
         return created
 
     def claim_bootstrap_credential(
@@ -672,7 +677,9 @@ class RuntimeCredentialStore:
             (bootstrap_secret_hash,),
         ).fetchone()
         if prior_claim is not None:
-            raise AuthenticationError("Invalid bootstrap secret")
+            raise BootstrapClaimRefusedError(
+                "runtime_bootstrap.secret_already_claimed", instance_id=instance_id
+            )
 
         prior_admin = conn.execute(
             """
@@ -684,7 +691,9 @@ class RuntimeCredentialStore:
             (instance_id, _serialize_permission_mode(PermissionMode.ADMIN)),
         ).fetchone()
         if prior_admin is not None:
-            raise AuthenticationError("Invalid bootstrap secret")
+            raise BootstrapClaimRefusedError(
+                "runtime_bootstrap.admin_exists", instance_id=instance_id
+            )
 
     @staticmethod
     def _mark_auth_required_conn(

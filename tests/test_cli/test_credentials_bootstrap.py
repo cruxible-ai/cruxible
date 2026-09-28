@@ -117,7 +117,7 @@ def test_credential_claim_bootstrap_second_claim_renders_refusal(
         def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
             self.claims += 1
             if self.claims > 1:
-                raise AuthenticationError("Invalid bootstrap secret")
+                raise AuthenticationError("runtime_bootstrap.secret_already_claimed: claimed")
             return contracts.RuntimeCredentialBootstrapResult(
                 credential_id="rcred_bootstrap",
                 instance_id=instance_id,
@@ -141,7 +141,7 @@ def test_credential_claim_bootstrap_second_claim_renders_refusal(
 
     assert first.exit_code == 0, first.output
     assert second.exit_code == 1
-    assert "Error: AuthenticationError: Invalid bootstrap secret" in second.output
+    assert "Error: AuthenticationError: runtime_bootstrap.secret_already_claimed" in second.output
     assert "Traceback" not in second.output
 
 
@@ -155,7 +155,7 @@ def test_credential_claim_bootstrap_wrong_secret_renders_auth_error(
 
     class StubClient:
         def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
-            raise AuthenticationError("Invalid bootstrap secret")
+            raise AuthenticationError("runtime_bootstrap.secret_invalid: mismatch")
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = runner.invoke(
@@ -171,7 +171,7 @@ def test_credential_claim_bootstrap_wrong_secret_renders_auth_error(
     )
 
     assert result.exit_code == 1
-    assert "Error: AuthenticationError: Invalid bootstrap secret" in result.output
+    assert "Error: AuthenticationError: runtime_bootstrap.secret_invalid" in result.output
     assert "Traceback" not in result.output
 
 
@@ -291,3 +291,68 @@ def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
         "socket_path": None,
         "capability_ceiling": None,
     }
+
+
+def test_credential_mint_mode_help_explains_each_tier(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["credential", "mint", "--help"])
+
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    assert "read_only: reads only" in text
+    assert "cannot submit approvals or activate" in text
+    assert "graph_write: also submits approvals and activates" in text
+    assert "admin: also operator actions" in text
+
+
+def test_credential_claim_mint_and_list_emit_json(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    import json
+
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "bootstrap-secret")
+    credential = contracts.RuntimeCredentialMetadata(
+        credential_id="rcred_reader",
+        instance_id="inst_123",
+        label="reader",
+        permission_mode="read_only",
+        created_at="2026-06-01T12:00:00Z",
+        created_by="rcred_admin",
+        revoked_at=None,
+    )
+
+    class StubClient:
+        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
+            return contracts.RuntimeCredentialBootstrapResult(
+                credential_id="rcred_bootstrap",
+                instance_id=instance_id,
+                permission_mode="admin",
+                token="crt_bootstrap",
+            )
+
+        def create_runtime_credential(self, instance_id: str, **_kwargs: object):
+            return contracts.RuntimeCredentialResult(credential=credential, token="crt_reader")
+
+        def list_runtime_credentials(self, instance_id: str):
+            return contracts.RuntimeCredentialListResult(credentials=[credential])
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    prefix = ["--server-url", "http://server", "--instance-id", "inst_123", "credential"]
+
+    claimed = runner.invoke(cli, [*prefix, "claim-bootstrap", "--json"])
+    minted = runner.invoke(
+        cli, [*prefix, "mint", "--label", "reader", "--mode", "read_only", "--json"]
+    )
+    listed = runner.invoke(cli, [*prefix, "list", "--json"])
+
+    for result in (claimed, minted, listed):
+        assert result.exit_code == 0, result.output
+    assert json.loads(claimed.stdout) == {
+        "credential_id": "rcred_bootstrap",
+        "instance_id": "inst_123",
+        "permission_mode": "admin",
+        "token": "crt_bootstrap",
+    }
+    assert json.loads(minted.stdout)["token"] == "crt_reader"
+    assert json.loads(minted.stdout)["credential"]["credential_id"] == "rcred_reader"
+    assert json.loads(listed.stdout)["credentials"][0]["permission_mode"] == "read_only"

@@ -54,16 +54,30 @@ cruxible context clear
 Manage runtime bearer credentials:
 
 ~~~text
-cruxible credential claim-bootstrap
-cruxible credential mint
-cruxible credential list
+cruxible credential claim-bootstrap [--secret-file PATH] [--json]
+cruxible credential mint --label LABEL --mode TIER [--json]
+cruxible credential list [--json]
 cruxible credential rotate
 cruxible credential revoke
-cruxible credential recover-admin
+cruxible credential recover-admin [--state-root DIR] [--instance-id ID] [--json]
 ~~~
+
+`recover-admin` is local-only: it opens the state root's credentials DB
+directly with the daemon stopped. It ignores a remembered CLI context and
+refuses only a transport chosen for that invocation (`--server-url`,
+`--server-socket` or their env vars). When the DB holds several instances and
+exactly one has a directory under `<state-root>/instances`, that instance is the
+target; otherwise pass `--instance-id`.
 
 These credentials authorize transport operations. They are distinct from
 Playbill signing principals.
+
+`credential mint --mode` picks a cumulative tier. `read_only` reads only.
+`governed_write` also proposes and authors, but cannot submit approvals or
+activate. `graph_write` also submits approvals and activates. `admin` also
+performs operator actions: credentials, host and init, principal changes,
+compiler upgrades, provider installs, ledger mirrors, and daemon stop/restart. A
+permission refusal names the tier it needs and what that tier allows.
 
 ## server
 
@@ -71,13 +85,15 @@ Playbill signing principals.
 cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port PORT]
 cruxible server install-service [SERVER-START FLAGS] [--print] [--replace]
 cruxible server status
-cruxible server info
 cruxible server restart
 cruxible server stop [--timeout SECONDS] [--json]
 ~~~
 
 server start is the long-running daemon process and does not connect to an
-existing server. State defaults to `~/.cruxible`; `--state-root` overrides
+existing server. With `--socket`, the socket is bound with mode 0600;
+a missing socket directory is created 0700; a socket directory that is not
+yours and owner-only, or an ancestor another user could use to replace it, is
+refused at startup. State defaults to `~/.cruxible`; `--state-root` overrides
 `CRUXIBLE_STATE_ROOT`. The obsolete `CRUXIBLE_SERVER_STATE_DIR` name is
 refused.
 
@@ -142,8 +158,7 @@ reads that window's own resolution journal, and it reads it again whenever a
 settlement or overturn lands there. A retired or revised contract withdraws its
 windows. `CRUXIBLE_DISABLED_CONSUMERS=prediction` turns it off; list both names,
 comma-separated, to turn off both workers.
-`server status` and `server info`
-also render `Provider lane:` and, when degraded,
+`server status` also renders `Provider lane:` and, when degraded,
 `Provider lane reason:`. Provider-lane degradation never prevents the daemon's
 non-Provider surfaces from starting, so these lines are the operator's recovery
 signal rather than a daemon-startup failure. When transient process-table reads
@@ -276,7 +291,7 @@ local socket when the daemon must advertise ledger refs into that worktree.
 
 With auth on, `host create` is authorized by the daemon's runtime bootstrap
 secret, which is its unscoped operator credential. That authorization is
-repeatable, exactly as it is for `server info`, `server restart` and
+repeatable, exactly as it is for `server status`, `server restart` and
 `server stop`: a daemon hosting several instances allocates each of them with
 the same secret, and `credential claim-bootstrap` -- which stays one-shot --
 does not revoke it. An instance-scoped credential cannot allocate a host on the
@@ -316,7 +331,8 @@ cruxible playbill init --key-dir DIR
 ~~~
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
-ledger with its public principal record. An optional `--reviewer-key-dir` adds a
+ledger with its public principal record. A missing `--key-dir` is created with
+mode 0700; an existing one must already exclude group and other access. An optional `--reviewer-key-dir` adds a
 second ordinary principal; pair it with `--require-independent-approval` to make
 one non-creator approval mandatory. Local key directories provide attribution
 and repository hygiene, not a security boundary. Organization review normally
@@ -627,7 +643,7 @@ cruxible playbill document history IDENTITY
 ## playbill subject
 
 ~~~text
-cruxible playbill subject list
+cruxible playbill subject list [--kind KIND]
 cruxible playbill subject get KIND/ID
 cruxible playbill subject history KIND/ID
 ~~~
@@ -688,11 +704,20 @@ the other's law.
 cruxible playbill claim retire IDENTITY REQUEST_FILE
 cruxible playbill claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
   [--valid-until TS]
-cruxible playbill claim list [--subject PATH] [--predicate P] [--include-retired]
+cruxible playbill claim list [--subject PATH] [--kind KIND] [--predicate P] [--include-retired]
+cruxible playbill claim values --kind KIND [--subject ID ...] --predicate P [--predicate P ...]
+  [--evaluation-time TS] [--json]
 cruxible playbill claim get IDENTITY [--brief]
 cruxible playbill claim history IDENTITY
 cruxible playbill claim explain IDENTITY [--evaluation-time TS]
 ~~~
+
+`subject list --kind` and `claim list --kind` narrow the listing to one Subject
+kind through the Subject index. `claim values` is the status-table read (the
+CLI form of the SDK's `world.values`): one row per live Claim, with its
+`subject_id`, predicate, value, verdict and resolution status, for every Subject
+of `--kind` (or only the named `--subject` IDs) and the given predicates,
+without full Claim views. It refuses rather than truncates past 8192 Claims.
 
 Claims are authored through `playbill authoring create`/`compile`; the retired
 direct v1 proposal commands are not a second writer. `retire` preflights or submits one
@@ -846,10 +871,13 @@ is not a declaration.
 ## playbill policy
 
 ~~~text
-cruxible playbill policy list [--json]
+cruxible playbill policy list [--limit N] [--cursor CURSOR] [--json]
 ~~~
 
-Lists the live standalone and embedded governed policies at the accepted coordinate.
+Lists the live standalone and embedded governed policies at the accepted
+coordinate, one page at a time (default 25, at most 200). A cut page has
+`truncated: true` and a `next_cursor`; pass it back with `--cursor` to continue at
+the same coordinate.
 
 ## playbill query
 
@@ -1543,7 +1571,8 @@ the row.
 ## playbill curation
 
 ~~~text
-cruxible playbill curation list [--workspace-root PATH] [--json]
+cruxible playbill curation list [--workspace-root PATH] [--limit N] [--cursor CURSOR]
+  [--json]
 cruxible playbill curation overrule ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT [--json]
 cruxible playbill curation accept-fixed ITEM_ID
@@ -1556,8 +1585,12 @@ cruxible playbill curation suppress ITEM_ID
 
 Lists the mechanical curation queue and explicitly submits the declared-block
 observation produced by the client-side workspace scanner. The daemon does not
-read workspace files. The lifecycle commands append attributed operational
-events; they do not create governed proposals or mutate accepted knowledge.
+read workspace files. The queue is paged (default 25 items, at most 200); a cut
+page has `truncated: true` and a `next_cursor` for `--cursor`, which continues
+only while accepted state and the queue itself are unchanged; otherwise it is
+refused as `playbill.list.cursor_stale`. The lifecycle commands append attributed
+operational events; they do not create governed proposals or mutate accepted
+knowledge.
 
 ## playbill audit
 
@@ -1586,7 +1619,10 @@ cruxible playbill discover [--query TEXT] [--entrypoint NAME]
 ~~~
 
 Exactly one of --query or --entrypoint selects the page. Matching is exact and
-lexical over the accepted naming layer; it is never a similarity score.
+lexical over the accepted naming layer; it is never a similarity score. When a
+budget clips the hits, the result says `truncated: true` at the top level
+(`page.coverage` names the budget); discovery has no cursor, so narrow the query
+or raise the budget.
 
 ## playbill search, list, and orient
 
@@ -1756,7 +1792,8 @@ covers all four tool kinds, including same-turn edit drift.
 
 ~~~text
 cruxible playbill proposal inspect PROPOSAL_ID
-cruxible playbill proposal list [--status open|settled]
+cruxible playbill proposal list [--status open|settled|incomplete] [--limit N]
+  [--cursor CURSOR]
 cruxible playbill proposal readmit PROPOSAL_ID
 cruxible playbill proposal withdraw PROPOSAL_ID --reason TEXT
 cruxible playbill proposal refusal PROPOSAL_ID
@@ -1772,7 +1809,11 @@ cruxible playbill proposal activate PROPOSAL_ID [--workspace-root DIR]
 permission mode, accepted principal-registration status, and current coordinate.
 `proposal list` prints a labeled `COORDINATE_TIME` column and deterministically
 separates current open candidates from accepted, refused, and stale terminal
-evidence so retries do not depend on remembered IDs. Proposal actions accept a
+evidence so retries do not depend on remembered IDs. It returns one page
+(default 50, at most 500); a cut page has `truncated: true` and a `next_cursor`
+for `--cursor`, which keeps reading the first page's accepted coordinate. A
+proposal admitted or withdrawn between pages changes the listing, and the
+cursor is then refused as `playbill.list.cursor_stale`: list again without it. Proposal actions accept a
 full digest, a unique digest prefix, or a target ref whose current Git target
 names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.

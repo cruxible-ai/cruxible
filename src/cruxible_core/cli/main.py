@@ -577,6 +577,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "Preflight or submit attributed Claim retirement.",
                     ),
                     "list": _command("playbill", "list_claims", "List accepted Claims."),
+                    "values": _command(
+                        "playbill",
+                        "claim_values",
+                        "Tabulate live Claim values and verdicts for one Subject kind.",
+                    ),
                     "get": _command("playbill", "get_claim", "Read an accepted Claim."),
                     "history": _command(
                         "playbill", "claim_history", "Read accepted Claim history."
@@ -921,7 +926,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "server", "server_install_service_cmd", "Install a user daemon service."
             ),
             "status": _command("server", "server_status_cmd", "Report daemon status."),
-            "info": _command("server", "server_info_cmd", "Show daemon metadata."),
             "restart": _command("server", "server_restart_cmd", "Re-exec the daemon in place."),
             "stop": _command(
                 "server", "server_stop_cmd", "Stop the daemon and release its state root."

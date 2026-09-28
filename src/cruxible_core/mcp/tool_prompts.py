@@ -73,7 +73,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "the adapter and daemon versions."
     ),
     "cruxible_playbill_proposal_list": (
-        "Use when you need to find open proposals or inspect terminal proposal outcomes."
+        "Use when you need to find open proposals or inspect terminal proposal outcomes. "
+        "Returns one page (default limit 50); when truncated, pass next_cursor back as cursor."
     ),
     "cruxible_playbill_proposal_readmit": (
         "Use when a stale proposal should be re-admitted against the current coordinate."
@@ -122,7 +123,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need a governed principal registration, rotation, revocation, or recovery."
     ),
     "cruxible_playbill_list_subjects": (
-        "Use when you need accepted Subjects and their exact coordinate."
+        "Use when you need accepted Subjects and their exact coordinate, optionally of one "
+        "subject_kind."
     ),
     "cruxible_playbill_get_subject": (
         "Use when you need one accepted Subject envelope and its structured facts."
@@ -211,7 +213,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "that demands its frame is released instead of asking for the block back."
     ),
     "cruxible_playbill_list_claims": (
-        "Use when you need accepted Claims, optionally narrowed to a Subject or predicate."
+        "Use when you need accepted Claims, optionally narrowed to a Subject, subject_kind "
+        "or predicate."
+    ),
+    "cruxible_playbill_claim_values": (
+        "Use when you need a status table: the value and verdict of each live Claim for "
+        "every Subject of one kind (or named subject_ids) and the given predicates, "
+        "without full Claim views."
     ),
     "cruxible_playbill_get_claim": (
         "Use when you need one accepted Claim envelope and its structured facts."
@@ -226,7 +234,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need the accepted named entrypoints an instance publishes."
     ),
     "cruxible_playbill_policies_in_force": (
-        "Use when you need the live governed policy inventory at the accepted coordinate."
+        "Use when you need the live governed policy inventory at the accepted coordinate. "
+        "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
     ),
     "cruxible_playbill_get_query_definition": (
         "Use when you need one entrypoint's parameters, budgets, and result contract."
@@ -299,7 +308,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "binding the exact retained mandate-settlement terminal record."
     ),
     "cruxible_playbill_discover": (
-        "Use when you do not yet know which interface or Subject names the state you want."
+        "Use when you do not yet know which interface or Subject names the state you want. "
+        "truncated means a budget clipped the hits; raise budget or narrow the query."
     ),
     "cruxible_playbill_search": (
         "Use search mode to find accepted Claims, Procedures, or installed demands; "
@@ -307,7 +317,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_playbill_curation_list": (
         "List mechanically detected curation patterns. Supply an explicit workspace_observation "
-        "only when the client has scanned declared blocks; the daemon never reads workspace files."
+        "only when the client has scanned declared blocks; the daemon never reads workspace files. "
+        "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
     ),
     "cruxible_playbill_audit": (
         "Rank visible Claim verification work by exact stake, weakness, and recency factors. "

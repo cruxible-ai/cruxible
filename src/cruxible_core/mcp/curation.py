@@ -22,6 +22,7 @@ _DEFAULT_TOOLS = frozenset(
         "cruxible_playbill_next",
         "cruxible_playbill_expand",
         # Claim, ClaimType, and Subject reads
+        "cruxible_playbill_claim_values",
         "cruxible_playbill_list_claims",
         "cruxible_playbill_get_claim",
         "cruxible_playbill_explain_claim",

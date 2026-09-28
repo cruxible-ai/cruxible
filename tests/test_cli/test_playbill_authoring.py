@@ -576,8 +576,15 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
             )
 
         def list_playbill_proposals(
-            self, instance_id: str, *, status: str | None
+            self,
+            instance_id: str,
+            *,
+            status: str | None,
+            limit: int | None = None,
+            cursor: str | None = None,
         ) -> contracts.PlaybillProposalList:
+            assert limit == contracts.PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT
+            assert cursor is None
             calls.append(f"proposals:{instance_id}:{status}")
             return contracts.PlaybillProposalList(
                 coordinate=COORDINATE,

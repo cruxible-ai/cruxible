@@ -65,6 +65,10 @@ class PlaybillDiscoveryResultV1(_StrictDiscoveryServiceModel):
     coordinate: PlaybillAcceptedCoordinate
     page: DiscoveryPageV1
     vocabulary_entry_count: int
+    # True when a budget clipped the page's hits; page.coverage names the clipped
+    # facet and the budget. Discovery has no cursor: raise budget.max_hits or
+    # budget.max_bytes, or narrow the query.
+    truncated: bool = False
 
 
 class ProviderInterfaceImplementationV1(_StrictDiscoveryServiceModel):
@@ -336,6 +340,7 @@ def service_discover_playbill_semantic(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
         page=page,
         vocabulary_entry_count=len(vocabulary.entries),
+        truncated=bool(page.coverage.truncated_facets),
     )
 
 

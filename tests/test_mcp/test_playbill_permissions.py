@@ -21,6 +21,7 @@ def _tool_names() -> set[str]:
 
 
 _DEFAULT_PROFILE = {
+    "cruxible_playbill_claim_values",
     "cruxible_playbill_search",
     "cruxible_playbill_next",
     "cruxible_playbill_expand",
@@ -103,3 +104,22 @@ def test_permission_checks_fail_closed_for_unknown_and_higher_tier_operations(
         check_permission("cruxible_playbill_init")
     with pytest.raises(ConfigError):
         check_permission("cruxible_query")
+
+
+def test_a_permission_denial_names_what_the_required_tier_allows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.errors import ErrorResponse, response_to_error
+    from cruxible_core.server.errors import error_to_response
+
+    monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+    reset_permissions()
+    with pytest.raises(PermissionDeniedError) as caught:
+        check_permission("cruxible_playbill_submit_approval")
+
+    message = str(caught.value)
+    assert "requires GRAPH_WRITE mode" in message
+    assert "plus submitting approvals and activating" in message
+    status, body = error_to_response(caught.value)
+    client_error = response_to_error(status, ErrorResponse.model_validate(body.model_dump()))
+    assert str(client_error) == message

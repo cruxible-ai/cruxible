@@ -229,10 +229,13 @@ def service_list_playbill_subjects(
     instance: PlaybillInstance,
     *,
     at: PlaybillAcceptedCoordinate | None = None,
+    subject_kind: str | None = None,
 ) -> PlaybillSubjectList:
     coordinate = _resolve_coordinate(instance, at)
     with instance.bind_accepted_projection(coordinate) as projection:
-        subjects = tuple(_public_subject(item) for item in projection.list_subjects())
+        subjects = tuple(
+            _public_subject(item) for item in projection.list_subjects(subject_kind=subject_kind)
+        )
     return PlaybillSubjectList(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
         subjects=subjects,

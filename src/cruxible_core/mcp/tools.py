@@ -15,6 +15,7 @@ from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.authoring.seed import SeedPlanResultV1
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendResultV1
+from cruxible_client.contracts.claim_reads import ClaimValuesResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -261,9 +262,15 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         status: Literal["open", "settled", "incomplete"] | None = None,
+        limit: Annotated[
+            int, Field(ge=1, le=contracts.PLAYBILL_PROPOSAL_LIST_MAX_LIMIT)
+        ] = contracts.PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT,
+        cursor: str | None = None,
     ) -> contracts.PlaybillProposalList:
-        """List open or settled proposal evidence at the current coordinate."""
-        return handlers.handle_playbill_list_proposals(require_instance_id(instance_id), status)
+        """List one page of proposal evidence; pass next_cursor back while truncated."""
+        return handlers.handle_playbill_list_proposals(
+            require_instance_id(instance_id), status, limit=limit, cursor=cursor
+        )
 
     @_tool
     def cruxible_playbill_proposal_readmit(
@@ -428,9 +435,12 @@ def register_tools(
     @_tool
     def cruxible_playbill_list_subjects(
         instance_id: InstanceId = None,
+        subject_kind: str | None = None,
     ) -> contracts.PlaybillSubjectList:
-        """List accepted Subjects at the current coordinate."""
-        return handlers.handle_playbill_list_subjects(require_instance_id(instance_id))
+        """List accepted Subjects at the current coordinate, optionally of one kind."""
+        return handlers.handle_playbill_list_subjects(
+            require_instance_id(instance_id), subject_kind=subject_kind
+        )
 
     @_tool
     def cruxible_playbill_get_subject(
@@ -712,13 +722,38 @@ def register_tools(
         subject_path: str | None = None,
         predicate: str | None = None,
         include_retired: bool = False,
+        subject_kind: str | None = None,
     ) -> contracts.PlaybillClaimList:
-        """List accepted Claims, optionally by Subject or predicate."""
+        """List accepted Claims, optionally by Subject, Subject kind or predicate."""
         return handlers.handle_playbill_list_claims(
             require_instance_id(instance_id),
             subject_path=subject_path,
             predicate=predicate,
             include_retired=include_retired,
+            subject_kind=subject_kind,
+        )
+
+    @_tool
+    def cruxible_playbill_claim_values(
+        instance_id: InstanceId = None,
+        *,
+        subject_kind: str,
+        predicates: list[str],
+        subject_ids: list[str] | None = None,
+        evaluation_time: str | None = None,
+    ) -> ClaimValuesResultV1:
+        """Status table: each live Claim's value and verdict for Subjects of one kind.
+
+        Covers every Subject of ``subject_kind`` (or only ``subject_ids``) for the
+        given fully qualified predicates, one row per Claim with ``subject_id``,
+        ``value`` and ``verdict``, without full Claim views.
+        """
+        return handlers.handle_playbill_claim_values(
+            require_instance_id(instance_id),
+            subject_kind=subject_kind,
+            predicates=predicates,
+            subject_ids=subject_ids,
+            evaluation_time=evaluation_time,
         )
 
     @_tool
@@ -764,9 +799,15 @@ def register_tools(
     @_tool
     def cruxible_playbill_policies_in_force(
         instance_id: InstanceId = None,
+        limit: Annotated[
+            int, Field(ge=1, le=contracts.PLAYBILL_POLICY_LIST_MAX_LIMIT)
+        ] = contracts.PLAYBILL_POLICY_LIST_DEFAULT_LIMIT,
+        cursor: str | None = None,
     ) -> contracts.PlaybillPolicyInForceList:
-        """List live governed policies embedded in and standing beside accepted artifacts."""
-        return handlers.handle_playbill_policies_in_force(require_instance_id(instance_id))
+        """List one page of live governed policies; pass next_cursor back while truncated."""
+        return handlers.handle_playbill_policies_in_force(
+            require_instance_id(instance_id), limit=limit, cursor=cursor
+        )
 
     @_tool
     def cruxible_playbill_get_query_definition(
@@ -1082,13 +1123,22 @@ def register_tools(
         evaluation_time: str,
         access_profile: dict[str, Any] | None = None,
         workspace_observation: dict[str, Any] | None = None,
+        limit: Annotated[
+            int, Field(ge=1, le=contracts.PLAYBILL_CURATION_LIST_MAX_LIMIT)
+        ] = contracts.PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
+        cursor: str | None = None,
     ) -> contracts.PlaybillCurationListResult:
-        """List mechanical curation patterns and explicitly ingest block observations."""
+        """List one page of curation patterns and ingest block observations.
+
+        Pass next_cursor back while the result is truncated.
+        """
         return handlers.handle_playbill_curation_list(
             require_instance_id(instance_id),
             evaluation_time=evaluation_time,
             access_profile=access_profile,
             workspace_observation=workspace_observation,
+            limit=limit,
+            cursor=cursor,
         )
 
     @_tool

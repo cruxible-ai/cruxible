@@ -63,15 +63,21 @@ def assert_outside_roots(path: Path, forbidden_roots: Sequence[Path]) -> None:
             )
 
 
+def _key_directory_mode_refusal(path: Path) -> str:
+    return (
+        f"key directory permissions must exclude group/world access: {path}; repair: "
+        f"run `chmod 700 {path}`, or name a directory that does not exist yet and it "
+        "is created with mode 0700"
+    )
+
+
 def _secure_directory(path: Path) -> None:
     if path.exists():
         if path.is_symlink() or not path.is_dir():
             raise PlaybillKeyError(f"key directory is not a real directory: {path}")
         mode = stat.S_IMODE(path.stat().st_mode)
         if mode & 0o077:
-            raise PlaybillKeyError(
-                f"key directory permissions must exclude group/world access: {path}"
-            )
+            raise PlaybillKeyError(_key_directory_mode_refusal(path))
         return
     path.mkdir(parents=True, mode=0o700)
     os.chmod(path, 0o700)
@@ -214,9 +220,7 @@ def validate_client_principal_key_target(
         if directory.is_symlink() or not directory.is_dir():
             raise PlaybillKeyError(f"key directory is not a real directory: {directory}")
         if stat.S_IMODE(directory.stat().st_mode) & 0o077:
-            raise PlaybillKeyError(
-                f"key directory permissions must exclude group/world access: {directory}"
-            )
+            raise PlaybillKeyError(_key_directory_mode_refusal(directory))
     return ClientPrincipalKeyTarget(
         directory=directory,
         principal=principal,

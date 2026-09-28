@@ -41,6 +41,7 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
     PreparedClaimAttestationRequestV1,
 )
+from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1, ClaimValuesResultV1
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
@@ -746,11 +747,18 @@ def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
 def handle_playbill_list_proposals(
     instance_id: str,
     status: str | None,
+    *,
+    limit: int = contracts.PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> contracts.PlaybillProposalList:
     normalized = cast(Any, status)
     return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_proposals(instance_id, status=normalized),
-        lambda: playbill_api.playbill_list_proposals(instance_id, status=normalized),
+        lambda client: client.list_playbill_proposals(
+            instance_id, status=normalized, limit=limit, cursor=cursor
+        ),
+        lambda: playbill_api.playbill_list_proposals(
+            instance_id, status=normalized, limit=limit, cursor=cursor
+        ),
         operation_name="cruxible_playbill_proposal_list",
     )
 
@@ -997,10 +1005,12 @@ def handle_playbill_propose_principal_change(
     )
 
 
-def handle_playbill_list_subjects(instance_id: str) -> contracts.PlaybillSubjectList:
+def handle_playbill_list_subjects(
+    instance_id: str, *, subject_kind: str | None = None
+) -> contracts.PlaybillSubjectList:
     return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_subjects(instance_id),
-        lambda: playbill_api.playbill_list_subjects(instance_id),
+        lambda client: client.list_playbill_subjects(instance_id, subject_kind=subject_kind),
+        lambda: playbill_api.playbill_list_subjects(instance_id, subject_kind=subject_kind),
         operation_name="cruxible_playbill_list_subjects",
     )
 
@@ -1399,6 +1409,7 @@ def handle_playbill_list_claims(
     subject_path: str | None,
     predicate: str | None,
     include_retired: bool,
+    subject_kind: str | None = None,
 ) -> contracts.PlaybillClaimList:
     subject = None if subject_path is None else SemanticAddress.whole_artifact(subject_path)
     return _dispatch_remote_or_local(
@@ -1407,14 +1418,40 @@ def handle_playbill_list_claims(
             subject_path=subject_path,
             predicate=predicate,
             include_retired=include_retired,
+            subject_kind=subject_kind,
         ),
         lambda: playbill_api.playbill_list_claims(
             instance_id,
             subject=subject,
             predicate=predicate,
             include_retired=include_retired,
+            subject_kind=subject_kind,
         ),
         operation_name="cruxible_playbill_list_claims",
+    )
+
+
+def handle_playbill_claim_values(
+    instance_id: str,
+    *,
+    subject_kind: str,
+    predicates: list[str],
+    subject_ids: list[str] | None = None,
+    evaluation_time: str | None = None,
+) -> ClaimValuesResultV1:
+    try:
+        request = ClaimValuesRequestV1.for_kind(
+            subject_kind,
+            subject_ids=subject_ids or (),
+            predicates=predicates,
+            evaluation_time=None if evaluation_time is None else parse_datetime(evaluation_time),
+        )
+    except (ValidationError, ValueError) as exc:
+        raise ConfigError(f"Invalid claim values selection: {exc}") from exc
+    return _dispatch_remote_or_local(
+        lambda client: client.read_playbill_claim_values(instance_id, request=request),
+        lambda: playbill_api.playbill_read_claim_values(instance_id, request=request),
+        operation_name="cruxible_playbill_claim_values",
     )
 
 
@@ -1484,10 +1521,15 @@ def handle_playbill_list_query_definitions(
 
 def handle_playbill_policies_in_force(
     instance_id: str,
+    *,
+    limit: int = contracts.PLAYBILL_POLICY_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> contracts.PlaybillPolicyInForceList:
     return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_policies_in_force(instance_id),
-        lambda: playbill_api.playbill_policies_in_force(instance_id),
+        lambda client: client.list_playbill_policies_in_force(
+            instance_id, limit=limit, cursor=cursor
+        ),
+        lambda: playbill_api.playbill_policies_in_force(instance_id, limit=limit, cursor=cursor),
         operation_name="cruxible_playbill_policies_in_force",
     )
 
@@ -1993,6 +2035,8 @@ def handle_playbill_curation_list(
     evaluation_time: str,
     access_profile: dict[str, Any] | None,
     workspace_observation: dict[str, Any] | None,
+    limit: int = contracts.PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> contracts.PlaybillCurationListResult:
     profile = access_profile or {
         "tag": "playbill-coverage-access-profile-v1",
@@ -2005,6 +2049,8 @@ def handle_playbill_curation_list(
         "evaluation_time": evaluation_time,
         "access_profile": profile,
         "workspace_observation": workspace_observation,
+        "limit": limit,
+        "cursor": cursor,
     }
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_curation(
@@ -2012,6 +2058,8 @@ def handle_playbill_curation_list(
             evaluation_time=evaluation_time,
             access_profile=profile,
             workspace_observation=workspace_observation,
+            limit=limit,
+            cursor=cursor,
         ),
         lambda: playbill_api.playbill_curation_list(instance_id, request=request),
         operation_name="cruxible_playbill_curation_list",

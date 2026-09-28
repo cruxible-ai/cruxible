@@ -295,6 +295,15 @@ PlaybillNextRefusalCodeV1: TypeAlias = Literal["playbill.next.cursor_mismatch"]
 #: Rows per next page when the request names none, and the most one page carries.
 PLAYBILL_NEXT_DEFAULT_LIMIT = 100
 PLAYBILL_NEXT_MAX_LIMIT = 1000
+#: Rows per page of the proposal, policies-in-force and curation lists when the
+#: request names none, and the most one page carries. A cut page says
+#: `truncated` and carries the `next_cursor` that continues it.
+PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT = 50
+PLAYBILL_PROPOSAL_LIST_MAX_LIMIT = 500
+PLAYBILL_POLICY_LIST_DEFAULT_LIMIT = 25
+PLAYBILL_POLICY_LIST_MAX_LIMIT = 200
+PLAYBILL_CURATION_LIST_DEFAULT_LIMIT = 25
+PLAYBILL_CURATION_LIST_MAX_LIMIT = 200
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
     "provider_process_lease_invalid",
@@ -576,6 +585,8 @@ class PlaybillProposalList(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     status_filter: Literal["open", "settled", "incomplete"] | None = None
     entries: list[PlaybillProposalListEntry]
+    truncated: bool = False
+    next_cursor: str | None = None
 
 
 class PlaybillProposalSelectorResultV1(BaseModel):
@@ -1498,6 +1509,8 @@ class PlaybillPolicyInForceList(BaseModel):
     tag: Literal["playbill-policy-in-force-list-v1"] = "playbill-policy-in-force-list-v1"
     coordinate: PlaybillAcceptedCoordinate
     policies: list[PlaybillPolicyInForce]
+    truncated: bool = False
+    next_cursor: str | None = None
 
 
 class PlaybillProcedureBindResult(BaseModel):
@@ -1719,6 +1732,8 @@ class PlaybillCurationListResult(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
     detector_coverage: list[dict[str, Any]]
     observation_coverage: dict[str, Any]
+    truncated: bool = False
+    next_cursor: str | None = None
     result_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
@@ -1982,6 +1997,8 @@ class PlaybillDiscoveryResult(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     page: dict[str, Any]
     vocabulary_entry_count: int
+    # True when a budget clipped the page's hits (page.coverage says which and why).
+    truncated: bool = False
 
 
 class PlaybillProviderInterfaceImplementation(BaseModel):

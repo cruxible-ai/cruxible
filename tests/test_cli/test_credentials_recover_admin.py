@@ -369,3 +369,63 @@ def test_recovered_admin_token_authenticates_against_server(
 
     assert response.status_code == 200
     assert any(item["created_by"] == "local_recovery" for item in response.json()["credentials"])
+
+
+def test_recover_admin_ignores_a_remembered_cli_context(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.cli.context import CliContextState, save_cli_context
+
+    state_dir, instance_ids = _seed_admin_state(tmp_path, monkeypatch)
+    save_cli_context(
+        CliContextState(
+            server_url="http://remembered.invalid",
+            instance_id="inst_remembered",
+            instance_transport="http://remembered.invalid",
+        )
+    )
+
+    result = runner.invoke(
+        cli,
+        ["credential", "recover-admin", "--state-root", str(state_dir), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["credential"]["instance_id"] == instance_ids[0]
+
+
+def test_recover_admin_names_the_environment_transport_it_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_SERVER_URL", "http://server")
+
+    result = runner.invoke(
+        cli,
+        ["credential", "recover-admin", "--state-root", str(tmp_path / "server-state")],
+    )
+
+    assert result.exit_code == 2
+    assert "unset CRUXIBLE_SERVER_URL/CRUXIBLE_SERVER_SOCKET" in result.output
+
+
+def test_recover_admin_infers_the_one_instance_present_under_the_state_root(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    state_dir, instance_ids = _seed_admin_state(tmp_path, monkeypatch, instance_count=2)
+    (state_dir / "instances" / instance_ids[1]).mkdir(parents=True, exist_ok=True)
+    for other in instance_ids[:1]:
+        assert not (state_dir / "instances" / other).exists()
+
+    result = runner.invoke(
+        cli,
+        ["credential", "recover-admin", "--state-root", str(state_dir), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["credential"]["instance_id"] == instance_ids[1]

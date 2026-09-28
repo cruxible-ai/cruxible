@@ -121,7 +121,14 @@ def test_proposal_list_rows_match_the_labelled_columns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class StubClient:
-        def list_playbill_proposals(self, _instance_id: str, *, status: str | None):
+        def list_playbill_proposals(
+            self,
+            _instance_id: str,
+            *,
+            status: str | None,
+            limit: int | None = None,
+            cursor: str | None = None,
+        ):
             assert status is None
             return contracts.PlaybillProposalList(
                 coordinate=COORDINATE,

@@ -539,8 +539,15 @@ class CruxibleClient:
         instance_id: str,
         *,
         status: Literal["open", "settled", "incomplete"] | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
     ) -> contracts.PlaybillProposalList:
-        params = {} if status is None else {"status": status}
+        """One page of proposals; follow ``next_cursor`` while ``truncated``."""
+        params: dict[str, Any] = {} if status is None else {"status": status}
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
         response = self._client.get(
             f"/api/v1/{instance_id}/playbill/proposals",
             params=params,
@@ -805,10 +812,14 @@ class CruxibleClient:
         instance_id: str,
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        subject_kind: str | None = None,
     ) -> contracts.PlaybillSubjectList:
+        params: dict[str, Any] = dict(self._playbill_coordinate_params(at))
+        if subject_kind is not None:
+            params["subject_kind"] = subject_kind
         response = self._client.get(
             f"/api/v1/{instance_id}/playbill/subjects",
-            params=self._playbill_coordinate_params(at),
+            params=params,
         )
         return self._parse_model(response, contracts.PlaybillSubjectList)
 
@@ -1225,6 +1236,7 @@ class CruxibleClient:
         subject_path: str | None = None,
         predicate: str | None = None,
         include_retired: bool = False,
+        subject_kind: str | None = None,
     ) -> contracts.PlaybillClaimList:
         params: dict[str, Any] = {
             **self._playbill_coordinate_params(at),
@@ -1234,6 +1246,8 @@ class CruxibleClient:
             params["subject_path"] = subject_path
         if predicate is not None:
             params["predicate"] = predicate
+        if subject_kind is not None:
+            params["subject_kind"] = subject_kind
         response = self._client.get(
             f"/api/v1/{instance_id}/playbill/claims",
             params=params,
@@ -1342,8 +1356,17 @@ class CruxibleClient:
     def list_playbill_policies_in_force(
         self,
         instance_id: str,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
     ) -> contracts.PlaybillPolicyInForceList:
-        response = self._client.get(f"/api/v1/{instance_id}/playbill/policies")
+        """One page of policies in force; follow ``next_cursor`` while ``truncated``."""
+        params: dict[str, Any] = {}
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/policies", params=params)
         return self._parse_model(response, contracts.PlaybillPolicyInForceList)
 
     def get_playbill_query_definition(
@@ -1641,17 +1664,25 @@ class CruxibleClient:
         evaluation_time: str,
         access_profile: Mapping[str, Any],
         workspace_observation: Mapping[str, Any] | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
     ) -> contracts.PlaybillCurationListResult:
+        """One page of the curation queue; follow ``next_cursor`` while ``truncated``."""
+        body: dict[str, Any] = {
+            "tag": "playbill-curation-list-request-v1",
+            "evaluation_time": evaluation_time,
+            "access_profile": dict(access_profile),
+            "workspace_observation": (
+                None if workspace_observation is None else dict(workspace_observation)
+            ),
+        }
+        if limit is not None:
+            body["limit"] = limit
+        if cursor is not None:
+            body["cursor"] = cursor
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/curation/list",
-            json={
-                "tag": "playbill-curation-list-request-v1",
-                "evaluation_time": evaluation_time,
-                "access_profile": dict(access_profile),
-                "workspace_observation": (
-                    None if workspace_observation is None else dict(workspace_observation)
-                ),
-            },
+            json=body,
         )
         return self._parse_model(response, contracts.PlaybillCurationListResult)
 

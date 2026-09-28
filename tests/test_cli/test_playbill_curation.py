@@ -44,6 +44,8 @@ def test_cli_curation_list_scans_then_calls_one_route(monkeypatch: pytest.Monkey
             evaluation_time: str,
             access_profile: object,
             workspace_observation: object,
+            limit: int | None = None,
+            cursor: str | None = None,
         ) -> contracts.PlaybillCurationListResult:
             calls.append((instance_id, evaluation_time, access_profile, workspace_observation))
 
@@ -178,6 +180,8 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
             evaluation_time: str,
             access_profile: object,
             workspace_observation: object,
+            limit: int | None = None,
+            cursor: str | None = None,
         ) -> contracts.PlaybillCurationListResult:
             assert instance_id == "inst"
             assert isinstance(workspace_observation, dict)

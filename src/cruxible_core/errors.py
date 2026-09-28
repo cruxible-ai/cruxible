@@ -13,6 +13,7 @@ credential errors shared by the daemon, CLI and MCP boundaries.
     ├── InstanceNotFoundError (instance registry lookup)
     ├── RuntimeCredentialNotFoundError (server credential store lookup)
     ├── AuthenticationError (HTTP/API credential failure)
+    │   └── BootstrapClaimRefusedError (one refused runtime bootstrap claim)
     ├── InstanceScopeError (HTTP/API credential scope mismatch)
     │   └── DaemonOperationScopeError (instance-scoped credential on a daemon operation)
     └── PermissionDeniedError (permission mode)
@@ -20,7 +21,10 @@ credential errors shared by the daemon, CLI and MCP boundaries.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from cruxible_client._error_base import CoreError as CoreError
+from cruxible_client.errors import permission_denied_message
 
 _MAX_DISPLAY_ERRORS = 10
 
@@ -172,6 +176,50 @@ class AuthenticationError(CoreError):
     pass
 
 
+BootstrapClaimRefusalCode = Literal[
+    "runtime_bootstrap.secret_invalid",
+    "runtime_bootstrap.secret_already_claimed",
+    "runtime_bootstrap.admin_exists",
+    "runtime_bootstrap.claim_conflict",
+]
+
+# One line each: what was refused, then the repair. None of them names or
+# hints at the expected secret.
+_BOOTSTRAP_CLAIM_REFUSALS: dict[str, tuple[str, str]] = {
+    "runtime_bootstrap.secret_invalid": (
+        "The bootstrap secret does not match this daemon's runtime bootstrap secret.",
+        "pass the exact CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET the daemon was started with "
+        "(--secret-file or the env var).",
+    ),
+    "runtime_bootstrap.secret_already_claimed": (
+        "This bootstrap secret has already been claimed; it mints one ADMIN credential once.",
+        "use the ADMIN token that claim printed, or run `cruxible credential recover-admin` "
+        "with the daemon stopped.",
+    ),
+    "runtime_bootstrap.admin_exists": (
+        "Instance {instance_id} already has an ADMIN credential.",
+        "this instance is already bootstrapped; use an existing ADMIN credential or run "
+        "`cruxible credential recover-admin` with the daemon stopped.",
+    ),
+    "runtime_bootstrap.claim_conflict": (
+        "The bootstrap claim collided with a concurrent claim or failed an integrity check.",
+        "retry `cruxible credential claim-bootstrap`.",
+    ),
+}
+
+
+class BootstrapClaimRefusedError(AuthenticationError):
+    """The one-time runtime bootstrap claim was refused, with its specific reason."""
+
+    def __init__(self, error_code: BootstrapClaimRefusalCode, *, instance_id: str) -> None:
+        summary, repair = _BOOTSTRAP_CLAIM_REFUSALS[error_code]
+        self.error_code = error_code
+        self.instance_id = instance_id
+        super().__init__(
+            f"{error_code}: {summary.format(instance_id=instance_id)} Repair: {repair}"
+        )
+
+
 class InstanceScopeError(CoreError):
     """Runtime credential scope does not match the requested instance."""
 
@@ -212,14 +260,6 @@ class PermissionDeniedError(CoreError):
         self.current_mode = current_mode
         self.required_mode = required_mode
         self.ceiling_mode = ceiling_mode
-        if ceiling_mode is not None:
-            super().__init__(
-                f"Operation '{tool_name}' requires {required_mode} mode, but the daemon "
-                f"capability ceiling is {ceiling_mode} mode "
-                f"(effective request mode: {current_mode})"
-            )
-            return
         super().__init__(
-            f"Tool '{tool_name}' requires {required_mode} mode, "
-            f"but server is running in {current_mode} mode"
+            permission_denied_message(tool_name, current_mode, required_mode, ceiling_mode)
         )

@@ -37,6 +37,13 @@ from cruxible_core.compiler.compiler import (
 )
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.list_pages import (
+    PlaybillListCursorMismatch,
+    decode_list_cursor,
+    encode_list_cursor,
+    list_snapshot,
+    page_after_boundary,
+)
 
 
 def _coordinate(
@@ -103,9 +110,26 @@ def list_playbill_policies_in_force(
     instance: PlaybillInstance,
     *,
     at: contracts.PlaybillAcceptedCoordinate | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
 ) -> contracts.PlaybillPolicyInForceList:
-    """List every live accepted policy carrier at exactly one coordinate."""
+    """List every live accepted policy carrier at exactly one coordinate.
 
+    ``limit`` bounds the page (``None`` reads them all). A cursor continues its
+    first page at that page's coordinate.
+    """
+
+    continuation = (
+        None if cursor is None else decode_list_cursor(cursor, list_name=_POLICY_LIST, selection={})
+    )
+    if continuation is not None:
+        pinned = contracts.PlaybillAcceptedCoordinate.model_validate(continuation.coordinate)
+        if at is not None and at != pinned:
+            raise PlaybillListCursorMismatch(
+                f"{PlaybillListCursorMismatch.error_code}: the cursor continues a different "
+                "coordinate; list the policies again without a cursor"
+            )
+        at = pinned
     coordinate = _coordinate(instance, at)
     artifact_codec = artifact_codec_for_compiler(coordinate.compiler)
     kinds = (
@@ -302,15 +326,47 @@ def list_playbill_policies_in_force(
             item.policy_kind.encode("utf-8"),
         )
     )
-    return contracts.PlaybillPolicyInForceList(
-        coordinate=contracts.PlaybillAcceptedCoordinate(
-            git_oid=coordinate.git_oid,
-            semantic_root=coordinate.semantic_root,
-            generation_root=coordinate.generation_root,
-            compiler_digest=coordinate.compiler.rule_digest,
-        ),
-        policies=rows,
+    keys = tuple(
+        (item.declaring_artifact_identity, item.field_path, item.policy_kind) for item in rows
     )
+    snapshot = list_snapshot([list(key) for key in keys])
+    page, truncated = page_after_boundary(
+        rows,
+        keys=keys,
+        snapshot=snapshot,
+        continuation=continuation,
+        limit=len(rows) if limit is None else limit,
+        list_name=_POLICY_LIST,
+    )
+    served = contracts.PlaybillAcceptedCoordinate(
+        git_oid=coordinate.git_oid,
+        semantic_root=coordinate.semantic_root,
+        generation_root=coordinate.generation_root,
+        compiler_digest=coordinate.compiler.rule_digest,
+    )
+    return contracts.PlaybillPolicyInForceList(
+        coordinate=served,
+        policies=list(page),
+        truncated=truncated,
+        next_cursor=(
+            encode_list_cursor(
+                list_name=_POLICY_LIST,
+                coordinate=served.model_dump(mode="json"),
+                selection={},
+                snapshot=snapshot,
+                last_key=(
+                    page[-1].declaring_artifact_identity,
+                    page[-1].field_path,
+                    page[-1].policy_kind,
+                ),
+            )
+            if truncated and page
+            else None
+        ),
+    )
+
+
+_POLICY_LIST = "policies-in-force"
 
 
 __all__ = ["list_playbill_policies_in_force"]
