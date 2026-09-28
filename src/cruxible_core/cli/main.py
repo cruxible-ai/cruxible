@@ -534,23 +534,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="proposal_group",
             ),
-            "review": _group(
-                "Materialize detached local worktrees for proposal comparison.",
-                {
-                    "open": _command(
-                        "playbill",
-                        "open_review",
-                        "Open an advertised proposal as a detached worktree.",
-                    ),
-                    "close": _command(
-                        "playbill",
-                        "close_review",
-                        "Close one clean detached proposal review worktree.",
-                    ),
-                },
-                module="playbill",
-                attr="review_group",
-            ),
             "subject": _group(
                 "Read identity-only governed Subjects.",
                 {

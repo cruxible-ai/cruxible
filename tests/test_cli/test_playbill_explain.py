@@ -10,7 +10,6 @@ from click.testing import CliRunner
 
 from cruxible_client import contracts
 from cruxible_core.cli.main import cli
-from cruxible_core.deprecation import DEFAULT_REMOVAL_VERSION
 from tests.test_cli.test_playbill_documents import COORDINATE
 
 
@@ -202,7 +201,7 @@ def test_cli_explain_resolves_a_subject_address_instead_of_a_document_404(
     ]
 
 
-def test_cli_subject_get_takes_the_address_and_deprecates_the_two_argument_form(
+def test_cli_subject_get_takes_one_kind_name_address(
     monkeypatch,
 ) -> None:
     client = _SubjectStubClient()
@@ -221,12 +220,12 @@ def test_cli_subject_get_takes_the_address_and_deprecates_the_two_argument_form(
     ]
 
     address = CliRunner().invoke(cli, [*common, "sec.package/click"])
-    legacy = CliRunner().invoke(cli, [*common, "sec.package", "click"])
+    two_arguments = CliRunner().invoke(cli, [*common, "sec.package", "click"])
     refused = CliRunner().invoke(cli, [*common, "sec.package"])
 
     assert address.exit_code == 0, address.output
-    assert legacy.exit_code == 0, legacy.output
-    assert json.loads(address.output) == json.loads(legacy.stdout)
+    assert two_arguments.exit_code != 0
+    assert "unexpected extra argument" in two_arguments.output.lower()
     # The profile carries the incoming edges the object side could not see before.
     assert json.loads(address.output)["incoming"] == [
         {
@@ -241,15 +240,5 @@ def test_cli_subject_get_takes_the_address_and_deprecates_the_two_argument_form(
             ],
         }
     ]
-    warning = json.loads(
-        next(
-            line for line in legacy.stderr.splitlines() if line.startswith("Deprecation: ")
-        ).removeprefix("Deprecation: ")
-    )
-    assert warning == {
-        "surface": "playbill subject get KIND ID two-argument form",
-        "replacement": "one `kind/name` Subject address argument",
-        "removal_version": DEFAULT_REMOVAL_VERSION,
-    }
     assert refused.exit_code != 0
     assert "is not a Subject address" in refused.output

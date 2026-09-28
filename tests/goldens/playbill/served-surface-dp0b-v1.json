@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-27:surface-cuts",
-    "surface_digest": "sha256:fa9ee7069b3feb312983c0a9da557f9b1a75af120152c6c1d271af6bcb20f0f8"
+    "surface_digest": "sha256:8bf38a9daa38f55e92639bcf13faee4c18eef931691082c44380029038dd4480"
   },
   "surface": {
     "cli_leaves": [
@@ -729,18 +729,6 @@
         ],
         "command": "playbill resolution-contracts",
         "delegate": "cruxible_core.cli.commands.playbill.resolution_contracts"
-      },
-      {
-        "client_operations": [],
-        "command": "playbill review close",
-        "delegate": "cruxible_core.cli.commands.playbill.close_review"
-      },
-      {
-        "client_operations": [
-          "inspect_playbill_proposal"
-        ],
-        "command": "playbill review open",
-        "delegate": "cruxible_core.cli.commands.playbill.open_review"
       },
       {
         "client_operations": [],

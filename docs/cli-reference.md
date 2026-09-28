@@ -446,8 +446,8 @@ resubmission. So `git diff playbill/accepted...playbill/proposals/<proposal-id>`
 takes the digest that `proposal list` and `proposal review` print.
 
 Re-keying that branch to `<actor>/<name>` is a deprecate-then-remove candidate,
-not a rename: `review open` resolves those ref names and the workspace
-advertisement fetches that refspec, so both are shipped surfaces. It would also
+not a rename: the workspace advertisement fetches that refspec, so it is a
+shipped surface. It would also
 have to answer what a resubmitted proposal's branch means, which the digest
 answers by construction. Nothing schedules it today.
 
@@ -634,8 +634,7 @@ cruxible playbill subject history KIND/ID
 
 A Subject is an identity-only referent named by its canonical `kind/name`
 address — the spelling the SDK, claim objects, floor profiles, and `explain` all
-use. The two-argument `KIND ID` form is deprecated and still accepted; it emits
-the structured deprecation warning on stderr and is removed in 0.6.0.
+use.
 
 `subject get` renders the Subject's own facts and an `incoming` section: every
 live Claim whose subject-valued object is this Subject, grouped by predicate and
@@ -1758,8 +1757,6 @@ cruxible playbill proposal approve PROPOSAL_ID
   --signer-id ID --key FILE [--yes]
 cruxible playbill proposal activate PROPOSAL_ID [--workspace-root DIR]
   [--no-sync]
-cruxible playbill review open PROPOSAL_ID [--workspace-root DIR]    # deprecated
-cruxible playbill review close PROPOSAL_ID [--workspace-root DIR]   # deprecated
 ~~~
 
 `cruxible playbill whoami` names the credential-derived actor, its effective
@@ -1842,14 +1839,6 @@ asking for a signature, because that rendering is what the signature covers.
 A reviewer without a workspace attachment clones the ledger mirror instead and
 runs the same diff against `origin/main`; see [playbill
 ledger](#playbill-ledger) for what the mirror carries and how to get its URL.
-
-`playbill review open` and `playbill review close`, which materialized a
-detached, gitignored worktree at `.playbill/review/<proposal-digest>/`, are
-DEPRECATED and are removed in 0.6.0; both emit the structured deprecation
-warning naming the diff above. They still work for the deprecation window. A
-`review_workspace_not_attached` refusal from `review open` names the
-local-socket `playbill host create --workspace` command needed when creating a
-host that supports review worktrees.
 
 ## playbill principal
 

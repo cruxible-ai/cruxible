@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from typing import cast
 
 from cruxible_client.contracts.types import GitObjectFormat
@@ -29,8 +27,6 @@ _PROPOSAL_REFSPEC = "+refs/heads/proposals/*:refs/remotes/playbill/proposals/*"
 # clone of the mirror alike: the command `proposal review` prints is the
 # command that runs, in both.
 _NOTE_REFS: tuple[str, ...] = tuple(sorted(NOTE_REFS.values()))
-_PROPOSAL_ID_RE = re.compile(r"^[0-9a-f]{64}$")
-_REVIEW_EXCLUDE = b"/.playbill/review/\n"
 _PASSTHROUGH_ENVIRONMENT = ("PATH", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT")
 # Fetch can consult fsmonitor, hooks, alternate-reference enumeration, transport
 # commands/helpers, and upload-pack. Pin each process-bearing seam at command-line
@@ -370,142 +366,8 @@ def advertise_workspace_refs(
         )
 
 
-def _review_proposal_key(proposal_id: str) -> str:
-    key = proposal_id.removeprefix("sha256:")
-    if _PROPOSAL_ID_RE.fullmatch(key) is None:
-        raise ValueError("review workspace requires one full sha256 proposal ID")
-    return key
-
-
-def _ensure_review_worktrees_ignored(workspace_root: Path) -> None:
-    common = _git(
-        workspace_root,
-        ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    if common.returncode != 0:
-        raise ValueError("review workspace cannot resolve Git metadata")
-    try:
-        common_path = Path(_text(common.stdout)).resolve(strict=True)
-    except (OSError, RuntimeError, ValueError) as exc:
-        raise ValueError("review workspace Git metadata is invalid") from exc
-    exclude = common_path / "info" / "exclude"
-    if exclude.is_symlink():
-        raise ValueError("review workspace exclude file must not be a symbolic link")
-    try:
-        current = exclude.read_bytes() if exclude.exists() else b""
-        if _REVIEW_EXCLUDE in current.splitlines(keepends=True):
-            return
-        replacement = current
-        if replacement and not replacement.endswith(b"\n"):
-            replacement += b"\n"
-        replacement += _REVIEW_EXCLUDE
-        exclude.parent.mkdir(parents=True, exist_ok=True)
-        temporary: Path | None = None
-        try:
-            with NamedTemporaryFile(mode="wb", dir=exclude.parent, delete=False) as output:
-                temporary = Path(output.name)
-                output.write(replacement)
-                output.flush()
-                os.fsync(output.fileno())
-            if exclude.exists():
-                temporary.chmod(exclude.stat().st_mode)
-            os.replace(temporary, exclude)
-            temporary = None
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
-    except OSError as exc:
-        raise ValueError("review workspace ignore rule could not be written") from exc
-
-
-def _review_worktree_target(
-    workspace_root: Path,
-    *,
-    key: str,
-    create_parent: bool,
-) -> Path:
-    playbill_root = workspace_root / ".playbill"
-    review_root = playbill_root / "review"
-    if playbill_root.is_symlink():
-        raise ValueError(f"review workspace path escapes the Git worktree: {playbill_root}")
-    try:
-        if create_parent:
-            review_root.mkdir(parents=True, exist_ok=True)
-        resolved_review_root = review_root.resolve(strict=True)
-    except (OSError, RuntimeError, ValueError) as exc:
-        raise ValueError(f"review workspace path is absent or unsafe: {review_root}") from exc
-    if review_root.is_symlink() or resolved_review_root.parent.parent != workspace_root:
-        raise ValueError(f"review workspace path escapes the Git worktree: {review_root}")
-    target = review_root / key
-    if target.is_symlink():
-        raise ValueError(f"review workspace path escapes the Git worktree: {target}")
-    return target
-
-
-def open_proposal_review_worktree(*, workspace_path: Path, proposal_id: str) -> Path:
-    """Materialize one advertised proposal tree as a detached, ignored worktree."""
-
-    workspace_root = containing_git_workspace_root(workspace_path)
-    if workspace_root is None:
-        raise ValueError("review workspace must be inside one Git worktree")
-    key = _review_proposal_key(proposal_id)
-    reference = f"refs/remotes/playbill/proposals/{key}"
-    resolved = _git(workspace_root, ["rev-parse", "--verify", f"{reference}^{{commit}}"])
-    if resolved.returncode != 0:
-        raise ValueError("proposal is not an advertised open proposal")
-    target = _review_worktree_target(workspace_root, key=key, create_parent=True)
-    if target.exists():
-        raise ValueError(f"review workspace already exists or has an unsafe path: {target}")
-    _ensure_review_worktrees_ignored(workspace_root)
-    created = _git(
-        workspace_root,
-        ["worktree", "add", "--detach", str(target), reference],
-    )
-    if created.returncode != 0:
-        raise ValueError(f"review workspace could not be opened: {_text(created.stderr)}")
-    detached = _git(target, ["symbolic-ref", "-q", "HEAD"])
-    if detached.returncode == 0:
-        raise ValueError("review workspace unexpectedly created a local branch")
-    return target
-
-
-def close_proposal_review_worktree(*, workspace_path: Path, proposal_id: str) -> Path:
-    """Remove one clean detached review worktree without deleting a branch."""
-
-    workspace_root = containing_git_workspace_root(workspace_path)
-    if workspace_root is None:
-        raise ValueError("review workspace must be inside one Git worktree")
-    key = _review_proposal_key(proposal_id)
-    target = _review_worktree_target(workspace_root, key=key, create_parent=False)
-    if not target.exists():
-        listed = _git(workspace_root, ["worktree", "list", "--porcelain", "-z"])
-        if listed.returncode != 0:
-            raise ValueError(
-                f"review workspace registration could not be inspected: {_text(listed.stderr)}"
-            )
-        if b"worktree " + os.fsencode(target) not in listed.stdout.split(b"\0"):
-            raise ValueError(f"review workspace was never opened: {target}")
-        removed = _git(workspace_root, ["worktree", "remove", "--force", str(target)])
-        if removed.returncode != 0:
-            raise ValueError(
-                f"review workspace registration could not be removed: {_text(removed.stderr)}"
-            )
-        return target
-    if not target.is_dir():
-        raise ValueError(f"review workspace is absent or has an unsafe path: {target}")
-    removed = _git(workspace_root, ["worktree", "remove", str(target)])
-    if removed.returncode != 0:
-        raise ValueError(
-            "review workspace is modified or could not be closed; preserve or discard "
-            f"its edits explicitly: {_text(removed.stderr)}"
-        )
-    return target
-
-
 __all__ = [
     "advertise_workspace_refs",
-    "close_proposal_review_worktree",
     "containing_git_workspace_root",
-    "open_proposal_review_worktree",
     "workspace_git_object_format",
 ]

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -150,17 +149,7 @@ from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_MIN_MAX_BYTES,
     AUDIT_BUDGET_MIN_MAX_ROWS,
 )
-from cruxible_core.deprecation import (
-    REVIEW_CLOSE_WORKTREE,
-    REVIEW_OPEN_WORKTREE,
-    DeprecationNotice,
-    emit_cli_deprecation,
-)
-from cruxible_core.floor.workspace_advertisement import (
-    close_proposal_review_worktree,
-    containing_git_workspace_root,
-    open_proposal_review_worktree,
-)
+from cruxible_core.floor.workspace_advertisement import containing_git_workspace_root
 from cruxible_core.governance.keys import (
     ClientPrincipalKeyTarget,
     GeneratedKeyMaterial,
@@ -1724,104 +1713,6 @@ def inspect_refusal(proposal_id: str, output_json: bool) -> None:
     _emit_json(result.model_dump(mode="json"))
 
 
-@playbill_group.group("review")
-def review_group() -> None:
-    """Deprecated: materialize detached local worktrees for proposal comparison."""
-
-
-def _review_workspace_path(workspace_root: str | None) -> Path:
-    if workspace_root is not None:
-        return Path(workspace_root)
-    configured = _root_ctx_obj().get("playbill_workspace")
-    return Path(str(configured)) if configured is not None else Path.cwd()
-
-
-@review_group.command("open")
-@click.argument("proposal_id")
-@click.option("--workspace-root", default=None, type=click.Path(file_okay=False))
-@json_option
-@handle_errors
-def open_review(
-    proposal_id: str,
-    workspace_root: str | None,
-    output_json: bool,
-) -> None:
-    """Deprecated: open an advertised proposal tree for comparison, never checkout."""
-
-    emit_cli_deprecation(REVIEW_OPEN_WORKTREE)
-    inspection = _server_call(
-        lambda client, instance_id: client.inspect_playbill_proposal(instance_id, proposal_id),
-        command_name="playbill review open",
-    )
-    advertisement = inspection.workspace_advertisement
-    if advertisement.status != "updated":
-        if advertisement.status == "not_attached":
-            workspace = _review_workspace_path(workspace_root).expanduser().resolve()
-            repair = ["cruxible"]
-            if server_socket := _root_ctx_obj().get("server_socket"):
-                repair.extend(("--server-socket", str(server_socket)))
-            elif server_url := _root_ctx_obj().get("server_url"):
-                repair.extend(("--server-url", str(server_url)))
-            repair.extend(("playbill", "host", "create", "--workspace", str(workspace)))
-            raise click.ClickException(
-                "review_workspace_not_attached: this host has no registered review worktree; "
-                f"repair: {shlex.join(repair)}"
-            )
-        reason = advertisement.failure_code or advertisement.status
-        raise click.ClickException(f"proposal refs could not be refreshed: {reason}")
-    admission = inspection.proposal.get("admission")
-    canonical_id = admission.get("proposal_id") if isinstance(admission, Mapping) else None
-    if not isinstance(canonical_id, str):
-        raise click.ClickException("proposal inspection omitted its canonical proposal ID")
-    try:
-        path = open_proposal_review_worktree(
-            workspace_path=_review_workspace_path(workspace_root),
-            proposal_id=canonical_id,
-        )
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-    payload = {
-        "proposal_id": canonical_id,
-        "path": str(path),
-        "detached": True,
-    }
-    if output_json:
-        _emit_json(payload)
-    else:
-        click.echo(f"Opened detached review worktree: {path}")
-
-
-@review_group.command("close")
-@click.argument("proposal_id")
-@click.option("--workspace-root", default=None, type=click.Path(file_okay=False))
-@json_option
-@handle_errors
-def close_review(
-    proposal_id: str,
-    workspace_root: str | None,
-    output_json: bool,
-) -> None:
-    """Deprecated: close one clean detached proposal review worktree."""
-
-    emit_cli_deprecation(REVIEW_CLOSE_WORKTREE)
-    try:
-        path = close_proposal_review_worktree(
-            workspace_path=_review_workspace_path(workspace_root),
-            proposal_id=proposal_id,
-        )
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-    payload = {
-        "proposal_id": proposal_id,
-        "path": str(path),
-        "closed": True,
-    }
-    if output_json:
-        _emit_json(payload)
-    else:
-        click.echo(f"Closed review worktree: {path}")
-
-
 @proposal_group.command("review")
 @click.argument("proposal_id")
 @click.option("--include-body/--redacted", default=True)
@@ -2368,30 +2259,9 @@ def revoke_principal(principal_id: str, proposal_name: str, output_json: bool) -
     _emit_json(result.model_dump(mode="json"))
 
 
-# Every other surface -- the SDK, claim objects, floor profiles, explain -- names
-# a Subject by its canonical `kind/name` address. `subject get KIND ID` was the
-# only surface that split it into two arguments, so a pasted address failed with
-# "Missing argument SUBJECT_ID". The address is canonical here now; the two-
-# argument form stays accepted for its deprecation window and says so.
-SUBJECT_ADDRESS_DEPRECATION_REPLACEMENT = "one `kind/name` Subject address argument"
+def _subject_address(address: str) -> tuple[str, str]:
+    """Return `(kind, id)` from one canonical `kind/name` Subject address."""
 
-
-def _subject_address(
-    address: str,
-    legacy_subject_id: str | None,
-    *,
-    surface: str,
-) -> tuple[str, str]:
-    """Return `(kind, id)` from either the address or the deprecated two-arg form."""
-
-    if legacy_subject_id is not None:
-        emit_cli_deprecation(
-            DeprecationNotice(
-                surface=surface,
-                replacement=SUBJECT_ADDRESS_DEPRECATION_REPLACEMENT,
-            )
-        )
-        return address, legacy_subject_id
     if _SUBJECT_ADDRESS_RE.fullmatch(address) is None:
         raise click.UsageError(
             f"{address!r} is not a Subject address: pass one `kind/name` argument, "
@@ -2424,21 +2294,12 @@ def list_subjects(output_json: bool) -> None:
 
 @subject_group.command("get")
 @click.argument("address")
-@click.argument("legacy_subject_id", required=False, metavar="[SUBJECT_ID]")
 @json_option
 @handle_errors
-def get_subject(address: str, legacy_subject_id: str | None, output_json: bool) -> None:
-    """Read one accepted Subject by its `kind/name` address.
+def get_subject(address: str, output_json: bool) -> None:
+    """Read one accepted Subject by its `kind/name` address."""
 
-    The two-argument `KIND ID` form is deprecated and still accepted; every
-    other surface speaks the address.
-    """
-
-    subject_kind, subject_id = _subject_address(
-        address,
-        legacy_subject_id,
-        surface="playbill subject get KIND ID two-argument form",
-    )
+    subject_kind, subject_id = _subject_address(address)
     result = _server_call(
         lambda client, instance_id: client.get_playbill_subject(
             instance_id, subject_kind, subject_id
@@ -2450,17 +2311,12 @@ def get_subject(address: str, legacy_subject_id: str | None, output_json: bool) 
 
 @subject_group.command("history")
 @click.argument("address")
-@click.argument("legacy_subject_id", required=False, metavar="[SUBJECT_ID]")
 @json_option
 @handle_errors
-def subject_history(address: str, legacy_subject_id: str | None, output_json: bool) -> None:
+def subject_history(address: str, output_json: bool) -> None:
     """Read one Subject's accepted lineage by its `kind/name` address."""
 
-    subject_kind, subject_id = _subject_address(
-        address,
-        legacy_subject_id,
-        surface="playbill subject history KIND ID two-argument form",
-    )
+    subject_kind, subject_id = _subject_address(address)
     result = _server_call(
         lambda client, instance_id: client.playbill_subject_history(
             instance_id, subject_kind, subject_id

@@ -312,9 +312,7 @@ materialized review aliases. Reconciliation can restore absent notes or valid
 incomplete groups after a crash; edited or unrelated records remain a refusal.
 
 `proposal review` without `--json` prints the pointer and the note refs rather
-than re-rendering the change set. `playbill review open` / `review close`, which
-materialized a detached worktree under `.playbill/review/`, are deprecated in
-favour of the diff above and are removed in 0.6.0.
+than re-rendering the change set.
 
 The proposal ref in that diff is keyed by proposal DIGEST, not by actor and
 name: an actor's own transport ref `refs/proposals/<actor>/<name>` is extended

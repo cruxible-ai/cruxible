@@ -44,8 +44,8 @@ def test_registry_surfaces_are_unique() -> None:
 
 
 def test_removed_050_surfaces_are_absent_from_code_and_registry() -> None:
-    # The registry is no longer empty (the Subject-address rows are live), so the
-    # law is stated over the 0.5.0 removals themselves rather than over emptiness.
+    # Stated over the 0.5.0 removals themselves rather than over an empty
+    # registry, so the law survives the next registered deprecation.
     removed_050_surfaces = {
         "legacy outcome record functions",
         "legacy outcome profile functions",
