@@ -87,8 +87,55 @@ def test_explicit_instance_wins_over_the_environment(monkeypatch: pytest.MonkeyP
     assert require_instance_id() == "inst_env"
 
 
-def test_no_configured_instance_names_the_repair() -> None:
+def _bind_workspace(root, **fields: str) -> None:
+    (root / ".playbill").mkdir()
+    (root / ".playbill" / "coverage.json").write_text(
+        json.dumps({"tag": "playbill-coverage-workspace-config-v2", **fields}),
+        encoding="utf-8",
+    )
+
+
+def test_no_configured_instance_names_the_repair(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
     with pytest.raises(ConfigError, match="CRUXIBLE_INSTANCE_ID=<instance id>"):
+        require_instance_id()
+
+
+def test_workspace_binding_selects_an_instance_on_the_adapters_daemon(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    socket = tmp_path / "d.sock"
+    _bind_workspace(tmp_path, server_socket=str(socket), instance_id="inst_bound")
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", str(socket))
+
+    assert require_instance_id() == "inst_bound"
+    monkeypatch.setenv("CRUXIBLE_INSTANCE_ID", "inst_env")
+    assert require_instance_id() == "inst_env"
+    assert require_instance_id("inst_explicit") == "inst_explicit"
+
+
+def test_workspace_binding_on_another_daemon_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _bind_workspace(tmp_path, server_socket=str(tmp_path / "other.sock"), instance_id="inst_bound")
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", str(tmp_path / "d.sock"))
+
+    with pytest.raises(ConfigError, match="selects instance inst_bound"):
+        require_instance_id()
+    monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET")
+    with pytest.raises(ConfigError, match="daemon is not configured"):
+        require_instance_id()
+
+
+def test_an_incomplete_workspace_binding_does_not_select_an_instance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _bind_workspace(tmp_path, instance_id="inst_bound")
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
+
+    with pytest.raises(ConfigError, match="No Playbill instance selected"):
         require_instance_id()
 
 
@@ -99,6 +146,7 @@ def test_remembered_cli_context_never_retargets_the_adapter(
         json.dumps({"instance_id": "inst_remembered"}), encoding="utf-8"
     )
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "client-context.json"))
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
 
     with pytest.raises(ConfigError, match="No Playbill instance selected"):
         require_instance_id()
