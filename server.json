@@ -46,6 +46,13 @@
           "isSecret": true
         },
         {
+          "name": "CRUXIBLE_INSTANCE_ID",
+          "description": "Instance every tool acts on when a call passes no instance_id",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
           "name": "CRUXIBLE_MCP_WORKSPACE_ROOT",
           "description": "Workspace for tools that read or write local files; defaults to the working directory",
           "isRequired": false,
@@ -54,7 +61,7 @@
         },
         {
           "name": "CRUXIBLE_MCP_PROFILE",
-          "description": "Tool catalog: unset for the writer path, or expert for the complete catalog",
+          "description": "Tool catalog: default (unset) for the everyday agent loop, or full for every tool",
           "isRequired": false,
           "format": "string",
           "isSecret": false

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import base64
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal, TypeVar, cast
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from cruxible_client import (
     CruxibleClient,
@@ -16,6 +16,7 @@ from cruxible_client import (
     contracts,
     inspect_workspace_floor,
     materialize_playbill_floor,
+    observe_playbill_next_workspace,
 )
 from cruxible_client.authoring.attestations import (
     append_prepared_claim_attestation,
@@ -30,11 +31,13 @@ from cruxible_client.authoring.sources import (
     load_source_catalog,
     mapped_root_aliases,
 )
+from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationAppendResultV1,
+    ClaimAttestationCaptureReferenceV1,
     ClaimStance,
     PreparedClaimAttestationRequestV1,
 )
@@ -60,20 +63,24 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
 from cruxible_client.errors import ServerUnreachableError
+from cruxible_core import __version__
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputV1,
 )
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.coverage.adapter import WorkingSourceObservationV1
-from cruxible_core.coverage.contracts import CoverageCardBudgetV1
+from cruxible_core.coverage.contracts import CoverageAccessProfileV1, CoverageCardBudgetV1
 from cruxible_core.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.coverage.workspace import (
     bindings_from_mapping,
     observe_workspace,
 )
-from cruxible_core.errors import ConfigError, DataValidationError
+from cruxible_core.errors import ConfigError, DaemonOperationScopeError, DataValidationError
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
+from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.workspace import (
     mcp_git_workspace_root,
     mcp_workspace_root,
@@ -93,6 +100,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringInputCompileRequest,
     PlaybillAuthoringInputCreateRequest,
     PlaybillAuthoringPreflightRequest,
+    PlaybillAuthoringRebaseRequest,
     PlaybillAuthoringSubmitRequest,
     PlaybillBlockDeclareRequest,
     PlaybillBlockDepublishRequest,
@@ -161,6 +169,46 @@ class _LocalFloorClient:
         request: contracts.PlaybillBlockSyncReadRequestV1,
     ) -> contracts.PlaybillBlockSyncReadResultV1:
         return playbill_api.playbill_read_block_sync_backing(instance_id, request=request)
+
+
+class _LocalCoverageClient:
+    """Serve the shared next-workspace coverage scan in library mode."""
+
+    def resolve_playbill_coverage(
+        self,
+        instance_id: str,
+        *,
+        observations: Sequence[Mapping[str, Any]],
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        budget: Mapping[str, Any] | None = None,
+        scan_budget: Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillCoverageResult:
+        return playbill_api.playbill_resolve_coverage(
+            instance_id,
+            observations=tuple(
+                WorkingSourceObservationV1.model_validate(item) for item in observations
+            ),
+            at=None if at is None else AcceptedCoordinate.model_validate(_json(at)),
+            budget=None if budget is None else CoverageCardBudgetV1.model_validate(budget),
+            scan_budget=(
+                None if scan_budget is None else CoverageScanBudgetV1.model_validate(scan_budget)
+            ),
+        )
+
+    def search_playbill(
+        self,
+        instance_id: str,
+        *,
+        mode: Literal["search", "list", "orient"],
+        kinds: Sequence[str] = SEARCH_KINDS,
+    ) -> contracts.PlaybillSearchResult:
+        return playbill_api.playbill_search(
+            instance_id, mode=mode, kinds=tuple(cast(SearchKind, kind) for kind in kinds)
+        )
+
+
+def _json(value: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any]) -> dict[str, Any]:
+    return value.model_dump(mode="json") if isinstance(value, BaseModel) else dict(value)
 
 
 class _LocalSourceContextClient:
@@ -287,11 +335,11 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_authoring_compile": TypeAdapter(PlaybillAuthoringInputCompileRequest),
     "cruxible_playbill_authoring_create": TypeAdapter(PlaybillAuthoringInputCreateRequest),
     "cruxible_playbill_authoring_preflight": TypeAdapter(PlaybillAuthoringPreflightRequest),
+    "cruxible_playbill_authoring_rebase": TypeAdapter(PlaybillAuthoringRebaseRequest),
     "cruxible_playbill_authoring_submit": TypeAdapter(PlaybillAuthoringSubmitRequest),
     "cruxible_playbill_block_declare": TypeAdapter(PlaybillBlockDeclareRequest),
     "cruxible_playbill_block_depublish": TypeAdapter(PlaybillBlockDepublishRequest),
     "cruxible_playbill_claim_attest": None,  # shared preparation helper builds the body
-    "cruxible_playbill_claim_attest_new_capture": None,  # same shared helper
     "cruxible_playbill_claim_retire": TypeAdapter(ClaimRetireRequestV1),
     "cruxible_playbill_claim_type_migrate": TypeAdapter(ClaimTypeMigrationRequest),
     "cruxible_playbill_curation_accept_fixed": TypeAdapter(PlaybillCurationAcceptFixedRequest),
@@ -370,11 +418,45 @@ def _dispatch_remote_or_local(
     return local_call()
 
 
-def handle_server_info() -> contracts.ServerInfoResult:
+def _daemon_version() -> str:
+    """The daemon's public version probe; in library mode this process is the daemon."""
+
     return _dispatch_remote_or_local(
-        lambda client: client.server_info(),
-        host_api.server_info,
-        operation_name="cruxible_server_info",
+        lambda client: client.version(),
+        lambda: __version__,
+        operation_name="daemon version probe (GET /version)",
+    )
+
+
+def handle_server_info() -> McpServerInfoResult:
+    """Answer a daemon-scope caller with daemon metadata, a scoped one with its instance."""
+
+    try:
+        daemon = _dispatch_remote_or_local(
+            lambda client: client.server_info(),
+            host_api.server_info,
+            operation_name="cruxible_server_info",
+        )
+    except (ClientDaemonOperationScopeError, DaemonOperationScopeError) as exc:
+        scope = exc.credential_scope
+        return McpServerInfoResult(
+            scope="instance",
+            instance_id=scope,
+            adapter_version=__version__,
+            daemon_version=_daemon_version(),
+            host=_dispatch_remote_or_local(
+                lambda client: client.show_playbill_host(scope),
+                lambda: host_api.show_playbill_host(scope),
+                operation_name="cruxible_server_info",
+            ),
+            identity=_playbill_whoami(scope),
+        )
+    return McpServerInfoResult(
+        scope="daemon",
+        instance_id=configured_instance_id(),
+        adapter_version=__version__,
+        daemon_version=daemon.version,
+        daemon=daemon,
     )
 
 
@@ -644,11 +726,20 @@ def handle_playbill_activate(
     )
 
 
-def handle_playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
+def _playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
     return _dispatch_remote_or_local(
         lambda client: client.playbill_whoami(instance_id),
         lambda: playbill_api.playbill_whoami(instance_id),
         operation_name="cruxible_playbill_whoami",
+    )
+
+
+def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
+    return McpWhoAmIResult(
+        instance_id=instance_id,
+        adapter_version=__version__,
+        daemon_version=_daemon_version(),
+        identity=_playbill_whoami(instance_id),
     )
 
 
@@ -771,16 +862,44 @@ def handle_playbill_source_context(instance_id: str) -> contracts.PlaybillSource
     )
 
 
-def handle_playbill_check_source_bundle(
-    instance_id: str, bundle: dict[str, Any]
+def handle_playbill_source_check(
+    instance_id: str,
+    *,
+    bundle: dict[str, Any] | None = None,
+    catalog_path: str | None = None,
+    repository_root: str = ".",
+    local_catalog_path: str | None = None,
+    root_aliases: Mapping[str, str] | None = None,
 ) -> contracts.PlaybillSourceCheckResult:
-    frozen = SourceCompilationBundle.model_validate(bundle)
+    """Check a compiled bundle, or compile catalog-declared workspace sources first."""
+
+    if (bundle is None) == (catalog_path is None):
+        raise DataValidationError(
+            "source check takes exactly one of bundle or catalog_path (workspace sources)"
+        )
+    if bundle is not None and (
+        repository_root != "." or local_catalog_path is not None or root_aliases
+    ):
+        raise DataValidationError(
+            "repository_root, local_catalog_path, and root_aliases apply only with catalog_path"
+        )
+    frozen = (
+        SourceCompilationBundle.model_validate(bundle)
+        if catalog_path is None
+        else handle_playbill_workspace_source_compile(
+            instance_id,
+            catalog_path=catalog_path,
+            repository_root=repository_root,
+            local_catalog_path=local_catalog_path,
+            root_aliases=root_aliases or {},
+        )
+    )
     return _dispatch_remote_or_local(
         lambda client: client.check_playbill_source_bundle(
             instance_id, bundle=frozen.model_dump(mode="json")
         ),
         lambda: playbill_api.playbill_check_source_bundle(instance_id, bundle=frozen),
-        operation_name="cruxible_playbill_check_source_bundle",
+        operation_name="cruxible_playbill_source_check",
     )
 
 
@@ -1015,32 +1134,49 @@ def handle_playbill_claim_attest(
     stance: ClaimStance,
     note: str | None,
     valid_until: datetime | None = None,
+    *,
+    capture_digests: list[str] | None = None,
+    referent_coordinate: Mapping[str, Any] | None = None,
+    attested_at: datetime | None = None,
 ) -> ClaimAttestationAppendResultV1:
-    prepared = PreparedClaimAttestationRequestV1(
-        claim_id=claim_id.removeprefix("Claim:"),
-        attestation_basis="examined_existing",
-        stance=stance,
-        attested_at=datetime.now(UTC),
-        valid_until=valid_until,
-        note=note,
-    )
+    """Attest the examined Claim, or a new Capture of it when capture digests are given."""
+
+    if capture_digests is not None and not capture_digests:
+        raise DataValidationError(
+            "capture_digests must name at least one new Capture; omit it to attest the "
+            "Claim's own citations"
+        )
+    if referent_coordinate is not None and not capture_digests:
+        raise DataValidationError("referent_coordinate applies only with capture_digests")
+    if attested_at is not None and not capture_digests:
+        raise DataValidationError(
+            "attested_at applies only with capture_digests; an examined-Claim attestation "
+            "is signed at the time of the call"
+        )
+    try:
+        prepared = PreparedClaimAttestationRequestV1(
+            claim_id=claim_id.removeprefix("Claim:"),
+            attestation_basis="new_capture" if capture_digests else "examined_existing",
+            stance=stance,
+            capture_references=tuple(
+                ClaimAttestationCaptureReferenceV1(capture_digest=digest)
+                for digest in sorted(set(capture_digests or ()), key=lambda d: d.encode())
+            ),
+            referent_coordinate=(
+                None
+                if referent_coordinate is None
+                else AcceptedCoordinate.model_validate(referent_coordinate)
+            ),
+            attested_at=datetime.now(UTC) if attested_at is None else attested_at,
+            valid_until=valid_until,
+            note=note,
+        )
+    except ValidationError as exc:
+        raise DataValidationError(f"cruxible_playbill_claim_attest: {exc}") from exc
     return _dispatch_remote_or_local(
         lambda client: _handle_claim_attestation(client, instance_id, prepared),
         lambda: _handle_claim_attestation(_LocalAttestationClient(), instance_id, prepared),
         operation_name="cruxible_playbill_claim_attest",
-    )
-
-
-def handle_playbill_claim_attest_new_capture(
-    instance_id: str,
-    request: PreparedClaimAttestationRequestV1,
-) -> ClaimAttestationAppendResultV1:
-    if request.attestation_basis != "new_capture":
-        raise DataValidationError("new-Capture attestation requires attestation_basis=new_capture")
-    return _dispatch_remote_or_local(
-        lambda client: _handle_claim_attestation(client, instance_id, request),
-        lambda: _handle_claim_attestation(_LocalAttestationClient(), instance_id, request),
-        operation_name="cruxible_playbill_claim_attest_new_capture",
     )
 
 
@@ -1171,6 +1307,18 @@ def handle_playbill_authoring_preflight(
         lambda client: client.preflight_playbill_authoring_intent(instance_id, intent_id),
         lambda: playbill_api.playbill_authoring_preflight(instance_id, intent_id),
         operation_name="cruxible_playbill_authoring_preflight",
+        local_payload={},
+    )
+
+
+def handle_playbill_authoring_rebase(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.PlaybillAuthoringIntentView:
+    return _dispatch_remote_or_local(
+        lambda client: client.rebase_playbill_authoring_intent(instance_id, intent_id),
+        lambda: playbill_api.playbill_authoring_rebase(instance_id, intent_id),
+        operation_name="cruxible_playbill_authoring_rebase",
         local_payload={},
     )
 
@@ -1764,6 +1912,81 @@ def handle_playbill_since(
     )
 
 
+def handle_playbill_next(
+    instance_id: str,
+    *,
+    evaluation_time: str | None = None,
+    access_profile: Mapping[str, Any] | None = None,
+    expiring_within: Mapping[str, Any] | None = None,
+    since_result_digest: str | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> contracts.PlaybillNextResult:
+    """Rank outstanding repair work, observing the MCP workspace as `playbill next` does."""
+
+    stamped = (
+        datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        if evaluation_time is None
+        else evaluation_time
+    )
+    profile = CoverageAccessProfileV1.model_validate(
+        access_profile
+        or {"profile_id": "mcp-next", "permitted_access_classes": ["instance", "public"]}
+    ).model_dump(mode="json")
+    workspace = mcp_workspace_root()
+    observation = observe_playbill_next_workspace(workspace)
+
+    def remote(client: CruxibleClient) -> contracts.PlaybillNextResult:
+        observed, coordinate = observe_playbill_next_workspace_with_coverage(
+            client,
+            instance_id,
+            workspace,
+            observation=observation,
+            access_profile=profile,
+        )
+        return client.next_playbill(
+            instance_id,
+            evaluation_time=stamped,
+            access_profile=profile,
+            at=coordinate,
+            expiring_within=expiring_within,
+            workspace_observation=observed,
+            since_result_digest=since_result_digest,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def local() -> contracts.PlaybillNextResult:
+        observed, coordinate = observe_playbill_next_workspace_with_coverage(
+            _LocalCoverageClient(),
+            instance_id,
+            workspace,
+            observation=observation,
+            access_profile=profile,
+        )
+        request: dict[str, Any] = {
+            "tag": "playbill-next-request-v2",
+            "at": None if coordinate is None else coordinate.model_dump(mode="json"),
+            "evaluation_time": stamped,
+            "access_profile": profile,
+            "workspace_observation": observed,
+            "expiring_within": None if expiring_within is None else dict(expiring_within),
+            "since_result_digest": since_result_digest,
+            "limit": limit,
+            "cursor": cursor,
+        }
+        return playbill_api.playbill_next(
+            instance_id,
+            request={key: value for key, value in request.items() if value is not None},
+        )
+
+    return _dispatch_remote_or_local(
+        remote,
+        local,
+        operation_name="cruxible_playbill_next",
+    )
+
+
 def handle_playbill_curation_list(
     instance_id: str,
     *,
@@ -2001,14 +2224,40 @@ def handle_playbill_expand(
     )
 
 
-def handle_playbill_resolve_coverage(
+def handle_playbill_coverage(
     instance_id: str,
-    observations: list[dict[str, Any]],
     *,
+    observations: list[dict[str, Any]] | None = None,
+    bindings: Mapping[str, str] | None = None,
+    files: tuple[str, ...] = (),
+    ranges: tuple[str, ...] = (),
+    grep_results_path: str | None = None,
+    whole_working_set: bool = False,
     budget: dict[str, Any] | None = None,
     scan_budget: dict[str, Any] | None = None,
 ) -> contracts.PlaybillCoverageResult:
-    observed = tuple(WorkingSourceObservationV1.model_validate(item) for item in observations)
+    """Resolve caller observations, or ones the adapter derives from workspace files."""
+
+    if (observations is None) == (bindings is None):
+        raise DataValidationError(
+            "coverage takes exactly one of observations or bindings (workspace files)"
+        )
+    if bindings is not None:
+        observed = _workspace_observations(
+            bindings,
+            files=files,
+            ranges=ranges,
+            grep_results_path=grep_results_path,
+            whole_working_set=whole_working_set,
+        )
+    elif files or ranges or grep_results_path is not None or whole_working_set:
+        raise DataValidationError(
+            "files, ranges, grep_results_path, and whole_working_set apply only with bindings"
+        )
+    else:
+        observed = tuple(
+            WorkingSourceObservationV1.model_validate(item) for item in observations or ()
+        )
     cards = None if budget is None else CoverageCardBudgetV1.model_validate(budget)
     scan = None if scan_budget is None else CoverageScanBudgetV1.model_validate(scan_budget)
     return _dispatch_remote_or_local(
@@ -2024,7 +2273,7 @@ def handle_playbill_resolve_coverage(
             budget=cards,
             scan_budget=scan,
         ),
-        operation_name="cruxible_playbill_resolve_coverage",
+        operation_name="cruxible_playbill_coverage",
     )
 
 
@@ -2073,42 +2322,14 @@ def handle_playbill_workspace_source_compile(
     )
 
 
-def handle_playbill_workspace_source_check(
-    instance_id: str,
-    *,
-    catalog_path: str,
-    repository_root: str,
-    local_catalog_path: str | None,
-    root_aliases: Mapping[str, str],
-) -> contracts.PlaybillSourceCheckResult:
-    bundle = handle_playbill_workspace_source_compile(
-        instance_id,
-        catalog_path=catalog_path,
-        repository_root=repository_root,
-        local_catalog_path=local_catalog_path,
-        root_aliases=root_aliases,
-    )
-    return _dispatch_remote_or_local(
-        lambda client: client.check_playbill_source_bundle(
-            instance_id,
-            bundle=bundle.model_dump(mode="json"),
-        ),
-        lambda: playbill_api.playbill_check_source_bundle(instance_id, bundle=bundle),
-        operation_name="cruxible_playbill_workspace_source_check",
-    )
-
-
-def handle_playbill_workspace_coverage_resolve(
-    instance_id: str,
-    *,
+def _workspace_observations(
     bindings: Mapping[str, str],
+    *,
     files: tuple[str, ...],
     ranges: tuple[str, ...],
     grep_results_path: str | None,
     whole_working_set: bool,
-    budget: dict[str, Any] | None,
-    scan_budget: dict[str, Any] | None,
-) -> contracts.PlaybillCoverageResult:
+) -> tuple[WorkingSourceObservationV1, ...]:
     """Read selected workspace bytes and lower them to existing coverage wire."""
 
     workspace = mcp_workspace_root()
@@ -2121,38 +2342,15 @@ def handle_playbill_workspace_coverage_resolve(
             kind="file",
         ).read_text(encoding="utf-8")
     )
-    observations = observe_workspace(
-        bindings_from_mapping(bindings),
-        root=workspace,
-        files=files,
-        ranges=ranges,
-        grep_text=grep_text,
-        whole_working_set=whole_working_set,
-    )
-    return handle_playbill_resolve_coverage(
-        instance_id,
-        [item.model_dump(mode="json") for item in observations],
-        budget=budget,
-        scan_budget=scan_budget,
-    )
-
-
-def handle_playbill_workspace_coverage_status(
-    instance_id: str,
-    *,
-    bindings: Mapping[str, str],
-    budget: dict[str, Any] | None,
-    scan_budget: dict[str, Any] | None,
-) -> contracts.PlaybillCoverageResult:
-    return handle_playbill_workspace_coverage_resolve(
-        instance_id,
-        bindings=bindings,
-        files=(),
-        ranges=(),
-        grep_results_path=None,
-        whole_working_set=True,
-        budget=budget,
-        scan_budget=scan_budget,
+    return tuple(
+        observe_workspace(
+            bindings_from_mapping(bindings),
+            root=workspace,
+            files=files,
+            ranges=ranges,
+            grep_text=grep_text,
+            whole_working_set=whole_working_set,
+        )
     )
 
 
@@ -2169,37 +2367,43 @@ def handle_playbill_seed_plan(
     return plan_seed_directory(root, proposal_name=proposal_name)
 
 
-def handle_playbill_export_floor(instance_id: str) -> contracts.PlaybillFloorExport:
-    return _dispatch_remote_or_local(
-        lambda client: client.export_playbill_floor(instance_id),
-        lambda: playbill_api.playbill_export_floor(instance_id),
-        operation_name="cruxible_playbill_export_floor",
-    )
+FloorExportMode = Literal["bytes", "write", "status"]
 
 
-def handle_playbill_workspace_floor_export(
+def handle_playbill_floor_export(
     instance_id: str,
     *,
-    force: bool,
-) -> contracts.PlaybillWorkspaceFloorWriteResult:
-    workspace = mcp_git_workspace_root()
-    export = handle_playbill_export_floor(instance_id)
+    mode: FloorExportMode,
+    force: bool = False,
+) -> (
+    contracts.PlaybillFloorExport
+    | contracts.PlaybillWorkspaceFloorWriteResult
+    | contracts.PlaybillWorkspaceFloorStatus
+):
+    """Return floor bytes, write them under the MCP workspace, or report that floor's status."""
+
+    if force and mode != "write":
+        raise DataValidationError("force applies only to floor export mode 'write'")
+    if mode == "status":
+        search = _dispatch_remote_or_local(
+            lambda client: client.search_playbill(instance_id, mode="orient"),
+            lambda: playbill_api.playbill_search(instance_id, mode="orient"),
+            operation_name="cruxible_playbill_floor_export",
+        )
+        return inspect_workspace_floor(
+            mcp_git_workspace_root(),
+            current_coordinate=search.coordinate,
+        )
+    workspace = mcp_git_workspace_root() if mode == "write" else None
+    export = _dispatch_remote_or_local(
+        lambda client: client.export_playbill_floor(instance_id),
+        lambda: playbill_api.playbill_export_floor(instance_id),
+        operation_name="cruxible_playbill_floor_export",
+    )
+    if workspace is None:
+        return export
     return materialize_playbill_floor(
         workspace,
         export=export,
         force=force,
-    )
-
-
-def handle_playbill_workspace_floor_status(
-    instance_id: str,
-) -> contracts.PlaybillWorkspaceFloorStatus:
-    search = _dispatch_remote_or_local(
-        lambda client: client.search_playbill(instance_id, mode="orient"),
-        lambda: playbill_api.playbill_search(instance_id, mode="orient"),
-        operation_name="cruxible_playbill_workspace_floor_status",
-    )
-    return inspect_workspace_floor(
-        mcp_git_workspace_root(),
-        current_coordinate=search.coordinate,
     )

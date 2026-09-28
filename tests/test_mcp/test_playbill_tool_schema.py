@@ -35,7 +35,7 @@ def test_registered_schema_catalog_matches_permission_catalog() -> None:
 def test_init_and_explain_publish_their_protocol_enums() -> None:
     schemas = _schemas()
     init = schemas["cruxible_playbill_init"].inputSchema
-    assert {"instance_id", "principals"} <= set(init["required"])
+    assert set(init["required"]) == {"principals"}
     assert init["properties"]["operating_profile"]["enum"] == ["local", "cloud"]
     assert init["properties"]["require_independent_approval"]["default"] is False
     # Bootstrap no longer installs a seed implicitly; provider setup is separate.
@@ -58,10 +58,7 @@ def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation()
     }
     # The evaluation instant is an assertion the daemon checks, never the
     # occurrence's own instant, so it is optional on every surface.
-    assert set(schema["required"]) == {
-        "instance_id",
-        "line",
-    }
+    assert set(schema["required"]) == {"line"}
 
 
 def test_prediction_tools_expose_the_same_typed_requests_as_http_and_sdk() -> None:
@@ -70,9 +67,26 @@ def test_prediction_tools_expose_the_same_typed_requests_as_http_and_sdk() -> No
     settle = schemas["cruxible_playbill_settle"].inputSchema
 
     assert set(predict["properties"]) == {"instance_id", "request"}
-    assert set(predict["required"]) == {"instance_id", "request"}
+    assert set(predict["required"]) == {"request"}
     assert set(settle["properties"]) == {"instance_id", "prediction_id", "request"}
-    assert set(settle["required"]) == {"instance_id", "prediction_id", "request"}
+    assert set(settle["required"]) == {"prediction_id", "request"}
+
+
+def test_every_instance_id_is_optional_and_names_its_default() -> None:
+    # A cold agent must be able to call any tool without first learning an
+    # instance id; the server's CRUXIBLE_INSTANCE_ID supplies it.
+    offenders: list[str] = []
+    for name, tool in _schemas().items():
+        properties = tool.inputSchema.get("properties", {})
+        if "instance_id" not in properties:
+            continue
+        if "instance_id" in tool.inputSchema.get("required", ()):
+            offenders.append(f"{name}: required")
+        elif name != "cruxible_playbill_host_create" and "CRUXIBLE_INSTANCE_ID" not in (
+            properties["instance_id"].get("description", "")
+        ):
+            offenders.append(f"{name}: undocumented default")
+    assert offenders == []
 
 
 def test_agent_schema_never_accepts_private_keys_or_local_paths() -> None:
@@ -89,8 +103,6 @@ def test_agent_schema_never_accepts_private_keys_or_local_paths() -> None:
 def test_playbill_tools_publish_typed_output_schemas() -> None:
     schemas = _schemas()
     for name, tool in schemas.items():
-        if name == "cruxible_version":
-            continue
         assert tool.outputSchema is not None, name
 
 
@@ -171,7 +183,7 @@ def test_since_schema_exposes_the_frozen_history_wire() -> None:
         "max_bytes",
         "cursor",
     }
-    assert set(schema["required"]) == {"instance_id", "generation"}
+    assert set(schema["required"]) == {"generation"}
     assert schema["properties"]["max_rows"]["maximum"] == 1000
     assert schema["properties"]["max_bytes"]["maximum"] == 1_048_576
 

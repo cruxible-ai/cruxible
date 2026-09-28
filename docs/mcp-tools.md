@@ -3,12 +3,39 @@
 The MCP surface is Playbill-only. All tools delegate to the same service core as
 HTTP and CLI.
 
-The unset/default MCP profile advertises the writer path: authoring, discovery,
-search/list/orient, expansion, source context, coverage, floor export, proposal
-approval/activation, and runtime identity/version reads. Set
-`CRUXIBLE_MCP_PROFILE=expert` (aliases: `full`, `all`) to advertise the complete
-catalog below. Curation changes discoverability only; permission tiers still gate
-every call, and hidden expert tools remain available through the API.
+`CRUXIBLE_MCP_PROFILE` takes two values. `default` (or unset) advertises the
+everyday agent loop:
+
+- orient and pick work: `cruxible_playbill_search` (its `orient` mode),
+  `cruxible_playbill_next`, and `cruxible_playbill_expand`;
+- Claim, ClaimType, and Subject reads: `cruxible_playbill_list_claims`,
+  `cruxible_playbill_get_claim`, `cruxible_playbill_explain_claim`,
+  `cruxible_playbill_list_claim_types`, `cruxible_playbill_get_claim_type`,
+  `cruxible_playbill_list_subjects`, `cruxible_playbill_get_subject`, and
+  `cruxible_playbill_run_query`;
+- the authoring write loop: `cruxible_playbill_authoring_example`,
+  `cruxible_playbill_authoring_create`, `cruxible_playbill_authoring_compile`,
+  `cruxible_playbill_authoring_preflight`, `cruxible_playbill_authoring_submit`,
+  `cruxible_playbill_authoring_status`, `cruxible_playbill_authoring_get`,
+  `cruxible_playbill_authoring_resume`, and
+  `cruxible_playbill_authoring_list_pending`;
+- proposals through activation: `cruxible_playbill_proposal_list`,
+  `cruxible_playbill_review`, `cruxible_playbill_prepare_approval`,
+  `cruxible_playbill_submit_approval`, and `cruxible_playbill_activate`;
+- identity and versions: `cruxible_playbill_whoami` and `cruxible_server_info`.
+
+`full` advertises the complete catalog below, including curation, coverage, the
+floor, sources, blocks, kits, Procedures, and Lines. Curation changes
+discoverability only; permission tiers still gate every call. There is no
+separate version tool: `cruxible_playbill_whoami` and `cruxible_server_info`
+both report the MCP adapter's package version and the daemon's (`GET /version`).
+
+Every tool that acts on one instance takes an optional `instance_id`. Omitted,
+it defaults to `CRUXIBLE_INSTANCE_ID` in the MCP server's own environment (set it
+in the `env` block of the MCP client config); the server reads neither remembered
+CLI context nor a workspace binding. With neither, the call fails and names that
+variable. `cruxible_playbill_whoami` returns the instance it resolved together
+with the caller's identity there.
 
 `CRUXIBLE_MCP_WORKSPACE_ROOT` selects the client-owned workspace for tools that
 read or write local files. The stdio MCP process is the client-side adapter; the
@@ -35,7 +62,7 @@ The list is a reachability closure, not a read of the handler's own body: it
 covers the verbs the handler names itself, the verbs reached through a local
 adapter object it constructs, and the verbs reached through a sibling handler
 it delegates to. An empty list therefore means the tool reaches no facade verb
-at all -- three tools are in that position today, and all three are
+at all -- two tools are in that position today, and both are
 `READ_ONLY`. A mutating tool may not publish an empty list without a declared
 exception naming its reason
 (`tests/test_guardrails/test_playbill_v1_served_surface.py`), because an
@@ -48,8 +75,7 @@ that starts reaching one more verb moves the pin.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_version` | Return package/runtime version information | `READ_ONLY` |
-| `cruxible_server_info` | Return daemon transport and state metadata | `READ_ONLY` |
+| `cruxible_server_info` | Return the adapter and daemon versions with daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
 
 ## Host and initialization
 
@@ -92,7 +118,7 @@ approval stay the ordinary steps.
 | `cruxible_playbill_proposal_list` | List open and terminal proposal evidence | `READ_ONLY` |
 | `cruxible_playbill_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
 | `cruxible_playbill_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
-| `cruxible_playbill_whoami` | Explain credential-derived actor identity and registration | `READ_ONLY` |
+| `cruxible_playbill_whoami` | Name the resolved instance, the credential-derived actor's identity and registration there, and the adapter and daemon versions | `READ_ONLY` |
 
 MCP never accepts a client private key. Signing occurs outside the server and
 outside the language server/MCP process.
@@ -113,14 +139,14 @@ outside the language server/MCP process.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_playbill_source_context` | Return source alignment context | `READ_ONLY` |
-| `cruxible_playbill_check_source_bundle` | Validate a compiled bundle | `READ_ONLY` |
+| `cruxible_playbill_source_check` | Check a compiled `bundle`, or the sources a workspace `catalog_path` declares, against accepted state | `READ_ONLY` |
 | `cruxible_playbill_propose_source_bundle` | Propose a frozen compiled bundle | `GOVERNED_WRITE` |
 | `cruxible_playbill_workspace_source_compile` | Read catalog-declared workspace bytes and derive a source bundle | `READ_ONLY` |
-| `cruxible_playbill_workspace_source_check` | Compile workspace sources and check accepted alignment | `READ_ONLY` |
 
-The raw bundle tools remain for programmatic clients. Workspace tools own local
-path traversal and digest construction so an agent supplies catalog paths and
-root aliases, not compilation wire.
+`cruxible_playbill_source_check` takes exactly one of `bundle` (for programmatic
+clients that compiled one) or `catalog_path`. With a catalog path the adapter
+owns local path traversal and digest construction, so an agent supplies catalog
+paths and root aliases, not compilation wire.
 
 ## Principals
 
@@ -142,8 +168,7 @@ root aliases, not compilation wire.
 | `cruxible_playbill_get_claim_type` | Read one accepted ClaimType | `READ_ONLY` |
 | `cruxible_playbill_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
 | `cruxible_playbill_claim_retire` | Preflight or submit one attributed, dependency-closed Claim retirement | `GOVERNED_WRITE` |
-| `cruxible_playbill_claim_attest` | Sign and append an examined-existing observation for the current exact Claim | `GOVERNED_WRITE` |
-| `cruxible_playbill_claim_attest_new_capture` | Sign and append a prepared new-Capture observation | `GOVERNED_WRITE` |
+| `cruxible_playbill_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
 | `cruxible_playbill_list_claims` | List accepted Claims by Subject or predicate | `READ_ONLY` |
 | `cruxible_playbill_get_claim` | Read one accepted Claim | `READ_ONLY` |
 | `cruxible_playbill_claim_history` | Read one Claim's accepted lineage | `READ_ONLY` |
@@ -164,6 +189,7 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_playbill_authoring_compile` | Create or update an intent and preflight it | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_bind` | Read an anchored workspace selection, derive commitments, and compile | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_rebase` | Rebase a stale intent onto the current accepted coordinate | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_submit` | Idempotently submit a passing intent | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
 | `cruxible_playbill_authoring_abandon_insertion` | Release a publication expectation an instance already holds | `GOVERNED_WRITE` |
@@ -232,6 +258,7 @@ Claims. It does not create a second authority plane beside accepted state.
 | `cruxible_playbill_discover` | Find interfaces and Subjects by name | `READ_ONLY` |
 | `cruxible_playbill_search` | Search, list, or orient over accepted state | `READ_ONLY` |
 | `cruxible_playbill_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
+| `cruxible_playbill_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible playbill next` does | `READ_ONLY` |
 | `cruxible_playbill_policies_in_force` | List live standalone and embedded governed policies | `READ_ONLY` |
 | `cruxible_playbill_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
 | `cruxible_playbill_curation_list` | List curation patterns and ingest an explicit declared-block observation | `READ_ONLY` |
@@ -239,12 +266,8 @@ Claims. It does not create a second authority plane beside accepted state.
 | `cruxible_playbill_curation_accept_fixed` | Link an item to an exact related accepted ChangeSet | `GOVERNED_WRITE` |
 | `cruxible_playbill_curation_suppress` | Hide open work by item, pattern, or instance without resolving it | `GOVERNED_WRITE` |
 | `cruxible_playbill_expand` | Expand one address into a context capsule | `READ_ONLY` |
-| `cruxible_playbill_export_floor` | Export the greppable floor as base64 bytes | `READ_ONLY` |
-| `cruxible_playbill_resolve_coverage` | Resolve observed working sources against accepted state | `READ_ONLY` |
-| `cruxible_playbill_workspace_floor_export` | Verify and exactly replace a floor directory under the MCP workspace | `READ_ONLY` |
-| `cruxible_playbill_workspace_floor_status` | Report whether the installed workspace floor is current, stale, or absent | `READ_ONLY` |
-| `cruxible_playbill_workspace_coverage_resolve` | Derive observations from selected workspace files and resolve coverage | `READ_ONLY` |
-| `cruxible_playbill_workspace_coverage_status` | Resolve coverage for the full declared workspace binding set | `READ_ONLY` |
+| `cruxible_playbill_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.playbill/floor` under the MCP workspace; `mode=status` reports whether that floor is current, stale, or absent | `READ_ONLY` |
+| `cruxible_playbill_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, `grep_results_path`, or `whole_working_set`) | `READ_ONLY` |
 
 Query execution is a read: it returns the result together with its
 `playbill-query-execution-receipt-v1`. Qualifying direct reads, query/search

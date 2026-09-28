@@ -25,6 +25,7 @@ def reset_mcp_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         "CRUXIBLE_MCP_PROFILE",
         "CRUXIBLE_MCP_TOOLS",
         "CRUXIBLE_MCP_TOOL_ALLOWLIST",
+        "CRUXIBLE_INSTANCE_ID",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / ".server-state"))

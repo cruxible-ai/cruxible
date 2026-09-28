@@ -128,6 +128,23 @@ class InstanceScopeError(CoreError):
         )
 
 
+class DaemonOperationScopeError(InstanceScopeError):
+    """An instance-scoped credential reached for one daemon-wide operation."""
+
+    def __init__(self, operation: str, credential_scope: str, message: str | None = None):
+        self.operation = operation
+        self.instance_id = credential_scope
+        self.credential_scope = credential_scope
+        CoreError.__init__(
+            self,
+            message
+            or (
+                f"Credential scoped to instance {credential_scope!r} cannot perform "
+                f"daemon-wide operation {operation!r}"
+            ),
+        )
+
+
 class PermissionDeniedError(CoreError):
     def __init__(
         self,
@@ -212,6 +229,12 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc = RuntimeCredentialNotFoundError(context.get("credential_id", "unknown"))
     elif body.error_type == "AuthenticationError":
         exc = AuthenticationError(body.message)
+    elif body.error_type == "DaemonOperationScopeError":
+        exc = DaemonOperationScopeError(
+            str(context.get("operation", "unknown")),
+            str(context.get("credential_scope", "unknown")),
+            message=body.message,
+        )
     elif body.error_type == "InstanceScopeError":
         exc = InstanceScopeError(
             context.get("instance_id", "unknown"),

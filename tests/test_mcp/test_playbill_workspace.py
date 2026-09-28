@@ -281,9 +281,9 @@ def test_workspace_status_compares_the_installed_floor(
     workspace = _workspace(tmp_path)
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
     monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
-    handlers.handle_playbill_workspace_floor_export("inst_test", force=False)
+    handlers.handle_playbill_floor_export("inst_test", mode="write")
 
-    status = handlers.handle_playbill_workspace_floor_status("inst_test")
+    status = handlers.handle_playbill_floor_export("inst_test", mode="status")
 
     assert status.status == "current"
     assert status.installed_coordinate == _coordinate()
@@ -300,7 +300,7 @@ def test_floor_export_from_nested_cwd_uses_the_containing_git_worktree(
     monkeypatch.delenv("CRUXIBLE_MCP_WORKSPACE_ROOT", raising=False)
     monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
 
-    written = handlers.handle_playbill_workspace_floor_export("inst_test", force=False)
+    written = handlers.handle_playbill_floor_export("inst_test", mode="write")
 
     assert written.destination == str(workspace / ".playbill/floor")
     assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
@@ -318,7 +318,7 @@ def test_explicit_nested_mcp_root_refuses_to_write_outside_its_boundary(
     monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
 
     with pytest.raises(ConfigError, match="must name the Git worktree root"):
-        handlers.handle_playbill_workspace_floor_export("inst_test", force=False)
+        handlers.handle_playbill_floor_export("inst_test", mode="write")
 
     assert not (workspace / ".playbill/floor").exists()
     assert not (scoped_root / ".playbill/floor").exists()

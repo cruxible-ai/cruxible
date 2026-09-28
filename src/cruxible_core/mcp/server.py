@@ -27,6 +27,7 @@ from cruxible_core.mcp.permissions import (
     init_permissions,
     validate_tool_permissions,
 )
+from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.tools import register_tools
 from cruxible_core.server.config import ServerSettings, resolve_server_settings
 
@@ -36,6 +37,9 @@ BASE_INSTRUCTIONS = """\\
 Playbill is deterministic, governed state with no LLM inside. Agents propose;
 accepted laws, principals, attestations, and compare-and-set settlement decide
 what becomes canonical.
+
+Every instance tool's instance_id defaults to the server's CRUXIBLE_INSTANCE_ID;
+cruxible_playbill_whoami names the instance and who you are there.
 
 Start by allocating a host with cruxible_playbill_host_create, bootstrap public
 principals with cruxible_playbill_init, then use authoring_compile followed by
@@ -64,6 +68,12 @@ def _build_instructions(
         f"\n\n## Current transport tier: {mode.name}\n\n"
         f"Available tools: {', '.join(sorted(advertised))}"
     )
+    try:
+        instance_id = configured_instance_id()
+    except ConfigError as exc:
+        section += f"\nConfigured instance is unusable: {exc}"
+    else:
+        section += f"\nConfigured instance: {instance_id or 'none; pass instance_id'}"
     if curation.active:
         section += f"\nActive MCP profile: {curation.profile}"
     if hidden:

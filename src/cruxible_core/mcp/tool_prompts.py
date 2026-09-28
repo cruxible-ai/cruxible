@@ -28,10 +28,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you want to retire what a kit installed. It only proposes; live Claims "
         "that depend on those definitions block it."
     ),
-    "cruxible_version": "Use when you need to confirm which cruxible build is running.",
     "cruxible_server_info": (
-        "Use when you need live daemon version, state-directory, authentication, "
-        "or instance-count information."
+        "Use when you need adapter and daemon versions with state, auth, and host metadata; "
+        "an instance-scoped credential gets its own instance's host and identity."
     ),
     "cruxible_playbill_host_create": (
         "Use when you need an empty daemon-owned host before Playbill bootstrap; "
@@ -70,8 +69,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "is ready to settle."
     ),
     "cruxible_playbill_whoami": (
-        "Use when you need the credential-derived writer identity, permission mode, and "
-        "accepted principal status."
+        "Use when you need which instance this server acts on, who you are there, and "
+        "the adapter and daemon versions."
     ),
     "cruxible_playbill_proposal_list": (
         "Use when you need to find open proposals or inspect terminal proposal outcomes."
@@ -105,8 +104,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_source_context": (
         "Use when a local client needs path-free accepted inputs before compiling sources."
     ),
-    "cruxible_playbill_check_source_bundle": (
-        "Use when you need to compare compiled source bytes with accepted state."
+    "cruxible_playbill_source_check": (
+        "Use when you need to check sources against accepted state: a compiled bundle, "
+        "or catalog-declared workspace files."
     ),
     "cruxible_playbill_propose_source_bundle": (
         "Use when you need to propose frozen source bytes without sending a local path."
@@ -150,12 +150,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "attribution in one governed ChangeSet."
     ),
     "cruxible_playbill_claim_attest": (
-        "Sign and append an exact-Claim observation. The local signature binds the caller's "
-        "ordinary principal to having examined the named Claim. Choose an explicit stance."
-    ),
-    "cruxible_playbill_claim_attest_new_capture": (
-        "Sign and append a structured new-Capture observation using a prepared digest-free "
-        "client request."
+        "Use when you examined a Claim and want to sign support, contradict, or unsure on it, "
+        "optionally citing new Captures you examined."
     ),
     "cruxible_playbill_authoring_create": (
         "Use when you need a durable machine-owned intent before iterating on a governed write."
@@ -183,6 +179,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_playbill_authoring_preflight": (
         "Use when you need a complete binding check of an existing authoring intent."
+    ),
+    "cruxible_playbill_authoring_rebase": (
+        "Use when an authoring intent went stale because accepted state moved and must be "
+        "rebased onto the current coordinate before preflight or submit."
+    ),
+    "cruxible_playbill_next": (
+        "Use when you need what to work on next: ranked repair work, conflicts, and stale "
+        "evidence, each with its exact next operation."
     ),
     "cruxible_playbill_authoring_submit": (
         "Use when an authoring intent has passed preflight and should become one candidate."
@@ -324,34 +328,17 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_expand": (
         "Use when you need one address's bounded governance, provenance, and relation context."
     ),
-    "cruxible_playbill_export_floor": (
-        "Use when you need the whole accepted floor as greppable files rather than one read."
+    "cruxible_playbill_floor_export": (
+        "Use when you need the accepted floor as greppable files: return the bytes, write "
+        "them to the workspace, or check that copy's status."
     ),
-    "cruxible_playbill_workspace_floor_export": (
-        "Use when you need the accepted floor verified and written under this MCP client's "
-        "configured workspace."
-    ),
-    "cruxible_playbill_workspace_floor_status": (
-        "Use when you need to know whether this MCP client's configured floor is current, "
-        "stale, missing, or invalid."
-    ),
-    "cruxible_playbill_resolve_coverage": (
+    "cruxible_playbill_coverage": (
         "Use when you have read or changed working files and need what they have to do with "
         "accepted state."
     ),
     "cruxible_playbill_workspace_source_compile": (
         "Use to compile catalog-declared files under this MCP client's workspace without "
         "constructing source digests or compilation wire."
-    ),
-    "cruxible_playbill_workspace_source_check": (
-        "Use to compile catalog-declared workspace files and compare them with accepted state."
-    ),
-    "cruxible_playbill_workspace_coverage_resolve": (
-        "Use after reading or changing selected workspace files; supply logical bindings and "
-        "the selections while the adapter derives byte observations."
-    ),
-    "cruxible_playbill_workspace_coverage_status": (
-        "Use for one coverage answer over every file in the declared workspace binding set."
     ),
     "cruxible_playbill_seed_plan": (
         "Use to inspect the deterministic proposal sequence for a workspace seed bundle; this "
