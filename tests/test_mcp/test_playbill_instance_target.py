@@ -238,7 +238,7 @@ def test_a_malformed_workspace_binding_selects_nothing_and_breaks_nothing(
         json.dumps(
             {
                 "tag": "playbill-coverage-workspace-config-v2",
-                "server_socket": "/tmp/bad\u0000path.sock",
+                "server_socket": str(tmp_path / "bad\x00path.sock"),
                 "instance_id": "inst_bound",
             }
         ),
