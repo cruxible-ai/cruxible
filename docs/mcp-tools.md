@@ -10,6 +10,13 @@ approval/activation, and runtime identity/version reads. Set
 catalog below. Curation changes discoverability only; permission tiers still gate
 every call, and hidden expert tools remain available through the API.
 
+Every tool that acts on one instance takes an optional `instance_id`. Omitted,
+it defaults to `CRUXIBLE_INSTANCE_ID` in the MCP server's own environment (set it
+in the `env` block of the MCP client config); the server reads neither remembered
+CLI context nor a workspace binding. With neither, the call fails and names that
+variable. `cruxible_playbill_whoami` returns the instance it resolved together
+with the caller's identity there.
+
 `CRUXIBLE_MCP_WORKSPACE_ROOT` selects the client-owned workspace for tools that
 read or write local files. The stdio MCP process is the client-side adapter; the
 workspace defaults to its working directory.
@@ -49,7 +56,7 @@ that starts reaching one more verb moves the pin.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_version` | Return package/runtime version information | `READ_ONLY` |
-| `cruxible_server_info` | Return daemon transport and state metadata | `READ_ONLY` |
+| `cruxible_server_info` | Return daemon metadata; an instance-scoped credential gets its own instance's host and identity instead of a refusal | `READ_ONLY` |
 
 ## Host and initialization
 
@@ -92,7 +99,7 @@ approval stay the ordinary steps.
 | `cruxible_playbill_proposal_list` | List open and terminal proposal evidence | `READ_ONLY` |
 | `cruxible_playbill_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
 | `cruxible_playbill_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
-| `cruxible_playbill_whoami` | Explain credential-derived actor identity and registration | `READ_ONLY` |
+| `cruxible_playbill_whoami` | Name the resolved instance and the credential-derived actor's identity and registration there | `READ_ONLY` |
 
 MCP never accepts a client private key. Signing occurs outside the server and
 outside the language server/MCP process.

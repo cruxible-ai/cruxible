@@ -62,6 +62,7 @@ from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputV1,
@@ -74,8 +75,10 @@ from cruxible_core.coverage.workspace import (
     bindings_from_mapping,
     observe_workspace,
 )
-from cruxible_core.errors import ConfigError, DataValidationError
+from cruxible_core.errors import ConfigError, DaemonOperationScopeError, DataValidationError
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
+from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.workspace import (
     mcp_git_workspace_root,
     mcp_workspace_root,
@@ -378,11 +381,31 @@ def _dispatch_remote_or_local(
     return local_call()
 
 
-def handle_server_info() -> contracts.ServerInfoResult:
-    return _dispatch_remote_or_local(
-        lambda client: client.server_info(),
-        host_api.server_info,
-        operation_name="cruxible_server_info",
+def handle_server_info() -> McpServerInfoResult:
+    """Answer a daemon-scope caller with daemon metadata, a scoped one with its instance."""
+
+    try:
+        daemon = _dispatch_remote_or_local(
+            lambda client: client.server_info(),
+            host_api.server_info,
+            operation_name="cruxible_server_info",
+        )
+    except (ClientDaemonOperationScopeError, DaemonOperationScopeError) as exc:
+        scope = exc.credential_scope
+        return McpServerInfoResult(
+            scope="instance",
+            instance_id=scope,
+            host=_dispatch_remote_or_local(
+                lambda client: client.show_playbill_host(scope),
+                lambda: host_api.show_playbill_host(scope),
+                operation_name="cruxible_server_info",
+            ),
+            identity=_playbill_whoami(scope),
+        )
+    return McpServerInfoResult(
+        scope="daemon",
+        instance_id=configured_instance_id(),
+        daemon=daemon,
     )
 
 
@@ -652,12 +675,16 @@ def handle_playbill_activate(
     )
 
 
-def handle_playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
+def _playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
     return _dispatch_remote_or_local(
         lambda client: client.playbill_whoami(instance_id),
         lambda: playbill_api.playbill_whoami(instance_id),
         operation_name="cruxible_playbill_whoami",
     )
+
+
+def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
+    return McpWhoAmIResult(instance_id=instance_id, identity=_playbill_whoami(instance_id))
 
 
 def handle_playbill_list_proposals(

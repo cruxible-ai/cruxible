@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-27:settle-ergonomics",
-    "surface_digest": "sha256:b12b8ddc1818149d7c62c70715d012e31bc433f8a9d2b9ef941e81bf0891e017"
+    "register_entry": "2026-09-27:mcp-instance-default",
+    "surface_digest": "sha256:d9bd801fe76322ffcd5089e417773484f762ded2a776ba7663a33a0b700d8c4c"
   },
   "surface": {
     "cli_leaves": [
@@ -2355,7 +2355,7 @@
           "playbill_export_floor",
           "playbill_read_block_sync_backing"
         ],
-        "input_schema_digest": "sha256:4ccba42723cf94a3b9c18d17ddbdd278c37322723223bcd3f8df9c7f1838f223",
+        "input_schema_digest": "sha256:381947bd2c49778f702d1d385ec41c62725da9e70a39ac3b03992437fe119169",
         "name": "cruxible_playbill_activate",
         "output_schema_digest": "sha256:b8d5798557fe3c2c517fe2f3fa82233a023c70bbe1175a28d0a6f9eb1a803c50",
         "permission": "GRAPH_WRITE"
@@ -2365,7 +2365,7 @@
         "facade_operations": [
           "playbill_audit"
         ],
-        "input_schema_digest": "sha256:03fa609114bc65f70379e24371e07b696836d06f1579cf5583ab5c419a58a161",
+        "input_schema_digest": "sha256:3d4d282cf731e5f943b8371dfebbe0ed5a91c586cdff7a6d34abe07025d5283d",
         "name": "cruxible_playbill_audit",
         "output_schema_digest": "sha256:9485915b835f3dac4411e84ccf1b927b0330bdb97be25bb21582a59a3fb288ca",
         "permission": "READ_ONLY"
@@ -2375,7 +2375,7 @@
         "facade_operations": [
           "playbill_authoring_abandon_insertion"
         ],
-        "input_schema_digest": "sha256:35179bc9ca03fae183ba0fecb5534ec5f015419a5d51cb6a6420481de06e9c19",
+        "input_schema_digest": "sha256:9da284481e4ffa7c4dde05d234d0c15a2cecb57a63a9179f23dc4b6b8634dd28",
         "name": "cruxible_playbill_authoring_abandon_insertion",
         "output_schema_digest": "sha256:c6c002fdec264d51a9763078c77231d9725564ef160ff4888cf46b22a2dc2572",
         "permission": "GOVERNED_WRITE"
@@ -2385,7 +2385,7 @@
         "facade_operations": [
           "playbill_authoring_compile"
         ],
-        "input_schema_digest": "sha256:79254772d622f5b4f66daa2c73bcd4f8c454ab46659c8d02eedeac57f0e23a15",
+        "input_schema_digest": "sha256:80b944736942dc03ba601c0fe288a1fef75a3d88e700980c50467396b3cb8743",
         "name": "cruxible_playbill_authoring_bind",
         "output_schema_digest": "sha256:6f61a0f07462d83d0b3cc433dfd7094642914fffb8bcfa10bb75cd233724dc66",
         "permission": "GOVERNED_WRITE"
@@ -2395,7 +2395,7 @@
         "facade_operations": [
           "playbill_authoring_compile_input"
         ],
-        "input_schema_digest": "sha256:5ef49bf2ac8ed7da93db94f58c05ac06f9d6a503292581cca035a070368a458b",
+        "input_schema_digest": "sha256:5760857825f2242d467a1af6d9b239b67e64517799f5766b627497906a9aabad",
         "name": "cruxible_playbill_authoring_compile",
         "output_schema_digest": "sha256:6f61a0f07462d83d0b3cc433dfd7094642914fffb8bcfa10bb75cd233724dc66",
         "permission": "GOVERNED_WRITE"
@@ -2405,7 +2405,7 @@
         "facade_operations": [
           "playbill_authoring_create_input"
         ],
-        "input_schema_digest": "sha256:9a82e7b30a881418bf1d8bbab31f3c96ca4f649bfc971e6e157b5a14fd091f9e",
+        "input_schema_digest": "sha256:db9551c6f71ba1f3cfc36318a1453d5986d401b35c6ba52e71868d20097d2c09",
         "name": "cruxible_playbill_authoring_create",
         "output_schema_digest": "sha256:b98e5e1e66a92716bb3a2fb66e34d8bbdc88f87a7ad1725e122f63317691888f",
         "permission": "GOVERNED_WRITE"
@@ -2423,7 +2423,7 @@
         "facade_operations": [
           "playbill_authoring_get"
         ],
-        "input_schema_digest": "sha256:abd7a8a662855eb0656f2dd37c9c85daf6c8d44b6956634d97173fb93e6d4913",
+        "input_schema_digest": "sha256:0df1497d732220c576ccd9a2e57fec2307c071d36f445b9c175eb428880d3f01",
         "name": "cruxible_playbill_authoring_get",
         "output_schema_digest": "sha256:b98e5e1e66a92716bb3a2fb66e34d8bbdc88f87a7ad1725e122f63317691888f",
         "permission": "READ_ONLY"
@@ -2433,7 +2433,7 @@
         "facade_operations": [
           "playbill_authoring_list_pending"
         ],
-        "input_schema_digest": "sha256:6925714df74fc0889ced0c23463ea4bd02dd6257dae17ec8b86d39685815c653",
+        "input_schema_digest": "sha256:85151e515bf3bc3bf02f8ae6af0af2545ae12f779ef4762a6f748ee39c8e8ee4",
         "name": "cruxible_playbill_authoring_list_pending",
         "output_schema_digest": "sha256:6e26df1014863da291016bbaa7ba7de06a53fc9becfa13cbb61ac38f30f1d5a8",
         "permission": "READ_ONLY"
@@ -2443,7 +2443,7 @@
         "facade_operations": [
           "playbill_authoring_preflight"
         ],
-        "input_schema_digest": "sha256:beefd2b92729ba79ed309c59e78b19aabe8550b0918e08f0b9713e868f8945fe",
+        "input_schema_digest": "sha256:66e62927ce975fff1df05d91fb12319a4a24c05931f5cf3503e9b3fa5e63c2ce",
         "name": "cruxible_playbill_authoring_preflight",
         "output_schema_digest": "sha256:6f61a0f07462d83d0b3cc433dfd7094642914fffb8bcfa10bb75cd233724dc66",
         "permission": "GOVERNED_WRITE"
@@ -2453,7 +2453,7 @@
         "facade_operations": [
           "playbill_authoring_resume"
         ],
-        "input_schema_digest": "sha256:df8c4f868228f6bbafc489d8adba522ae90a61ba93ac9699a4cfdde10e95be88",
+        "input_schema_digest": "sha256:d6e44839c770058dc50f03008d5a23d0745ae19ed0b9de5cc66582fc91c5cf45",
         "name": "cruxible_playbill_authoring_resume",
         "output_schema_digest": "sha256:b98e5e1e66a92716bb3a2fb66e34d8bbdc88f87a7ad1725e122f63317691888f",
         "permission": "READ_ONLY"
@@ -2463,7 +2463,7 @@
         "facade_operations": [
           "playbill_authoring_status"
         ],
-        "input_schema_digest": "sha256:11f2387bc602c5881463edb8400f170ee6cb742db04ecec9989481307a572996",
+        "input_schema_digest": "sha256:8ef40ab5fc9612603db99249a3e7d099f2db7fe221216d78c3f7b41e7fc768c8",
         "name": "cruxible_playbill_authoring_status",
         "output_schema_digest": "sha256:6bce6ebd16e85e6caabd392467aaf19c0984c4bc7702b55ce249aaf9797c521a",
         "permission": "READ_ONLY"
@@ -2473,7 +2473,7 @@
         "facade_operations": [
           "playbill_authoring_submit"
         ],
-        "input_schema_digest": "sha256:2332f7874d03188cfe34bf337b7a5344cbbf826519203434404a280355d3e2ae",
+        "input_schema_digest": "sha256:e698c45e38d9fa637b9d803a50678a7da246a9501cc5d32aefb4272cce1b55de",
         "name": "cruxible_playbill_authoring_submit",
         "output_schema_digest": "sha256:b5d183ad759fa13b972d239d5211ff4936c591da373d215015025d46851e0915",
         "permission": "GOVERNED_WRITE"
@@ -2483,7 +2483,7 @@
         "facade_operations": [
           "playbill_block_declare"
         ],
-        "input_schema_digest": "sha256:06e4f16792646518d1d5aa552bf71b4fb48644953eb240a94d4c69b59d5c9858",
+        "input_schema_digest": "sha256:7d3015f296fa01ae425a698bc46fa3e3de48cdc1f5f8c1d52ba71b4c74a9fb9a",
         "name": "cruxible_playbill_block_declare",
         "output_schema_digest": "sha256:f0316e11279c00c5517ec13255bdf27b204d51e1dce565b1e4fc2d9b77313513",
         "permission": "GOVERNED_WRITE"
@@ -2493,7 +2493,7 @@
         "facade_operations": [
           "playbill_block_depublish"
         ],
-        "input_schema_digest": "sha256:6c5d917adc7c51a7830ba583036d8344d769fc82fa573752b9f17632a42499d5",
+        "input_schema_digest": "sha256:d6888bc0c8dbef4f2fc8001bc4f3c3884ffc577a532cd56edffec48b22e77eba",
         "name": "cruxible_playbill_block_depublish",
         "output_schema_digest": "sha256:346c9a1a107e06bd30316e2b24f1fb7fda0654ae67bc18057c09dd084ed93f0b",
         "permission": "GOVERNED_WRITE"
@@ -2503,7 +2503,7 @@
         "facade_operations": [
           "playbill_check_source_bundle"
         ],
-        "input_schema_digest": "sha256:73a91ce60f1a52e53da5bcb5c75979e7ccc41dfab8fddf16c6e852bb3708150f",
+        "input_schema_digest": "sha256:869efab6c79b671905151665e28b82500895abe1578cf249ef1363351936a6a3",
         "name": "cruxible_playbill_check_source_bundle",
         "output_schema_digest": "sha256:8141b55931019f75b01cdb6b3ce0a155764b2cd0c9d657b2ad9c04d8abcc983a",
         "permission": "READ_ONLY"
@@ -2518,7 +2518,7 @@
           "playbill_whoami",
           "server_info"
         ],
-        "input_schema_digest": "sha256:2b76fe98f72b98c5d5c706180023cbb5599f0811a77ad8f75102c4589dbd148b",
+        "input_schema_digest": "sha256:179f309088c11fbe4b04f185393698328ab592e82e8f6534dee655e0808c35e1",
         "name": "cruxible_playbill_claim_attest",
         "output_schema_digest": "sha256:8bdc1292a33abdde84cdcd403758af061c6a46f76a41199dc8b03b983b2d7064",
         "permission": "GOVERNED_WRITE"
@@ -2533,7 +2533,7 @@
           "playbill_whoami",
           "server_info"
         ],
-        "input_schema_digest": "sha256:1d25f38045276270c089a108eb38184118745e665ce17dc8e81780bd884166b2",
+        "input_schema_digest": "sha256:597853758442f39b89cadfd3f4ec42241771a98dd5c959c01f1b77653a0bf0d5",
         "name": "cruxible_playbill_claim_attest_new_capture",
         "output_schema_digest": "sha256:8bdc1292a33abdde84cdcd403758af061c6a46f76a41199dc8b03b983b2d7064",
         "permission": "GOVERNED_WRITE"
@@ -2543,7 +2543,7 @@
         "facade_operations": [
           "playbill_claim_history"
         ],
-        "input_schema_digest": "sha256:d191a780239f0ea1ad33c51fdfe2168316f53321cc4a56695cec7826ca5c1a55",
+        "input_schema_digest": "sha256:90c6ee3ddf734520b0e3f6f0a61b53cd35f9142d3c669477358f61836f592b60",
         "name": "cruxible_playbill_claim_history",
         "output_schema_digest": "sha256:64a1a77a9186aacbbf045888f26988174e2eb7ad1beaeb181a8ff6d8d6884497",
         "permission": "READ_ONLY"
@@ -2553,7 +2553,7 @@
         "facade_operations": [
           "playbill_retire_claim"
         ],
-        "input_schema_digest": "sha256:1a8e7bf30e1c87b06b2549fc3a91d438b4d2ac2711090c0c14e06502ee9eb51d",
+        "input_schema_digest": "sha256:891768e2daf32fb288f4f012bcfd2ab3798997c7614a94fcc2d203aed7d22f7f",
         "name": "cruxible_playbill_claim_retire",
         "output_schema_digest": "sha256:a9b09ea7cfc69f09cd7a4f0e6fac09d8c310c872c3c01ccafafae2736f8df757",
         "permission": "GOVERNED_WRITE"
@@ -2563,7 +2563,7 @@
         "facade_operations": [
           "playbill_migrate_claim_type"
         ],
-        "input_schema_digest": "sha256:d069d6ff14ecad9430568ad67c5b2e5fedfcc94aa16bb2f3f5abc0cc56705972",
+        "input_schema_digest": "sha256:b9fbfcdac7f484128bcfce3d0c40b2a71398badc89eda2822e9780db287d8160",
         "name": "cruxible_playbill_claim_type_migrate",
         "output_schema_digest": "sha256:189128f32621b93d75f377a6de0d1337ea98f943248ac3c79aaaf9c8fedfcb1f",
         "permission": "GOVERNED_WRITE"
@@ -2573,7 +2573,7 @@
         "facade_operations": [
           "playbill_propose_compiler_upgrade"
         ],
-        "input_schema_digest": "sha256:0cbc0f840896262e3ab3939bdc653b6fdfc04eb869f98fc900138ab3a87498fa",
+        "input_schema_digest": "sha256:1aaa9c68fa78494620c99665fd85a742f7cfa36bb11c9e020d74c88845949f16",
         "name": "cruxible_playbill_compiler_upgrade",
         "output_schema_digest": "sha256:ea67bd66fddf27c631a84ea0f7813f4f0a8806ec35c94a5d0bee68de1afb3916",
         "permission": "ADMIN"
@@ -2583,7 +2583,7 @@
         "facade_operations": [
           "playbill_curation_accept_fixed"
         ],
-        "input_schema_digest": "sha256:b2e0dbccf672db08e640f645fe8965e6db8e858119d23ebc7205a2c017948756",
+        "input_schema_digest": "sha256:2ca9cd7b809141bd7cbb99199ed7681dd44f3cbc6778a7d6a2a36d5dc2087302",
         "name": "cruxible_playbill_curation_accept_fixed",
         "output_schema_digest": "sha256:73fbb78a70436d704696f8b8fc3e0f6543f25480cd466a9c2e5d1b19decbab00",
         "permission": "GOVERNED_WRITE"
@@ -2593,7 +2593,7 @@
         "facade_operations": [
           "playbill_curation_list"
         ],
-        "input_schema_digest": "sha256:14923650736ea5982d37233e3a5ec7b67e5cd4bda7084de89b178d83eea52e4a",
+        "input_schema_digest": "sha256:b4f00544520ae98701760ce111d4477172872b03e5e0eaab940fdb696d6470b4",
         "name": "cruxible_playbill_curation_list",
         "output_schema_digest": "sha256:f7d7c7e0481196aab712466d766e97175e9a1492b93380cc4f1f9d9fa01171ea",
         "permission": "READ_ONLY"
@@ -2603,7 +2603,7 @@
         "facade_operations": [
           "playbill_curation_overrule"
         ],
-        "input_schema_digest": "sha256:74d3e0dab3009303db2290d4b3f5e27c6d3d23429ce3130b529e0c6ac7b1b367",
+        "input_schema_digest": "sha256:755864d74bf4a054dc277e7bb2af1ac54effb2aa0bc295bdc5b0690ecccf90d9",
         "name": "cruxible_playbill_curation_overrule",
         "output_schema_digest": "sha256:73fbb78a70436d704696f8b8fc3e0f6543f25480cd466a9c2e5d1b19decbab00",
         "permission": "GOVERNED_WRITE"
@@ -2613,7 +2613,7 @@
         "facade_operations": [
           "playbill_curation_suppress"
         ],
-        "input_schema_digest": "sha256:10e06e1c2a4f51d7dd46d0444ac7130b58b7a063706dd8456ad9d98188b862a0",
+        "input_schema_digest": "sha256:926fa5de56a2c7aa0ff40dec02fb032f46dac0d3ca353429a8c0330b67fc8452",
         "name": "cruxible_playbill_curation_suppress",
         "output_schema_digest": "sha256:73fbb78a70436d704696f8b8fc3e0f6543f25480cd466a9c2e5d1b19decbab00",
         "permission": "GOVERNED_WRITE"
@@ -2623,7 +2623,7 @@
         "facade_operations": [
           "playbill_dereference_document"
         ],
-        "input_schema_digest": "sha256:56dae9b6c15b2b66476e4edaf3d25f6e7a29ea3398ae2ef7f9085385542b338b",
+        "input_schema_digest": "sha256:40ab84c02b8a875f85b53126b8970c6f0993c86801bc4bed13eccd0abc08a514",
         "name": "cruxible_playbill_dereference",
         "output_schema_digest": "sha256:052cfe9eb90b2cb968439788fae82d799dc0ad2b17838f8ceff2d24ffe39f16c",
         "permission": "GOVERNED_WRITE"
@@ -2633,7 +2633,7 @@
         "facade_operations": [
           "playbill_discover"
         ],
-        "input_schema_digest": "sha256:8c0d7032f17451933ded7352466aeaed1aad36711de0552e432462f36388663a",
+        "input_schema_digest": "sha256:b6512bb504b1e7767143150f30b3fcfa0fc573f0a479afec76bcb7d2ca7bfecb",
         "name": "cruxible_playbill_discover",
         "output_schema_digest": "sha256:f3954b92356a1f59536905c1209c993ad51b7ace1b93a1850536963284235d7c",
         "permission": "READ_ONLY"
@@ -2643,7 +2643,7 @@
         "facade_operations": [
           "playbill_expand"
         ],
-        "input_schema_digest": "sha256:26c8edfc21af04f8813675533f17b7326c25719b1866e26fb981359af67a9b3a",
+        "input_schema_digest": "sha256:5129c159011ff15bf2ef33fe9ee6a5877e8b71772c672b4e7a5da2ec6c5129a2",
         "name": "cruxible_playbill_expand",
         "output_schema_digest": "sha256:a0ac186fa7464fde15d224843da5219a4d4bc4daf9f4dcf21c5e391103ca790f",
         "permission": "READ_ONLY"
@@ -2653,7 +2653,7 @@
         "facade_operations": [
           "playbill_explain"
         ],
-        "input_schema_digest": "sha256:a81c901aaf24cad9052e701203f78c3ff1ab5412275311dfcd34b1adb6981a8a",
+        "input_schema_digest": "sha256:178f4531ff51b9d4096777e45b0cbf73d114293cdcc38e73de0eada69abb305e",
         "name": "cruxible_playbill_explain",
         "output_schema_digest": "sha256:ae5f4c374221859e8c8a187e31854bd1ad876fd59de3a9278497ba21cb47bea1",
         "permission": "READ_ONLY"
@@ -2663,7 +2663,7 @@
         "facade_operations": [
           "playbill_explain_claim"
         ],
-        "input_schema_digest": "sha256:6ace050efba751edc4656634693de0e9af40e280c9db8098c5b23fdfc25b5435",
+        "input_schema_digest": "sha256:dd96703f14b1a26ec1e6b4b4f55b97e939552c5bca0e66ba92b5b850019d590b",
         "name": "cruxible_playbill_explain_claim",
         "output_schema_digest": "sha256:76eadc98bdf9fd531d93587586b1e3c647e14e984d57ba01a5abb0ed91f69a39",
         "permission": "READ_ONLY"
@@ -2673,7 +2673,7 @@
         "facade_operations": [
           "playbill_export_floor"
         ],
-        "input_schema_digest": "sha256:0368f95602c4a441d51af57f4744819894e5b04cfb20331f7fdbc27d667028a3",
+        "input_schema_digest": "sha256:0ff396982a9346fc9d0ba704b83954d3aeba38f5bd4890ec23008ca07005e003",
         "name": "cruxible_playbill_export_floor",
         "output_schema_digest": "sha256:fa1da4e74991d4c7b98d38094d1b005ec1d9ec5c55d5ae4ecd262a25cb4dc27e",
         "permission": "READ_ONLY"
@@ -2683,7 +2683,7 @@
         "facade_operations": [
           "playbill_get_claim"
         ],
-        "input_schema_digest": "sha256:bbfcde13f44bbb2eb230e7dcd25c199afe18bc0184fddb024998119cb722b197",
+        "input_schema_digest": "sha256:a7d870d0268759052faefb5b575b15eb3233a04252a6180cca5cd5199414481f",
         "name": "cruxible_playbill_get_claim",
         "output_schema_digest": "sha256:7f83f9e858d389720feb1efa6ed54b8c97939b10dbbf95a3ae19d12bad149a62",
         "permission": "READ_ONLY"
@@ -2693,7 +2693,7 @@
         "facade_operations": [
           "playbill_get_claim_type"
         ],
-        "input_schema_digest": "sha256:e89db21d986b9f33ff41beab38e2975454cc5ce8be8f375cc6fd30fb8fe330b8",
+        "input_schema_digest": "sha256:3fd1bd09dc784cefecb6ca0d3c65d6ef2028b931677a5a0195a9e8e28af558f1",
         "name": "cruxible_playbill_get_claim_type",
         "output_schema_digest": "sha256:38e736aa4ce211f1a90da4bc83175e444f09125094a3389766273255f7bdcec9",
         "permission": "READ_ONLY"
@@ -2703,7 +2703,7 @@
         "facade_operations": [
           "playbill_get_document"
         ],
-        "input_schema_digest": "sha256:bc642c568cdbcf9ff244672482b1e1603fc0476b3abecfdf9910cb64349a700c",
+        "input_schema_digest": "sha256:bc0d8c50c2f1a3842f23728da820bd1d27fc406944ba6719cebf1fa0582ecd27",
         "name": "cruxible_playbill_get_document",
         "output_schema_digest": "sha256:ca05f14e5065786be78f6cb6da4231a0466c00bf82826823e9ea67b6bd2b00e9",
         "permission": "READ_ONLY"
@@ -2713,7 +2713,7 @@
         "facade_operations": [
           "playbill_get_query_definition"
         ],
-        "input_schema_digest": "sha256:eacbd672f8387e3a463b752fbbc483c4498347077bba551881619a1de47a70cf",
+        "input_schema_digest": "sha256:f8bd2df9ee11c53e3d07f74d7793b08a37769f9fec268948c4ccf1856f5fb1ec",
         "name": "cruxible_playbill_get_query_definition",
         "output_schema_digest": "sha256:5f80c5971963ff74c3a123195f20c19f9118629b251f32e138e8c5c2006b21f3",
         "permission": "READ_ONLY"
@@ -2723,7 +2723,7 @@
         "facade_operations": [
           "playbill_get_subject"
         ],
-        "input_schema_digest": "sha256:0b883b776d4c15da2f40076e319313c5cec70157012baf21a7d8a9d32a1b2f4e",
+        "input_schema_digest": "sha256:cb6c7e3e557beb030aba336cd4b1255e8292db24d83776caeb61479ea2a78f4c",
         "name": "cruxible_playbill_get_subject",
         "output_schema_digest": "sha256:56c2cf6c03038ce9087ad6c881d71ca1c96593ea81b36c59d6bcb0446be6caca",
         "permission": "READ_ONLY"
@@ -2733,7 +2733,7 @@
         "facade_operations": [
           "playbill_document_history"
         ],
-        "input_schema_digest": "sha256:45fa2236a6a74167cbf31ec7a2ec10aa408cc2b81997ef56738800e8c2aff4cf",
+        "input_schema_digest": "sha256:4224889d89da53a37cb28b0c1c6b579a62168caca5d15cbd1f226ec4cc408a44",
         "name": "cruxible_playbill_history",
         "output_schema_digest": "sha256:54d716b8bc5b157d13c26a279b210c5b44d8a08298dfda7932f5fb2f529001a3",
         "permission": "READ_ONLY"
@@ -2753,7 +2753,7 @@
         "facade_operations": [
           "playbill_host_workspace_detach"
         ],
-        "input_schema_digest": "sha256:a4c9f666b65702bdc8158807ecd0cf9024162c69e00a634fd5c461c0581b31dd",
+        "input_schema_digest": "sha256:a3e47776d1ccb2dcf5fbb053f3236815a5113f05cb0f5683a18c8aea60f6b687",
         "name": "cruxible_playbill_host_workspace_detach",
         "output_schema_digest": "sha256:6045ff5afdfe3eb926042a675bab26b8ee33b41bca54228c93336b026b93eaf1",
         "permission": "ADMIN"
@@ -2763,7 +2763,7 @@
         "facade_operations": [
           "playbill_init"
         ],
-        "input_schema_digest": "sha256:1f9fcac11c412022d55cf6050117eb760f9854bfb5437aa741ffc941a986580b",
+        "input_schema_digest": "sha256:e7f9da6b6ccebda012a7d755b25eba08343a04c515e342f0a048828477a47308",
         "name": "cruxible_playbill_init",
         "output_schema_digest": "sha256:cc8a1bb0caeaa6a4e1a7e33f5a0f0725722be8910827537d27496c22c2e0eb09",
         "permission": "ADMIN"
@@ -2773,7 +2773,7 @@
         "facade_operations": [
           "playbill_inspect_proposal"
         ],
-        "input_schema_digest": "sha256:f6b0609a0abba3e1000cd2a4b8ae0a5e5d93ad191bcc206b8151dd2654de26f4",
+        "input_schema_digest": "sha256:fcef4933aa9acf4cd413b3044d86fd032b552fc2de3c59e917c864661661c5e0",
         "name": "cruxible_playbill_inspect_proposal",
         "output_schema_digest": "sha256:ea67bd66fddf27c631a84ea0f7813f4f0a8806ec35c94a5d0bee68de1afb3916",
         "permission": "READ_ONLY"
@@ -2783,7 +2783,7 @@
         "facade_operations": [
           "playbill_inspect_refusal"
         ],
-        "input_schema_digest": "sha256:4b663d6b09f3f5fee0ff71d91edbea40bdb644173a426830fb1d778e1f0caab6",
+        "input_schema_digest": "sha256:74efb1f2a6c0df6263c3fab8b58caf5d177eba965e2e7daed856bd2ee213b2a5",
         "name": "cruxible_playbill_inspect_refusal",
         "output_schema_digest": "sha256:5bb8bd9cec33f63873198c84120cbaacde49deda4d93f2192f091445a23a3054",
         "permission": "READ_ONLY"
@@ -2793,7 +2793,7 @@
         "facade_operations": [
           "playbill_instance_decommission"
         ],
-        "input_schema_digest": "sha256:90b6c6c174659da5f1eec7a36327dc02b537435dda5f8a75fcd08031d4c339c5",
+        "input_schema_digest": "sha256:188c648781ed39abe0997f1c9c5472ba8f63fa865ec0f07c77ee1bc45f1ac94b",
         "name": "cruxible_playbill_instance_decommission",
         "output_schema_digest": "sha256:519c9b57ae41752d90d72ebf71faab8c169f272eb4d3d96bcbc2ce87a3b14063",
         "permission": "ADMIN"
@@ -2803,7 +2803,7 @@
         "facade_operations": [
           "playbill_kit_add"
         ],
-        "input_schema_digest": "sha256:08e97be0bd93a6daa34d6824b1657331ff56aa9821322cffa7a20a87d1137b44",
+        "input_schema_digest": "sha256:41f7a04eece5eb65786f4e56f5a382c9ecc3e5745a9c164845f1936b73be7c49",
         "name": "cruxible_playbill_kit_add",
         "output_schema_digest": "sha256:c4f46bb3f13ff22d5bbc836e521a109f320ad795654e078df43061c7c884bbb2",
         "permission": "GOVERNED_WRITE"
@@ -2813,7 +2813,7 @@
         "facade_operations": [
           "playbill_kit_build"
         ],
-        "input_schema_digest": "sha256:e947a75e9542c8c92c0e8f14f18cba579cd69e6788eb720836b1f866a3d98f98",
+        "input_schema_digest": "sha256:2c122e7f2b0dbbb1836a61e29019fcb62a94ce9fe4009720b8bcadb6b223877f",
         "name": "cruxible_playbill_kit_build",
         "output_schema_digest": "sha256:07ab77dc98f8b18915f70b2d492c1eeef2269a5a25ae61d091c94817296ee629",
         "permission": "READ_ONLY"
@@ -2823,7 +2823,7 @@
         "facade_operations": [
           "playbill_kit_remove"
         ],
-        "input_schema_digest": "sha256:6abfd632f7598578914a9e9932a5db4da724ffadc9d52608060c7680355b3cd7",
+        "input_schema_digest": "sha256:14d2f1ba64cad75f5762b67bf8e4da28f922393cc15a71453ce8e92998579894",
         "name": "cruxible_playbill_kit_remove",
         "output_schema_digest": "sha256:c4f46bb3f13ff22d5bbc836e521a109f320ad795654e078df43061c7c884bbb2",
         "permission": "GOVERNED_WRITE"
@@ -2833,7 +2833,7 @@
         "facade_operations": [
           "playbill_kit_status"
         ],
-        "input_schema_digest": "sha256:a5b623a704cc900acedff43b96b9ca5498814c24e2c1d28543b7dd566dd5a304",
+        "input_schema_digest": "sha256:bab917c4c5093a6a34fe776f577347fa3870308cf635d18f6fddc7d461c6d601",
         "name": "cruxible_playbill_kit_status",
         "output_schema_digest": "sha256:576b83da7b98fa700d07f4e8de9758dd7833661d23d6af7a5e571c97195565ac",
         "permission": "READ_ONLY"
@@ -2843,7 +2843,7 @@
         "facade_operations": [
           "playbill_line_arm"
         ],
-        "input_schema_digest": "sha256:dff9ed1443c8c2971ca7a7c8d95af4c098c7297ebe249d57a3e45a472a73f814",
+        "input_schema_digest": "sha256:2d6dedd8050513141bcd4e6d104e430975e75f71fce89fc58926727fe84890f0",
         "name": "cruxible_playbill_line_arm",
         "output_schema_digest": "sha256:6d8537e74f12b1580637705a4c986c5573d4154b739d369a55912f663fb0cd73",
         "permission": "GOVERNED_WRITE"
@@ -2853,7 +2853,7 @@
         "facade_operations": [
           "playbill_line_arm_status"
         ],
-        "input_schema_digest": "sha256:ba2f501462972f3c5851f0117797ade17fcd5f997c9c7e6cb5ee1098b3b09cd2",
+        "input_schema_digest": "sha256:c4c131e6705393b1e98e943d21677ee641b4ee52674b68ae936974a2d9adfea5",
         "name": "cruxible_playbill_line_arm_status",
         "output_schema_digest": "sha256:6d8537e74f12b1580637705a4c986c5573d4154b739d369a55912f663fb0cd73",
         "permission": "READ_ONLY"
@@ -2863,7 +2863,7 @@
         "facade_operations": [
           "playbill_line_check"
         ],
-        "input_schema_digest": "sha256:4189a6f98e2859ac7951a06dcf2c15d432c9076217d090abc0719f28b193d2d4",
+        "input_schema_digest": "sha256:c20310147ab8ffc1854b0d82f4ea23f3d93ba32d4ce0973c3aec651e5ae85ba1",
         "name": "cruxible_playbill_line_check",
         "output_schema_digest": "sha256:4c1df648c4ee8175172e6d2eec5d055f1f70acf3272d0948d1b8f9ff7f15fdc1",
         "permission": "READ_ONLY"
@@ -2873,7 +2873,7 @@
         "facade_operations": [
           "playbill_line_disarm"
         ],
-        "input_schema_digest": "sha256:0609d83b1b83e4f213a122c50f1becdf5f2ac832ecb5732df89cf5b44f4893e2",
+        "input_schema_digest": "sha256:1e37d3f35b940580dd662da1acec8016d424071c529c0cbe3a1b6d4718536797",
         "name": "cruxible_playbill_line_disarm",
         "output_schema_digest": "sha256:6d8537e74f12b1580637705a4c986c5573d4154b739d369a55912f663fb0cd73",
         "permission": "GOVERNED_WRITE"
@@ -2883,7 +2883,7 @@
         "facade_operations": [
           "playbill_line_dispatch"
         ],
-        "input_schema_digest": "sha256:0618c27d8cfbc65c71508fdf49b217aa6160e9aa95bd2d56eb13eff97581ad83",
+        "input_schema_digest": "sha256:7c7d14977078325198204f81c0fd1063542daceb53715fd346941d967ed20b4d",
         "name": "cruxible_playbill_line_dispatch",
         "output_schema_digest": "sha256:05d2be2e1acb82b1cd257a35a3540bbff7745864bcdfe0aa24814a20d68135a7",
         "permission": "GOVERNED_WRITE"
@@ -2893,7 +2893,7 @@
         "facade_operations": [
           "playbill_line_evaluate"
         ],
-        "input_schema_digest": "sha256:ad98f9bb5b2533a9daa8e8e0762fc81de13455f39051b67d99745103334c2549",
+        "input_schema_digest": "sha256:af051d06e24a36f541f34f149c3f4cc5c0407cf840097db2c97a8297f737db84",
         "name": "cruxible_playbill_line_evaluate",
         "output_schema_digest": "sha256:4c1df648c4ee8175172e6d2eec5d055f1f70acf3272d0948d1b8f9ff7f15fdc1",
         "permission": "GOVERNED_WRITE"
@@ -2903,7 +2903,7 @@
         "facade_operations": [
           "playbill_line_run"
         ],
-        "input_schema_digest": "sha256:c518495bc3ec37a21a893cb97d28eb383873ee351e72a5080c640b3554439c59",
+        "input_schema_digest": "sha256:997f8bbf4f8fa0a551e8c86e9649728ad44dfc579c1654c8cef49e2dc7724d43",
         "name": "cruxible_playbill_line_run",
         "output_schema_digest": "sha256:d01b7c1bac72f70acbb34c2c4974bf79ea42a046286b1de4256451fec7550ce3",
         "permission": "READ_ONLY"
@@ -2913,7 +2913,7 @@
         "facade_operations": [
           "playbill_list_claim_types"
         ],
-        "input_schema_digest": "sha256:c12910e9debcc6ec0d926c5068e4b35f668deed730e7449809902735879db046",
+        "input_schema_digest": "sha256:2fe5357ab680c87ef8cf9675e86288fb0f780a672cab435c2a0755568483f897",
         "name": "cruxible_playbill_list_claim_types",
         "output_schema_digest": "sha256:516530750a72d958a64f9a7c269202846ea91a132af396d0bc3ba62fd55810ad",
         "permission": "READ_ONLY"
@@ -2923,7 +2923,7 @@
         "facade_operations": [
           "playbill_list_claims"
         ],
-        "input_schema_digest": "sha256:84a0afa1a25809dafca24b76c02a423b3557b9e5e36dfcc4d4c22f72b73d78a2",
+        "input_schema_digest": "sha256:fc1aabeb93279dc8060192a263e695eceb4e459bb0612bc19d5674cc0d6c6d29",
         "name": "cruxible_playbill_list_claims",
         "output_schema_digest": "sha256:522ff90f7532109638d5450e6c7ecbd231a4966ad0cde910c6a87249fed7025b",
         "permission": "READ_ONLY"
@@ -2933,7 +2933,7 @@
         "facade_operations": [
           "playbill_list_documents"
         ],
-        "input_schema_digest": "sha256:d3ab01d1cef87c1cf42435e0f1511d736241d0d91dd030c381780452d1862711",
+        "input_schema_digest": "sha256:852050d36bfd81413d83614c33c24556d99949e34cecf55427277df8fb392942",
         "name": "cruxible_playbill_list_documents",
         "output_schema_digest": "sha256:3253fca9be3d4ba6ae20b00f01df9546b1e7c02e347474bd6ce1423b6c7dea8f",
         "permission": "READ_ONLY"
@@ -2943,7 +2943,7 @@
         "facade_operations": [
           "playbill_list_principals"
         ],
-        "input_schema_digest": "sha256:a2054e7a31342ddfeaeca1a20e63a87194dd019a83efb5b32c869057196716ec",
+        "input_schema_digest": "sha256:d69996ebcc41e26128823e901bf51fcf093b6f0c02d9208a5eefdbc6af59850a",
         "name": "cruxible_playbill_list_principals",
         "output_schema_digest": "sha256:2c3c3c250ce365f798f9b800ba64ab52ac9fc607a12bc23284458247cc70c6a8",
         "permission": "READ_ONLY"
@@ -2953,7 +2953,7 @@
         "facade_operations": [
           "playbill_list_query_definitions"
         ],
-        "input_schema_digest": "sha256:46bf517eabb82a158bb78ad6a12c12aa29e33c27ad2fc30f61f1790a33d4905b",
+        "input_schema_digest": "sha256:17db77d34f2d5259f70878c2a5b286b543cb2cdc177d87dac03d373a61f7dfcf",
         "name": "cruxible_playbill_list_query_definitions",
         "output_schema_digest": "sha256:3137625b3b176b8601c2ddaca0bc71c97ec66e2ae86d8b085977fc7dd4019dce",
         "permission": "READ_ONLY"
@@ -2963,7 +2963,7 @@
         "facade_operations": [
           "playbill_list_subjects"
         ],
-        "input_schema_digest": "sha256:65ccbc632b074c5fe3419129d5aead2e195bc00dab5926bbd09150b327381368",
+        "input_schema_digest": "sha256:21c51ed1d134067f8af9f52c5482b364307c3d8e349c3d6e9ddc30318e0d9214",
         "name": "cruxible_playbill_list_subjects",
         "output_schema_digest": "sha256:9d965d16734a069cbab75b26504d85ffafec231ea32383de88ccc59c8f089686",
         "permission": "READ_ONLY"
@@ -2973,7 +2973,7 @@
         "facade_operations": [
           "playbill_policies_in_force"
         ],
-        "input_schema_digest": "sha256:83d0641e034f0e789368a55ac84def778f6a91680c803d3aa61f6296acdecd55",
+        "input_schema_digest": "sha256:5a72676a70a582c0c70a509f7f64062d2b00b413229fbd09613e4ba7bbd4eb47",
         "name": "cruxible_playbill_policies_in_force",
         "output_schema_digest": "sha256:80d5636a6c87159e5e2362533ccc2566b04bdee293f45e48c2f603f327360fa1",
         "permission": "READ_ONLY"
@@ -2983,7 +2983,7 @@
         "facade_operations": [
           "playbill_predict"
         ],
-        "input_schema_digest": "sha256:de7355d06509ff13fea59069408fe23789675bfafafb03154c6fd061619689bf",
+        "input_schema_digest": "sha256:2f5140d0b15f759632387f81a11406b29b7068210abaeb755fc0ee2cfd09002e",
         "name": "cruxible_playbill_predict",
         "output_schema_digest": "sha256:7ee456590c6d771dcdc5aa509480e9be55185a0c99432e74aa1b52780173d124",
         "permission": "GOVERNED_WRITE"
@@ -2993,7 +2993,7 @@
         "facade_operations": [
           "playbill_prepare_approval"
         ],
-        "input_schema_digest": "sha256:d3192c86131445a8eefa0a05535e186042a71668a516f5828ce7d327db1683c1",
+        "input_schema_digest": "sha256:f1ffe6ed315838232e5e95d8d7fa0ef59f2a252271b28f691b8bdd6ff0763713",
         "name": "cruxible_playbill_prepare_approval",
         "output_schema_digest": "sha256:b0af5070282657126c2e90c9456ef4adea13d1ccd151530ebd0148d5839bae7b",
         "permission": "READ_ONLY"
@@ -3003,7 +3003,7 @@
         "facade_operations": [
           "playbill_procedure_bind"
         ],
-        "input_schema_digest": "sha256:e10a19b61132d02d29a4a0e8ee0d499aa00bdcee1efae9f65add9b9d06c75849",
+        "input_schema_digest": "sha256:bff52240bbaef5660653339acb5da8408dbaf6fffd581f787771930bdf5f1768",
         "name": "cruxible_playbill_procedure_bind",
         "output_schema_digest": "sha256:9d6eeb6ceb88ad58688eab3b40150f973a76f3d9bc8e05b1d2a28ca94fa7b55f",
         "permission": "GOVERNED_WRITE"
@@ -3013,7 +3013,7 @@
         "facade_operations": [
           "playbill_procedure_measure"
         ],
-        "input_schema_digest": "sha256:c291c2f8533dc28a3bfd134f0410e046475130016f07f205138af3be504fbd23",
+        "input_schema_digest": "sha256:e678de64b46b4c04383317ef3140b87cdf75b44f51580a0d318de3883c6382b7",
         "name": "cruxible_playbill_procedure_measure",
         "output_schema_digest": "sha256:7c47dd89aa95493848529448ef61db3eb08b1aa605ab66dfe5bedbc165ba5db6",
         "permission": "GOVERNED_WRITE"
@@ -3023,7 +3023,7 @@
         "facade_operations": [
           "playbill_procedure_readiness"
         ],
-        "input_schema_digest": "sha256:129c4d9ae3b8804c06d00f1c085e748101f9726faa9f6512987792347b1cf76e",
+        "input_schema_digest": "sha256:7f0dd3ee7153bd44780cbd1d247b8fba38a9d77cec7fd8e98cb81d8774fab85c",
         "name": "cruxible_playbill_procedure_readiness",
         "output_schema_digest": "sha256:fb32edabc1c16cb74232f01d27a4fc0919e19dc09abbd0c45f920437c3839be0",
         "permission": "READ_ONLY"
@@ -3033,7 +3033,7 @@
         "facade_operations": [
           "playbill_procedure_readings"
         ],
-        "input_schema_digest": "sha256:a193c738d9eb82a6bda6ffc34eec1c437914580a959eb7493f43c0ddd6ead29a",
+        "input_schema_digest": "sha256:7a606436caf96aac5192c5483c39b8b3b63dbbf9c0ad404728ecc927bc757857",
         "name": "cruxible_playbill_procedure_readings",
         "output_schema_digest": "sha256:f0c7b223a1d4c8c6d2dd5e4f42a511efe1ec12448b2207c20c8add048f659975",
         "permission": "READ_ONLY"
@@ -3043,7 +3043,7 @@
         "facade_operations": [
           "playbill_procedure_run"
         ],
-        "input_schema_digest": "sha256:07d2bbca54d33a25c323b0b99ad168fa3b2c43fd5ce4971317fa3a1dfbcaec89",
+        "input_schema_digest": "sha256:a664c4afe2bd81ec1441a91308c9f6fe50170749f296e78e8794ca4b4ac8ed32",
         "name": "cruxible_playbill_procedure_run",
         "output_schema_digest": "sha256:d01b7c1bac72f70acbb34c2c4974bf79ea42a046286b1de4256451fec7550ce3",
         "permission": "READ_ONLY"
@@ -3053,7 +3053,7 @@
         "facade_operations": [
           "playbill_procedure_run_status"
         ],
-        "input_schema_digest": "sha256:1842f141f8b3bf19b6ae2663ce118fa8e80d2611761e3dc66d01419d427ca430",
+        "input_schema_digest": "sha256:69978835079eb93f1c24a6e29f6551f74cad0841f080d4c866f36fd33dea2e6a",
         "name": "cruxible_playbill_procedure_run_status",
         "output_schema_digest": "sha256:d01b7c1bac72f70acbb34c2c4974bf79ea42a046286b1de4256451fec7550ce3",
         "permission": "READ_ONLY"
@@ -3063,7 +3063,7 @@
         "facade_operations": [
           "playbill_list_proposals"
         ],
-        "input_schema_digest": "sha256:312a28f2de0436a453e58fd9e1c887d736dcb70d98ed52cf7b5903eadca829b7",
+        "input_schema_digest": "sha256:66b4f6c895c45c7c4cb8bb9df206945c597d30b94f2ccd368bc74c1b577b963d",
         "name": "cruxible_playbill_proposal_list",
         "output_schema_digest": "sha256:93d7162d054ce881d7fe5f1eb0b471a4d222cb1b901da2ba488335e8c0a98d7d",
         "permission": "READ_ONLY"
@@ -3073,7 +3073,7 @@
         "facade_operations": [
           "playbill_readmit_proposal"
         ],
-        "input_schema_digest": "sha256:38fab80940be33493e26bde031966c75c4d825cd80076ffb4017311283adf335",
+        "input_schema_digest": "sha256:13b3de1b7f89655742b6e6729d8dc5af9fe8433d5ff274558fb13c82b8be0e71",
         "name": "cruxible_playbill_proposal_readmit",
         "output_schema_digest": "sha256:21a56b53d6bf346d2e92b219047c35e33ff53a0f75e1500127557bd063fcaaeb",
         "permission": "GOVERNED_WRITE"
@@ -3083,7 +3083,7 @@
         "facade_operations": [
           "playbill_withdraw_proposal"
         ],
-        "input_schema_digest": "sha256:8c19386759bf7e665a04a4b9cd1ca0671941e37ded1ec2f49ede0358b05c3dc1",
+        "input_schema_digest": "sha256:39cccf60f6218f1a42fca88b8853022a7e388b07d84a8626da62aa1fea2d4a82",
         "name": "cruxible_playbill_proposal_withdraw",
         "output_schema_digest": "sha256:10b90afdc827b768afe46e339c81d346eb96176f57736e33f2170404c263765f",
         "permission": "GOVERNED_WRITE"
@@ -3093,7 +3093,7 @@
         "facade_operations": [
           "playbill_propose_claim_type_input"
         ],
-        "input_schema_digest": "sha256:0ae73074c6b5a9ff1fe3c28f6e835da1f688bf3efb3462a2a35afdc553d895ed",
+        "input_schema_digest": "sha256:bb36e430f87521fe06b429acf946af385405b28eec262c4e965ea7d85ac25733",
         "name": "cruxible_playbill_propose_claim_type",
         "output_schema_digest": "sha256:0df1d3765bd3ce935355c2a0c0e8cdc5ec44265598bbb4cd2503c5c14b9c249d",
         "permission": "GOVERNED_WRITE"
@@ -3103,7 +3103,7 @@
         "facade_operations": [
           "playbill_propose_document"
         ],
-        "input_schema_digest": "sha256:46f4df266e4cacef0611ef00789acb56ef2cd2153823b3beb7a6c5cb5109a169",
+        "input_schema_digest": "sha256:23d66de03bc4455412b9ecb58b5fdb7a8f8c0583fd42a9b1cee0e497a962a178",
         "name": "cruxible_playbill_propose_document",
         "output_schema_digest": "sha256:ea67bd66fddf27c631a84ea0f7813f4f0a8806ec35c94a5d0bee68de1afb3916",
         "permission": "GOVERNED_WRITE"
@@ -3113,7 +3113,7 @@
         "facade_operations": [
           "playbill_propose_principal_change"
         ],
-        "input_schema_digest": "sha256:04177dc9e8431182a930c0f7ebfd9641abd1a233c2834d17057df74143acb2c1",
+        "input_schema_digest": "sha256:421a8ace417fc46545add59c8451ef53c835550c6c2336da196832f65cd01657",
         "name": "cruxible_playbill_propose_principal_change",
         "output_schema_digest": "sha256:ea67bd66fddf27c631a84ea0f7813f4f0a8806ec35c94a5d0bee68de1afb3916",
         "permission": "ADMIN"
@@ -3123,7 +3123,7 @@
         "facade_operations": [
           "playbill_propose_query_definition"
         ],
-        "input_schema_digest": "sha256:cd22446971ab334eece84d092d556efce8f00ab5f7e96593684a57215a39054b",
+        "input_schema_digest": "sha256:499c7509d873e124dee2044c34e55a4bf4c453baa9793d2a3855f7f185e267ca",
         "name": "cruxible_playbill_propose_query_definition",
         "output_schema_digest": "sha256:ea67bd66fddf27c631a84ea0f7813f4f0a8806ec35c94a5d0bee68de1afb3916",
         "permission": "GOVERNED_WRITE"
@@ -3133,7 +3133,7 @@
         "facade_operations": [
           "playbill_propose_source_bundle"
         ],
-        "input_schema_digest": "sha256:706fe5a2862907a5a61c3ef0157c4ed03707880fbfa095b44cad86d553f2e685",
+        "input_schema_digest": "sha256:89c0aaa56153e19fc762dcccfda8640f6c3d848cfe32a74a052f57b2f42e7300",
         "name": "cruxible_playbill_propose_source_bundle",
         "output_schema_digest": "sha256:ea67bd66fddf27c631a84ea0f7813f4f0a8806ec35c94a5d0bee68de1afb3916",
         "permission": "GOVERNED_WRITE"
@@ -3143,7 +3143,7 @@
         "facade_operations": [
           "playbill_propose_subject"
         ],
-        "input_schema_digest": "sha256:ed041d024c1cd2cd154a4587bb0a18fcf894f120dce6f93d9cab204ff93f4d02",
+        "input_schema_digest": "sha256:9be540fc48deb2ef3434bc6767693a60c76c86cb683f6d49a51ac8b2d965d4a3",
         "name": "cruxible_playbill_propose_subject",
         "output_schema_digest": "sha256:ea67bd66fddf27c631a84ea0f7813f4f0a8806ec35c94a5d0bee68de1afb3916",
         "permission": "GOVERNED_WRITE"
@@ -3153,7 +3153,7 @@
         "facade_operations": [
           "playbill_provider_catalog"
         ],
-        "input_schema_digest": "sha256:235a5fa6c65aa4559ed85002c98fd656509375333a9665a0f7fc4f1382a3b517",
+        "input_schema_digest": "sha256:8e9188ad0059240374ff307887a95ba0572ff1210c6ed34dcf564c3dc0a888a2",
         "name": "cruxible_playbill_provider_catalog",
         "output_schema_digest": "sha256:02f5b0e163422f38a8457912de4b1ef40935426068c7b11327d09bc44682c1a3",
         "permission": "READ_ONLY"
@@ -3163,7 +3163,7 @@
         "facade_operations": [
           "playbill_provider_install"
         ],
-        "input_schema_digest": "sha256:58af96ef1a34317c6d08337ed82331cb09dd3d4bab4a3c73ddf98330aa7ffa1a",
+        "input_schema_digest": "sha256:36679294634e7d370dd7011bd30b46ad0fccdbd2bf0a24a04be044dfd0b03238",
         "name": "cruxible_playbill_provider_install",
         "output_schema_digest": "sha256:74a212d754e38007a595bb20e1664c307c34fa736a62375e04c048f94a4364a8",
         "permission": "ADMIN"
@@ -3173,7 +3173,7 @@
         "facade_operations": [
           "playbill_read_capture"
         ],
-        "input_schema_digest": "sha256:f7384ae517fad6448e4ad1da97abda43a65094a0d3091fe8f44d770ec8456e56",
+        "input_schema_digest": "sha256:db9ba3ce2c3a05f979c51cdfcf72e817c471ca0de45453a74f89bb665e6aaae4",
         "name": "cruxible_playbill_read_capture",
         "output_schema_digest": "sha256:30acbfc99a5afddaf0d4a5fb8075a265c9b44e73d0e1139656822b22ba1b398f",
         "permission": "GOVERNED_WRITE"
@@ -3183,7 +3183,7 @@
         "facade_operations": [
           "playbill_resolution_contracts"
         ],
-        "input_schema_digest": "sha256:c4fd7efa7be3c10803b7c7d547ac55b331e581ec9b1e177914f6681a65937ac8",
+        "input_schema_digest": "sha256:bed0910f16abacdbdc75f5dd2980de6a2e441fe073ed0489b77fbf9a1e4d55b4",
         "name": "cruxible_playbill_resolution_contracts",
         "output_schema_digest": "sha256:147a896816fa47754d941518553b4d6b1017df181f80915b7b21eeda2d9a1a4e",
         "permission": "READ_ONLY"
@@ -3193,7 +3193,7 @@
         "facade_operations": [
           "playbill_resolve_coverage"
         ],
-        "input_schema_digest": "sha256:e709f816d5284f1711187ff5cddfa2a357b39a4b9e90dadbda32d4158e643213",
+        "input_schema_digest": "sha256:5ae93590377d7ef9dbf5059838e7be95e12f3285d12163245dd40aed24388839",
         "name": "cruxible_playbill_resolve_coverage",
         "output_schema_digest": "sha256:987580f367a9f99dec202d55e0c7a30435960e92f3dc8622d4fe07b91bef12fe",
         "permission": "READ_ONLY"
@@ -3203,7 +3203,7 @@
         "facade_operations": [
           "playbill_review_proposal"
         ],
-        "input_schema_digest": "sha256:1c7d9806557ab0a7081387f247efe7a1ef2542bff70001398d24777a622ceafc",
+        "input_schema_digest": "sha256:b3bcedb0b6e1cdb300c51e69c2a7ad633401f0176501ea537252efb616164749",
         "name": "cruxible_playbill_review",
         "output_schema_digest": "sha256:b0b67da94d9bdb298e36f3ef51aca13ab801db68f6b3baea28827e216b379388",
         "permission": "READ_ONLY"
@@ -3213,7 +3213,7 @@
         "facade_operations": [
           "playbill_run_query"
         ],
-        "input_schema_digest": "sha256:efc6d0b26401b6ba22657f2dd99cfe1d1dd867ce874f385f47773be84e696b11",
+        "input_schema_digest": "sha256:b9d151e8e4a09f09c871f7f336e2b2d5dd093f10e946e2e0d1552df78c1f6705",
         "name": "cruxible_playbill_run_query",
         "output_schema_digest": "sha256:588c6e066f9567d0dcbe62234ae4a10849f6e9d34b03edffb399968e86058f83",
         "permission": "READ_ONLY"
@@ -3223,7 +3223,7 @@
         "facade_operations": [
           "playbill_search"
         ],
-        "input_schema_digest": "sha256:5af9bd5149ec2443cfbf7eeb7ac93b1e6024dfeb387ff969b48056ceabe2d26a",
+        "input_schema_digest": "sha256:65852be00d9fefdd307fce7eb5ec282e2c9889d6415129930c817f051f8ccf49",
         "name": "cruxible_playbill_search",
         "output_schema_digest": "sha256:35b0af9895535e60ccc27737945c0d192997192335ff84d6c0b892dc0144729c",
         "permission": "READ_ONLY"
@@ -3241,7 +3241,7 @@
         "facade_operations": [
           "playbill_settle_prediction"
         ],
-        "input_schema_digest": "sha256:d663339e89dd900b263cf7d88a3444155d10173b6872d011ffb2001accf3987e",
+        "input_schema_digest": "sha256:d26ed51f143879107650a4d3be36eadad4303d37635953febea3b89d561d064d",
         "name": "cruxible_playbill_settle",
         "output_schema_digest": "sha256:8b0be492d10d6260030b08a6581c028537c17663146c9f663c5046ee7577859f",
         "permission": "GOVERNED_WRITE"
@@ -3251,7 +3251,7 @@
         "facade_operations": [
           "playbill_since"
         ],
-        "input_schema_digest": "sha256:66230e3f9c7ad854b44005a25e68b2cebdb746b82574b62e07604f11605f0890",
+        "input_schema_digest": "sha256:ed8cf017fbc46bc93bb6a4246f7e22a1207da14f3cb180efc9c8adfc52775a88",
         "name": "cruxible_playbill_since",
         "output_schema_digest": "sha256:60e14d69bd6dcb756fbec3aa4c1d6301f862d0238b9a7fe0ec1a3156e480f8a2",
         "permission": "READ_ONLY"
@@ -3261,7 +3261,7 @@
         "facade_operations": [
           "playbill_source_context"
         ],
-        "input_schema_digest": "sha256:beda4996a6ba749d0d5bb7d44f4e1ba72ce57c41d0b5a23e01a31869862d0ab4",
+        "input_schema_digest": "sha256:1276a546387a7bbb68deb9527fe70d27347d0c6e0fb42b25f4420c5fefe5686b",
         "name": "cruxible_playbill_source_context",
         "output_schema_digest": "sha256:287e323f7d7995045f2fce4714c2517472725c5ca24174a58772370655041e33",
         "permission": "READ_ONLY"
@@ -3271,7 +3271,7 @@
         "facade_operations": [
           "playbill_store_body"
         ],
-        "input_schema_digest": "sha256:586bf128c645972cd697dc6179ce71084d0c0e22d1508190435647111ccd19cf",
+        "input_schema_digest": "sha256:e74ce74bddb03f9b600c42b4fae40dfdc1deb59757eb3962592595eb1c3fa011",
         "name": "cruxible_playbill_store_body",
         "output_schema_digest": "sha256:15e69633fe980b538279678edb5349ab7efb82c2b2853386457574ca963c722c",
         "permission": "GOVERNED_WRITE"
@@ -3281,7 +3281,7 @@
         "facade_operations": [
           "playbill_subject_history"
         ],
-        "input_schema_digest": "sha256:5cf16abb53f226419a57ebb9e53ad6c3fb24865a6d27e3497af716d1af7bad39",
+        "input_schema_digest": "sha256:3bf277f1b034f86c4b8f9484d3c73ab4a58e7d99ff16711f5c7e5d09106c8571",
         "name": "cruxible_playbill_subject_history",
         "output_schema_digest": "sha256:0f774273e6d459f897e566c942012ef43945dad1b13e3d6f7a3a9442ed92d7f0",
         "permission": "READ_ONLY"
@@ -3291,7 +3291,7 @@
         "facade_operations": [
           "playbill_submit_approval"
         ],
-        "input_schema_digest": "sha256:035b05bf27efb9727873de5f2d6adb0f009180caf8db6245f1cf58f1cc70db9e",
+        "input_schema_digest": "sha256:5bd32931de9f73d70be4dc4782eb14304f6b42e603a8609c4dddc8841fc1c520",
         "name": "cruxible_playbill_submit_approval",
         "output_schema_digest": "sha256:0ab3d535937d4845070048f2c2e849ec30a4094fd561ee9644b2c4e1c199c791",
         "permission": "GRAPH_WRITE"
@@ -3301,9 +3301,9 @@
         "facade_operations": [
           "playbill_whoami"
         ],
-        "input_schema_digest": "sha256:1d48952a893902de91d3f6d715ae45c101eaef293fdbe7c5a4a35e54f25878c3",
+        "input_schema_digest": "sha256:261c174fea6b795ad265b220123da232265eeaab274ba31f45a82718ebc8f5e9",
         "name": "cruxible_playbill_whoami",
-        "output_schema_digest": "sha256:6ce3b869809938273f48f6e63d4b6443c9e1a48b1411fb8e126776c9b54a6ea5",
+        "output_schema_digest": "sha256:9b8b7527c4b233d4114b2a83f12183aa608afbf28b43ea78b08f1744c61500fb",
         "permission": "READ_ONLY"
       },
       {
@@ -3311,7 +3311,7 @@
         "facade_operations": [
           "playbill_resolve_coverage"
         ],
-        "input_schema_digest": "sha256:5c867660766b35edaf57c51145d1c10bbe4cb996543c6f89fa6fdf012d0c6e9a",
+        "input_schema_digest": "sha256:1f6cf3b98e4fde9813be77fb464a2f7b02fb9723ba26835f0cbbb2a39d9c8ffd",
         "name": "cruxible_playbill_workspace_coverage_resolve",
         "output_schema_digest": "sha256:987580f367a9f99dec202d55e0c7a30435960e92f3dc8622d4fe07b91bef12fe",
         "permission": "READ_ONLY"
@@ -3321,7 +3321,7 @@
         "facade_operations": [
           "playbill_resolve_coverage"
         ],
-        "input_schema_digest": "sha256:af51a73f5b9c3ee79c3dee65349fd5fa3231d1084f7aaaad8405d3b746223756",
+        "input_schema_digest": "sha256:5387025358a4871dcfc738bd62e7e9fd59b8ce060e63d0ed47059a9cdb35be88",
         "name": "cruxible_playbill_workspace_coverage_status",
         "output_schema_digest": "sha256:987580f367a9f99dec202d55e0c7a30435960e92f3dc8622d4fe07b91bef12fe",
         "permission": "READ_ONLY"
@@ -3331,7 +3331,7 @@
         "facade_operations": [
           "playbill_export_floor"
         ],
-        "input_schema_digest": "sha256:8a409341e18493960f5995d5051cb0d5fdc44da383dfce1f3d95092c2858b1df",
+        "input_schema_digest": "sha256:9cfa8eb92b411b171fc31c5180725c11de4b3f141d29a4b63fde830ab6589a52",
         "name": "cruxible_playbill_workspace_floor_export",
         "output_schema_digest": "sha256:e031eb5baf9f9c6cc3053ad9928a18cd16a97ea146fb93e1690eea463aebe49e",
         "permission": "READ_ONLY"
@@ -3341,7 +3341,7 @@
         "facade_operations": [
           "playbill_search"
         ],
-        "input_schema_digest": "sha256:e59ce5f211318814cdd5afd4d9718b4030636dd1f94decf3bf6777c12648abb0",
+        "input_schema_digest": "sha256:a54957f4cb4535eecf6d2569d65d9cb64fc01101178e9d637304cd81d708a1e8",
         "name": "cruxible_playbill_workspace_floor_status",
         "output_schema_digest": "sha256:8df4fb2a038c06ff9181ed2a991b1fc78f849eddeb4f3a091250355e9e0d6a1b",
         "permission": "READ_ONLY"
@@ -3352,7 +3352,7 @@
           "playbill_check_source_bundle",
           "playbill_source_context"
         ],
-        "input_schema_digest": "sha256:37a36feb2c3f395d1b67c2f139f1107bc06c8ea1346d6d26a3383d7fdec0c31e",
+        "input_schema_digest": "sha256:40785b8900fb5aeaad801d9895b824778446bc32ef14be402be05490359e329f",
         "name": "cruxible_playbill_workspace_source_check",
         "output_schema_digest": "sha256:8141b55931019f75b01cdb6b3ce0a155764b2cd0c9d657b2ad9c04d8abcc983a",
         "permission": "READ_ONLY"
@@ -3362,7 +3362,7 @@
         "facade_operations": [
           "playbill_source_context"
         ],
-        "input_schema_digest": "sha256:33bd480c334208c94c66e1f5d658311b99f91ab909adc887a2009f2f47475ee0",
+        "input_schema_digest": "sha256:2c2dc85f9bd4d037a7c8f6e9b2b63eab8ba932b56da35204001931f9f1aef53f",
         "name": "cruxible_playbill_workspace_source_compile",
         "output_schema_digest": "sha256:d42c699fdaf57f2ea68dd6b9823f1646db6b69dd3e902dea08e039bceef1e3c6",
         "permission": "READ_ONLY"
@@ -3370,11 +3370,13 @@
       {
         "delegate": "cruxible_core.mcp.handlers.handle_server_info",
         "facade_operations": [
-          "server_info"
+          "playbill_whoami",
+          "server_info",
+          "show_playbill_host"
         ],
         "input_schema_digest": "sha256:99d0490133578d67317d5885bb4e59121f2c6efce091358dfcb03d3542792925",
         "name": "cruxible_server_info",
-        "output_schema_digest": "sha256:c2e6f1302a61bb23a652cc9875098408c1e256ab16985ae7e693bf763a221078",
+        "output_schema_digest": "sha256:4f915ffea5ce12e923ccb90bb2dba30b95fcaf98085073c5eb72522928631d98",
         "permission": "READ_ONLY"
       },
       {

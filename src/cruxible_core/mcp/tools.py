@@ -43,7 +43,14 @@ from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_MIN_MAX_ROWS,
 )
 from cruxible_core.mcp import handlers
+from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
+from cruxible_core.mcp.target import MCP_INSTANCE_ENV, require_instance_id
 from cruxible_core.mcp.tool_prompts import tool_description
+
+InstanceId = Annotated[
+    str | None,
+    Field(description=f"Instance to act on; defaults to the server's {MCP_INSTANCE_ENV}."),
+]
 
 
 def register_tools(
@@ -72,51 +79,57 @@ def register_tools(
         return {"version": __version__}
 
     @_tool
-    def cruxible_server_info() -> contracts.ServerInfoResult:
-        """Return daemon metadata without loading semantic state."""
+    def cruxible_server_info() -> McpServerInfoResult:
+        """Return daemon metadata, or the credential's instance when it is instance-scoped."""
         return handlers.handle_server_info()
 
     @_tool
-    def cruxible_playbill_provider_catalog(instance_id: str) -> PlaybillProviderCatalogV1:
+    def cruxible_playbill_provider_catalog(
+        instance_id: InstanceId = None,
+    ) -> PlaybillProviderCatalogV1:
         """Discover provider packages available from the configured repository."""
-        return handlers.handle_playbill_provider_catalog(instance_id)
+        return handlers.handle_playbill_provider_catalog(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_provider_install(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         request: PlaybillProviderInstallRequestV1,
     ) -> PlaybillProviderInstallResultV1:
         """Install a provider package and propose its definitions; requires ADMIN."""
-        return handlers.handle_playbill_provider_install(instance_id, request)
+        return handlers.handle_playbill_provider_install(require_instance_id(instance_id), request)
 
     @_tool
     def cruxible_playbill_kit_build(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         request: PlaybillKitBuildRequestV1,
     ) -> PlaybillKitBuildResultV1:
         """Export this instance's definitions under the owned prefixes as one kit release."""
-        return handlers.handle_playbill_kit_build(instance_id, request)
+        return handlers.handle_playbill_kit_build(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_playbill_kit_status(instance_id: str) -> PlaybillKitStatusV1:
+    def cruxible_playbill_kit_status(instance_id: InstanceId = None) -> PlaybillKitStatusV1:
         """List installed kits and the kit paths edited since install."""
-        return handlers.handle_playbill_kit_status(instance_id)
+        return handlers.handle_playbill_kit_status(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_kit_add(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         request: PlaybillKitAddRequestV1,
     ) -> PlaybillKitChangeResultV1:
         """Propose installing or upgrading a kit as one change set; activation is separate."""
-        return handlers.handle_playbill_kit_add(instance_id, request)
+        return handlers.handle_playbill_kit_add(require_instance_id(instance_id), request)
 
     @_tool
     def cruxible_playbill_kit_remove(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         request: PlaybillKitRemoveRequestV1,
     ) -> PlaybillKitChangeResultV1:
         """Propose retiring every artifact a kit installed; activation is separate."""
-        return handlers.handle_playbill_kit_remove(instance_id, request)
+        return handlers.handle_playbill_kit_remove(require_instance_id(instance_id), request)
 
     @_tool
     def cruxible_playbill_host_create(
@@ -127,14 +140,15 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_host_workspace_detach(
-        instance_id: str,
+        instance_id: InstanceId = None,
     ) -> contracts.PlaybillWorkspaceDetachResultV1:
         """Release one daemon host from the Git worktree it registers."""
-        return handlers.handle_playbill_host_workspace_detach(instance_id)
+        return handlers.handle_playbill_host_workspace_detach(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_init(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         principals: list[dict[str, Any]],
         operating_profile: Literal["local", "cloud"] = "local",
         require_independent_approval: bool = False,
@@ -145,7 +159,7 @@ def register_tools(
         Provider installation is a separate administrative operation.
         """
         return handlers.handle_playbill_init(
-            instance_id,
+            require_instance_id(instance_id),
             principals,
             operating_profile,
             require_independent_approval,
@@ -154,63 +168,74 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_instance_decommission(
-        instance_id: str, reason: str
+        instance_id: InstanceId = None, *, reason: str
     ) -> contracts.PlaybillInstanceDecommissionResultV1:
         """End one instance's governed writes; reads keep serving and nothing is deleted."""
-        return handlers.handle_playbill_instance_decommission(instance_id, reason)
+        return handlers.handle_playbill_instance_decommission(
+            require_instance_id(instance_id), reason
+        )
 
     @_tool
     def cruxible_playbill_store_body(
-        instance_id: str, content_base64: str
+        instance_id: InstanceId = None, *, content_base64: str
     ) -> contracts.PlaybillCasObjectResult:
         """Store inert exact body bytes."""
-        return handlers.handle_playbill_store_body(instance_id, content_base64)
+        return handlers.handle_playbill_store_body(require_instance_id(instance_id), content_base64)
 
     @_tool
     def cruxible_playbill_propose_document(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         shell: dict[str, Any],
         proposal_name: str,
         source_compilation_digest: str | None = None,
     ) -> contracts.PlaybillProposalInspection:
         """Propose a governed Document create or supersession."""
         return handlers.handle_playbill_propose_document(
-            instance_id, shell, proposal_name, source_compilation_digest
+            require_instance_id(instance_id), shell, proposal_name, source_compilation_digest
         )
 
     @_tool
     def cruxible_playbill_inspect_proposal(
-        instance_id: str, proposal_id: str
+        instance_id: InstanceId = None, *, proposal_id: str
     ) -> contracts.PlaybillProposalInspection:
         """Inspect immutable proposal evidence."""
-        return handlers.handle_playbill_inspect_proposal(instance_id, proposal_id)
+        return handlers.handle_playbill_inspect_proposal(
+            require_instance_id(instance_id), proposal_id
+        )
 
     @_tool
     def cruxible_playbill_inspect_refusal(
-        instance_id: str, proposal_id: str
+        instance_id: InstanceId = None, *, proposal_id: str
     ) -> contracts.PlaybillRefusalInspection:
         """Inspect typed admission and law diagnostics."""
-        return handlers.handle_playbill_inspect_refusal(instance_id, proposal_id)
+        return handlers.handle_playbill_inspect_refusal(
+            require_instance_id(instance_id), proposal_id
+        )
 
     @_tool
     def cruxible_playbill_review(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         proposal_id: str,
         include_body: bool = False,
     ) -> contracts.PlaybillProposalReview:
         """Render a structured candidate review."""
-        return handlers.handle_playbill_review(instance_id, proposal_id, include_body=include_body)
+        return handlers.handle_playbill_review(
+            require_instance_id(instance_id), proposal_id, include_body=include_body
+        )
 
     @_tool
     def cruxible_playbill_prepare_approval(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         proposal_id: str,
         signer_id: str,
         include_body: bool = False,
     ) -> contracts.PlaybillApprovalChallenge:
         """Fetch the exact statement for a client-held signer."""
         return handlers.handle_playbill_prepare_approval(
-            instance_id,
+            require_instance_id(instance_id),
             proposal_id,
             signer_id=signer_id,
             include_body=include_body,
@@ -218,88 +243,99 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_submit_approval(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         proposal_id: str,
         attestation: dict[str, Any],
     ) -> contracts.PlaybillApprovalReceipt:
         """Submit a public approval attestation."""
-        return handlers.handle_playbill_submit_approval(instance_id, proposal_id, attestation)
+        return handlers.handle_playbill_submit_approval(
+            require_instance_id(instance_id), proposal_id, attestation
+        )
 
     @_tool
     def cruxible_playbill_activate(
-        instance_id: str, proposal_id: str
+        instance_id: InstanceId = None, *, proposal_id: str
     ) -> contracts.PlaybillWorkspaceActivationResult:
         """Settle by compare-and-set and refresh the configured client-owned floor."""
-        return handlers.handle_playbill_activate(instance_id, proposal_id)
+        return handlers.handle_playbill_activate(require_instance_id(instance_id), proposal_id)
 
     @_tool
-    def cruxible_playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
-        """Explain the credential-derived actor and its accepted registration."""
-        return handlers.handle_playbill_whoami(instance_id)
+    def cruxible_playbill_whoami(instance_id: InstanceId = None) -> McpWhoAmIResult:
+        """Name the resolved instance, the credential-derived actor, and its registration."""
+        return handlers.handle_playbill_whoami(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_proposal_list(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         status: Literal["open", "settled", "incomplete"] | None = None,
     ) -> contracts.PlaybillProposalList:
         """List open or settled proposal evidence at the current coordinate."""
-        return handlers.handle_playbill_list_proposals(instance_id, status)
+        return handlers.handle_playbill_list_proposals(require_instance_id(instance_id), status)
 
     @_tool
     def cruxible_playbill_proposal_readmit(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         proposal_id: str,
     ) -> contracts.PlaybillProposalReadmitResult:
         """Re-admit one stale proposal against the current accepted coordinate."""
-        return handlers.handle_playbill_readmit_proposal(instance_id, proposal_id)
+        return handlers.handle_playbill_readmit_proposal(
+            require_instance_id(instance_id), proposal_id
+        )
 
     @_tool
     def cruxible_playbill_proposal_withdraw(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         proposal_id: str,
         reason: str,
     ) -> contracts.PlaybillProposalWithdrawResult:
         """Retire one open proposal that will never be activated."""
-        return handlers.handle_playbill_withdraw_proposal(instance_id, proposal_id, reason)
+        return handlers.handle_playbill_withdraw_proposal(
+            require_instance_id(instance_id), proposal_id, reason
+        )
 
     @_tool
     def cruxible_playbill_list_documents(
-        instance_id: str,
+        instance_id: InstanceId = None,
     ) -> contracts.PlaybillDocumentList:
         """List accepted Documents at the current coordinate."""
-        return handlers.handle_playbill_list_documents(instance_id)
+        return handlers.handle_playbill_list_documents(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_get_document(
-        instance_id: str, identity: str
+        instance_id: InstanceId = None, *, identity: str
     ) -> contracts.PlaybillDocumentView:
         """Read one accepted Document envelope and facts."""
-        return handlers.handle_playbill_get_document(instance_id, identity)
+        return handlers.handle_playbill_get_document(require_instance_id(instance_id), identity)
 
     @_tool
     def cruxible_playbill_read_capture(
-        instance_id: str, request: CaptureReadRequestV1
+        instance_id: InstanceId = None, *, request: CaptureReadRequestV1
     ) -> CaptureReadV1:
         """Read exact retained Capture evidence with a byte budget and body permission."""
-        return handlers.handle_playbill_read_capture(instance_id, request)
+        return handlers.handle_playbill_read_capture(require_instance_id(instance_id), request)
 
     @_tool
     def cruxible_playbill_dereference(
-        instance_id: str, identity: str
+        instance_id: InstanceId = None, *, identity: str
     ) -> contracts.PlaybillBodyRead:
         """Dereference verified accepted body bytes."""
-        return handlers.handle_playbill_dereference(instance_id, identity)
+        return handlers.handle_playbill_dereference(require_instance_id(instance_id), identity)
 
     @_tool
     def cruxible_playbill_history(
-        instance_id: str, identity: str
+        instance_id: InstanceId = None, *, identity: str
     ) -> contracts.PlaybillDocumentHistory:
         """Read one Document's replay-verified history."""
-        return handlers.handle_playbill_history(instance_id, identity)
+        return handlers.handle_playbill_history(require_instance_id(instance_id), identity)
 
     @_tool
     def cruxible_playbill_explain(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         subject: dict[str, Any],
         at: dict[str, Any],
         detail: Literal["summary", "evidence", "proof"] = "summary",
@@ -307,7 +343,7 @@ def register_tools(
     ) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
         """Explain governance and provenance at an exact coordinate."""
         return handlers.handle_playbill_explain(
-            instance_id,
+            require_instance_id(instance_id),
             subject,
             at,
             detail=detail,
@@ -316,28 +352,31 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_source_context(
-        instance_id: str,
+        instance_id: InstanceId = None,
     ) -> contracts.PlaybillSourceContext:
         """Fetch path-free inputs for local source compilation."""
-        return handlers.handle_playbill_source_context(instance_id)
+        return handlers.handle_playbill_source_context(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_check_source_bundle(
-        instance_id: str, bundle: dict[str, Any]
+        instance_id: InstanceId = None, *, bundle: dict[str, Any]
     ) -> contracts.PlaybillSourceCheckResult:
         """Compare a compiled source bundle with accepted state."""
-        return handlers.handle_playbill_check_source_bundle(instance_id, bundle)
+        return handlers.handle_playbill_check_source_bundle(
+            require_instance_id(instance_id), bundle
+        )
 
     @_tool
     def cruxible_playbill_propose_source_bundle(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         bundle: dict[str, Any],
         source_name: str,
         proposal_name: str,
     ) -> contracts.PlaybillProposalInspection:
         """Propose frozen source bytes without a client path."""
         return handlers.handle_playbill_propose_source_bundle(
-            instance_id,
+            require_instance_id(instance_id),
             bundle,
             source_name=source_name,
             proposal_name=proposal_name,
@@ -345,21 +384,22 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_list_principals(
-        instance_id: str,
+        instance_id: InstanceId = None,
     ) -> contracts.PlaybillPrincipalList:
         """List accepted public principal records."""
-        return handlers.handle_playbill_list_principals(instance_id)
+        return handlers.handle_playbill_list_principals(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_compiler_upgrade(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         target_compiler_digest: str,
         base: dict[str, Any],
         proposal_name: str,
     ) -> contracts.PlaybillProposalInspection:
         """Propose an admin-only compiler upgrade; review, approve and activate separately."""
         return handlers.handle_playbill_compiler_upgrade(
-            instance_id,
+            require_instance_id(instance_id),
             target_compiler_digest,
             base,
             proposal_name,
@@ -367,90 +407,106 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_propose_principal_change(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         principal: dict[str, Any],
         proposal_name: str,
     ) -> contracts.PlaybillProposalInspection:
         """Propose principal registration, rotation, revocation, or recovery."""
         return handlers.handle_playbill_propose_principal_change(
-            instance_id, principal, proposal_name
+            require_instance_id(instance_id), principal, proposal_name
         )
 
     @_tool
     def cruxible_playbill_propose_subject(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         shell: dict[str, Any],
         proposal_name: str,
     ) -> contracts.PlaybillProposalInspection:
         """Propose one identity-only governed Subject."""
-        return handlers.handle_playbill_propose_subject(instance_id, shell, proposal_name)
+        return handlers.handle_playbill_propose_subject(
+            require_instance_id(instance_id), shell, proposal_name
+        )
 
     @_tool
     def cruxible_playbill_list_subjects(
-        instance_id: str,
+        instance_id: InstanceId = None,
     ) -> contracts.PlaybillSubjectList:
         """List accepted Subjects at the current coordinate."""
-        return handlers.handle_playbill_list_subjects(instance_id)
+        return handlers.handle_playbill_list_subjects(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_get_subject(
-        instance_id: str, subject_kind: str, subject_id: str
+        instance_id: InstanceId = None, *, subject_kind: str, subject_id: str
     ) -> contracts.PlaybillSubjectView:
         """Read one accepted Subject envelope, facts, and incoming relations."""
-        return handlers.handle_playbill_get_subject(instance_id, subject_kind, subject_id)
+        return handlers.handle_playbill_get_subject(
+            require_instance_id(instance_id), subject_kind, subject_id
+        )
 
     @_tool
     def cruxible_playbill_subject_history(
-        instance_id: str, subject_kind: str, subject_id: str
+        instance_id: InstanceId = None, *, subject_kind: str, subject_id: str
     ) -> contracts.PlaybillSubjectHistory:
         """Read one Subject's accepted lineage."""
-        return handlers.handle_playbill_subject_history(instance_id, subject_kind, subject_id)
+        return handlers.handle_playbill_subject_history(
+            require_instance_id(instance_id), subject_kind, subject_id
+        )
 
     @_tool
     def cruxible_playbill_propose_claim_type(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         input: ClaimTypeInputV1,
         proposal_name: str,
     ) -> contracts.PlaybillClaimTypeInputProposalResult:
         """Propose one governed ClaimType interface."""
         return handlers.handle_playbill_propose_claim_type(
-            instance_id, input.model_dump(mode="json"), proposal_name
+            require_instance_id(instance_id), input.model_dump(mode="json"), proposal_name
         )
 
     @_tool
     def cruxible_playbill_claim_type_migrate(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         request: dict[str, Any],
     ) -> contracts.PlaybillClaimTypeMigrationResponse:
         """Propose one ClaimType successor and its dependent dispositions atomically."""
-        return handlers.handle_playbill_migrate_claim_type(instance_id, request)
+        return handlers.handle_playbill_migrate_claim_type(
+            require_instance_id(instance_id), request
+        )
 
     @_tool
     def cruxible_playbill_list_claim_types(
-        instance_id: str,
+        instance_id: InstanceId = None,
     ) -> contracts.PlaybillClaimTypeList:
         """List accepted ClaimType interfaces."""
-        return handlers.handle_playbill_list_claim_types(instance_id)
+        return handlers.handle_playbill_list_claim_types(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_get_claim_type(
-        instance_id: str, predicate: str
+        instance_id: InstanceId = None, *, predicate: str
     ) -> contracts.PlaybillClaimTypeView:
         """Read one accepted ClaimType by predicate."""
-        return handlers.handle_playbill_get_claim_type(instance_id, predicate)
+        return handlers.handle_playbill_get_claim_type(require_instance_id(instance_id), predicate)
 
     @_tool
     def cruxible_playbill_claim_retire(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         claim_id: str,
         request: dict[str, Any],
     ) -> contracts.PlaybillClaimRetireResponse:
         """Preflight or submit one attributed Claim retirement closure."""
-        return handlers.handle_playbill_retire_claim(instance_id, claim_id, request)
+        return handlers.handle_playbill_retire_claim(
+            require_instance_id(instance_id), claim_id, request
+        )
 
     @_tool
     def cruxible_playbill_claim_attest(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         claim_id: str,
         stance: Literal["support", "contradict", "unsure"],
         note: str | None = None,
@@ -464,26 +520,30 @@ def register_tools(
         """
 
         return handlers.handle_playbill_claim_attest(
-            instance_id, claim_id, stance, note, valid_until
+            require_instance_id(instance_id), claim_id, stance, note, valid_until
         )
 
     @_tool
     def cruxible_playbill_claim_attest_new_capture(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         request: PreparedClaimAttestationRequestV1,
     ) -> ClaimAttestationAppendResultV1:
         """Sign and append a structured new-Capture Claim observation."""
 
-        return handlers.handle_playbill_claim_attest_new_capture(instance_id, request)
+        return handlers.handle_playbill_claim_attest_new_capture(
+            require_instance_id(instance_id), request
+        )
 
     @_tool
     def cruxible_playbill_authoring_create(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         payload: AuthoringInputV1,
     ) -> contracts.PlaybillAuthoringIntentView:
         """Create or recover a daemon-owned authoring intent."""
         return handlers.handle_playbill_authoring_create(
-            instance_id, payload.model_dump(mode="json")
+            require_instance_id(instance_id), payload.model_dump(mode="json")
         )
 
     @_tool
@@ -501,43 +561,49 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_authoring_get(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         intent_id: str,
     ) -> contracts.PlaybillAuthoringIntentView:
         """Read one actor-scoped authoring intent."""
-        return handlers.handle_playbill_authoring_get(instance_id, intent_id)
+        return handlers.handle_playbill_authoring_get(require_instance_id(instance_id), intent_id)
 
     @_tool
     def cruxible_playbill_authoring_resume(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         intent_id: str,
     ) -> contracts.PlaybillAuthoringIntentView:
         """Resume one durable authoring continuation."""
-        return handlers.handle_playbill_authoring_resume(instance_id, intent_id)
+        return handlers.handle_playbill_authoring_resume(
+            require_instance_id(instance_id), intent_id
+        )
 
     @_tool
     def cruxible_playbill_authoring_list_pending(
-        instance_id: str,
+        instance_id: InstanceId = None,
     ) -> contracts.PlaybillAuthoringIntentList:
         """List the authenticated writer's pending intents."""
-        return handlers.handle_playbill_authoring_list_pending(instance_id)
+        return handlers.handle_playbill_authoring_list_pending(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_authoring_compile(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         payload: AuthoringInputV1,
         intent_id: str | None = None,
     ) -> contracts.PlaybillAuthoringPreflightResult:
         """Create or update an intent and return its complete preflight."""
         return handlers.handle_playbill_authoring_compile(
-            instance_id,
+            require_instance_id(instance_id),
             payload.model_dump(mode="json"),
             intent_id=intent_id,
         )
 
     @_tool
     def cruxible_playbill_authoring_bind(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         source_path: str,
         anchor: str,
         payload: ClaimInput,
@@ -545,7 +611,7 @@ def register_tools(
     ) -> contracts.PlaybillAuthoringPreflightResult:
         """Bind one exact workspace anchor and compile the derived Flow-A observation."""
         return handlers.handle_playbill_authoring_bind(
-            instance_id,
+            require_instance_id(instance_id),
             source_path=source_path,
             anchor=anchor,
             payload=payload,
@@ -554,68 +620,83 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_authoring_preflight(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         intent_id: str,
     ) -> contracts.PlaybillAuthoringPreflightResult:
         """Recompute one intent's complete binding preflight."""
-        return handlers.handle_playbill_authoring_preflight(instance_id, intent_id)
+        return handlers.handle_playbill_authoring_preflight(
+            require_instance_id(instance_id), intent_id
+        )
 
     @_tool
     def cruxible_playbill_authoring_submit(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         intent_id: str,
     ) -> contracts.PlaybillAuthoringSubmitResult:
         """Idempotently submit one passing authoring intent."""
-        return handlers.handle_playbill_authoring_submit(instance_id, intent_id)
+        return handlers.handle_playbill_authoring_submit(
+            require_instance_id(instance_id), intent_id
+        )
 
     @_tool
     def cruxible_playbill_authoring_status(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         intent_id: str,
     ) -> contracts.PlaybillCandidateStatus:
         """Read exactly what separates an intent from acceptance."""
-        return handlers.handle_playbill_authoring_status(instance_id, intent_id)
+        return handlers.handle_playbill_authoring_status(
+            require_instance_id(instance_id), intent_id
+        )
 
     @_tool
     def cruxible_playbill_authoring_abandon_insertion(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         intent_id: str,
         expectation_id: str | None = None,
     ) -> contracts.PlaybillInsertionAbandonResult:
         """Abandon a pending insertion while keeping the accepted self-source Claim."""
         return handlers.handle_playbill_authoring_abandon_insertion(
-            instance_id,
+            require_instance_id(instance_id),
             intent_id,
             expectation_id,
         )
 
     @_tool
     def cruxible_playbill_block_declare(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         stamp: dict[str, Any],
     ) -> contracts.PlaybillBlockDeclareResultV1:
         """Register one projection block a workspace just stamped into its page."""
-        return handlers.handle_playbill_block_declare(instance_id, stamp)
+        return handlers.handle_playbill_block_declare(require_instance_id(instance_id), stamp)
 
     @_tool
     def cruxible_playbill_block_depublish(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         source_id: str,
         block_id: str,
     ) -> contracts.PlaybillBlockDepublishResultV1:
         """Release the publication registration that demands one page block."""
-        return handlers.handle_playbill_block_depublish(instance_id, source_id, block_id)
+        return handlers.handle_playbill_block_depublish(
+            require_instance_id(instance_id), source_id, block_id
+        )
 
     @_tool
     def cruxible_playbill_list_claims(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         subject_path: str | None = None,
         predicate: str | None = None,
         include_retired: bool = False,
     ) -> contracts.PlaybillClaimList:
         """List accepted Claims, optionally by Subject or predicate."""
         return handlers.handle_playbill_list_claims(
-            instance_id,
+            require_instance_id(instance_id),
             subject_path=subject_path,
             predicate=predicate,
             include_retired=include_retired,
@@ -623,68 +704,74 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_get_claim(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         identity: str,
         evaluation_time: str | None = None,
     ) -> contracts.PlaybillClaimViewV2:
         """Read one accepted Claim with its capture-admission accounts."""
         return handlers.handle_playbill_get_claim(
-            instance_id,
+            require_instance_id(instance_id),
             identity,
             evaluation_time=evaluation_time,
         )
 
     @_tool
     def cruxible_playbill_claim_history(
-        instance_id: str, identity: str
+        instance_id: InstanceId = None, *, identity: str
     ) -> contracts.PlaybillClaimHistory:
         """Read one Claim's accepted lineage."""
-        return handlers.handle_playbill_claim_history(instance_id, identity)
+        return handlers.handle_playbill_claim_history(require_instance_id(instance_id), identity)
 
     @_tool
     def cruxible_playbill_explain_claim(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         identity: str,
         evaluation_time: str | None = None,
     ) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
         """Explain one Claim's verdict, law evidence, and sources."""
         return handlers.handle_playbill_explain_claim(
-            instance_id, identity, evaluation_time=evaluation_time
+            require_instance_id(instance_id), identity, evaluation_time=evaluation_time
         )
 
     @_tool
     def cruxible_playbill_propose_query_definition(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         query: dict[str, Any],
         proposal_name: str,
     ) -> contracts.PlaybillProposalInspection:
         """Propose one governed QueryDefinition entrypoint."""
-        return handlers.handle_playbill_propose_query_definition(instance_id, query, proposal_name)
+        return handlers.handle_playbill_propose_query_definition(
+            require_instance_id(instance_id), query, proposal_name
+        )
 
     @_tool
     def cruxible_playbill_list_query_definitions(
-        instance_id: str,
+        instance_id: InstanceId = None,
     ) -> contracts.PlaybillQueryDefinitionList:
         """List accepted QueryDefinition entrypoints."""
-        return handlers.handle_playbill_list_query_definitions(instance_id)
+        return handlers.handle_playbill_list_query_definitions(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_policies_in_force(
-        instance_id: str,
+        instance_id: InstanceId = None,
     ) -> contracts.PlaybillPolicyInForceList:
         """List live governed policies embedded in and standing beside accepted artifacts."""
-        return handlers.handle_playbill_policies_in_force(instance_id)
+        return handlers.handle_playbill_policies_in_force(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_get_query_definition(
-        instance_id: str, name: str
+        instance_id: InstanceId = None, *, name: str
     ) -> contracts.PlaybillQueryDefinitionView:
         """Read one accepted QueryDefinition and its contract."""
-        return handlers.handle_playbill_get_query_definition(instance_id, name)
+        return handlers.handle_playbill_get_query_definition(require_instance_id(instance_id), name)
 
     @_tool
     def cruxible_playbill_run_query(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         name: str,
         parameters: dict[str, Any] | None = None,
         evaluation_time: str | None = None,
@@ -692,7 +779,7 @@ def register_tools(
     ) -> contracts.PlaybillQueryRun:
         """Execute an accepted QueryDefinition and return its execution receipt."""
         return handlers.handle_playbill_run_query(
-            instance_id,
+            require_instance_id(instance_id),
             name,
             parameters=parameters,
             evaluation_time=evaluation_time,
@@ -701,33 +788,36 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_procedure_readiness(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         name: str,
         evaluation_time: str,
     ) -> contracts.PlaybillProcedureReadiness:
         """Inspect one accepted Procedure's bindings and executable profile."""
         return handlers.handle_playbill_procedure_readiness(
-            instance_id,
+            require_instance_id(instance_id),
             name,
             evaluation_time=evaluation_time,
         )
 
     @_tool
     def cruxible_playbill_procedure_bind(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         name: str,
         bindings: list[dict[str, Any]],
     ) -> contracts.PlaybillProcedureBindResult:
         """Propose exact accepted bindings for one Procedure's open slots."""
         return handlers.handle_playbill_procedure_bind(
-            instance_id,
+            require_instance_id(instance_id),
             name,
             bindings=bindings,
         )
 
     @_tool
     def cruxible_playbill_procedure_run(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         name: str,
         input: Any,
         evaluation_time: str | None = None,
@@ -737,7 +827,7 @@ def register_tools(
     ) -> contracts.PlaybillProcedureRunState:
         """Run one accepted query-only Procedure deterministically."""
         return handlers.handle_playbill_procedure_run(
-            instance_id,
+            require_instance_id(instance_id),
             name,
             evaluation_time=evaluation_time,
             resolution_contract=resolution_contract,
@@ -748,69 +838,89 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_procedure_run_status(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         run_id: str,
     ) -> contracts.PlaybillProcedureRunState:
         """Read one durable Procedure run state and its exact next operation."""
-        return handlers.handle_playbill_procedure_run_status(instance_id, run_id)
+        return handlers.handle_playbill_procedure_run_status(
+            require_instance_id(instance_id), run_id
+        )
 
     @_tool
     def cruxible_playbill_procedure_measure(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         name: str,
         request: contracts.PlaybillProcedureMeasureRequestV1,
     ) -> contracts.PlaybillProcedureMeasureResultV1:
         """Evaluate due Procedure measurements from real evidence and credit one run."""
-        return handlers.handle_playbill_procedure_measure(instance_id, name, request)
+        return handlers.handle_playbill_procedure_measure(
+            require_instance_id(instance_id), name, request
+        )
 
     @_tool
     def cruxible_playbill_procedure_readings(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         name: str,
         request: contracts.PlaybillProcedureReadingsRequestV1,
     ) -> contracts.PlaybillProcedureReadingsResultV1:
         """Inspect measurement standing and retained exact-grain readings."""
-        return handlers.handle_playbill_procedure_readings(instance_id, name, request)
+        return handlers.handle_playbill_procedure_readings(
+            require_instance_id(instance_id), name, request
+        )
 
     @_tool
     def cruxible_playbill_line_check(
-        instance_id: str, line: str, request: contracts.LineTriggerCheckRequestV1
+        instance_id: InstanceId = None, *, line: str, request: contracts.LineTriggerCheckRequestV1
     ) -> contracts.LineTriggerCheckResultV1:
         """Check a Line's trigger and admitted occurrences; never enqueue or execute."""
-        return handlers.handle_playbill_line_check(instance_id, line, request)
+        return handlers.handle_playbill_line_check(require_instance_id(instance_id), line, request)
 
     @_tool
-    def cruxible_playbill_line_arm(instance_id: str, line: str) -> contracts.LineArmV1:
+    def cruxible_playbill_line_arm(
+        instance_id: InstanceId = None, *, line: str
+    ) -> contracts.LineArmV1:
         """Arm a Line forward-only; the daemon admits what it matches under your credential."""
-        return handlers.handle_playbill_line_arm(instance_id, line)
+        return handlers.handle_playbill_line_arm(require_instance_id(instance_id), line)
 
     @_tool
-    def cruxible_playbill_line_disarm(instance_id: str, line: str) -> contracts.LineArmV1:
+    def cruxible_playbill_line_disarm(
+        instance_id: InstanceId = None, *, line: str
+    ) -> contracts.LineArmV1:
         """Stop a Line admitting work on its own; admitted runs are not cancelled."""
-        return handlers.handle_playbill_line_disarm(instance_id, line)
+        return handlers.handle_playbill_line_disarm(require_instance_id(instance_id), line)
 
     @_tool
-    def cruxible_playbill_line_arm_status(instance_id: str, line: str) -> contracts.LineArmV1:
+    def cruxible_playbill_line_arm_status(
+        instance_id: InstanceId = None, *, line: str
+    ) -> contracts.LineArmV1:
         """Read a Line's current arm, or its last one and why it stopped."""
-        return handlers.handle_playbill_line_arm_status(instance_id, line)
+        return handlers.handle_playbill_line_arm_status(require_instance_id(instance_id), line)
 
     @_tool
     def cruxible_playbill_line_evaluate(
-        instance_id: str, line: str, request: contracts.LineEvaluateRequestV1
+        instance_id: InstanceId = None, *, line: str, request: contracts.LineEvaluateRequestV1
     ) -> contracts.LineTriggerCheckResultV1:
         """Explicitly evaluate a historical range into pending work; never execute."""
-        return handlers.handle_playbill_line_evaluate(instance_id, line, request)
+        return handlers.handle_playbill_line_evaluate(
+            require_instance_id(instance_id), line, request
+        )
 
     @_tool
     def cruxible_playbill_line_dispatch(
-        instance_id: str, line: str, request: contracts.LineDispatchRequestV1
+        instance_id: InstanceId = None, *, line: str, request: contracts.LineDispatchRequestV1
     ) -> contracts.LineDispatchResultV1:
         """Execute retained pending occurrences using the current authenticated actor."""
-        return handlers.handle_playbill_line_dispatch(instance_id, line, request)
+        return handlers.handle_playbill_line_dispatch(
+            require_instance_id(instance_id), line, request
+        )
 
     @_tool
     def cruxible_playbill_line_run(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         line: str,
         evaluation_time: str | None = None,
         occurrence_id: str | None = None,
@@ -819,7 +929,7 @@ def register_tools(
     ) -> contracts.PlaybillProcedureRunState:
         """Trigger one due occurrence of an accepted Line."""
         return handlers.handle_playbill_line_run(
-            instance_id,
+            require_instance_id(instance_id),
             line,
             occurrence_id=occurrence_id,
             evaluation_time=evaluation_time,
@@ -829,31 +939,38 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_resolution_contracts(
-        instance_id: str, request: contracts.ResolutionContractsRequestV1
+        instance_id: InstanceId = None, *, request: contracts.ResolutionContractsRequestV1
     ) -> contracts.ResolutionContractsResultV1:
         """Find accepted resolution contracts for an exact hypothesis version."""
-        return handlers.handle_playbill_resolution_contracts(instance_id, request)
+        return handlers.handle_playbill_resolution_contracts(
+            require_instance_id(instance_id), request
+        )
 
     @_tool
     def cruxible_playbill_predict(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         request: contracts.PlaybillPredictRequestV2,
     ) -> contracts.PlaybillPredictResultV2:
         """Propose a predicted Claim with an exact settlement rule and deadline."""
-        return handlers.handle_playbill_predict(instance_id, request)
+        return handlers.handle_playbill_predict(require_instance_id(instance_id), request)
 
     @_tool
     def cruxible_playbill_settle(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         prediction_id: str,
         request: contracts.PlaybillSettleRequestV2,
     ) -> contracts.PlaybillSettleResultV2:
         """Settle one prediction from an accepted observation or mandated terminal."""
-        return handlers.handle_playbill_settle_prediction(instance_id, prediction_id, request)
+        return handlers.handle_playbill_settle_prediction(
+            require_instance_id(instance_id), prediction_id, request
+        )
 
     @_tool
     def cruxible_playbill_discover(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         query: str | None = None,
         entrypoint: str | None = None,
         evaluation_time: str | None = None,
@@ -862,7 +979,7 @@ def register_tools(
     ) -> contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory:
         """Find accepted interfaces and Subjects by exact or lexical match."""
         return handlers.handle_playbill_discover(
-            instance_id,
+            require_instance_id(instance_id),
             query=query,
             entrypoint=entrypoint,
             evaluation_time=evaluation_time,
@@ -872,7 +989,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_search(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         mode: Literal["search", "list", "orient"],
         query: str | None = None,
         kinds: list[Literal["claim", "procedure", "demand"]] | None = None,
@@ -885,7 +1003,7 @@ def register_tools(
     ) -> contracts.PlaybillSearchResult:
         """Search, list, or orient over accepted Claims and Procedures."""
         return handlers.handle_playbill_search(
-            instance_id,
+            require_instance_id(instance_id),
             mode=mode,
             query=query,
             kinds=kinds,
@@ -898,7 +1016,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_since(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         generation: int,
         at: dict[str, Any] | None = None,
         access_profile: dict[str, Any] | None = None,
@@ -908,7 +1027,7 @@ def register_tools(
     ) -> contracts.PlaybillSinceResult:
         """Read accepted ChangeSet members after one generation."""
         return handlers.handle_playbill_since(
-            instance_id,
+            require_instance_id(instance_id),
             generation=generation,
             at=at,
             access_profile=access_profile,
@@ -919,14 +1038,15 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_curation_list(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         evaluation_time: str,
         access_profile: dict[str, Any] | None = None,
         workspace_observation: dict[str, Any] | None = None,
     ) -> contracts.PlaybillCurationListResult:
         """List mechanical curation patterns and explicitly ingest block observations."""
         return handlers.handle_playbill_curation_list(
-            instance_id,
+            require_instance_id(instance_id),
             evaluation_time=evaluation_time,
             access_profile=access_profile,
             workspace_observation=workspace_observation,
@@ -934,7 +1054,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_audit(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         evaluation_time: str,
         access_profile: dict[str, Any] | None = None,
         claim_type_identities: list[str] | None = None,
@@ -951,7 +1072,7 @@ def register_tools(
     ) -> contracts.PlaybillAuditResult:
         """Read ranked Claim verification work and record completed coverage."""
         return handlers.handle_playbill_audit(
-            instance_id,
+            require_instance_id(instance_id),
             evaluation_time=evaluation_time,
             access_profile=access_profile,
             claim_type_identities=claim_type_identities or [],
@@ -963,7 +1084,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_curation_overrule(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
@@ -971,7 +1093,7 @@ def register_tools(
     ) -> contracts.PlaybillCurationActionResult:
         """Resolve one detector-version item as mechanically inapplicable."""
         return handlers.handle_playbill_curation_overrule(
-            instance_id,
+            require_instance_id(instance_id),
             item_id=item_id,
             expected_latest_event_digest=expected_latest_event_digest,
             reason=reason,
@@ -980,7 +1102,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_curation_accept_fixed(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
@@ -990,7 +1113,7 @@ def register_tools(
     ) -> contracts.PlaybillCurationActionResult:
         """Link one curation item to its exact accepted resolving ChangeSet."""
         return handlers.handle_playbill_curation_accept_fixed(
-            instance_id,
+            require_instance_id(instance_id),
             item_id=item_id,
             expected_latest_event_digest=expected_latest_event_digest,
             reason=reason,
@@ -1001,7 +1124,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_curation_suppress(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         item_id: str,
         expected_latest_event_digest: str,
         reason: str,
@@ -1011,7 +1135,7 @@ def register_tools(
     ) -> contracts.PlaybillCurationActionResult:
         """Hide curation work temporarily without resolving its detector facts."""
         return handlers.handle_playbill_curation_suppress(
-            instance_id,
+            require_instance_id(instance_id),
             item_id=item_id,
             expected_latest_event_digest=expected_latest_event_digest,
             reason=reason,
@@ -1022,7 +1146,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_expand(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         address: dict[str, Any],
         facets: list[str] | None = None,
         evaluation_time: str | None = None,
@@ -1030,7 +1155,7 @@ def register_tools(
     ) -> contracts.PlaybillContextCapsule:
         """Expand one accepted address into a bounded context capsule."""
         return handlers.handle_playbill_expand(
-            instance_id,
+            require_instance_id(instance_id),
             address,
             evaluation_time=evaluation_time,
             facets=facets or [],
@@ -1039,14 +1164,15 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_resolve_coverage(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         observations: list[dict[str, Any]],
         budget: dict[str, Any] | None = None,
         scan_budget: dict[str, Any] | None = None,
     ) -> contracts.PlaybillCoverageResult:
         """Resolve what observed working sources have to do with accepted state."""
         return handlers.handle_playbill_resolve_coverage(
-            instance_id,
+            require_instance_id(instance_id),
             observations,
             budget=budget,
             scan_budget=scan_budget,
@@ -1054,7 +1180,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_workspace_source_compile(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         catalog_path: str,
         repository_root: str = ".",
         local_catalog_path: str | None = None,
@@ -1062,7 +1189,7 @@ def register_tools(
     ) -> SourceCompilationBundle:
         """Compile declared workspace sources against accepted daemon context."""
         return handlers.handle_playbill_workspace_source_compile(
-            instance_id,
+            require_instance_id(instance_id),
             catalog_path=catalog_path,
             repository_root=repository_root,
             local_catalog_path=local_catalog_path,
@@ -1071,7 +1198,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_workspace_source_check(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         catalog_path: str,
         repository_root: str = ".",
         local_catalog_path: str | None = None,
@@ -1079,7 +1207,7 @@ def register_tools(
     ) -> contracts.PlaybillSourceCheckResult:
         """Compile workspace sources and report their alignment to accepted state."""
         return handlers.handle_playbill_workspace_source_check(
-            instance_id,
+            require_instance_id(instance_id),
             catalog_path=catalog_path,
             repository_root=repository_root,
             local_catalog_path=local_catalog_path,
@@ -1088,7 +1216,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_workspace_coverage_resolve(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         bindings: dict[str, str],
         files: list[str] | None = None,
         ranges: list[str] | None = None,
@@ -1099,7 +1228,7 @@ def register_tools(
     ) -> contracts.PlaybillCoverageResult:
         """Resolve selected workspace files while the adapter derives observations."""
         return handlers.handle_playbill_workspace_coverage_resolve(
-            instance_id,
+            require_instance_id(instance_id),
             bindings=bindings,
             files=tuple(files or ()),
             ranges=tuple(ranges or ()),
@@ -1111,14 +1240,15 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_workspace_coverage_status(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         bindings: dict[str, str],
         budget: dict[str, Any] | None = None,
         scan_budget: dict[str, Any] | None = None,
     ) -> contracts.PlaybillCoverageResult:
         """Resolve the complete declared workspace scope as one coverage status."""
         return handlers.handle_playbill_workspace_coverage_status(
-            instance_id,
+            require_instance_id(instance_id),
             bindings=bindings,
             budget=budget,
             scan_budget=scan_budget,
@@ -1137,27 +1267,28 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_export_floor(
-        instance_id: str,
+        instance_id: InstanceId = None,
     ) -> contracts.PlaybillFloorExport:
         """Export the deterministic greppable floor as base64 bytes per path."""
-        return handlers.handle_playbill_export_floor(instance_id)
+        return handlers.handle_playbill_export_floor(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_workspace_floor_export(
-        instance_id: str,
+        instance_id: InstanceId = None,
+        *,
         force: bool = False,
     ) -> contracts.PlaybillWorkspaceFloorWriteResult:
         """Verify and write the floor under the configured MCP workspace."""
         return handlers.handle_playbill_workspace_floor_export(
-            instance_id,
+            require_instance_id(instance_id),
             force=force,
         )
 
     @_tool
     def cruxible_playbill_workspace_floor_status(
-        instance_id: str,
+        instance_id: InstanceId = None,
     ) -> contracts.PlaybillWorkspaceFloorStatus:
         """Report whether the configured local floor is current, stale, or missing."""
-        return handlers.handle_playbill_workspace_floor_status(instance_id)
+        return handlers.handle_playbill_workspace_floor_status(require_instance_id(instance_id))
 
     return registered

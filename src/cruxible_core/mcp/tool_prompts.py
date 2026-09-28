@@ -30,8 +30,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_version": "Use when you need to confirm which cruxible build is running.",
     "cruxible_server_info": (
-        "Use when you need live daemon version, state-directory, authentication, "
-        "or instance-count information."
+        "Use when you need daemon version, state, auth, and host metadata; an "
+        "instance-scoped credential gets its own instance's host and identity."
     ),
     "cruxible_playbill_host_create": (
         "Use when you need an empty daemon-owned host before Playbill bootstrap; "
@@ -70,8 +70,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "is ready to settle."
     ),
     "cruxible_playbill_whoami": (
-        "Use when you need the credential-derived writer identity, permission mode, and "
-        "accepted principal status."
+        "Use when you need which instance this server acts on and who you are there: "
+        "actor, permission mode, and principal status."
     ),
     "cruxible_playbill_proposal_list": (
         "Use when you need to find open proposals or inspect terminal proposal outcomes."
