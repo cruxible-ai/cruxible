@@ -31,20 +31,3 @@ def test_query_coordinator_example_is_local_and_directly_creatable(
     assert definition["evaluation_policy"]["visible_verdicts"] == ["supported"]
     assert definition["evaluation_policy"]["visible_currency"] == ["current"]
     assert definition["pins"] == []  # resolved by the coordinator, not a fake digest
-
-
-def test_query_propose_is_a_typed_deprecation_shim() -> None:
-    result = CliRunner().invoke(
-        cli,
-        [
-            "playbill",
-            "query",
-            "propose",
-            "--example",
-            "query-claims-by-type",
-        ],
-    )
-
-    assert result.exit_code != 0
-    assert "playbill.write_surface_deprecated" in result.output
-    assert "authoring coordinator with payload kind 'query_definition'" in result.output

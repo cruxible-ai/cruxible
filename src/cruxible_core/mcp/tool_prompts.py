@@ -121,9 +121,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_propose_principal_change": (
         "Use when you need a governed principal registration, rotation, revocation, or recovery."
     ),
-    "cruxible_playbill_propose_subject": (
-        "Use when you need a governed identity-only Subject to hang Claims on."
-    ),
     "cruxible_playbill_list_subjects": (
         "Use when you need accepted Subjects and their exact coordinate."
     ),
@@ -220,9 +217,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_playbill_explain_claim": (
         "Use when you need why one Claim holds: its verdict, law evidence, and sources."
-    ),
-    "cruxible_playbill_propose_query_definition": (
-        "Use when you need a governed named entrypoint others can execute and replay."
     ),
     "cruxible_playbill_list_query_definitions": (
         "Use when you need the accepted named entrypoints an instance publishes."

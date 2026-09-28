@@ -809,54 +809,21 @@ def test_cli_create_help_names_only_kinds_the_discriminators_admit() -> None:
     assert "a change set refuses either" in " ".join(help_output.split())
 
 
-def test_subject_propose_is_a_typed_deprecation_shim(tmp_path: Path) -> None:
-    envelope = tmp_path / "subject.json"
-    envelope.write_text("{}\n")
-    result = CliRunner().invoke(
-        cli,
-        [
-            "playbill",
-            "subject",
-            "propose",
-            "--envelope",
-            str(envelope),
-            "--name",
-            "old-path",
-        ],
-    )
-
-    assert result.exit_code != 0
-    assert "playbill.write_surface_deprecated" in result.output
-    assert "authoring coordinator with payload kind 'subject'" in result.output
-    assert "target:" not in result.output
-
-
-def test_propose_help_distinguishes_coordinator_shims_from_sanctioned_paths() -> None:
+def test_propose_help_names_the_sanctioned_proposal_paths() -> None:
     runner = CliRunner()
-    subject = runner.invoke(cli, ["playbill", "subject", "propose", "--help"])
-    query = runner.invoke(cli, ["playbill", "query", "propose", "--help"])
     document = runner.invoke(cli, ["playbill", "document", "propose", "--help"])
     claim_type = runner.invoke(cli, ["playbill", "claim-type", "propose", "--help"])
 
-    for shim in (subject, query):
-        assert shim.exit_code == 0
-        assert "Deprecated" in shim.output
-        assert "playbill authoring create" in shim.output
-        assert "authoring submit" in shim.output
-        assert "``" not in shim.output
-        assert "--envelope FILE" in shim.output
-        assert "Deprecated and ignored by this compatibility shim" in " ".join(shim.output.split())
-        assert "--envelope FILE  [required]" not in shim.output
     assert document.exit_code == 0
     assert "sanctioned command-local Document proposal path" in document.output
     assert "Deprecated" not in document.output
     assert claim_type.exit_code == 0
     assert "sanctioned typed-input ClaimType proposal path" in claim_type.output
     assert "Deprecated" not in claim_type.output
-
-    bare_subject = runner.invoke(cli, ["playbill", "subject", "propose"])
-    assert bare_subject.exit_code != 0
-    assert "playbill.write_surface_deprecated" in bare_subject.output
+    for group in ("subject", "query"):
+        removed = runner.invoke(cli, ["playbill", group, "propose"])
+        assert removed.exit_code != 0
+        assert "No such command 'propose'" in removed.output
 
 
 @pytest.mark.parametrize(

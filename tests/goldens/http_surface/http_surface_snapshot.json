@@ -276,9 +276,6 @@
   "/api/v1/{instance_id}/playbill/queries": {
     "GET": "PlaybillQueryDefinitionList"
   },
-  "/api/v1/{instance_id}/playbill/queries/proposals": {
-    "POST": "PlaybillProposalInspection"
-  },
   "/api/v1/{instance_id}/playbill/queries/{name}": {
     "GET": "PlaybillQueryDefinitionView"
   },
@@ -308,9 +305,6 @@
   },
   "/api/v1/{instance_id}/playbill/subjects": {
     "GET": "PlaybillSubjectList"
-  },
-  "/api/v1/{instance_id}/playbill/subjects/proposals": {
-    "POST": "PlaybillProposalInspection"
   },
   "/api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}": {
     "GET": "PlaybillSubjectView"

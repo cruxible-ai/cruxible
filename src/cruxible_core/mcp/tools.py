@@ -377,15 +377,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_propose_subject(
-        instance_id: str,
-        shell: dict[str, Any],
-        proposal_name: str,
-    ) -> contracts.PlaybillProposalInspection:
-        """Propose one identity-only governed Subject."""
-        return handlers.handle_playbill_propose_subject(instance_id, shell, proposal_name)
-
-    @_tool
     def cruxible_playbill_list_subjects(
         instance_id: str,
     ) -> contracts.PlaybillSubjectList:
@@ -651,15 +642,6 @@ def register_tools(
         return handlers.handle_playbill_explain_claim(
             instance_id, identity, evaluation_time=evaluation_time
         )
-
-    @_tool
-    def cruxible_playbill_propose_query_definition(
-        instance_id: str,
-        query: dict[str, Any],
-        proposal_name: str,
-    ) -> contracts.PlaybillProposalInspection:
-        """Propose one governed QueryDefinition entrypoint."""
-        return handlers.handle_playbill_propose_query_definition(instance_id, query, proposal_name)
 
     @_tool
     def cruxible_playbill_list_query_definitions(

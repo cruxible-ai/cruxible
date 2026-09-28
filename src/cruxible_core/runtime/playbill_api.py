@@ -55,7 +55,6 @@ from cruxible_client.contracts.discovery import (
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
-    PlaybillDeprecatedWriteError,
 )
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
@@ -86,11 +85,9 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallRequestV1,
     PlaybillProviderInstallResultV1,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
-from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_client.contracts.types import (
     CompilerCoordinate,
@@ -1079,19 +1076,6 @@ def _evaluation_timestamp(value: str | None) -> str:
     return canonical_candidate_timestamp(utc_now()) if value is None else value
 
 
-def playbill_propose_subject(
-    instance_id: str,
-    *,
-    shell: SubjectShell,
-    proposal_name: str,
-    base: AcceptedCoordinate | None = None,
-) -> contracts.PlaybillProposalInspection:
-    del instance_id, shell, proposal_name, base
-    raise PlaybillDeprecatedWriteError(
-        replacement="the authoring coordinator with payload kind 'subject'"
-    )
-
-
 def playbill_list_subjects(
     instance_id: str,
     *,
@@ -1754,19 +1738,6 @@ def playbill_explain_claim(
     if payload.get("tag") == "playbill-claim-explanation-v3":
         return contracts.PlaybillClaimExplanationV3.model_validate(payload)
     return contracts.PlaybillClaimExplanationV2.model_validate(payload)
-
-
-def playbill_propose_query_definition(
-    instance_id: str,
-    *,
-    query: QueryDefinitionV1,
-    proposal_name: str,
-    base: AcceptedCoordinate | None = None,
-) -> contracts.PlaybillProposalInspection:
-    del instance_id, query, proposal_name, base
-    raise PlaybillDeprecatedWriteError(
-        replacement="the authoring coordinator with payload kind 'query_definition'"
-    )
 
 
 def playbill_policies_in_force(

@@ -85,8 +85,6 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillProposeClaimTypeRequest,
     PlaybillProposeDocumentRequest,
     PlaybillProposePrincipalRequest,
-    PlaybillProposeQueryDefinitionRequest,
-    PlaybillProposeSubjectRequest,
     PlaybillResolveCoverageRequest,
     PlaybillReviewRequest,
     PlaybillRunQueryRequest,
@@ -601,22 +599,6 @@ def propose_sources(
         bundle=req.bundle,
         source_name=req.source_name,
         proposal_name=req.proposal_name,
-    )
-
-
-@router.post(
-    "/{instance_id}/playbill/subjects/proposals",
-    response_model=contracts.PlaybillProposalInspection,
-)
-def propose_subject(
-    instance_id: str,
-    req: PlaybillProposeSubjectRequest,
-) -> contracts.PlaybillProposalInspection:
-    return playbill_api.playbill_propose_subject(
-        resolve_server_instance_id(instance_id),
-        shell=req.shell,
-        proposal_name=req.proposal_name,
-        base=req.base,
     )
 
 
@@ -1203,22 +1185,6 @@ async def explain_claim(
         identity,
         at=req.at,
         evaluation_time=req.evaluation_time,
-    )
-
-
-@router.post(
-    "/{instance_id}/playbill/queries/proposals",
-    response_model=contracts.PlaybillProposalInspection,
-)
-def propose_query_definition(
-    instance_id: str,
-    req: PlaybillProposeQueryDefinitionRequest,
-) -> contracts.PlaybillProposalInspection:
-    return playbill_api.playbill_propose_query_definition(
-        resolve_server_instance_id(instance_id),
-        query=req.query,
-        proposal_name=req.proposal_name,
-        base=req.base,
     )
 
 

@@ -627,7 +627,6 @@ cruxible playbill document history IDENTITY
 ## playbill subject
 
 ~~~text
-cruxible playbill subject propose --envelope FILE --name NAME
 cruxible playbill subject list
 cruxible playbill subject get KIND/ID
 cruxible playbill subject history KIND/ID
@@ -857,7 +856,7 @@ run executes one accepted QueryDefinition and prints its
 parameter digest, and the result digest that replays it.
 
 Author named queries through `playbill authoring compile`, then submit the intent
-and review/accept its proposal. `cruxible playbill query propose` is deprecated.
+and review/accept its proposal.
 The SDK equivalent is `pb.query_definition(definition=QueryDefinitionInput(...)).prepare()`, followed
 by the normal intent submission and approval flow. `pb.changes().query_definition(...)`
 includes a query in a changeset. Omitted ClaimType pins resolve against the intent

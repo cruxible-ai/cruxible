@@ -1516,9 +1516,8 @@ Compile and preflight the whole changeset as one intent.
 compilation/preflight; `submit()` compiles and submits in one request, with the
 daemon preflighting once, and a refused intent carries the same `refused` and
 `diagnostics` that `prepare()` reports; the program stamp is structured authoring provenance,
-not retained executable Python source. `ClaimTypeDraft.propose(...)` and
-`SubjectDraft.propose(...)` are direct proposal helpers and submit immediately;
-they are not synonyms for local staging.
+not retained executable Python source. `ClaimTypeDraft.propose(...)` is a direct
+proposal helper and submits immediately; it is not a synonym for local staging.
 
 `Intent` and `Proposal` are obtained from SDK factories. `from_preflight` and
 `from_inspection` are advanced response adapters. Cached properties are not
@@ -1609,16 +1608,6 @@ Import: `cruxible_client.authoring.sdk.SubjectDraft`. [Source](src/cruxible_clie
 
 ```text
 address: str
-```
-
-<a id="api-subjectdraft-propose"></a>
-
-### `SubjectDraft.propose`
-
-[Source](src/cruxible_client/authoring/sdk.py#L1118)
-
-```text
-propose(*, proposal_name: str) -> Proposal
 ```
 
 <a id="api-claimtypedraft"></a>
@@ -5402,22 +5391,6 @@ propose_playbill_source_bundle(
 
 HTTP: `POST f'/api/v1/{instance_id}/playbill/sources/proposals'`.
 
-<a id="api-cruxibleclient-propose-playbill-subject"></a>
-
-### `CruxibleClient.propose_playbill_subject`
-
-[Source](src/cruxible_client/transport/http.py#L823)
-
-```text
-propose_playbill_subject(
-    instance_id: str,
-    *,
-    shell: Mapping[str, Any],
-    proposal_name: str,
-    base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-) -> contracts.PlaybillProposalInspection
-```
-
 <a id="api-cruxibleclient-list-playbill-subjects"></a>
 
 ### `CruxibleClient.list_playbill_subjects`
@@ -5928,22 +5901,6 @@ explain_playbill_claim(
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/playbill/claims/{identity}/explanation'`.
-
-<a id="api-cruxibleclient-propose-playbill-query-definition"></a>
-
-### `CruxibleClient.propose_playbill_query_definition`
-
-[Source](src/cruxible_client/transport/http.py#L1303)
-
-```text
-propose_playbill_query_definition(
-    instance_id: str,
-    *,
-    query: Mapping[str, Any],
-    proposal_name: str,
-    base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-) -> contracts.PlaybillProposalInspection
-```
 
 <a id="api-cruxibleclient-list-playbill-query-definitions"></a>
 
@@ -7392,7 +7349,7 @@ fields are documented above; these links keep wire schema definitions singular.
 
 **`contracts.documents`** — [DocumentLink](src/cruxible_client/contracts/documents.py#L64), [DocumentPin](src/cruxible_client/contracts/documents.py#L79), [DocumentAuthority](src/cruxible_client/contracts/documents.py#L101), [DocumentLifecycle](src/cruxible_client/contracts/documents.py#L105), [DocumentShell](src/cruxible_client/contracts/documents.py#L111), [DocumentArtifactAdapter](src/cruxible_client/contracts/documents.py#L210), [BodyVerifierProtocol](src/cruxible_client/contracts/documents.py#L319), [AcceptedDocument](src/cruxible_client/contracts/documents.py#L323), [DocumentLawResult](src/cruxible_client/contracts/documents.py#L335).
 
-**`contracts.errors`** — [PlaybillError](src/cruxible_client/contracts/errors.py#L11), [CanonicalEncodingError](src/cruxible_client/contracts/errors.py#L15), [MerkleIntegrityError](src/cruxible_client/contracts/errors.py#L19), [PlaybillFormatError](src/cruxible_client/contracts/errors.py#L23), [PlaybillSinceRequestInvalid](src/cruxible_client/contracts/errors.py#L27), [ClaimAttestationRequestInvalid](src/cruxible_client/contracts/errors.py#L69), [PlaybillInstanceIncompatiblePrereleaseContent](src/cruxible_client/contracts/errors.py#L98), [PlaybillReseedRequired](src/cruxible_client/contracts/errors.py#L111), [PlaybillInstanceDecommissioned](src/cruxible_client/contracts/errors.py#L123), [SemanticDeltaLimitError](src/cruxible_client/contracts/errors.py#L144), [PlaybillDeprecatedWriteError](src/cruxible_client/contracts/errors.py#L150), [PlaybillBootstrapError](src/cruxible_client/contracts/errors.py#L160), [PlaybillObjectFormatConflict](src/cruxible_client/contracts/errors.py#L164), [PlaybillGitError](src/cruxible_client/contracts/errors.py#L183), [PlaybillKeyError](src/cruxible_client/contracts/errors.py#L187), [PlaybillCasError](src/cruxible_client/contracts/errors.py#L191), [PlaybillJournalError](src/cruxible_client/contracts/errors.py#L195), [PlaybillJournalConflictError](src/cruxible_client/contracts/errors.py#L199), [PlaybillJournalIntegrityError](src/cruxible_client/contracts/errors.py#L209), [PlaybillExecutionError](src/cruxible_client/contracts/errors.py#L217), [DocumentFormatError](src/cruxible_client/contracts/errors.py#L221), [DocumentNotFoundError](src/cruxible_client/contracts/errors.py#L225), [SubjectFormatError](src/cruxible_client/contracts/errors.py#L229), [SubjectNotFoundError](src/cruxible_client/contracts/errors.py#L233), [ClaimNotFoundError](src/cruxible_client/contracts/errors.py#L237), [ProposalAdmissionError](src/cruxible_client/contracts/errors.py#L241), [ProposalWithdrawnError](src/cruxible_client/contracts/errors.py#L245), [ProposalNotFoundError](src/cruxible_client/contracts/errors.py#L276), [ProposalSelectorAmbiguousError](src/cruxible_client/contracts/errors.py#L293), [ProposalContentUnavailable](src/cruxible_client/contracts/errors.py#L323), [ProposalReadmitRequiresResubmission](src/cruxible_client/contracts/errors.py#L336), [ProposalActivationRequestInvalid](src/cruxible_client/contracts/errors.py#L349), [ProposalIntegrityError](src/cruxible_client/contracts/errors.py#L355), [ProposalEvaluationIntegrityError](src/cruxible_client/contracts/errors.py#L359), [ApprovalIntegrityError](src/cruxible_client/contracts/errors.py#L363), [PrincipalIntegrityError](src/cruxible_client/contracts/errors.py#L367), [SettlementIntegrityError](src/cruxible_client/contracts/errors.py#L371), [ReplayCheckpointError](src/cruxible_client/contracts/errors.py#L375), [ProjectionError](src/cruxible_client/contracts/errors.py#L379), [ProjectionCoordinateError](src/cruxible_client/contracts/errors.py#L383), [ProjectionFormatError](src/cruxible_client/contracts/errors.py#L387), [ProjectionPublicationError](src/cruxible_client/contracts/errors.py#L391), [ProjectionIntegrityError](src/cruxible_client/contracts/errors.py#L395).
+**`contracts.errors`** — [PlaybillError](src/cruxible_client/contracts/errors.py#L11), [CanonicalEncodingError](src/cruxible_client/contracts/errors.py#L15), [MerkleIntegrityError](src/cruxible_client/contracts/errors.py#L19), [PlaybillFormatError](src/cruxible_client/contracts/errors.py#L23), [PlaybillSinceRequestInvalid](src/cruxible_client/contracts/errors.py#L27), [ClaimAttestationRequestInvalid](src/cruxible_client/contracts/errors.py#L69), [PlaybillInstanceIncompatiblePrereleaseContent](src/cruxible_client/contracts/errors.py#L98), [PlaybillReseedRequired](src/cruxible_client/contracts/errors.py#L111), [PlaybillInstanceDecommissioned](src/cruxible_client/contracts/errors.py#L123), [SemanticDeltaLimitError](src/cruxible_client/contracts/errors.py#L144), [PlaybillBootstrapError](src/cruxible_client/contracts/errors.py#L160), [PlaybillObjectFormatConflict](src/cruxible_client/contracts/errors.py#L164), [PlaybillGitError](src/cruxible_client/contracts/errors.py#L183), [PlaybillKeyError](src/cruxible_client/contracts/errors.py#L187), [PlaybillCasError](src/cruxible_client/contracts/errors.py#L191), [PlaybillJournalError](src/cruxible_client/contracts/errors.py#L195), [PlaybillJournalConflictError](src/cruxible_client/contracts/errors.py#L199), [PlaybillJournalIntegrityError](src/cruxible_client/contracts/errors.py#L209), [PlaybillExecutionError](src/cruxible_client/contracts/errors.py#L217), [DocumentFormatError](src/cruxible_client/contracts/errors.py#L221), [DocumentNotFoundError](src/cruxible_client/contracts/errors.py#L225), [SubjectFormatError](src/cruxible_client/contracts/errors.py#L229), [SubjectNotFoundError](src/cruxible_client/contracts/errors.py#L233), [ClaimNotFoundError](src/cruxible_client/contracts/errors.py#L237), [ProposalAdmissionError](src/cruxible_client/contracts/errors.py#L241), [ProposalWithdrawnError](src/cruxible_client/contracts/errors.py#L245), [ProposalNotFoundError](src/cruxible_client/contracts/errors.py#L276), [ProposalSelectorAmbiguousError](src/cruxible_client/contracts/errors.py#L293), [ProposalContentUnavailable](src/cruxible_client/contracts/errors.py#L323), [ProposalReadmitRequiresResubmission](src/cruxible_client/contracts/errors.py#L336), [ProposalActivationRequestInvalid](src/cruxible_client/contracts/errors.py#L349), [ProposalIntegrityError](src/cruxible_client/contracts/errors.py#L355), [ProposalEvaluationIntegrityError](src/cruxible_client/contracts/errors.py#L359), [ApprovalIntegrityError](src/cruxible_client/contracts/errors.py#L363), [PrincipalIntegrityError](src/cruxible_client/contracts/errors.py#L367), [SettlementIntegrityError](src/cruxible_client/contracts/errors.py#L371), [ReplayCheckpointError](src/cruxible_client/contracts/errors.py#L375), [ProjectionError](src/cruxible_client/contracts/errors.py#L379), [ProjectionCoordinateError](src/cruxible_client/contracts/errors.py#L383), [ProjectionFormatError](src/cruxible_client/contracts/errors.py#L387), [ProjectionPublicationError](src/cruxible_client/contracts/errors.py#L391), [ProjectionIntegrityError](src/cruxible_client/contracts/errors.py#L395).
 
 **`contracts.governance`** — [ApprovalRequirement](src/cruxible_client/contracts/governance.py#L34), [AcceptanceLawCoordinate](src/cruxible_client/contracts/governance.py#L63).
 

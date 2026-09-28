@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 
 from cruxible_client.authoring.examples import (
     query_claims_by_type_example,
-    subject_example,
 )
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.documents import (
@@ -198,26 +197,7 @@ def test_every_proposal_route_keeps_the_typed_validation_boundary(
     assert "_proposal_validation_boundary(" in getsource(entrypoint)
 
 
-@pytest.mark.parametrize(
-    ("entrypoint", "replacement"),
-    (
-        (playbill_api.playbill_propose_subject, "payload kind 'subject'"),
-        (
-            playbill_api.playbill_propose_query_definition,
-            "payload kind 'query_definition'",
-        ),
-    ),
-)
-def test_converged_proposal_routes_are_typed_deprecation_shims(
-    entrypoint: object,
-    replacement: str,
-) -> None:
-    source = getsource(entrypoint)
-    assert "PlaybillDeprecatedWriteError(" in source
-    assert replacement in source
-
-
-def test_converged_writes_and_policy_read_are_real_http_behaviors(
+def test_policy_read_is_a_real_http_behavior(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
     client, instance_id, _private_key_path = playbill_http
@@ -228,42 +208,6 @@ def test_converged_writes_and_policy_read_are_real_http_behaviors(
         "approval_policy",
         "procedure_runtime_policy",
     ]
-
-    requests = (
-        (
-            f"/api/v1/{instance_id}/playbill/subjects/proposals",
-            {
-                "shell": subject_example().subject.model_dump(mode="json"),
-                "proposal_name": "removed-subject-writer",
-            },
-            "payload kind 'subject'",
-        ),
-        (
-            f"/api/v1/{instance_id}/playbill/queries/proposals",
-            {
-                # A well-formed accepted-query body: the route refuses it as a
-                # retired write surface, whatever it would have pinned.
-                "query": {
-                    **query_claims_by_type_example().query_definition.model_dump(mode="json"),
-                    "pins": [
-                        {
-                            "role": "claim-type",
-                            "target": {"kind": "ClaimType", "name": "project.work_item.status"},
-                            "artifact_digest": "sha256:" + "0" * 64,
-                        }
-                    ],
-                },
-                "proposal_name": "removed-query-writer",
-            },
-            "payload kind 'query_definition'",
-        ),
-    )
-    for path, payload, repair in requests:
-        response = client.post(path, json=payload)
-        assert response.status_code == 400, response.text
-        assert response.json()["error_code"] == "playbill.write_surface_deprecated"
-        assert repair in response.json()["message"]
-        assert "cruxible playbill" not in response.json()["message"]
 
 
 def test_friendly_change_set_duplicate_is_a_typed_http_400(

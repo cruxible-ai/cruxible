@@ -72,7 +72,6 @@ from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
     DocumentNotFoundError,
-    PlaybillDeprecatedWriteError,
     PlaybillKeyError,
     PlaybillSinceRequestInvalid,
 )
@@ -2404,33 +2403,7 @@ def _subject_address(
 
 @playbill_group.group("subject")
 def subject_group() -> None:
-    """Propose and read identity-only governed Subjects."""
-
-
-@subject_group.command("propose")
-@click.option(
-    "--envelope",
-    type=click.Path(exists=True, dir_okay=False),
-    help="Deprecated and ignored by this compatibility shim.",
-)
-@click.option(
-    "--name",
-    "proposal_name",
-    help="Deprecated and ignored by this compatibility shim.",
-)
-@json_option
-@handle_errors
-def propose_subject(
-    envelope: str | None,
-    proposal_name: str | None,
-    output_json: bool,
-) -> None:
-    """Deprecated: use playbill authoring create then authoring submit."""
-
-    del envelope, proposal_name, output_json
-    raise PlaybillDeprecatedWriteError(
-        replacement="the authoring coordinator with payload kind 'subject'"
-    )
+    """Read identity-only governed Subjects."""
 
 
 @subject_group.command("list")
@@ -3818,39 +3791,7 @@ def propose_compiler_upgrade(target_digest: str, proposal_name: str, output_json
 
 @playbill_group.group("query")
 def query_group() -> None:
-    """Propose, read, and execute governed named entrypoints."""
-
-
-@query_group.command("propose")
-@click.option(
-    "--envelope",
-    type=click.Path(exists=True, dir_okay=False),
-    help="Deprecated and ignored by this compatibility shim.",
-)
-@click.option(
-    "--example",
-    type=click.Choice(["query-claims-by-type"]),
-    help="Deprecated and ignored by this compatibility shim.",
-)
-@click.option(
-    "--name",
-    "proposal_name",
-    help="Deprecated and ignored by this compatibility shim.",
-)
-@json_option
-@handle_errors
-def propose_query_definition(
-    envelope: str | None,
-    example: str | None,
-    proposal_name: str | None,
-    output_json: bool,
-) -> None:
-    """Deprecated: use playbill authoring create then authoring submit."""
-
-    del envelope, example, proposal_name, output_json
-    raise PlaybillDeprecatedWriteError(
-        replacement="the authoring coordinator with payload kind 'query_definition'"
-    )
+    """Read and execute governed named entrypoints."""
 
 
 @query_group.command("list")

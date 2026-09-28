@@ -55,11 +55,9 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallRequestV1,
     PlaybillProviderInstallResultV1,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
-from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.errors import ServerUnreachableError
@@ -110,8 +108,6 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillProposeClaimTypeInputRequest,
     PlaybillProposeDocumentRequest,
     PlaybillProposePrincipalRequest,
-    PlaybillProposeQueryDefinitionRequest,
-    PlaybillProposeSubjectRequest,
     PlaybillSourceProposeRequest,
     PlaybillStoreBodyRequest,
 )
@@ -315,11 +311,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_propose_document": TypeAdapter(PlaybillProposeDocumentRequest),
     "cruxible_playbill_compiler_upgrade": TypeAdapter(PlaybillCompilerUpgradeRequest),
     "cruxible_playbill_propose_principal_change": TypeAdapter(PlaybillProposePrincipalRequest),
-    "cruxible_playbill_propose_query_definition": TypeAdapter(
-        PlaybillProposeQueryDefinitionRequest
-    ),
     "cruxible_playbill_propose_source_bundle": TypeAdapter(PlaybillSourceProposeRequest),
-    "cruxible_playbill_propose_subject": TypeAdapter(PlaybillProposeSubjectRequest),
     "cruxible_playbill_procedure_measure": TypeAdapter(contracts.PlaybillProcedureMeasureRequestV1),
     "cruxible_playbill_settle": TypeAdapter(contracts.PlaybillSettleRequestV2),
     "cruxible_playbill_store_body": TypeAdapter(PlaybillStoreBodyRequest),
@@ -886,31 +878,6 @@ def handle_playbill_propose_principal_change(
     )
 
 
-def handle_playbill_propose_subject(
-    instance_id: str,
-    shell: dict[str, Any],
-    proposal_name: str,
-) -> contracts.PlaybillProposalInspection:
-    subject = SubjectShell.model_validate(shell)
-    return _dispatch_remote_or_local(
-        lambda client: client.propose_playbill_subject(
-            instance_id,
-            shell=subject.model_dump(mode="json"),
-            proposal_name=proposal_name,
-        ),
-        lambda: playbill_api.playbill_propose_subject(
-            instance_id,
-            shell=subject,
-            proposal_name=proposal_name,
-        ),
-        operation_name="cruxible_playbill_propose_subject",
-        local_payload={
-            "shell": subject.model_dump(mode="json"),
-            "proposal_name": proposal_name,
-        },
-    )
-
-
 def handle_playbill_list_subjects(instance_id: str) -> contracts.PlaybillSubjectList:
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_subjects(instance_id),
@@ -1354,31 +1321,6 @@ def handle_playbill_explain_claim(
             evaluation_time=evaluated_at,
         ),
         operation_name="cruxible_playbill_explain_claim",
-    )
-
-
-def handle_playbill_propose_query_definition(
-    instance_id: str,
-    query: dict[str, Any],
-    proposal_name: str,
-) -> contracts.PlaybillProposalInspection:
-    definition = QueryDefinitionV1.model_validate(query)
-    return _dispatch_remote_or_local(
-        lambda client: client.propose_playbill_query_definition(
-            instance_id,
-            query=definition.model_dump(mode="json"),
-            proposal_name=proposal_name,
-        ),
-        lambda: playbill_api.playbill_propose_query_definition(
-            instance_id,
-            query=definition,
-            proposal_name=proposal_name,
-        ),
-        operation_name="cruxible_playbill_propose_query_definition",
-        local_payload={
-            "query": definition.model_dump(mode="json"),
-            "proposal_name": proposal_name,
-        },
     )
 
 

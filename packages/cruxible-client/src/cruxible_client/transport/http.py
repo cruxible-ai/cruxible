@@ -33,7 +33,6 @@ from cruxible_client.contracts.claim_reads import (
 )
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import (
-    PlaybillDeprecatedWriteError,
     PlaybillSinceRequestInvalid,
 )
 from cruxible_client.contracts.kits import (
@@ -801,19 +800,6 @@ class CruxibleClient:
             payload["base"] = base_payload
         return payload
 
-    def propose_playbill_subject(
-        self,
-        instance_id: str,
-        *,
-        shell: Mapping[str, Any],
-        proposal_name: str,
-        base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillProposalInspection:
-        del instance_id, shell, proposal_name, base
-        raise PlaybillDeprecatedWriteError(
-            replacement="the authoring coordinator with payload kind 'subject'"
-        )
-
     def list_playbill_subjects(
         self,
         instance_id: str,
@@ -1340,19 +1326,6 @@ class CruxibleClient:
         if payload.get("tag") == "playbill-claim-explanation-v3":
             return contracts.PlaybillClaimExplanationV3.model_validate(payload)
         return contracts.PlaybillClaimExplanationV2.model_validate(payload)
-
-    def propose_playbill_query_definition(
-        self,
-        instance_id: str,
-        *,
-        query: Mapping[str, Any],
-        proposal_name: str,
-        base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillProposalInspection:
-        del instance_id, query, proposal_name, base
-        raise PlaybillDeprecatedWriteError(
-            replacement="the authoring coordinator with payload kind 'query_definition'"
-        )
 
     def list_playbill_query_definitions(
         self,

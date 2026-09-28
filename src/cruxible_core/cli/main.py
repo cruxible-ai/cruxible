@@ -552,9 +552,8 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 attr="review_group",
             ),
             "subject": _group(
-                "Propose and read identity-only governed Subjects.",
+                "Read identity-only governed Subjects.",
                 {
-                    "propose": _command("playbill", "propose_subject", "Propose a Subject shell."),
                     "list": _command("playbill", "list_subjects", "List accepted Subjects."),
                     "get": _command("playbill", "get_subject", "Read an accepted Subject."),
                     "history": _command(
@@ -694,11 +693,8 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 attr="compiler_group",
             ),
             "query": _group(
-                "Propose, read, and execute governed named entrypoints.",
+                "Read and execute governed named entrypoints.",
                 {
-                    "propose": _command(
-                        "playbill", "propose_query_definition", "Propose a QueryDefinition."
-                    ),
                     "list": _command(
                         "playbill", "list_query_definitions", "List accepted entrypoints."
                     ),

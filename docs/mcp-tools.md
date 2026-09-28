@@ -134,7 +134,6 @@ root aliases, not compilation wire.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_propose_subject` | Propose an identity-only Subject | `GOVERNED_WRITE` |
 | `cruxible_playbill_list_subjects` | List accepted Subjects and coordinate | `READ_ONLY` |
 | `cruxible_playbill_get_subject` | Read one accepted Subject | `READ_ONLY` |
 | `cruxible_playbill_subject_history` | Read one Subject's accepted lineage | `READ_ONLY` |
@@ -227,7 +226,6 @@ Claims. It does not create a second authority plane beside accepted state.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_propose_query_definition` | Propose a named entrypoint | `GOVERNED_WRITE` |
 | `cruxible_playbill_list_query_definitions` | List accepted entrypoints | `READ_ONLY` |
 | `cruxible_playbill_get_query_definition` | Read one entrypoint's contract | `READ_ONLY` |
 | `cruxible_playbill_run_query` | Execute an entrypoint with a replay receipt | `READ_ONLY` |

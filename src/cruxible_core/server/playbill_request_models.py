@@ -26,11 +26,9 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.ledger_mirror import MIRROR_URL_MAX_LENGTH
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
-from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.types import (
     DECOMMISSION_REASON_MAX_LENGTH,
     CompilerCoordinate,
@@ -167,12 +165,6 @@ class PlaybillSourceProposeRequest(PlaybillSourceBundleRequest):
     proposal_name: str
 
 
-class PlaybillProposeSubjectRequest(_StrictPlaybillRequest):
-    shell: SubjectShell
-    proposal_name: str
-    base: AcceptedCoordinate | None = None
-
-
 class PlaybillProposeClaimTypeRequest(_StrictPlaybillRequest):
     claim_type: ClaimType
     proposal_name: str
@@ -236,12 +228,6 @@ class PlaybillBlockDepublishRequest(_StrictPlaybillRequest):
 
     source_id: str = Field(min_length=1)
     block_id: str = Field(min_length=1)
-
-
-class PlaybillProposeQueryDefinitionRequest(_StrictPlaybillRequest):
-    query: QueryDefinitionV1
-    proposal_name: str
-    base: AcceptedCoordinate | None = None
 
 
 class PlaybillClaimExplainRequest(_StrictPlaybillRequest):

@@ -1166,14 +1166,6 @@ class SubjectDraft(_IntentDraft):
     def address(self) -> str:
         return self.shell.identity.name
 
-    def propose(self, *, proposal_name: str) -> Proposal:
-        del proposal_name
-        from cruxible_client.contracts.errors import PlaybillDeprecatedWriteError
-
-        raise PlaybillDeprecatedWriteError(
-            replacement="the authoring coordinator with payload kind 'subject'"
-        )
-
 
 class Intent:
     def __init__(
