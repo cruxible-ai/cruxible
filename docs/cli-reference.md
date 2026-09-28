@@ -54,13 +54,20 @@ cruxible context clear
 Manage runtime bearer credentials:
 
 ~~~text
-cruxible credential claim-bootstrap
-cruxible credential mint
-cruxible credential list
+cruxible credential claim-bootstrap [--secret-file PATH] [--json]
+cruxible credential mint --label LABEL --mode TIER [--json]
+cruxible credential list [--json]
 cruxible credential rotate
 cruxible credential revoke
-cruxible credential recover-admin
+cruxible credential recover-admin [--state-root DIR] [--instance-id ID] [--json]
 ~~~
+
+`recover-admin` is local-only: it opens the state root's credentials DB
+directly with the daemon stopped. It ignores a remembered CLI context and
+refuses only a transport chosen for that invocation (`--server-url`,
+`--server-socket` or their env vars). When the DB holds several instances and
+exactly one has a directory under `<state-root>/instances`, that instance is the
+target; otherwise pass `--instance-id`.
 
 These credentials authorize transport operations. They are distinct from
 Playbill signing principals.
@@ -323,7 +330,8 @@ cruxible playbill init --key-dir DIR
 ~~~
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
-ledger with its public principal record. An optional `--reviewer-key-dir` adds a
+ledger with its public principal record. A missing `--key-dir` is created with
+mode 0700; an existing one must already exclude group and other access. An optional `--reviewer-key-dir` adds a
 second ordinary principal; pair it with `--require-independent-approval` to make
 one non-creator approval mandatory. Local key directories provide attribution
 and repository hygiene, not a security boundary. Organization review normally

@@ -102,11 +102,15 @@ def _echo_token_once(token: str, *, label: str) -> None:
         "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET."
     ),
 )
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
-def claim_bootstrap_cmd(secret_file: str | None) -> None:
+def claim_bootstrap_cmd(secret_file: str | None, output_json: bool) -> None:
     """Exchange the one-time bootstrap secret for the first ADMIN runtime token."""
     client, instance_id = _require_server_client("credential claim-bootstrap")
     result = client.claim_runtime_bootstrap(instance_id, _read_bootstrap_secret(secret_file))
+    if output_json:
+        _common._emit_json(result.model_dump(mode="json"))
+        return
 
     click.echo("Bootstrap claimed.")
     click.echo(f"Credential ID: {result.credential_id}")
@@ -130,8 +134,9 @@ def claim_bootstrap_cmd(secret_file: str | None) -> None:
         "upgrades, provider installs, ledger mirrors, daemon stop/restart)."
     ),
 )
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
-def mint_cmd(label: str, permission_mode: str) -> None:
+def mint_cmd(label: str, permission_mode: str, output_json: bool) -> None:
     """Mint a new runtime bearer credential."""
     client, instance_id = _require_server_client("credential mint")
     result = client.create_runtime_credential(
@@ -139,6 +144,9 @@ def mint_cmd(label: str, permission_mode: str) -> None:
         label=label,
         permission_mode=cast(contracts.RuntimeCredentialPermissionMode, permission_mode),
     )
+    if output_json:
+        _common._emit_json(result.model_dump(mode="json"))
+        return
 
     click.echo("Credential minted.")
     _echo_credential_metadata(result.credential)
@@ -147,11 +155,15 @@ def mint_cmd(label: str, permission_mode: str) -> None:
 
 
 @credential_group.command("list")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
-def list_cmd() -> None:
+def list_cmd(output_json: bool) -> None:
     """List runtime bearer credentials for the active instance."""
     client, instance_id = _require_server_client("credential list")
     result = client.list_runtime_credentials(instance_id)
+    if output_json:
+        _common._emit_json(result.model_dump(mode="json"))
+        return
 
     if not result.credentials:
         click.echo("No runtime credentials.")
@@ -174,12 +186,26 @@ def list_cmd() -> None:
 
 
 def _refuse_recover_admin_server_mode() -> None:
+    """Refuse only a transport the caller chose for this invocation.
+
+    A remembered CLI context or workspace binding is not a request to talk to a
+    daemon here, so this local-only command ignores it.
+    """
     obj = _common._root_ctx_obj()
-    if obj.get("server_url") or obj.get("server_socket") or obj.get("require_server"):
-        raise click.UsageError(
-            "credential recover-admin is local-only; unset --server-url/--server-socket "
-            "and run it directly against --state-root with the daemon stopped."
-        )
+    selected = obj.get("server_url") or obj.get("server_socket")
+    source = obj.get("target_transport_source")
+    if selected and source == "explicit":
+        named = "--server-url/--server-socket"
+    elif selected and source == "environment":
+        named = "CRUXIBLE_SERVER_URL/CRUXIBLE_SERVER_SOCKET"
+    elif obj.get("require_server"):
+        named = "CRUXIBLE_REQUIRE_SERVER"
+    else:
+        return
+    raise click.UsageError(
+        f"credential recover-admin is local-only; unset {named} and run it directly "
+        "against --state-root with the daemon stopped."
+    )
 
 
 def _require_owned_path(path: Path, *, description: str, uid: int, directory: bool) -> None:
@@ -201,7 +227,9 @@ def _require_owned_path(path: Path, *, description: str, uid: int, directory: bo
         )
 
 
-def _select_recovery_instance_id(db_path: Path, instance_id: str | None) -> str:
+def _select_recovery_instance_id(
+    db_path: Path, instance_id: str | None, *, state_root: Path
+) -> str:
     try:
         instance_ids = list_runtime_credential_instance_ids(db_path)
     except (RuntimeCredentialRecoveryBusyError, RuntimeCredentialRecoveryError) as exc:
@@ -217,6 +245,13 @@ def _select_recovery_instance_id(db_path: Path, instance_id: str | None) -> str:
         return instance_id
     if len(instance_ids) == 1:
         return instance_ids[0]
+    # Credentials can outlive their instance's storage; when exactly one of
+    # them still has its directory under this state root, that is the target.
+    present = [
+        candidate for candidate in instance_ids if (state_root / "instances" / candidate).is_dir()
+    ]
+    if len(present) == 1:
+        return present[0]
     raise click.UsageError(
         "Credentials DB contains multiple instance IDs; pass --instance-id. "
         f"Found: {', '.join(instance_ids)}"
@@ -238,7 +273,10 @@ def _select_recovery_instance_id(db_path: Path, instance_id: str | None) -> str:
 @click.option(
     "--instance-id",
     default=None,
-    help="Target instance ID when the credentials DB contains multiple instances.",
+    help=(
+        "Target instance ID when the credentials DB contains multiple instances and "
+        "not exactly one of them has a directory under <state-root>/instances."
+    ),
 )
 @click.option(
     "--label",
@@ -278,7 +316,9 @@ def recover_admin_cmd(
     uid = os.getuid()
     _require_owned_path(resolved_state_root, description="State root", uid=uid, directory=True)
     _require_owned_path(db_path, description="Runtime credentials DB", uid=uid, directory=False)
-    resolved_instance_id = _select_recovery_instance_id(db_path, instance_id)
+    resolved_instance_id = _select_recovery_instance_id(
+        db_path, instance_id, state_root=resolved_state_root
+    )
     _common._echo_explicit_write_target(resolved_instance_id, resolved_state_root)
 
     store = RuntimeCredentialStore(db_path, initialize=False)

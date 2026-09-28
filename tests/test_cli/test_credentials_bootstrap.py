@@ -302,3 +302,57 @@ def test_credential_mint_mode_help_explains_each_tier(runner: CliRunner) -> None
     assert "cannot submit approvals or activate" in text
     assert "graph_write: also submits approvals and activates" in text
     assert "admin: also operator actions" in text
+
+
+def test_credential_claim_mint_and_list_emit_json(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    import json
+
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "bootstrap-secret")
+    credential = contracts.RuntimeCredentialMetadata(
+        credential_id="rcred_reader",
+        instance_id="inst_123",
+        label="reader",
+        permission_mode="read_only",
+        created_at="2026-06-01T12:00:00Z",
+        created_by="rcred_admin",
+        revoked_at=None,
+    )
+
+    class StubClient:
+        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
+            return contracts.RuntimeCredentialBootstrapResult(
+                credential_id="rcred_bootstrap",
+                instance_id=instance_id,
+                permission_mode="admin",
+                token="crt_bootstrap",
+            )
+
+        def create_runtime_credential(self, instance_id: str, **_kwargs: object):
+            return contracts.RuntimeCredentialResult(credential=credential, token="crt_reader")
+
+        def list_runtime_credentials(self, instance_id: str):
+            return contracts.RuntimeCredentialListResult(credentials=[credential])
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    prefix = ["--server-url", "http://server", "--instance-id", "inst_123", "credential"]
+
+    claimed = runner.invoke(cli, [*prefix, "claim-bootstrap", "--json"])
+    minted = runner.invoke(
+        cli, [*prefix, "mint", "--label", "reader", "--mode", "read_only", "--json"]
+    )
+    listed = runner.invoke(cli, [*prefix, "list", "--json"])
+
+    for result in (claimed, minted, listed):
+        assert result.exit_code == 0, result.output
+    assert json.loads(claimed.stdout) == {
+        "credential_id": "rcred_bootstrap",
+        "instance_id": "inst_123",
+        "permission_mode": "admin",
+        "token": "crt_bootstrap",
+    }
+    assert json.loads(minted.stdout)["token"] == "crt_reader"
+    assert json.loads(minted.stdout)["credential"]["credential_id"] == "rcred_reader"
+    assert json.loads(listed.stdout)["credentials"][0]["permission_mode"] == "read_only"

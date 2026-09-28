@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import subprocess
 
 from click.testing import CliRunner
@@ -100,7 +101,7 @@ def test_cli_init_remembers_the_initialized_instance(monkeypatch, tmp_path) -> N
             "playbill",
             "init",
             "--key-dir",
-            str(tmp_path / "custody"),
+            str(tmp_path / "keys" / "custody"),
             "--principal-id",
             "operator",
             "--json",
@@ -109,6 +110,34 @@ def test_cli_init_remembers_the_initialized_instance(monkeypatch, tmp_path) -> N
 
     assert result.exit_code == 0, result.output
     assert json.loads(context_path.read_text())["instance_id"] == "inst_cli_init"
+    # A missing custody directory is created owner-only rather than refused.
+    assert stat.S_IMODE((tmp_path / "keys" / "custody").stat().st_mode) == 0o700
+
+
+def test_cli_init_refuses_a_shared_key_dir_with_a_chmod_repair(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: object())
+    custody = tmp_path / "custody"
+    custody.mkdir(mode=0o755)
+    custody.chmod(0o755)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_cli_init",
+            "playbill",
+            "init",
+            "--key-dir",
+            str(custody),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert f"run `chmod 700 {custody.resolve()}`" in result.output
 
 
 def test_cli_init_writes_an_explicit_remote_workspace_config(monkeypatch, tmp_path) -> None:
