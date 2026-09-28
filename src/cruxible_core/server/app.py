@@ -424,6 +424,13 @@ def _check_socket_ancestors(directory: Path) -> None:
         entry = current / part
         status = _inspect_socket_path_entry(entry)
         if stat.S_ISLNK(status.st_mode):
+            # A link's owner can repoint it at any time, whatever its directory
+            # allows (a sticky /tmp keeps others from removing the link, not its
+            # owner from replacing it).
+            if status.st_uid not in (0, os.getuid()):
+                raise _refuse_socket_location(
+                    f"{entry} is a symlink owned by uid {status.st_uid}, who could repoint it"
+                )
             followed += 1
             if followed > _MAX_SOCKET_PATH_SYMLINKS:
                 raise _refuse_socket_location(f"{directory} passes through too many symlinks")

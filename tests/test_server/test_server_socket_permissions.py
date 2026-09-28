@@ -95,6 +95,32 @@ def test_a_chain_through_an_open_directory_via_an_intermediate_symlink_is_refuse
         server_app.prepare_socket_directory(directory)
 
 
+def test_a_symlink_owned_by_another_user_is_refused(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = short_dir / "real"
+    (real / "run").mkdir(parents=True, mode=0o700)
+    os.chmod(real, 0o700)
+    link = short_dir / "theirs"
+    link.symlink_to(real)
+    inspect = server_app._inspect_socket_path_entry
+    foreign_uid = os.getuid() + 1
+
+    def as_if_foreign(path: Path) -> os.stat_result:
+        status = inspect(path)
+        # The walk reaches the link through the temp root's resolved spelling.
+        if path.name == link.name and path.parent == link.parent.resolve():
+            fields = list(status)
+            fields[stat.ST_UID] = foreign_uid
+            return os.stat_result(fields)
+        return status
+
+    monkeypatch.setattr(server_app, "_inspect_socket_path_entry", as_if_foreign)
+
+    with pytest.raises(ConfigError, match=f"symlink owned by uid {foreign_uid}"):
+        server_app.prepare_socket_directory(link / "run")
+
+
 def test_a_socket_under_the_system_temp_root_still_passes() -> None:
     # The sticky root-owned temp root; on macOS it is reached through a
     # root-owned symlink into the root-owned private directory.
