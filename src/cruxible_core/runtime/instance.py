@@ -1244,41 +1244,40 @@ class PlaybillInstance:
         return parse_claim_law_evidence(raw)
 
     def accepted_artifact_version(
-        self, coordinate: AcceptedCoordinate, path: str, artifact_digest: str
-    ) -> bytes | None:
+        self, coordinate: AcceptedCoordinate, artifact_digest: str, *, family: str
+    ) -> tuple[str, bytes] | None:
         """Exact bytes of one accepted artifact version within a prefix, even if superseded.
 
-        A missing version is None; nothing ever substitutes today's version for a
-        historical one.
+        A missing version, or one outside ``family``, is None; nothing ever
+        substitutes today's version for a historical one.
         """
 
         with self.accepted_history_reader(at=coordinate) as history:
             location = history.artifact(artifact_digest)
-            if location is None or location.path != path:
+            if location is None or not location.path.startswith(family):
                 return None
             generation = history.generation(location.occurrence_sequence)
         raw = self.blob_at(generation.git_oid, location.path)
         if raw is None:
             raise ProposalIntegrityError("an accepted artifact version's bytes are unavailable")
-        return raw
+        return location.path, raw
 
     def accepted_capture_contract_version(
         self, coordinate: AcceptedCoordinate, contract_digest: str
     ) -> AcceptedCaptureContract | None:
         """One exact CaptureContract version accepted within a prefix, even if superseded."""
 
-        with self.accepted_history_reader(at=coordinate) as history:
-            location = history.artifact(contract_digest)
-        if location is None or not location.path.startswith("capture-contracts/"):
+        found = self.accepted_artifact_version(
+            coordinate, contract_digest, family="capture-contracts/"
+        )
+        if found is None:
             return None
-        raw = self.accepted_artifact_version(coordinate, location.path, contract_digest)
-        if raw is None:
-            return None
-        contract = parse_capture_contract(raw, path=location.path)
+        path, raw = found
+        contract = parse_capture_contract(raw, path=path)
         if capture_contract_digest(contract).tagged != contract_digest:
             return None
         return AcceptedCaptureContract(
-            path=location.path, contract=contract, artifact_digest=contract_digest
+            path=path, contract=contract, artifact_digest=contract_digest
         )
 
     def proposal_service(self) -> ProposalService:

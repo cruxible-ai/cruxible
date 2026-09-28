@@ -503,6 +503,7 @@ def verify_attestation_binding(
     bodies: CaptureObjectStoreProtocol,
     law: ClaimLawEvidenceAny | None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
 ) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifactV1, ...]]:
     claim = verify_attestation_referent(
         attestation,
@@ -521,4 +522,5 @@ def verify_attestation_binding(
         bodies=bodies,
         law=law,
         producer_receipt_resolver=producer_receipt_resolver,
+        historical_capture_contract=historical_capture_contract,
     )

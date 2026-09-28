@@ -45,7 +45,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_client.contracts.claims import claim_path, parse_claim
+from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimEvidenceAdmissionPolicyV2,
@@ -552,3 +552,158 @@ def test_moving_a_query_a_claim_type_corroborates_through_needs_the_claim_type_t
         )
     )
     world.accept(tree, name="move-query-and-type")
+
+
+# --- Review regressions -------------------------------------------------------
+
+
+def test_replay_finds_every_historical_version_in_any_order(world: _World) -> None:
+    from cruxible_core.indexes.projection import AcceptedCoordinate
+    from cruxible_core.ledger.recovery import _LedgerArtifactVersions
+
+    world.seed(_v6_type())
+    versions = [ORIGINAL]
+    for step in range(2):
+        versions.append(_successor(versions[-1]))
+        tree = world.tree()
+        tree[CONTRACT_PATH] = render_capture_contract(versions[-1])
+        world.accept(tree, name=f"improve-{step}")
+    at = AcceptedCoordinate.from_internal(world.instance.accepted_coordinate())
+    digests = [_digest(item) for item in versions]
+    for order in (digests, list(reversed(digests)), [digests[1], digests[0], digests[2]]):
+        lookup = _LedgerArtifactVersions(world.instance._ledger)
+        for digest in order:
+            found = lookup(at, digest, family="capture-contracts/")
+            assert found is not None and found[0] == CONTRACT_PATH, digest
+
+
+def test_a_two_version_claim_passes_the_cold_projection_proof(world: _World) -> None:
+    from cruxible_core.indexes import sqlite as playbill_projection
+
+    world.seed(_v6_type())
+    first = world.observe(b"status: ready")
+    tree = world.tree()
+    tree[CONTRACT_PATH] = render_capture_contract(_successor(ORIGINAL))
+    world.accept(tree, name="improve-contract")
+    world.observe(b"status: done", claim_ref=first)
+    assert len(world.contract_pins(first)) == 2
+
+    coordinate = world.instance.accepted_coordinate()
+    with world.instance.bind_accepted_projection(coordinate) as handle:
+        stamps = handle.index_path.parent / playbill_projection.SOURCE_AUTHENTICATION_STAMPS
+    stamps.unlink(missing_ok=True)
+    playbill_projection.reset_projection_verification_memo()
+    with world.instance.bind_accepted_projection(coordinate):
+        pass
+
+
+def test_a_provenance_pin_must_name_the_identity_its_version_belongs_to(world: _World) -> None:
+    from cruxible_client.contracts.claims import render_claim
+
+    world.seed(_v6_type())
+    claim_id = world.observe(b"status: ready")
+    path = claim_path(claim_id)
+    claim = parse_claim(world.tree()[path], path=path)
+    wrong = ArtifactIdentity(kind="CaptureContract", name="never-accepted")
+    pins = [
+        pin.model_copy(update={"target": wrong}) if pin.role == "capture-contract" else pin
+        for pin in claim.pins
+    ]
+    pins.sort(key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest))
+    forged = claim.model_copy(
+        update={
+            "pins": tuple(pins),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_artifact_digest(claim).tagged),
+        }
+    )
+    tree = world.tree()
+    tree[path] = render_claim(forged)
+    assert "playbill.claim.capture_contract_pin_unresolved" in world.refusals(
+        tree, name="forged-provenance"
+    )
+
+
+def _dependents(*claim_types: ClaimType, windows: tuple[object, ...] = ()) -> tuple[str, ...]:
+    from types import SimpleNamespace
+
+    from cruxible_core.proposals.proposals import _capture_contract_dependents
+
+    context = SimpleNamespace(
+        resolved=SimpleNamespace(
+            claim_types={
+                item.identity.qualified: SimpleNamespace(claim_type=item) for item in claim_types
+            },
+            resolution_contracts={f"r{index}": item for index, item in enumerate(windows)},
+        )
+    )
+    return _capture_contract_dependents(
+        context,  # type: ignore[arg-type]
+        identity=IDENTITY.qualified,
+        previous_digest=_digest(ORIGINAL),
+        successor_digest=_digest(_successor(ORIGINAL)),
+    )
+
+
+def test_a_rule_for_other_roles_does_not_cover_a_stranded_exact_rule() -> None:
+    observation = _digest_rule(_digest(ORIGINAL), rule_id="observed").model_copy(
+        update={"claim_roles": ("observation",)}
+    )
+    normative = _digest_rule(_digest(_successor(ORIGINAL)), rule_id="stated").model_copy(
+        update={"claim_roles": ("normative",)}
+    )
+    assert _dependents(_v5_type(observation, normative)) == (f"ClaimType:{PREDICATE}",)
+    covering = normative.model_copy(update={"claim_roles": ("normative", "observation")})
+    assert _dependents(_v5_type(observation, covering)) == ()
+
+
+def test_only_live_resolution_contracts_hold_a_contract_in_place() -> None:
+    from cruxible_client.contracts.procedures.windows import (
+        CaptureEventSelectorV1,
+        CaptureEventWindowV1,
+    )
+    from cruxible_client.contracts.resolution_contracts import ResolutionContractV1
+
+    def window(state: str) -> ResolutionContractV1:
+        return ResolutionContractV1.model_construct(
+            identity=ArtifactIdentity(kind="ResolutionContract", name=state),
+            window=CaptureEventWindowV1(
+                event=CaptureEventSelectorV1(
+                    capture_contract_identity=IDENTITY,
+                    capture_contract_digest=_digest(ORIGINAL),
+                ),
+                duration_seconds=60,
+            ),
+            lifecycle=ArtifactLifecycle(state=state),  # type: ignore[arg-type]
+        )
+
+    assert _dependents(windows=(window("live"), window("retired"))) == ("ResolutionContract:live",)
+
+
+def test_the_upgrade_refuses_versions_that_would_newly_match_two_rules() -> None:
+    from cruxible_core.service.claims.evidence_rule_upgrade import _convert, _Refused
+
+    other = foreign_source_capture_contract("repo.other")
+    improved = _successor(ORIGINAL)
+    by_digest = {
+        _digest(item): AcceptedCaptureContract(
+            path=capture_contract_path(item.identity.name),
+            contract=item,
+            artifact_digest=_digest(item),
+        )
+        for item in (ORIGINAL, improved, other)
+    }
+
+    class Lineages:
+        def version(self, digest: str) -> AcceptedCaptureContract:
+            return by_digest[digest]
+
+        def lineage(self, identity: str) -> tuple[AcceptedCaptureContract, ...]:
+            return tuple(
+                item for item in by_digest.values() if item.contract.identity.qualified == identity
+            )
+
+    # Both rules already share the other contract, but C1 and C2 each matched one.
+    first = _digest_rule(_digest(other), _digest(ORIGINAL), rule_id="a")
+    second = _digest_rule(_digest(other), _digest(improved), rule_id="b")
+    with pytest.raises(_Refused, match="both match the same evidence"):
+        _convert(_v5_type(first, second), Lineages())  # type: ignore[arg-type]

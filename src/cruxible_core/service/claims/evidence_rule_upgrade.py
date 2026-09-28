@@ -162,12 +162,26 @@ def _convert(
         for offset, second in enumerate(rules[index + 1 :], start=index + 1):
             if not _overlaps(first, second):
                 continue
-            if not set(before[index].capture_contract_digests) & set(
+            # Evidence two rules both match is refused, so conversion may only keep
+            # ambiguity that already existed: every version of a shared contract
+            # must already have been named by both exact rules.
+            already = set(before[index].capture_contract_digests) & set(
                 before[offset].capture_contract_digests
-            ):
+            )
+            shared = {item.target.qualified for item in first.capture_contracts} & {
+                item.target.qualified for item in second.capture_contracts
+            }
+            newly = sorted(
+                f"{identity}@{version.artifact_digest}"
+                for identity in shared
+                for version in lineages.lineage(identity)
+                if version.artifact_digest not in already
+            )
+            if newly:
                 raise _Refused(
                     f"rules {first.rule_id!r} and {second.rule_id!r} would both match the same "
-                    "evidence once they name contracts by identity; merge them first"
+                    f"evidence once they name contracts by identity ({', '.join(newly)}); "
+                    "merge them first"
                 )
     payload = claim_type.model_dump(mode="python")
     payload.update(

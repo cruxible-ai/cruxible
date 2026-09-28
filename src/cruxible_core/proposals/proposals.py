@@ -75,7 +75,6 @@ from cruxible_client.contracts.captures import (
     CaptureObjectStoreProtocol,
     ProducerReceiptResolverProtocol,
     capture_contract_digest,
-    capture_contract_path,
     evaluate_capture_contract_law,
     parse_capture_contract,
 )
@@ -341,12 +340,19 @@ ClaimLawEvidenceProvider = Callable[[AcceptedCoordinate, str, str], ClaimLawEvid
 
 AcceptedReferentsProvider = Callable[[AcceptedProjectionCoordinate], frozenset[AcceptedCoordinate]]
 AttestationPrincipalProvider = Callable[[AcceptedCoordinate, str], PrincipalRecord]
-HistoricalArtifactProvider = Callable[[AcceptedCoordinate, str, str], bytes | None]
-"""Bytes of the accepted version of ``path`` with an exact digest, within one accepted prefix.
 
-``(coordinate, path, artifact_digest)``: the version may since have been
-superseded; a version the prefix never accepted is None.
-"""
+
+class HistoricalArtifactProvider(Protocol):
+    """One exact accepted artifact version within an accepted prefix, even if superseded.
+
+    Returns ``(path, bytes)`` for the version with ``artifact_digest`` whose path
+    lies under ``family`` (e.g. ``"capture-contracts/"``), or None when the prefix
+    never accepted it. Nothing ever substitutes a later version.
+    """
+
+    def __call__(
+        self, coordinate: AcceptedCoordinate, artifact_digest: str, *, family: str
+    ) -> tuple[str, bytes] | None: ...
 
 
 @dataclass(frozen=True)
@@ -2687,6 +2693,11 @@ def _verified_attestation_member(context: _MemberContext) -> _MemberVerdict:
         bodies=context.bodies,
         law=law,
         producer_receipt_resolver=context.producer_receipt_resolver,
+        # Evidence under a since-succeeded contract version verifies against that
+        # version, accepted at or before the signed referent.
+        historical_capture_contract=historical_capture_contract_resolver(
+            context.historical_artifact_provider, s.referent_coordinate
+        ),
     )
     digest = attestation_artifact_digest(value).tagged
     return _accepted(
@@ -2730,25 +2741,34 @@ def _capture_contract_dependents(
         if claim_type.lifecycle.state != "live":
             continue
         rules = claim_type.evidence_admission_policy.rules
-        names_identity = any(
-            item.target.qualified == identity
-            for rule in rules
-            if isinstance(rule, ClaimEvidenceAdmissionRuleV3)
-            for item in rule.capture_contracts
-        )
-        exact_digests = {
-            digest
-            for rule in rules
-            if not isinstance(rule, ClaimEvidenceAdmissionRuleV3)
-            for digest in rule.capture_contract_digests
-        }
-        exact_stranded = previous_digest in exact_digests and successor_digest not in exact_digests
-        if (names_identity and successor_digest is None) or exact_stranded:
-            stranded.add(claim_type.identity.qualified)
-    for path, resolution in context.resolved.resolution_contracts.items():
+        # The (role, evidence kind) pairs whose evidence the replacing version can
+        # still reach. Only a rule admitting that version covers a pair; a rule
+        # for other roles or kinds that happens to name it does not.
+        covered: set[tuple[str, str]] = set()
+        for rule in rules:
+            follows = (
+                any(item.target.qualified == identity for item in rule.capture_contracts)
+                if isinstance(rule, ClaimEvidenceAdmissionRuleV3)
+                else successor_digest in rule.capture_contract_digests
+            )
+            if successor_digest is not None and follows:
+                covered.update(
+                    (role, kind) for role in rule.claim_roles for kind in rule.evidence_kinds
+                )
+        for rule in rules:
+            names_moving = (
+                any(item.target.qualified == identity for item in rule.capture_contracts)
+                if isinstance(rule, ClaimEvidenceAdmissionRuleV3)
+                else previous_digest in rule.capture_contract_digests
+            )
+            domain = {(role, kind) for role in rule.claim_roles for kind in rule.evidence_kinds}
+            if names_moving and not domain <= covered:
+                stranded.add(claim_type.identity.qualified)
+    for resolution in context.resolved.resolution_contracts.values():
         window = resolution.window
         if (
-            isinstance(window, CaptureEventWindowV1)
+            resolution.lifecycle.state == "live"
+            and isinstance(window, CaptureEventWindowV1)
             and window.event.capture_contract_identity.qualified == identity
             and window.event.capture_contract_digest == previous_digest
         ):
@@ -2811,42 +2831,30 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
-def _historical_capture_contract(
-    context: _MemberContext,
-    claim: ClaimArtifactAny,
+def historical_capture_contract_resolver(
+    provider: HistoricalArtifactProvider | None, at: AcceptedCoordinate
 ) -> Callable[[str], AcceptedCaptureContract | None]:
-    """Resolve an exact CaptureContract version the Claim pins, in accepted history.
+    """Resolve exact CaptureContract versions accepted within the prefix ending at ``at``.
 
-    Bounded by the evaluation's accepted parent, so replaying a generation reads
-    exactly what its first evaluation read. The Claim's own capture-contract pin
-    names the contract identity, hence its path; a version it does not pin is
-    never looked up. Without a provider nothing historical resolves and only
-    live contracts verify.
+    Bounded by one accepted coordinate, so replaying a generation reads exactly
+    what its first evaluation read. Without a provider nothing historical
+    resolves and only live contracts verify.
     """
 
-    provider = context.historical_artifact_provider
-    at = context.accepted_coordinate()
-    identities = {
-        pin.artifact_digest: pin.target
-        for pin in claim.pins
-        if pin.role == "capture-contract" and pin.target.kind == "CaptureContract"
-    }
     cache: dict[str, AcceptedCaptureContract | None] = {}
 
     def resolve(digest: str) -> AcceptedCaptureContract | None:
         if digest in cache:
             return cache[digest]
-        identity = identities.get(digest)
+        found = None if provider is None else provider(at, digest, family="capture-contracts/")
         accepted = None
-        if provider is not None and identity is not None:
-            path = capture_contract_path(identity.name)
-            raw = provider(at, path, digest)
-            if raw is not None:
-                contract = parse_capture_contract(raw, path=path)
-                if capture_contract_digest(contract).tagged == digest:
-                    accepted = AcceptedCaptureContract(
-                        path=path, contract=contract, artifact_digest=digest
-                    )
+        if found is not None:
+            path, raw = found
+            contract = parse_capture_contract(raw, path=path)
+            if capture_contract_digest(contract).tagged == digest:
+                accepted = AcceptedCaptureContract(
+                    path=path, contract=contract, artifact_digest=digest
+                )
         cache[digest] = accepted
         return accepted
 
@@ -2914,7 +2922,9 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
             installed.coordinate in {CLAIM_LAW_V3_REVISION_8, CLAIM_LAW_V3_REVISION_9}
         ),
         historical_capture_contract=(
-            _historical_capture_contract(context, claim)
+            historical_capture_contract_resolver(
+                context.historical_artifact_provider, context.accepted_coordinate()
+            )
             if installed.coordinate in {CLAIM_LAW_V2_REVISION_7, CLAIM_LAW_V3_REVISION_9}
             else None
         ),

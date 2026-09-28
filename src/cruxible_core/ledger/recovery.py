@@ -531,33 +531,41 @@ class _LedgerArtifactVersions:
     """Historical artifact versions read straight from the signed ledger.
 
     Replay has no history index, so a law that needs an exact superseded version
-    walks back from the generation it is bounded by, reading only the one path.
-    Found versions are remembered per path, so each lineage is walked at most
-    once however many members ask.
+    walks back from the generation it is bounded by, reading only the paths of
+    one family that each generation changed. A walk stops as soon as it finds
+    the version and resumes from where it stopped for the next lookup, so each
+    prefix is read at most once however many members ask, in any order.
     """
 
     def __init__(self, ledger: GitLedger) -> None:
         self._ledger = ledger
-        self._versions: dict[str, dict[str, bytes]] = {}
-        self._walked: dict[str, set[str]] = {}
+        # (start oid, family) -> (versions found, next generation to read or None)
+        self._walks: dict[tuple[str, str], tuple[dict[str, tuple[str, bytes]], str | None]] = {}
 
-    def __call__(self, coordinate: AcceptedCoordinate, path: str, digest: str) -> bytes | None:
+    def __call__(
+        self, coordinate: AcceptedCoordinate, artifact_digest: str, *, family: str
+    ) -> tuple[str, bytes] | None:
         from cruxible_core.claims.closure import parse_dependency_artifact
 
-        versions = self._versions.setdefault(path, {})
-        walked = self._walked.setdefault(path, set())
-        oid: str | None = coordinate.git_oid
-        while oid is not None and oid not in walked:
-            walked.add(oid)
-            content = self._ledger.blobs_at(oid, (path,)).get(path)
-            if content is not None:
+        key = (coordinate.git_oid, family)
+        versions, oid = self._walks.get(key, ({}, coordinate.git_oid))
+        while artifact_digest not in versions and oid is not None:
+            parent = self._ledger.parent_of(oid)
+            paths = (
+                tuple(self._ledger.read_tree(oid))
+                if parent is None
+                else self._ledger.changed_tree_paths(parent, oid)
+            )
+            wanted = tuple(
+                path for path in paths if path.startswith(family) and path.endswith(".json")
+            )
+            for path, content in self._ledger.blobs_at(oid, wanted).items():
                 state = parse_dependency_artifact(path, content)
                 if state is not None:
-                    versions.setdefault(state.artifact_digest, content)
-            if digest in versions:
-                break
-            oid = self._ledger.parent_of(oid)
-        return versions.get(digest)
+                    versions.setdefault(state.artifact_digest, (path, content))
+            oid = parent
+        self._walks[key] = (versions, oid)
+        return versions.get(artifact_digest)
 
 
 def _verify_successor(

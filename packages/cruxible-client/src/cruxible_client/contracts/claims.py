@@ -2159,11 +2159,14 @@ def evaluate_claim_law(
     if historical_capture_contract is not None:
         # Provenance pins are not closure edges, so the law proves each one names
         # an accepted version of its contract -- live now or merely historical.
-        live_contract_digests = {item.artifact_digest for item in capture_contracts.values()}
+        live_contracts = {item.artifact_digest: item for item in capture_contracts.values()}
         for pin in claim.pins:
-            if pin.role != "capture-contract" or pin.artifact_digest in live_contract_digests:
+            if pin.role != "capture-contract":
                 continue
-            resolved_version = historical_capture_contract(pin.artifact_digest)
+            resolved_version = live_contracts.get(pin.artifact_digest) or (
+                historical_capture_contract(pin.artifact_digest)
+            )
+            # The exact identity/version pair must be real, live or historical.
             if resolved_version is None or resolved_version.contract.identity != pin.target:
                 return _diagnostic(
                     "playbill.claim.capture_contract_pin_unresolved",
