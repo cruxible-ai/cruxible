@@ -391,16 +391,54 @@ def _check_socket_parent(path: Path, status: os.stat_result) -> None:
         )
 
 
+_MAX_SOCKET_PATH_SYMLINKS = 40
+
+
+def _inspect_socket_path_entry(path: Path) -> os.stat_result:
+    try:
+        return os.lstat(path)
+    except OSError as exc:
+        raise _refuse_socket_location(f"could not inspect {path}: {exc}") from exc
+
+
 def _check_socket_ancestors(directory: Path) -> None:
-    # Both the path as given and its resolved form: a symlink in the chain is
-    # itself an entry that its directory's owner could replace.
-    for chain in (directory, directory.resolve(strict=True)):
-        for ancestor in chain.parents:
-            try:
-                status = os.lstat(ancestor)
-            except OSError as exc:
-                raise _refuse_socket_location(f"could not inspect {ancestor}: {exc}") from exc
-            _check_socket_ancestor(ancestor, status)
+    """Apply the ancestor rule to every directory the path actually traverses.
+
+    The path is walked one component at a time and each symlink is resolved
+    here, so every directory a lookup passes through -- including the ones a
+    symlink target leads through on the way to the next symlink -- is checked.
+    A directory another user could write would let them replace whatever the
+    path resolves through it. The socket's own directory is checked separately.
+    """
+    current = Path(os.sep)
+    _check_socket_ancestor(current, _inspect_socket_path_entry(current))
+    remaining = list(directory.parts[1:])
+    followed = 0
+    while remaining:
+        part = remaining.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            current = current.parent
+            continue
+        entry = current / part
+        status = _inspect_socket_path_entry(entry)
+        if stat.S_ISLNK(status.st_mode):
+            followed += 1
+            if followed > _MAX_SOCKET_PATH_SYMLINKS:
+                raise _refuse_socket_location(f"{directory} passes through too many symlinks")
+            target = Path(os.readlink(entry))
+            if target.is_absolute():
+                current = Path(os.sep)
+                remaining = list(target.parts[1:]) + remaining
+            else:
+                remaining = list(target.parts) + remaining
+            continue
+        if not stat.S_ISDIR(status.st_mode):
+            raise _refuse_socket_location(f"{entry} is not a directory")
+        if remaining:
+            _check_socket_ancestor(entry, status)
+        current = entry
 
 
 def prepare_socket_directory(directory: Path) -> None:

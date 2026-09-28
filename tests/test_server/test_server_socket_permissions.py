@@ -72,6 +72,45 @@ def test_a_symlinked_socket_directory_is_refused(short_dir: Path) -> None:
         server_app.prepare_socket_directory(link)
 
 
+def test_a_chain_through_an_open_directory_via_an_intermediate_symlink_is_refused(
+    short_dir: Path,
+) -> None:
+    # private/hop -> ../open/relay -> ../real: neither the path as given nor its
+    # final resolution names `open`, but the lookup walks through it, and
+    # anyone can replace `relay` there.
+    open_dir = short_dir / "open"
+    open_dir.mkdir()
+    os.chmod(open_dir, 0o777)
+    real = short_dir / "real"
+    (real / "run").mkdir(parents=True, mode=0o700)
+    os.chmod(real, 0o700)
+    (open_dir / "relay").symlink_to(Path("..") / "real")
+    private = short_dir / "private"
+    private.mkdir(mode=0o700)
+    (private / "hop").symlink_to(Path("..") / "open" / "relay")
+    directory = private / "hop" / "run"
+    assert directory.resolve() == (real / "run").resolve()
+
+    with pytest.raises(ConfigError, match="open is writable by group or others"):
+        server_app.prepare_socket_directory(directory)
+
+
+def test_a_socket_under_the_system_temp_root_still_passes() -> None:
+    # The sticky root-owned temp root; on macOS it is reached through a
+    # root-owned symlink into the root-owned private directory.
+    temp_root = Path(os.sep) / "tmp"
+    status = os.stat(temp_root)
+    if not (status.st_mode & stat.S_ISVTX and status.st_uid == 0):
+        pytest.skip("this host's temp root is not sticky and root-owned")
+    directory = Path(tempfile.mkdtemp(prefix="cxs", dir=temp_root))
+    try:
+        server_app.prepare_socket_directory(directory / "run")
+        sock = server_app.bind_private_unix_socket(directory / "run" / "d.sock")
+        sock.close()
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
 def test_a_private_existing_directory_is_accepted(short_dir: Path) -> None:
     os.chmod(short_dir, 0o700)
 
