@@ -10,7 +10,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.canonical import ProposalDigest, Sha256Value, typed_digest
 from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
     ProposalIntegrityError,
@@ -204,23 +204,52 @@ def service_playbill_proposal_status(
     *,
     proposal_id: str,
 ) -> PlaybillProposalListEntryV1:
-    """The one proposal's list entry at the current accepted coordinate, read by ID."""
+    """The one proposal's list entry at the current accepted coordinate, read by ID.
 
-    resolved = instance.proposal_evidence().read_admission(proposal_id).proposal_id
+    It is the list's own entry for that ID, so retained partial evidence answers
+    ``incomplete`` with its reasons rather than refusing; whatever evidence is
+    present is still read and authenticated.
+    """
+
+    evidence = instance.proposal_evidence()
+    resolved = evidence.resolve_proposal_id(proposal_id)
+    try:
+        ProposalDigest.from_tagged(resolved)
+    except ValueError as exc:
+        raise ProposalNotFoundError(proposal_id) from exc
     coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    for entry in _proposal_entries(instance, coordinate, resolved):
-        if entry.proposal_id == resolved:
-            return entry
-    raise ProposalNotFoundError(proposal_id)  # pragma: no cover - a read admission lists
+    entry = next(
+        (
+            item
+            for item in _proposal_entries(instance, coordinate, resolved, require_evidence=False)
+            if item.proposal_id == resolved
+        ),
+        None,
+    )
+    if entry is None:
+        raise ProposalNotFoundError(proposal_id)
+    missing = set(entry.incomplete_reasons)
+    if "missing_admission" not in missing:
+        evidence.read_admission(resolved)
+    if "missing_evaluation" not in missing:
+        evaluation = evidence.read_evaluation(resolved)
+        if evaluation.candidate_digest is not None and "missing_candidate" not in missing:
+            evidence.read_candidate(evaluation.candidate_digest)
+    if entry.withdrawal_present:
+        evidence.read_withdrawal(resolved)
+    return entry
 
 
 def _proposal_entries(
     instance: PlaybillInstance,
     coordinate: PlaybillAcceptedCoordinate,
     proposal_id: str | None = None,
+    *,
+    require_evidence: bool = True,
 ) -> tuple[PlaybillProposalListEntryV1, ...]:
+    """List entries, or one ID's; ``require_evidence`` makes that ID's records mandatory."""
     evidence = instance.proposal_evidence()
-    if proposal_id is not None:
+    if proposal_id is not None and require_evidence:
         # A selected status is an evidence read, not an inventory-only answer.
         evidence.read_admission(proposal_id)
         evaluation = evidence.read_evaluation(proposal_id)
