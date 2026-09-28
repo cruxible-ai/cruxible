@@ -236,11 +236,6 @@ class SeedPlanV1(_StrictSeedModel):
         named = ", ".join(self.group_ids) or "none"
         raise SeedBundleError(f"no seed group named {group_id}; this bundle plans: {named}")
 
-    def next_group_id(self, after: str) -> str | None:
-        ids = self.group_ids
-        index = ids.index(after)
-        return ids[index + 1] if index + 1 < len(ids) else None
-
 
 class SeedPlanResultV1(_StrictSeedModel):
     tag: Literal["playbill-seed-plan-result-v1"] = "playbill-seed-plan-result-v1"

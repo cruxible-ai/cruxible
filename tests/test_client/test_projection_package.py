@@ -39,7 +39,6 @@ def test_compact_package_roundtrip_and_refusals(tmp_path: Path) -> None:
     restored = ProjectionPackage.from_bytes(package.to_bytes())
     restored.install(tmp_path, "view.md")
     assert ProjectionPackage.read(tmp_path, "view.md").to_bytes() == package.to_bytes()
-    assert package.retention_value().content == package.to_bytes()
     # Unavailable sidecars cannot turn the body into independently citable evidence.
     (tmp_path / ".playbill/manifests" / (digest[7:] + ".json")).unlink()
     with pytest.raises(ProjectionMarkerError, match="unavailable"):

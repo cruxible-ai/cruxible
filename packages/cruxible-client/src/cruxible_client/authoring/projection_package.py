@@ -1,8 +1,8 @@
 """Portable authored views: compact page plus immutable declaration manifests.
 
-Local installation is derived, not governed retention. ``retention_value`` is
-an exact-content value for a normal reviewed Claim; accepting that Claim is
-what makes the complete package recoverable from the ledger and its CAS.
+Local installation is derived, not governed retention. Staging ``to_bytes()`` as
+exact content in a normal reviewed Claim, and accepting that Claim, is what makes
+the complete package recoverable from the ledger and its CAS.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
-from cruxible_client.authoring.sdk_types import ExactContent
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.declared_blocks import (
     ProjectionMarkerError,
@@ -152,10 +151,6 @@ class ProjectionPackage:
             return package
         except (ValueError, TypeError, KeyError, AttributeError) as exc:
             raise ProjectionMarkerError("projection package is malformed") from exc
-
-    def retention_value(self) -> ExactContent:
-        """Stage this in a reviewed exact-content Claim to obtain ledger retention."""
-        return ExactContent(self.to_bytes())
 
     def install(self, workspace: str | Path, path: str | Path) -> Path:
         from cruxible_client.authoring.insertions import replace_publication_file

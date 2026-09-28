@@ -70,30 +70,6 @@ def _unique_window(content: bytes, anchor: str) -> tuple[int, int]:
     return found[0], found[0] + len(encoded)
 
 
-def _line_window(
-    content: bytes,
-    *,
-    start: int,
-    end: int,
-    surrounding_lines: int,
-) -> tuple[int, int]:
-    if isinstance(surrounding_lines, bool) or surrounding_lines < 0:
-        raise SourceSelectionError("surrounding_lines must be a nonnegative integer")
-    window_start = content.rfind(b"\n", 0, start) + 1
-    closing = content.find(b"\n", end - 1)
-    window_end = len(content) if closing < 0 else closing + 1
-    for _ in range(surrounding_lines):
-        if window_start == 0:
-            break
-        window_start = content.rfind(b"\n", 0, window_start - 1) + 1
-    for _ in range(surrounding_lines):
-        if window_end >= len(content):
-            break
-        closing = content.find(b"\n", window_end)
-        window_end = len(content) if closing < 0 else closing + 1
-    return window_start, window_end
-
-
 def source_content_for_observation(content: bytes) -> str | None:
     """The whole source, base64, when it declares a projection block; else nothing.
 
@@ -146,23 +122,6 @@ class FileSelector:
 
     def anchor(self, text: str) -> EvidenceSelection:
         start, end = _unique_window(self.content, text)
-        return EvidenceSelection(
-            path=self.path,
-            source_id=self.source_id,
-            content=self.content,
-            anchor_text=text,
-            start_byte=start,
-            end_byte=end,
-        )
-
-    def anchor_window(self, *, text: str, surrounding_lines: int) -> EvidenceSelection:
-        start, end = _unique_window(self.content, text)
-        start, end = _line_window(
-            self.content,
-            start=start,
-            end=end,
-            surrounding_lines=surrounding_lines,
-        )
         return EvidenceSelection(
             path=self.path,
             source_id=self.source_id,

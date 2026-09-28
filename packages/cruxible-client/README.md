@@ -3059,8 +3059,7 @@ Import: `cruxible_client.authoring.sdk_types.DerivationSpec`. [Source](src/cruxi
 
 `pb.file(path)` selects only cataloged local sources. FileSelector retains
 the observed bytes; `.anchor(text)` requires exactly one occurrence and records
-byte offsets. `.anchor_window(text=..., surrounding_lines=...)` extends that
-unique selection by full lines. Missing, empty, or ambiguous anchors refuse.
+byte offsets. Missing, empty, or ambiguous anchors refuse.
 Selectors do not silently reinterpret character indexes as byte indexes.
 Selections overlapping a governed projection cannot be claimed as independent
 evidence. `.observation()` produces the typed working observation for normal
@@ -3086,16 +3085,6 @@ Import: `cruxible_client.authoring.selectors.FileSelector`. [Source](src/cruxibl
 
 ```text
 anchor(text: str) -> EvidenceSelection
-```
-
-<a id="api-fileselector-anchor-window"></a>
-
-### `FileSelector.anchor_window`
-
-[Source](src/cruxible_client/authoring/selectors.py#L158)
-
-```text
-anchor_window(*, text: str, surrounding_lines: int) -> EvidenceSelection
 ```
 
 <a id="api-evidenceselection"></a>
@@ -3723,8 +3712,8 @@ currency policy makes drift a failure; `detach` is an explicit local mutation.
 ProjectionPackage carries page bytes and every referenced exact manifest.
 Construction/read/from_bytes validate the package and reject missing, unrelated,
 corrupt, or out-of-root material. `.install` writes local derived files; it is
-not governed retention. `.retention_value()` returns ExactContent to author in
-a normal reviewed Claim if ledger retention is desired. Package construction
+not governed retention. Author `.to_bytes()` as ExactContent in a normal
+reviewed Claim if ledger retention is desired. Package construction
 and installation do not grant evidence independence to a projection.
 
 <a id="api-projectionblocks"></a>
@@ -3830,18 +3819,6 @@ to_bytes() -> bytes
 ```text
 from_bytes(content: bytes) -> ProjectionPackage
 ```
-
-<a id="api-projectionpackage-retention-value"></a>
-
-### `ProjectionPackage.retention_value`
-
-[Source](src/cruxible_client/authoring/projection_package.py#L156)
-
-```text
-retention_value() -> ExactContent
-```
-
-Stage this in a reviewed exact-content Claim to obtain ledger retention.
 
 <a id="api-projectionpackage-install"></a>
 
@@ -6885,10 +6862,6 @@ group_ids() -> tuple[str, ...]
 
 ```text
 group(group_id: str) -> SeedProposalGroupV1
-```
-
-```text
-next_group_id(after: str) -> str | None
 ```
 
 The whole grouping, before a byte is stored or a proposal is opened.

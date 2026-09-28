@@ -384,10 +384,8 @@ def test_sdk_curation_lifecycle_methods_are_thin_typed_delegates(tmp_path: Path)
     assert client.curation_actions[2][1]["scope"] == "item"
 
 
-@pytest.mark.parametrize("window", [False, True])
 def test_sdk_declared_block_refuses_every_citation_role_inside_it(
     tmp_path: Path,
-    window: bool,
 ) -> None:
     """A copy of projection bytes attests them into concrete as evidence would.
 
@@ -428,16 +426,8 @@ def test_sdk_declared_block_refuses_every_citation_role_inside_it(
         clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
     )
     selector = pb.file("corpus/runbook.md")
-    selection = (
-        selector.anchor_window(text="within 48 hours", surrounding_lines=1)
-        if window
-        else selector.anchor("within 48 hours")
-    )
-    outside = (
-        selector.anchor_window(text="Preamble the author wrote", surrounding_lines=1)
-        if window
-        else selector.anchor("Preamble the author wrote")
-    )
+    selection = selector.anchor("within 48 hours")
+    outside = selector.anchor("Preamble the author wrote")
     common: dict[str, Any] = {
         "subject": "secops.policy/patch-sla",
         "predicate": "secops.policy.patch_sla",

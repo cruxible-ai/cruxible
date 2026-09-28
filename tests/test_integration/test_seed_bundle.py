@@ -73,10 +73,6 @@ def test_the_example_bundle_plans_each_surviving_writer_in_dependency_order() ->
         "bodies/corpus/runbook.md",
         "bodies/notes/scratch.md",
     )
-    assert plan.next_group_id("claim_type:project.work_item.status") == (
-        "subject:project.work_item/wi-101"
-    )
-    assert plan.next_group_id("procedure:project.work_item.digest") is None
     procedure = plan.group("procedure:project.work_item.digest")
     assert procedure.operation == "playbill_authoring_submit"
     assert procedure.entry_paths == ("procedures/project.work_item.digest.json",)
