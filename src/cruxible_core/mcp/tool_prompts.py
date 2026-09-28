@@ -74,7 +74,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "accepted principal status."
     ),
     "cruxible_playbill_proposal_list": (
-        "Use when you need to find open proposals or inspect terminal proposal outcomes."
+        "Use when you need to find open proposals or inspect terminal proposal outcomes. "
+        "Returns one page (default limit 50); when truncated, pass next_cursor back as cursor."
     ),
     "cruxible_playbill_proposal_readmit": (
         "Use when a stale proposal should be re-admitted against the current coordinate."
@@ -235,7 +236,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need the accepted named entrypoints an instance publishes."
     ),
     "cruxible_playbill_policies_in_force": (
-        "Use when you need the live governed policy inventory at the accepted coordinate."
+        "Use when you need the live governed policy inventory at the accepted coordinate. "
+        "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
     ),
     "cruxible_playbill_get_query_definition": (
         "Use when you need one entrypoint's parameters, budgets, and result contract."
@@ -308,7 +310,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "binding the exact retained mandate-settlement terminal record."
     ),
     "cruxible_playbill_discover": (
-        "Use when you do not yet know which interface or Subject names the state you want."
+        "Use when you do not yet know which interface or Subject names the state you want. "
+        "truncated means a budget clipped the hits; raise budget or narrow the query."
     ),
     "cruxible_playbill_search": (
         "Use search mode to find accepted Claims, Procedures, or installed demands; "
@@ -316,7 +319,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_playbill_curation_list": (
         "List mechanically detected curation patterns. Supply an explicit workspace_observation "
-        "only when the client has scanned declared blocks; the daemon never reads workspace files."
+        "only when the client has scanned declared blocks; the daemon never reads workspace files. "
+        "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
     ),
     "cruxible_playbill_audit": (
         "Rank visible Claim verification work by exact stake, weakness, and recency factors. "

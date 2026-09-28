@@ -7,7 +7,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from cruxible_client.contracts import PLAYBILL_NEXT_DEFAULT_LIMIT, PLAYBILL_NEXT_MAX_LIMIT
+from cruxible_client.contracts import (
+    PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
+    PLAYBILL_CURATION_LIST_MAX_LIMIT,
+    PLAYBILL_NEXT_DEFAULT_LIMIT,
+    PLAYBILL_NEXT_MAX_LIMIT,
+)
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
 from cruxible_client.contracts.authoring.models import (
@@ -319,6 +324,10 @@ class PlaybillCurationListRequest(_StrictPlaybillRequest):
     evaluation_time: datetime
     access_profile: dict[str, Any]
     workspace_observation: dict[str, Any] | None = None
+    limit: int = Field(
+        default=PLAYBILL_CURATION_LIST_DEFAULT_LIMIT, ge=1, le=PLAYBILL_CURATION_LIST_MAX_LIMIT
+    )
+    cursor: str | None = Field(default=None, max_length=4096)
 
 
 class PlaybillAuditRequest(_StrictPlaybillRequest):

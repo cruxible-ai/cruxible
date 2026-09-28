@@ -32,6 +32,11 @@ from cruxible_core.service.authoring.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
 )
+from cruxible_core.service.list_pages import (
+    decode_list_cursor,
+    encode_list_cursor,
+    page_after_boundary,
+)
 
 ProposalInventoryStatus = Literal["open", "settled", "incomplete"]
 ProposalIncompleteReason = Literal["missing_admission", "missing_evaluation", "missing_candidate"]
@@ -83,6 +88,8 @@ class PlaybillProposalListV1(_StrictOperationalReadModel):
     coordinate: PlaybillAcceptedCoordinate
     status_filter: ProposalInventoryStatus | None = None
     entries: tuple[PlaybillProposalListEntryV1, ...]
+    truncated: bool = False
+    next_cursor: str | None = None
 
 
 class PlaybillProposalReadmitResultV1(_StrictOperationalReadModel):
@@ -131,19 +138,58 @@ def service_list_playbill_proposals(
     instance: PlaybillInstance,
     *,
     status: ProposalInventoryStatus | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
 ) -> PlaybillProposalListV1:
-    """Reduce immutable proposal evidence against the current accepted coordinate."""
+    """Reduce immutable proposal evidence against the current accepted coordinate.
 
-    coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    ``limit`` bounds the page; ``None`` is the unbounded internal read. A
+    cursor continues its first page at that page's accepted coordinate, so
+    statuses do not shift between pages.
+    """
+
+    selection = {"status": status}
+    continuation = (
+        None
+        if cursor is None
+        else decode_list_cursor(cursor, list_name=_PROPOSAL_LIST, selection=selection)
+    )
+    coordinate = (
+        PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        if continuation is None
+        else PlaybillAcceptedCoordinate.model_validate(continuation.coordinate)
+    )
+    entries = tuple(
+        entry
+        for entry in _proposal_entries(instance, coordinate)
+        if status is None or status == entry.status
+    )
+    page, truncated = page_after_boundary(
+        entries,
+        keys=tuple((entry.proposal_id,) for entry in entries),
+        after=None if continuation is None else continuation.last_key,
+        limit=len(entries) if limit is None else limit,
+        list_name=_PROPOSAL_LIST,
+    )
     return PlaybillProposalListV1(
         coordinate=coordinate,
         status_filter=status,
-        entries=tuple(
-            entry
-            for entry in _proposal_entries(instance, coordinate)
-            if status is None or status == entry.status
+        entries=page,
+        truncated=truncated,
+        next_cursor=(
+            encode_list_cursor(
+                list_name=_PROPOSAL_LIST,
+                coordinate=coordinate.model_dump(mode="json"),
+                selection=selection,
+                last_key=(page[-1].proposal_id,),
+            )
+            if truncated and page
+            else None
         ),
     )
+
+
+_PROPOSAL_LIST = "proposal"
 
 
 def _proposal_entries(

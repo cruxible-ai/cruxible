@@ -8,7 +8,7 @@ import os
 import re
 import time
 from collections import OrderedDict
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -1380,6 +1380,27 @@ class Intent:
         )
 
 
+def _all_proposals(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    status: Literal["open", "settled", "incomplete"] | None = None,
+) -> Iterator[api.PlaybillProposalListEntry]:
+    """Every listed proposal, following the list's pages at one pinned coordinate."""
+    cursor: str | None = None
+    while True:
+        page = client.list_playbill_proposals(
+            instance_id,
+            status=status,
+            limit=api.PLAYBILL_PROPOSAL_LIST_MAX_LIMIT,
+            cursor=cursor,
+        )
+        yield from page.entries
+        if page.next_cursor is None:
+            return
+        cursor = page.next_cursor
+
+
 class Proposal:
     def __init__(
         self,
@@ -1418,9 +1439,7 @@ class Proposal:
         return () if self.lint is None else tuple(self.lint.warnings)
 
     def status(self) -> api.PlaybillProposalListEntry:
-        for entry in self._playbill._client.list_playbill_proposals(
-            self._playbill._instance_id
-        ).entries:
+        for entry in _all_proposals(self._playbill._client, self._playbill._instance_id):
             if entry.proposal_id == self.proposal_id:
                 return entry
         raise ValueError(f"proposal {self.proposal_id!r} was not listed by the daemon")
@@ -2703,10 +2722,9 @@ class Playbill:
         if not isinstance(candidate_digest, str) or not isinstance(predecessor_digest, str):
             raise ValueError("accepted retirement history lacks candidate evidence")
 
-        proposals = self._client.list_playbill_proposals(self._instance_id, status="settled")
         matches = tuple(
             entry
-            for entry in proposals.entries
+            for entry in _all_proposals(self._client, self._instance_id, status="settled")
             if entry.candidate_digest == candidate_digest and entry.terminal_reason == "accepted"
         )
         if len(matches) != 1:
@@ -3375,8 +3393,13 @@ class Playbill:
         self._observe_read(_coordinate(result.coordinate), expected=self._read_at())
         return result
 
-    def curation_list(self) -> api.PlaybillCurationListResult:
-        """Read the curation queue with one explicit attributed workspace scan."""
+    def curation_list(
+        self, *, limit: int | None = None, cursor: str | None = None
+    ) -> api.PlaybillCurationListResult:
+        """Read one page of the curation queue with one explicit attributed workspace scan.
+
+        A truncated page carries ``next_cursor``; pass it back as ``cursor``.
+        """
 
         access_profile = self._access_profile.model_dump()
         observation, _coordinate = observe_playbill_next_workspace_with_coverage(
@@ -3391,6 +3414,8 @@ class Playbill:
             evaluation_time=self._evaluation_time(),
             access_profile=access_profile,
             workspace_observation=observation,
+            limit=limit,
+            cursor=cursor,
         )
 
     def audit(

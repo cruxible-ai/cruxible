@@ -78,6 +78,8 @@ def test_mcp_curation_list_is_one_thin_read_delegate(monkeypatch) -> None:  # ty
                 "disclose_restricted_existence": True,
             },
             "workspace_observation": observation,
+            "limit": contracts.PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
+            "cursor": None,
         },
     }
 

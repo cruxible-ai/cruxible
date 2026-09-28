@@ -1622,13 +1622,23 @@ def proposal_group() -> None:
 
 @proposal_group.command("list")
 @click.option("--status", type=click.Choice(["open", "settled", "incomplete"]), default=None)
+@click.option(
+    "--limit",
+    default=contracts.PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT,
+    show_default=True,
+    type=click.IntRange(1, contracts.PLAYBILL_PROPOSAL_LIST_MAX_LIMIT),
+    help="Proposals per page.",
+)
+@click.option("--cursor", default=None, help="Continue a previous page of the same listing.")
 @json_option
 @handle_errors
-def list_proposals(status: str | None, output_json: bool) -> None:
+def list_proposals(status: str | None, limit: int, cursor: str | None, output_json: bool) -> None:
     result = _server_call(
         lambda client, instance_id: client.list_playbill_proposals(
             instance_id,
             status=cast(Any, status),
+            limit=limit,
+            cursor=cursor,
         ),
         command_name="playbill proposal list",
     )
@@ -1643,6 +1653,7 @@ def list_proposals(status: str | None, output_json: bool) -> None:
             f"{entry.target_ref or '-'}  {entry.admitted_at or '-'}"
         )
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
+    _echo_list_continuation(result.next_cursor)
 
 
 @proposal_group.command("readmit")
@@ -3828,11 +3839,21 @@ def policy_group() -> None:
 
 
 @policy_group.command("list")
+@click.option(
+    "--limit",
+    default=contracts.PLAYBILL_POLICY_LIST_DEFAULT_LIMIT,
+    show_default=True,
+    type=click.IntRange(1, contracts.PLAYBILL_POLICY_LIST_MAX_LIMIT),
+    help="Policies per page.",
+)
+@click.option("--cursor", default=None, help="Continue a previous page of the same listing.")
 @json_option
 @handle_errors
-def list_policies_in_force(output_json: bool) -> None:
+def list_policies_in_force(limit: int, cursor: str | None, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.list_playbill_policies_in_force(instance_id),
+        lambda client, instance_id: client.list_playbill_policies_in_force(
+            instance_id, limit=limit, cursor=cursor
+        ),
         command_name="playbill policy list",
     )
     if output_json:
@@ -3843,6 +3864,12 @@ def list_policies_in_force(output_json: bool) -> None:
             f"{policy.declaring_artifact_identity}  {policy.field_path}  {policy.policy_kind}"
         )
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
+    _echo_list_continuation(result.next_cursor)
+
+
+def _echo_list_continuation(next_cursor: str | None) -> None:
+    if next_cursor is not None:
+        click.echo(f"Truncated. Next: --cursor {next_cursor}")
 
 
 @playbill_group.group("compiler")
@@ -4701,9 +4728,23 @@ def curation_group() -> None:
     type=click.Path(exists=True, dir_okay=False),
     help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
 )
+@click.option(
+    "--limit",
+    default=contracts.PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
+    show_default=True,
+    type=click.IntRange(1, contracts.PLAYBILL_CURATION_LIST_MAX_LIMIT),
+    help="Queue items per page.",
+)
+@click.option("--cursor", default=None, help="Continue a previous page of the same queue.")
 @json_option
 @handle_errors
-def curation_list(workspace_root: str, access_profile_path: str | None, output_json: bool) -> None:
+def curation_list(
+    workspace_root: str,
+    access_profile_path: str | None,
+    limit: int,
+    cursor: str | None,
+    output_json: bool,
+) -> None:
     observation = observe_playbill_next_workspace(Path(workspace_root))
     profile = (
         CoverageAccessProfileV1(
@@ -4729,6 +4770,8 @@ def curation_list(workspace_root: str, access_profile_path: str | None, output_j
             evaluation_time=datetime.now(UTC).isoformat(),
             access_profile=profile,
             workspace_observation=observed,
+            limit=limit,
+            cursor=cursor,
         )
 
     result = _server_call(
@@ -4742,6 +4785,7 @@ def curation_list(workspace_root: str, access_profile_path: str | None, output_j
         f"Curation queue at generation {result.generation}: {len(result.items)} item(s); "
         f"observed {result.observation_coverage['observed_block_count']} declared block(s)."
     )
+    _echo_list_continuation(result.next_cursor)
 
 
 @curation_group.command("overrule")

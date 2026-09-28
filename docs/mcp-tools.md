@@ -89,7 +89,7 @@ approval stay the ordinary steps.
 | `cruxible_playbill_prepare_approval` | Return the exact approval challenge | `READ_ONLY` |
 | `cruxible_playbill_submit_approval` | Submit a public signed attestation | `GRAPH_WRITE` |
 | `cruxible_playbill_activate` | Activate by compare-and-set and refresh any configured workspace floor | `GRAPH_WRITE` |
-| `cruxible_playbill_proposal_list` | List open and terminal proposal evidence | `READ_ONLY` |
+| `cruxible_playbill_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_playbill_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
 | `cruxible_playbill_proposal_withdraw` | Retire an open proposal that will never activate | `GOVERNED_WRITE` |
 | `cruxible_playbill_whoami` | Explain credential-derived actor identity and registration | `READ_ONLY` |
@@ -235,9 +235,9 @@ Claims. It does not create a second authority plane beside accepted state.
 | `cruxible_playbill_discover` | Find interfaces and Subjects by name | `READ_ONLY` |
 | `cruxible_playbill_search` | Search, list, or orient over accepted state | `READ_ONLY` |
 | `cruxible_playbill_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
-| `cruxible_playbill_policies_in_force` | List live standalone and embedded governed policies | `READ_ONLY` |
+| `cruxible_playbill_policies_in_force` | List one page of live standalone and embedded governed policies (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_playbill_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
-| `cruxible_playbill_curation_list` | List curation patterns and ingest an explicit declared-block observation | `READ_ONLY` |
+| `cruxible_playbill_curation_list` | List one page of curation patterns (`limit`, `cursor`) and ingest an explicit declared-block observation | `READ_ONLY` |
 | `cruxible_playbill_curation_overrule` | Close an inapplicable detector-version item with attribution | `GOVERNED_WRITE` |
 | `cruxible_playbill_curation_accept_fixed` | Link an item to an exact related accepted ChangeSet | `GOVERNED_WRITE` |
 | `cruxible_playbill_curation_suppress` | Hide open work by item, pattern, or instance without resolving it | `GOVERNED_WRITE` |
@@ -248,6 +248,12 @@ Claims. It does not create a second authority plane beside accepted state.
 | `cruxible_playbill_workspace_floor_status` | Report whether the installed workspace floor is current, stale, or absent | `READ_ONLY` |
 | `cruxible_playbill_workspace_coverage_resolve` | Derive observations from selected workspace files and resolve coverage | `READ_ONLY` |
 | `cruxible_playbill_workspace_coverage_status` | Resolve coverage for the full declared workspace binding set | `READ_ONLY` |
+
+Lists that can outgrow one answer are paged. `proposal_list`,
+`policies_in_force` and `curation_list` take `limit` and `cursor`; a cut page
+carries top-level `truncated: true` and a `next_cursor` to pass back as `cursor`.
+`search` pages the same way with its structured cursor. `discover` has no
+cursor; its top-level `truncated` says a budget clipped the hits.
 
 Query execution is a read: it returns the result together with its
 `playbill-query-execution-receipt-v1`. Qualifying direct reads, query/search

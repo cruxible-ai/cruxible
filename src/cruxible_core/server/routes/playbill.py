@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 
 from cruxible_client import contracts
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
@@ -110,8 +110,18 @@ router = APIRouter(prefix="/api/v1", tags=["playbill"])
     "/{instance_id}/playbill/policies",
     response_model=contracts.PlaybillPolicyInForceList,
 )
-async def list_policies_in_force(instance_id: str) -> contracts.PlaybillPolicyInForceList:
-    return playbill_api.playbill_policies_in_force(resolve_server_instance_id(instance_id))
+async def list_policies_in_force(
+    instance_id: str,
+    limit: int = Query(
+        default=contracts.PLAYBILL_POLICY_LIST_DEFAULT_LIMIT,
+        ge=1,
+        le=contracts.PLAYBILL_POLICY_LIST_MAX_LIMIT,
+    ),
+    cursor: str | None = Query(default=None, max_length=4096),
+) -> contracts.PlaybillPolicyInForceList:
+    return playbill_api.playbill_policies_in_force(
+        resolve_server_instance_id(instance_id), limit=limit, cursor=cursor
+    )
 
 
 def _coordinate(
@@ -330,10 +340,18 @@ async def whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
 async def list_proposals(
     instance_id: str,
     status: Literal["open", "settled", "incomplete"] | None = None,
+    limit: int = Query(
+        default=contracts.PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT,
+        ge=1,
+        le=contracts.PLAYBILL_PROPOSAL_LIST_MAX_LIMIT,
+    ),
+    cursor: str | None = Query(default=None, max_length=4096),
 ) -> contracts.PlaybillProposalList:
     return playbill_api.playbill_list_proposals(
         resolve_server_instance_id(instance_id),
         status=status,
+        limit=limit,
+        cursor=cursor,
     )
 
 

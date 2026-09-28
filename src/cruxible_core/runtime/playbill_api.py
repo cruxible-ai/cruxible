@@ -775,11 +775,15 @@ def playbill_list_proposals(
     instance_id: str,
     *,
     status: ProposalInventoryStatus | None = None,
+    limit: int = contracts.PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> contracts.PlaybillProposalList:
     check_permission("cruxible_playbill_read", instance_id=instance_id)
     result = service_list_playbill_proposals(
         get_playbill_manager().get(instance_id),
         status=status,
+        limit=limit,
+        cursor=cursor,
     )
     return contracts.PlaybillProposalList.model_validate(result.model_dump(mode="json"))
 
@@ -1778,6 +1782,8 @@ def playbill_policies_in_force(
     instance_id: str,
     *,
     at: AcceptedCoordinate | None = None,
+    limit: int = contracts.PLAYBILL_POLICY_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> contracts.PlaybillPolicyInForceList:
     check_permission("cruxible_playbill_policies_in_force", instance_id=instance_id)
     result = list_playbill_policies_in_force(
@@ -1787,6 +1793,8 @@ def playbill_policies_in_force(
             if at is None
             else contracts.PlaybillAcceptedCoordinate.model_validate(at.model_dump(mode="json"))
         ),
+        limit=limit,
+        cursor=cursor,
     )
     return contracts.PlaybillPolicyInForceList.model_validate(result.model_dump(mode="json"))
 

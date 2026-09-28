@@ -942,10 +942,12 @@ Reads a bounded ranking of visible Claim-verification work.
 [Source](src/cruxible_client/authoring/sdk.py#L3153)
 
 ```text
-curation_list() -> api.PlaybillCurationListResult
+curation_list(*, limit: int | None = None, cursor: str | None = None) -> api.PlaybillCurationListResult
 ```
 
-Performs an attributed workspace scan and reads current operational curation work.
+Performs an attributed workspace scan and reads one page of current operational
+curation work (default 25 items). A truncated page carries `next_cursor`; pass it
+back as `cursor`.
 
 **Conditions and effects:** Operational state stays live even through a pinned accepted-reading context.
 

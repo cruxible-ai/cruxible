@@ -704,7 +704,10 @@ def test_http_whoami_and_proposal_inventory_are_typed_reads(
     )
     monkeypatch.setattr(
         "cruxible_core.runtime.playbill_api.playbill_list_proposals",
-        lambda selected, *, status=None: (seen.append((selected, status)), proposals)[1],
+        lambda selected, *, status=None, limit, cursor: (
+            seen.append((selected, status)),
+            proposals,
+        )[1],
     )
     monkeypatch.setattr(
         "cruxible_core.runtime.playbill_api.playbill_resolve_proposal_selector",
@@ -808,3 +811,28 @@ def test_http_insertion_abandon_is_typed(
     assert abandoned.status_code == 200, abandoned.text
     assert abandoned.json()["expectation"]["state"] == "abandoned"
     assert seen == ["abandon"]
+
+
+def test_http_list_routes_bound_their_page_size(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+
+    proposals = client.get(f"/api/v1/{instance_id}/playbill/proposals", params={"limit": 1})
+    policies = client.get(f"/api/v1/{instance_id}/playbill/policies", params={"limit": 1})
+    oversized = client.get(
+        f"/api/v1/{instance_id}/playbill/policies",
+        params={"limit": contracts.PLAYBILL_POLICY_LIST_MAX_LIMIT + 1},
+    )
+    foreign = client.get(
+        f"/api/v1/{instance_id}/playbill/proposals",
+        params={"cursor": policies.json()["next_cursor"]},
+    )
+
+    assert proposals.status_code == policies.status_code == 200
+    assert len(proposals.json()["entries"]) <= 1
+    assert len(policies.json()["policies"]) == 1
+    assert policies.json()["truncated"] is True
+    assert oversized.status_code == 422
+    assert foreign.status_code == 400
+    assert foreign.json()["error_code"] == "playbill.list.cursor_mismatch"

@@ -664,11 +664,18 @@ def handle_playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
 def handle_playbill_list_proposals(
     instance_id: str,
     status: str | None,
+    *,
+    limit: int = contracts.PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> contracts.PlaybillProposalList:
     normalized = cast(Any, status)
     return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_proposals(instance_id, status=normalized),
-        lambda: playbill_api.playbill_list_proposals(instance_id, status=normalized),
+        lambda client: client.list_playbill_proposals(
+            instance_id, status=normalized, limit=limit, cursor=cursor
+        ),
+        lambda: playbill_api.playbill_list_proposals(
+            instance_id, status=normalized, limit=limit, cursor=cursor
+        ),
         operation_name="cruxible_playbill_proposal_list",
     )
 
@@ -1424,10 +1431,15 @@ def handle_playbill_list_query_definitions(
 
 def handle_playbill_policies_in_force(
     instance_id: str,
+    *,
+    limit: int = contracts.PLAYBILL_POLICY_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> contracts.PlaybillPolicyInForceList:
     return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_policies_in_force(instance_id),
-        lambda: playbill_api.playbill_policies_in_force(instance_id),
+        lambda client: client.list_playbill_policies_in_force(
+            instance_id, limit=limit, cursor=cursor
+        ),
+        lambda: playbill_api.playbill_policies_in_force(instance_id, limit=limit, cursor=cursor),
         operation_name="cruxible_playbill_policies_in_force",
     )
 
@@ -1858,6 +1870,8 @@ def handle_playbill_curation_list(
     evaluation_time: str,
     access_profile: dict[str, Any] | None,
     workspace_observation: dict[str, Any] | None,
+    limit: int = contracts.PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> contracts.PlaybillCurationListResult:
     profile = access_profile or {
         "tag": "playbill-coverage-access-profile-v1",
@@ -1870,6 +1884,8 @@ def handle_playbill_curation_list(
         "evaluation_time": evaluation_time,
         "access_profile": profile,
         "workspace_observation": workspace_observation,
+        "limit": limit,
+        "cursor": cursor,
     }
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_curation(
@@ -1877,6 +1893,8 @@ def handle_playbill_curation_list(
             evaluation_time=evaluation_time,
             access_profile=profile,
             workspace_observation=workspace_observation,
+            limit=limit,
+            cursor=cursor,
         ),
         lambda: playbill_api.playbill_curation_list(instance_id, request=request),
         operation_name="cruxible_playbill_curation_list",

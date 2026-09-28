@@ -863,10 +863,13 @@ is not a declaration.
 ## playbill policy
 
 ~~~text
-cruxible playbill policy list [--json]
+cruxible playbill policy list [--limit N] [--cursor CURSOR] [--json]
 ~~~
 
-Lists the live standalone and embedded governed policies at the accepted coordinate.
+Lists the live standalone and embedded governed policies at the accepted
+coordinate, one page at a time (default 25, at most 200). A cut page has
+`truncated: true` and a `next_cursor`; pass it back with `--cursor` to continue at
+the same coordinate.
 
 ## playbill query
 
@@ -1560,7 +1563,8 @@ the row.
 ## playbill curation
 
 ~~~text
-cruxible playbill curation list [--workspace-root PATH] [--json]
+cruxible playbill curation list [--workspace-root PATH] [--limit N] [--cursor CURSOR]
+  [--json]
 cruxible playbill curation overrule ITEM_ID
   --expected-latest-event-digest DIGEST --reason TEXT [--json]
 cruxible playbill curation accept-fixed ITEM_ID
@@ -1573,8 +1577,11 @@ cruxible playbill curation suppress ITEM_ID
 
 Lists the mechanical curation queue and explicitly submits the declared-block
 observation produced by the client-side workspace scanner. The daemon does not
-read workspace files. The lifecycle commands append attributed operational
-events; they do not create governed proposals or mutate accepted knowledge.
+read workspace files. The queue is paged (default 25 items, at most 200); a cut
+page has `truncated: true` and a `next_cursor` for `--cursor`, which continues
+only while accepted state is unchanged. The lifecycle commands append attributed
+operational events; they do not create governed proposals or mutate accepted
+knowledge.
 
 ## playbill audit
 
@@ -1603,7 +1610,10 @@ cruxible playbill discover [--query TEXT] [--entrypoint NAME]
 ~~~
 
 Exactly one of --query or --entrypoint selects the page. Matching is exact and
-lexical over the accepted naming layer; it is never a similarity score.
+lexical over the accepted naming layer; it is never a similarity score. When a
+budget clips the hits, the result says `truncated: true` at the top level
+(`page.coverage` names the budget); discovery has no cursor, so narrow the query
+or raise the budget.
 
 ## playbill search, list, and orient
 
@@ -1773,7 +1783,8 @@ covers all four tool kinds, including same-turn edit drift.
 
 ~~~text
 cruxible playbill proposal inspect PROPOSAL_ID
-cruxible playbill proposal list [--status open|settled]
+cruxible playbill proposal list [--status open|settled|incomplete] [--limit N]
+  [--cursor CURSOR]
 cruxible playbill proposal readmit PROPOSAL_ID
 cruxible playbill proposal withdraw PROPOSAL_ID --reason TEXT
 cruxible playbill proposal refusal PROPOSAL_ID
@@ -1791,7 +1802,9 @@ cruxible playbill review close PROPOSAL_ID [--workspace-root DIR]   # deprecated
 permission mode, accepted principal-registration status, and current coordinate.
 `proposal list` prints a labeled `COORDINATE_TIME` column and deterministically
 separates current open candidates from accepted, refused, and stale terminal
-evidence so retries do not depend on remembered IDs. Proposal actions accept a
+evidence so retries do not depend on remembered IDs. It returns one page
+(default 50, at most 500); a cut page has `truncated: true` and a `next_cursor`
+for `--cursor`, which keeps reading the first page's accepted coordinate. Proposal actions accept a
 full digest, a unique digest prefix, or a target ref whose current Git target
 names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.

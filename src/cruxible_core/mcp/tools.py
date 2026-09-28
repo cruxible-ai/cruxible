@@ -242,9 +242,15 @@ def register_tools(
     def cruxible_playbill_proposal_list(
         instance_id: str,
         status: Literal["open", "settled", "incomplete"] | None = None,
+        limit: Annotated[
+            int, Field(ge=1, le=contracts.PLAYBILL_PROPOSAL_LIST_MAX_LIMIT)
+        ] = contracts.PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT,
+        cursor: str | None = None,
     ) -> contracts.PlaybillProposalList:
-        """List open or settled proposal evidence at the current coordinate."""
-        return handlers.handle_playbill_list_proposals(instance_id, status)
+        """List one page of proposal evidence; pass next_cursor back while truncated."""
+        return handlers.handle_playbill_list_proposals(
+            instance_id, status, limit=limit, cursor=cursor
+        )
 
     @_tool
     def cruxible_playbill_proposal_readmit(
@@ -697,9 +703,13 @@ def register_tools(
     @_tool
     def cruxible_playbill_policies_in_force(
         instance_id: str,
+        limit: Annotated[
+            int, Field(ge=1, le=contracts.PLAYBILL_POLICY_LIST_MAX_LIMIT)
+        ] = contracts.PLAYBILL_POLICY_LIST_DEFAULT_LIMIT,
+        cursor: str | None = None,
     ) -> contracts.PlaybillPolicyInForceList:
-        """List live governed policies embedded in and standing beside accepted artifacts."""
-        return handlers.handle_playbill_policies_in_force(instance_id)
+        """List one page of live governed policies; pass next_cursor back while truncated."""
+        return handlers.handle_playbill_policies_in_force(instance_id, limit=limit, cursor=cursor)
 
     @_tool
     def cruxible_playbill_get_query_definition(
@@ -949,13 +959,22 @@ def register_tools(
         evaluation_time: str,
         access_profile: dict[str, Any] | None = None,
         workspace_observation: dict[str, Any] | None = None,
+        limit: Annotated[
+            int, Field(ge=1, le=contracts.PLAYBILL_CURATION_LIST_MAX_LIMIT)
+        ] = contracts.PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
+        cursor: str | None = None,
     ) -> contracts.PlaybillCurationListResult:
-        """List mechanical curation patterns and explicitly ingest block observations."""
+        """List one page of curation patterns and ingest block observations.
+
+        Pass next_cursor back while the result is truncated.
+        """
         return handlers.handle_playbill_curation_list(
             instance_id,
             evaluation_time=evaluation_time,
             access_profile=access_profile,
             workspace_observation=workspace_observation,
+            limit=limit,
+            cursor=cursor,
         )
 
     @_tool

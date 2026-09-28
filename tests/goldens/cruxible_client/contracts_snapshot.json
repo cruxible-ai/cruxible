@@ -20673,6 +20673,26 @@
             "type": "array"
           }
         },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          }
+        },
         "observation_coverage": {
           "has_default": false,
           "has_default_factory": false,
@@ -20718,6 +20738,19 @@
             "default": "playbill-curation-list-result-v1",
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         }
       },
@@ -20794,6 +20827,18 @@
             "title": "Items",
             "type": "array"
           },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          },
           "observation_coverage": {
             "additionalProperties": true,
             "title": "Observation Coverage",
@@ -20814,6 +20859,11 @@
             "default": "playbill-curation-list-result-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -20872,6 +20922,19 @@
             "default": "playbill-discovery-result-v1",
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "vocabulary_entry_count": {
@@ -20942,6 +21005,11 @@
             "default": "playbill-discovery-result-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           },
           "vocabulary_entry_count": {
             "title": "Vocabulary Entry Count",
@@ -26248,6 +26316,26 @@
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           }
         },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          }
+        },
         "policies": {
           "has_default": false,
           "has_default_factory": false,
@@ -26273,6 +26361,19 @@
             "default": "playbill-policy-in-force-list-v1",
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         }
       },
@@ -26398,6 +26499,18 @@
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          },
           "policies": {
             "items": {
               "$ref": "#/$defs/PlaybillPolicyInForce"
@@ -26410,6 +26523,11 @@
             "default": "playbill-policy-in-force-list-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -47994,6 +48112,26 @@
             "type": "array"
           }
         },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          }
+        },
         "status_filter": {
           "default": null,
           "default_json_serializable": true,
@@ -48031,6 +48169,19 @@
             "default": "playbill-proposal-list-v1",
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         }
       },
@@ -48218,6 +48369,18 @@
             "title": "Entries",
             "type": "array"
           },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          },
           "status_filter": {
             "anyOf": [
               {
@@ -48240,6 +48403,11 @@
             "default": "playbill-proposal-list-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
