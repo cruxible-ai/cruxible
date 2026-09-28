@@ -514,13 +514,17 @@ def service_list_playbill_claims(
     subject: SemanticAddress | None = None,
     predicate: str | None = None,
     include_retired: bool = False,
+    subject_kind: str | None = None,
 ) -> PlaybillClaimList:
     coordinate = _resolve_coordinate(instance, at)
     with instance.bind_accepted_projection(coordinate) as projection:
         claims = tuple(
             _public_claim(item)
             for item in projection.list_claims(
-                subject=subject, predicate=predicate, include_retired=include_retired
+                subject=subject,
+                predicate=predicate,
+                include_retired=include_retired,
+                subject_kind=subject_kind,
             )
         )
     return PlaybillClaimList(

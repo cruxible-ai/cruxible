@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-27:surface-reads",
-    "surface_digest": "sha256:606ff5f93ce3b21d436c6f6758d64978d7a14e223c897c4e03b1b873240f4641"
+    "surface_digest": "sha256:612ba0a07c046a97c34681b2d45e5a334e30211cbc255a2bd50c2fdcacaffb73"
   },
   "surface": {
     "cli_leaves": [
@@ -229,6 +229,13 @@
         ],
         "command": "playbill claim retire",
         "delegate": "cruxible_core.cli.commands.playbill.retire_claim"
+      },
+      {
+        "client_operations": [
+          "read_playbill_claim_values"
+        ],
+        "command": "playbill claim values",
+        "delegate": "cruxible_core.cli.commands.playbill.claim_values"
       },
       {
         "client_operations": [
@@ -1292,9 +1299,9 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/claims/values",
         "request_model": "cruxible_client.contracts.claim_reads.ClaimValuesRequestV1",
-        "request_schema_digest": "sha256:77843c0133d62eca613d204a09e5ad1a55c5a1f888c3aeca1f131fe84e506727",
+        "request_schema_digest": "sha256:d900aefd69f9e81fa88fdd22bbbd72be157a4ef4fea7222af6bf816a1df5eb4c",
         "response_model": "cruxible_client.contracts.claim_reads.ClaimValuesResultV1",
-        "response_schema_digest": "sha256:3ff2e3889e6d7bcb98e048602a428dc77dd322ad828648863f4afb50bf9adc67"
+        "response_schema_digest": "sha256:5275ded6b88128ed2f498ab670a06c977fc2c9ab4e82eb6eb1684f36a0677f2d"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.retire_claim",
@@ -2323,6 +2330,7 @@
       "playbill_provider_install",
       "playbill_read_block_sync_backing",
       "playbill_read_capture",
+      "playbill_read_claim_values",
       "playbill_readmit_proposal",
       "playbill_resolution_contracts",
       "playbill_resolve_coverage",
@@ -2560,6 +2568,16 @@
         "name": "cruxible_playbill_claim_type_migrate",
         "output_schema_digest": "sha256:189128f32621b93d75f377a6de0d1337ea98f943248ac3c79aaaf9c8fedfcb1f",
         "permission": "GOVERNED_WRITE"
+      },
+      {
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_claim_values",
+        "facade_operations": [
+          "playbill_read_claim_values"
+        ],
+        "input_schema_digest": "sha256:6c597344bf5c21e046b41a7b5915d029f167af561e77f485e2bb0379358a62d0",
+        "name": "cruxible_playbill_claim_values",
+        "output_schema_digest": "sha256:a8b2d4a826d9dac48ad03d5b5157ea31b638870476258c3de45978a75af73ab6",
+        "permission": "READ_ONLY"
       },
       {
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_compiler_upgrade",
@@ -2916,7 +2934,7 @@
         "facade_operations": [
           "playbill_list_claims"
         ],
-        "input_schema_digest": "sha256:84a0afa1a25809dafca24b76c02a423b3557b9e5e36dfcc4d4c22f72b73d78a2",
+        "input_schema_digest": "sha256:c60bb2d9ce9f8a87410d2ed8763b48e4914321937d81ed9a42d5f475fc4156c4",
         "name": "cruxible_playbill_list_claims",
         "output_schema_digest": "sha256:522ff90f7532109638d5450e6c7ecbd231a4966ad0cde910c6a87249fed7025b",
         "permission": "READ_ONLY"
@@ -2956,7 +2974,7 @@
         "facade_operations": [
           "playbill_list_subjects"
         ],
-        "input_schema_digest": "sha256:65ccbc632b074c5fe3419129d5aead2e195bc00dab5926bbd09150b327381368",
+        "input_schema_digest": "sha256:8f11472f301c28fe3a3aa34f4bd907af20490798ca41dcdfc77c409152aa5f1c",
         "name": "cruxible_playbill_list_subjects",
         "output_schema_digest": "sha256:9d965d16734a069cbab75b26504d85ffafec231ea32383de88ccc59c8f089686",
         "permission": "READ_ONLY"

@@ -67,6 +67,7 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
     PreparedClaimAttestationRequestV1,
 )
+from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
@@ -90,6 +91,7 @@ from cruxible_client.contracts.repairs import render_served_repair
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReferenceV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
+from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
@@ -2434,11 +2436,14 @@ def propose_subject(
 
 
 @subject_group.command("list")
+@click.option("--kind", "subject_kind", default=None, help="Only Subjects of this kind.")
 @json_option
 @handle_errors
-def list_subjects(output_json: bool) -> None:
+def list_subjects(subject_kind: str | None, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.list_playbill_subjects(instance_id),
+        lambda client, instance_id: client.list_playbill_subjects(
+            instance_id, subject_kind=subject_kind
+        ),
         command_name="playbill subject list",
     )
     if output_json:
@@ -3413,12 +3418,14 @@ def abandon_authoring_insertion(
 
 @claim_group.command("list")
 @click.option("--subject", "subject_path", default=None, help="Subject artifact path filter.")
+@click.option("--kind", "subject_kind", default=None, help="Only Claims about this Subject kind.")
 @click.option("--predicate", default=None)
 @click.option("--include-retired", is_flag=True)
 @json_option
 @handle_errors
 def list_claims(
     subject_path: str | None,
+    subject_kind: str | None,
     predicate: str | None,
     include_retired: bool,
     output_json: bool,
@@ -3429,6 +3436,7 @@ def list_claims(
             subject_path=subject_path,
             predicate=predicate,
             include_retired=include_retired,
+            subject_kind=subject_kind,
         ),
         command_name="playbill claim list",
     )
@@ -3437,6 +3445,56 @@ def list_claims(
         return
     for claim in result.claims:
         click.echo(f"{claim.envelope['identity']}  {claim.envelope['path']}")
+    click.echo(f"Coordinate: {result.coordinate.git_oid}")
+
+
+@claim_group.command("values")
+@click.option("--kind", "subject_kind", required=True, help="Subject kind to tabulate.")
+@click.option(
+    "--subject",
+    "subject_ids",
+    multiple=True,
+    help="Only this Subject ID of --kind (repeatable). Default: every Subject of the kind.",
+)
+@click.option(
+    "--predicate",
+    "predicates",
+    multiple=True,
+    required=True,
+    help="Fully qualified predicate to read (repeatable).",
+)
+@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@json_option
+@handle_errors
+def claim_values(
+    subject_kind: str,
+    subject_ids: tuple[str, ...],
+    predicates: tuple[str, ...],
+    evaluation_time: str | None,
+    output_json: bool,
+) -> None:
+    """Status table: each live Claim's value and verdict for Subjects of one kind."""
+    try:
+        request = ClaimValuesRequestV1.for_kind(
+            subject_kind,
+            subject_ids=subject_ids,
+            predicates=predicates,
+            evaluation_time=None if evaluation_time is None else parse_datetime(evaluation_time),
+        )
+    except (ValidationError, ValueError) as exc:
+        raise click.UsageError(f"Invalid claim values selection: {exc}") from exc
+    result = _server_call(
+        lambda client, instance_id: client.read_playbill_claim_values(instance_id, request=request),
+        command_name="playbill claim values",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for row in result.values:
+        value = row.value if isinstance(row.value, str) else canonical_json(row.value)
+        click.echo(f"{row.subject_id}  {row.predicate}  {value}  {row.verdict}  {row.status}")
+    if not result.values:
+        click.echo("No live Claims match this selection.")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
 

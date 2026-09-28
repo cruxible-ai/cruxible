@@ -671,12 +671,28 @@ class ProjectionHandle:
             envelope, self.typed.facts(identity=identity), coordinate=self.accepted
         )
 
-    def list_subjects(self) -> tuple[SubjectProjectionView, ...]:
-        """List canonical Subjects in stable kind-qualified identity order."""
+    def list_subjects(
+        self, *, subject_kind: str | None = None
+    ) -> tuple[SubjectProjectionView, ...]:
+        """List canonical Subjects in stable kind-qualified identity order.
+
+        ``subject_kind`` selects one kind through the Subject index before any
+        Subject's facts are compiled.
+        """
 
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")
-        rows = self.typed.envelopes(kind="subject")
+        if subject_kind is None:
+            rows = self.typed.envelopes(kind="subject")
+        else:
+            rows = tuple(
+                row
+                for (identity,) in self.typed.connection.execute(
+                    "SELECT identity FROM subjects WHERE subject_kind=? ORDER BY identity",
+                    (subject_kind,),
+                )
+                if (row := self.typed.envelope(str(identity))) is not None
+            )
         facts = self.typed.facts_for(rows)
         return tuple(
             subject_projection_view(row, facts[row.identity], coordinate=self.accepted)
@@ -760,6 +776,7 @@ class ProjectionHandle:
         subject: SemanticAddress | None = None,
         predicate: str | None = None,
         include_retired: bool = True,
+        subject_kind: str | None = None,
     ) -> tuple[ClaimProjectionView, ...]:
         """Select exact Claim keys before materializing their canonical views."""
 
@@ -776,6 +793,9 @@ class ProjectionHandle:
         if predicate is not None:
             clauses.append("predicate=?")
             values.append(predicate)
+        if subject_kind is not None:
+            clauses.append("subject_path IN (SELECT path FROM subjects WHERE subject_kind=?)")
+            values.append(subject_kind)
         if not include_retired:
             clauses.append("lifecycle='live'")
         if clauses:

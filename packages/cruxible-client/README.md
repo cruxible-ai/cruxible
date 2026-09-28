@@ -2375,7 +2375,7 @@ values(
 Each live Claim's value and verdict for these Subjects, in one request and
 without full Claim views -- the cheaper read when only values and verdicts are
 needed. Every live contender of each selected slot is returned. Each
-`ClaimValueV1` carries `claim_id`, `subject_path`, `predicate`, `qualifier`,
+`ClaimValueV1` carries `claim_id`, `subject_path`, `subject_id`, `predicate`, `qualifier`,
 `role`, `object_kind` (`literal`, `subject` or `exact_content`), `object` (the
 statement object exactly as accepted, including a Subject object's selector or
 an exact-content span), `value` (the literal, the object Subject's artifact

@@ -595,6 +595,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "Preflight or submit attributed Claim retirement.",
                     ),
                     "list": _command("playbill", "list_claims", "List accepted Claims."),
+                    "values": _command(
+                        "playbill",
+                        "claim_values",
+                        "Tabulate live Claim values and verdicts for one Subject kind.",
+                    ),
                     "get": _command("playbill", "get_claim", "Read an accepted Claim."),
                     "history": _command(
                         "playbill", "claim_history", "Read accepted Claim history."

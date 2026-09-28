@@ -18,6 +18,7 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendResultV1,
     PreparedClaimAttestationRequestV1,
 )
+from cruxible_client.contracts.claim_reads import ClaimValuesResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -388,9 +389,10 @@ def register_tools(
     @_tool
     def cruxible_playbill_list_subjects(
         instance_id: str,
+        subject_kind: str | None = None,
     ) -> contracts.PlaybillSubjectList:
-        """List accepted Subjects at the current coordinate."""
-        return handlers.handle_playbill_list_subjects(instance_id)
+        """List accepted Subjects at the current coordinate, optionally of one kind."""
+        return handlers.handle_playbill_list_subjects(instance_id, subject_kind=subject_kind)
 
     @_tool
     def cruxible_playbill_get_subject(
@@ -612,13 +614,37 @@ def register_tools(
         subject_path: str | None = None,
         predicate: str | None = None,
         include_retired: bool = False,
+        subject_kind: str | None = None,
     ) -> contracts.PlaybillClaimList:
-        """List accepted Claims, optionally by Subject or predicate."""
+        """List accepted Claims, optionally by Subject, Subject kind or predicate."""
         return handlers.handle_playbill_list_claims(
             instance_id,
             subject_path=subject_path,
             predicate=predicate,
             include_retired=include_retired,
+            subject_kind=subject_kind,
+        )
+
+    @_tool
+    def cruxible_playbill_claim_values(
+        instance_id: str,
+        subject_kind: str,
+        predicates: list[str],
+        subject_ids: list[str] | None = None,
+        evaluation_time: str | None = None,
+    ) -> ClaimValuesResultV1:
+        """Status table: each live Claim's value and verdict for Subjects of one kind.
+
+        Covers every Subject of ``subject_kind`` (or only ``subject_ids``) for the
+        given fully qualified predicates, one row per Claim with ``subject_id``,
+        ``value`` and ``verdict``, without full Claim views.
+        """
+        return handlers.handle_playbill_claim_values(
+            instance_id,
+            subject_kind=subject_kind,
+            predicates=predicates,
+            subject_ids=subject_ids,
+            evaluation_time=evaluation_time,
         )
 
     @_tool

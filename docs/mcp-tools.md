@@ -135,7 +135,7 @@ root aliases, not compilation wire.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_playbill_propose_subject` | Propose an identity-only Subject | `GOVERNED_WRITE` |
-| `cruxible_playbill_list_subjects` | List accepted Subjects and coordinate | `READ_ONLY` |
+| `cruxible_playbill_list_subjects` | List accepted Subjects and coordinate, optionally of one `subject_kind` | `READ_ONLY` |
 | `cruxible_playbill_get_subject` | Read one accepted Subject | `READ_ONLY` |
 | `cruxible_playbill_subject_history` | Read one Subject's accepted lineage | `READ_ONLY` |
 | `cruxible_playbill_propose_claim_type` | Propose a governed predicate interface | `GOVERNED_WRITE` |
@@ -145,7 +145,8 @@ root aliases, not compilation wire.
 | `cruxible_playbill_claim_retire` | Preflight or submit one attributed, dependency-closed Claim retirement | `GOVERNED_WRITE` |
 | `cruxible_playbill_claim_attest` | Sign and append an examined-existing observation for the current exact Claim | `GOVERNED_WRITE` |
 | `cruxible_playbill_claim_attest_new_capture` | Sign and append a prepared new-Capture observation | `GOVERNED_WRITE` |
-| `cruxible_playbill_list_claims` | List accepted Claims by Subject or predicate | `READ_ONLY` |
+| `cruxible_playbill_list_claims` | List accepted Claims by Subject, `subject_kind` or predicate | `READ_ONLY` |
+| `cruxible_playbill_claim_values` | Status table: each live Claim's `subject_id`, value and verdict for every Subject of one kind (or named `subject_ids`) and the given predicates | `READ_ONLY` |
 | `cruxible_playbill_get_claim` | Read one accepted Claim | `READ_ONLY` |
 | `cruxible_playbill_claim_history` | Read one Claim's accepted lineage | `READ_ONLY` |
 | `cruxible_playbill_explain_claim` | Explain a Claim's verdict and evidence | `READ_ONLY` |

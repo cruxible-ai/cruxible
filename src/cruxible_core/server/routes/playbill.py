@@ -647,10 +647,12 @@ async def list_subjects(
     semantic_root: str | None = None,
     generation_root: str | None = None,
     compiler_digest: str | None = None,
+    subject_kind: str | None = None,
 ) -> contracts.PlaybillSubjectList:
     return playbill_api.playbill_list_subjects(
         resolve_server_instance_id(instance_id),
         at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
+        subject_kind=subject_kind,
     )
 
 
@@ -1100,6 +1102,7 @@ async def list_claims(
     semantic_root: str | None = None,
     generation_root: str | None = None,
     compiler_digest: str | None = None,
+    subject_kind: str | None = None,
 ) -> contracts.PlaybillClaimList:
     return playbill_api.playbill_list_claims(
         resolve_server_instance_id(instance_id),
@@ -1107,6 +1110,7 @@ async def list_claims(
         subject=(None if subject_path is None else SemanticAddress.whole_artifact(subject_path)),
         predicate=predicate,
         include_retired=include_retired,
+        subject_kind=subject_kind,
     )
 
 

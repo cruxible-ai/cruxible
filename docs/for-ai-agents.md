@@ -83,6 +83,9 @@ predicates=(...), max_claims=...)` to populate complete, bounded selections.
 When you only need values and verdicts -- a status table, a checklist, a view --
 use `world.values(subjects=(...), predicates=(...))`: one request that returns
 each live Claim's value, object, verdict and status without full Claim views.
+The CLI (`playbill claim values --kind K --predicate P`) and MCP
+(`cruxible_playbill_claim_values`) expose the same read for every Subject of one
+kind.
 Use `pb.run_query(name_or_ref, parameters=...)` for named joins and filtered
 populations, checking truncation before assuming completeness.
 

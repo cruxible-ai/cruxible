@@ -125,7 +125,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need a governed identity-only Subject to hang Claims on."
     ),
     "cruxible_playbill_list_subjects": (
-        "Use when you need accepted Subjects and their exact coordinate."
+        "Use when you need accepted Subjects and their exact coordinate, optionally of one "
+        "subject_kind."
     ),
     "cruxible_playbill_get_subject": (
         "Use when you need one accepted Subject envelope and its structured facts."
@@ -210,7 +211,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "that demands its frame is released instead of asking for the block back."
     ),
     "cruxible_playbill_list_claims": (
-        "Use when you need accepted Claims, optionally narrowed to a Subject or predicate."
+        "Use when you need accepted Claims, optionally narrowed to a Subject, subject_kind "
+        "or predicate."
+    ),
+    "cruxible_playbill_claim_values": (
+        "Use when you need a status table: the value and verdict of each live Claim for "
+        "every Subject of one kind (or named subject_ids) and the given predicates, "
+        "without full Claim views."
     ),
     "cruxible_playbill_get_claim": (
         "Use when you need one accepted Claim envelope and its structured facts."

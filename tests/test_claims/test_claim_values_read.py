@@ -129,3 +129,54 @@ def test_value_rows_carry_every_object_variant(tmp_path: Path) -> None:
     assert rows["exact_content"].object.span.end_byte == 4  # type: ignore[union-attr]
     for kind, claim in variants.items():
         assert rows[kind].object == claim.statement.object
+
+
+def test_values_select_every_subject_of_one_kind(tmp_path: Path) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    by_paths = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequestV1(subject_paths=SUBJECTS, evaluation_time=EVALUATION_TIME),
+    )
+    by_kind = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequestV1.for_kind("project.work_item", evaluation_time=EVALUATION_TIME),
+    )
+    other_kind = service_read_claim_values(
+        instance,
+        request=ClaimValuesRequestV1.for_kind("project.milestone", evaluation_time=EVALUATION_TIME),
+    )
+
+    assert by_kind.values == by_paths.values
+    assert {row.subject_id for row in by_kind.values} == {"wi-42", "wi-43"}
+    assert all(
+        row.subject_path == f"subjects/project.work_item/{row.subject_id}.json"
+        for row in by_kind.values
+    )
+    assert other_kind.values == ()
+
+
+def test_values_request_selects_paths_or_one_kind_never_both() -> None:
+    named = ClaimValuesRequestV1.for_kind("project.work_item", subject_ids=("wi-42",))
+    assert named.subject_paths == (SUBJECTS[0],)
+    assert named.subject_kind is None
+    with pytest.raises(ValueError, match="either explicit subject paths or one subject kind"):
+        ClaimValuesRequestV1(subject_paths=SUBJECTS, subject_kind="project.work_item")
+    with pytest.raises(ValueError, match="either explicit subject paths or one subject kind"):
+        ClaimValuesRequestV1()
+
+
+def test_subject_and_claim_lists_filter_by_subject_kind(tmp_path: Path) -> None:
+    from cruxible_core.service.claims.claims import service_list_playbill_claims
+    from cruxible_core.service.claims.subjects import service_list_playbill_subjects
+
+    instance, _owner = seed_claims(tmp_path)
+
+    subjects = service_list_playbill_subjects(instance, subject_kind="project.work_item")
+    claims = service_list_playbill_claims(instance, subject_kind="project.work_item")
+    all_claims = service_list_playbill_claims(instance)
+
+    assert {subject.envelope["path"] for subject in subjects.subjects} == set(SUBJECTS)
+    assert service_list_playbill_subjects(instance, subject_kind="project.milestone").subjects == ()
+    assert claims.claims == all_claims.claims
+    assert len(claims.claims) == 2
+    assert service_list_playbill_claims(instance, subject_kind="project.milestone").claims == ()

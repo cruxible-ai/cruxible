@@ -1096,9 +1096,12 @@ def playbill_list_subjects(
     instance_id: str,
     *,
     at: AcceptedCoordinate | None = None,
+    subject_kind: str | None = None,
 ) -> contracts.PlaybillSubjectList:
     check_permission("cruxible_playbill_read", instance_id=instance_id)
-    result = service_list_playbill_subjects(get_playbill_manager().get(instance_id), at=at)
+    result = service_list_playbill_subjects(
+        get_playbill_manager().get(instance_id), at=at, subject_kind=subject_kind
+    )
     return contracts.PlaybillSubjectList.model_validate(result.model_dump(mode="json"))
 
 
@@ -1630,6 +1633,7 @@ def playbill_list_claims(
     subject: SemanticAddress | None = None,
     predicate: str | None = None,
     include_retired: bool = False,
+    subject_kind: str | None = None,
 ) -> contracts.PlaybillClaimList:
     check_permission("cruxible_playbill_read", instance_id=instance_id)
     result = service_list_playbill_claims(
@@ -1638,6 +1642,7 @@ def playbill_list_claims(
         subject=subject,
         predicate=predicate,
         include_retired=include_retired,
+        subject_kind=subject_kind,
     )
     return contracts.PlaybillClaimList.model_validate(result.model_dump(mode="json"))
 

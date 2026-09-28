@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Literal
 
@@ -67,22 +68,56 @@ class ClaimBackingsResultV1(BaseModel):
 
 
 class ClaimValuesRequestV1(BaseModel):
-    """Every live Claim's value and verdict for explicit Subjects and predicates."""
+    """Every live Claim's value and verdict for selected Subjects and predicates.
+
+    Subjects are selected either by explicit paths or by one Subject kind.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     at: PlaybillAcceptedCoordinate | None = None
-    subject_paths: tuple[str, ...] = Field(min_length=1, max_length=MAX_CLAIM_VALUE_SUBJECTS)
+    subject_paths: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_VALUE_SUBJECTS)
+    subject_kind: str | None = Field(default=None, min_length=1)
     predicates: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_VALUE_PREDICATES)
     evaluation_time: datetime | None = None
 
     @model_validator(mode="after")
     def selection(self) -> ClaimValuesRequestV1:
+        if bool(self.subject_paths) == (self.subject_kind is not None):
+            raise ValueError("select either explicit subject paths or one subject kind")
         for values in (self.subject_paths, self.predicates):
             if len(set(values)) != len(values) or any(not value for value in values):
                 raise ValueError("selectors must be nonempty and unique")
         if self.evaluation_time is not None and self.evaluation_time.utcoffset() is None:
             raise ValueError("evaluation_time must be timezone-aware")
         return self
+
+    @classmethod
+    def for_kind(
+        cls,
+        subject_kind: str,
+        *,
+        subject_ids: Sequence[str] = (),
+        predicates: Sequence[str] = (),
+        evaluation_time: datetime | None = None,
+    ) -> ClaimValuesRequestV1:
+        """Every Subject of one kind, or just the named IDs of that kind."""
+        from cruxible_client.contracts.subjects import subject_path
+
+        if subject_ids:
+            selection: dict[str, Any] = {
+                "subject_paths": tuple(
+                    subject_path(subject_kind, subject_id) for subject_id in subject_ids
+                )
+            }
+        else:
+            selection = {"subject_kind": subject_kind}
+        return cls.model_validate(
+            {
+                **selection,
+                "predicates": tuple(predicates),
+                "evaluation_time": evaluation_time,
+            }
+        )
 
 
 class ClaimValueV1(BaseModel):
@@ -91,6 +126,7 @@ class ClaimValueV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     claim_id: str
     subject_path: str
+    subject_id: str
     predicate: str
     qualifier: str | None
     role: str

@@ -227,9 +227,10 @@ def service_read_claim_values(
     *,
     request: ClaimValuesRequestV1,
 ) -> ClaimValuesResultV1:
-    """Live Claim values and verdicts for explicit Subjects, without full Claim views.
+    """Live Claim values and verdicts for selected Subjects, without full Claim views.
 
-    Selecting by Subject path (and predicate) returns every live contender of
+    Subjects are explicit paths or every Subject of one kind, read through the
+    Subject index. Selecting by Subject (and predicate) returns every live contender of
     each slot it touches, so each verdict is the slot's full resolution. The
     verdicts come from the same per-slot derivation orient and block checks use,
     and are reused across coordinates wherever its reads still hold.
@@ -247,11 +248,14 @@ def service_read_claim_values(
         else None,
     )
     at = PlaybillAcceptedCoordinate.from_internal(coordinate)
-    clauses = [
-        "lifecycle='live'",
-        "subject_path IN (" + ",".join("?" * len(request.subject_paths)) + ")",
-    ]
-    values: list[object] = list(request.subject_paths)
+    clauses = ["lifecycle='live'"]
+    values: list[object]
+    if request.subject_kind is not None:
+        clauses.append("subject_path IN (SELECT path FROM subjects WHERE subject_kind=?)")
+        values = [request.subject_kind]
+    else:
+        clauses.append("subject_path IN (" + ",".join("?" * len(request.subject_paths)) + ")")
+        values = list(request.subject_paths)
     if request.predicates:
         clauses.append("predicate IN (" + ",".join("?" * len(request.predicates)) + ")")
         values.extend(request.predicates)
@@ -306,9 +310,12 @@ def _claim_value_row(claim: Any, *, verdict: object, status: str) -> ClaimValueV
         value = claim_object.content_digest
     else:
         value = claim_object.value
+    subject_path = statement.subject.artifact_path
     return ClaimValueV1(
         claim_id=claim.identity.name,
-        subject_path=statement.subject.artifact_path,
+        subject_path=subject_path,
+        # Subject paths are `subjects/<kind>/<id>.json`; kinds hold no slash.
+        subject_id=subject_path.split("/", 2)[2].removesuffix(".json"),
         predicate=statement.predicate,
         qualifier=statement.qualifier,
         role=statement.role,

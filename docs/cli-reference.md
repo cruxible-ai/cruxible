@@ -643,7 +643,7 @@ cruxible playbill document history IDENTITY
 
 ~~~text
 cruxible playbill subject propose --envelope FILE --name NAME
-cruxible playbill subject list
+cruxible playbill subject list [--kind KIND]
 cruxible playbill subject get KIND/ID
 cruxible playbill subject history KIND/ID
 ~~~
@@ -705,11 +705,20 @@ the other's law.
 cruxible playbill claim retire IDENTITY REQUEST_FILE
 cruxible playbill claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
   [--valid-until TS]
-cruxible playbill claim list [--subject PATH] [--predicate P] [--include-retired]
+cruxible playbill claim list [--subject PATH] [--kind KIND] [--predicate P] [--include-retired]
+cruxible playbill claim values --kind KIND [--subject ID ...] --predicate P [--predicate P ...]
+  [--evaluation-time TS] [--json]
 cruxible playbill claim get IDENTITY [--brief]
 cruxible playbill claim history IDENTITY
 cruxible playbill claim explain IDENTITY [--evaluation-time TS]
 ~~~
+
+`subject list --kind` and `claim list --kind` narrow the listing to one Subject
+kind through the Subject index. `claim values` is the status-table read (the
+CLI form of the SDK's `world.values`): one row per live Claim, with its
+`subject_id`, predicate, value, verdict and resolution status, for every Subject
+of `--kind` (or only the named `--subject` IDs) and the given predicates,
+without full Claim views. It refuses rather than truncates past 8192 Claims.
 
 Claims are authored through `playbill authoring create`/`compile`; the retired
 direct v1 proposal commands are not a second writer. `retire` preflights or submits one

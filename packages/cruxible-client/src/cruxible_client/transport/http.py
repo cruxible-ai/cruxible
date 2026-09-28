@@ -819,10 +819,14 @@ class CruxibleClient:
         instance_id: str,
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        subject_kind: str | None = None,
     ) -> contracts.PlaybillSubjectList:
+        params: dict[str, Any] = dict(self._playbill_coordinate_params(at))
+        if subject_kind is not None:
+            params["subject_kind"] = subject_kind
         response = self._client.get(
             f"/api/v1/{instance_id}/playbill/subjects",
-            params=self._playbill_coordinate_params(at),
+            params=params,
         )
         return self._parse_model(response, contracts.PlaybillSubjectList)
 
@@ -1239,6 +1243,7 @@ class CruxibleClient:
         subject_path: str | None = None,
         predicate: str | None = None,
         include_retired: bool = False,
+        subject_kind: str | None = None,
     ) -> contracts.PlaybillClaimList:
         params: dict[str, Any] = {
             **self._playbill_coordinate_params(at),
@@ -1248,6 +1253,8 @@ class CruxibleClient:
             params["subject_path"] = subject_path
         if predicate is not None:
             params["predicate"] = predicate
+        if subject_kind is not None:
+            params["subject_kind"] = subject_kind
         response = self._client.get(
             f"/api/v1/{instance_id}/playbill/claims",
             params=params,
