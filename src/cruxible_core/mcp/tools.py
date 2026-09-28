@@ -222,6 +222,38 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_playbill_approve(
+        instance_id: InstanceId = None,
+        *,
+        proposal_id: str,
+        signer_id: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Principal to sign as; its key is <signer_id>.ed25519 in the server's "
+                    "CRUXIBLE_MCP_KEY_DIR. Omit when that directory holds exactly one key."
+                )
+            ),
+        ] = None,
+        candidate_digest: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "The candidate_digest you reviewed; the approval refuses if the "
+                    "proposal now signs a different candidate."
+                )
+            ),
+        ] = None,
+    ) -> contracts.PlaybillApprovalReceipt:
+        """Approve a proposal with a local key: challenge, sign and submit in one call."""
+        return handlers.handle_playbill_approve(
+            require_instance_id(instance_id),
+            proposal_id,
+            signer_id=signer_id,
+            candidate_digest=candidate_digest,
+        )
+
+    @_tool
     def cruxible_playbill_activate(
         instance_id: InstanceId = None, *, proposal_id: str
     ) -> contracts.PlaybillWorkspaceActivationResult:

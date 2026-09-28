@@ -56,6 +56,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_submit_approval": (
         "Use when you have a public approval attestation produced outside the daemon."
     ),
+    "cruxible_playbill_approve": (
+        "Use after review to approve a proposal with a local key from the server's "
+        "CRUXIBLE_MCP_KEY_DIR; it challenges, signs and submits in one call and never "
+        "activates. Pass the reviewed candidate_digest to bind it to what you read."
+    ),
     "cruxible_playbill_activate": (
         "Use when an admitted Playbill candidate has satisfied any committed requirements and "
         "is ready to settle."

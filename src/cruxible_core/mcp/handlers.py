@@ -6,6 +6,7 @@ import base64
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -25,13 +26,14 @@ from cruxible_client.authoring.attestations import (
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
+from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
 from cruxible_client.authoring.sources import (
     compile_client_source_context,
     load_source_catalog,
     mapped_root_aliases,
 )
 from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
-from cruxible_client.contracts.attestations import ApprovalAttestation
+from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
@@ -45,6 +47,7 @@ from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.governance import governance_identifier
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -82,6 +85,8 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
 from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.workspace import (
+    mcp_approval_key_dir,
+    mcp_custody_forbidden_roots,
     mcp_git_workspace_root,
     mcp_workspace_root,
     optional_mcp_git_workspace_root,
@@ -675,6 +680,58 @@ def handle_playbill_submit_approval(
         operation_name="cruxible_playbill_submit_approval",
         local_payload={"attestation": public_attestation.model_dump(mode="json")},
     )
+
+
+def handle_playbill_approve(
+    instance_id: str,
+    proposal_id: str,
+    *,
+    signer_id: str | None,
+    candidate_digest: str | None,
+) -> contracts.PlaybillApprovalReceipt:
+    """Challenge, sign with the configured local key, and submit, as `proposal approve` does.
+
+    Only the public attestation leaves this process; the key's bytes and path
+    never enter a result or a log line.
+    """
+
+    key_dir = mcp_approval_key_dir()
+    signer = signer_id if signer_id is not None else _sole_approval_signer(key_dir)
+    try:
+        governance_identifier(signer, label="signer_id")
+    except ValueError as exc:
+        raise DataValidationError(f"cruxible_playbill_approve: {exc}") from exc
+    challenge = handle_playbill_prepare_approval(
+        instance_id, proposal_id, signer_id=signer, include_body=False
+    )
+    statement = ApprovalStatement.model_validate(challenge.statement)
+    if candidate_digest is not None and statement.payload_digest != candidate_digest:
+        raise DataValidationError(
+            f"cruxible_playbill_approve: proposal {proposal_id} now signs candidate "
+            f"{statement.payload_digest}, not the reviewed {candidate_digest}; review it again"
+        )
+    principal = PrincipalRecord.model_validate(challenge.signer_principal)
+    key_signer = LocalEd25519ApprovalSigner.open(
+        signer_id=signer,
+        private_key_path=key_dir / f"{signer}.ed25519",
+        expected_public_key=principal.public_key,
+        forbidden_roots=mcp_custody_forbidden_roots(),
+    )
+    attestation = key_signer.sign(statement)
+    return handle_playbill_submit_approval(
+        instance_id, proposal_id, attestation.model_dump(mode="json")
+    )
+
+
+def _sole_approval_signer(key_dir: Path) -> str:
+    signers = sorted(path.name.removesuffix(".ed25519") for path in key_dir.glob("*.ed25519"))
+    if len(signers) != 1:
+        found = ", ".join(signers) if signers else "none"
+        raise DataValidationError(
+            "cruxible_playbill_approve: pass signer_id; the configured key directory holds "
+            f"{len(signers)} approval keys (signers: {found})"
+        )
+    return signers[0]
 
 
 def handle_playbill_activate(

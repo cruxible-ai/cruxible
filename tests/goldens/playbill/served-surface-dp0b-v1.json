@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-28:small-operator-tools-leave-mcp",
-    "surface_digest": "sha256:33a5c1db9e3c6e3b7692c86f23e589ab05cb52b4f147dfaa959889579f6bb16b"
+    "register_entry": "2026-09-28:small-mcp-approve",
+    "surface_digest": "sha256:bf115398983064128aa4525867d4c9e7fe8e3b18a55461d0cdecd1e4e4314d6d"
   },
   "surface": {
     "cli_leaves": [
@@ -2323,6 +2323,17 @@
         "input_schema_digest": "sha256:381947bd2c49778f702d1d385ec41c62725da9e70a39ac3b03992437fe119169",
         "name": "cruxible_playbill_activate",
         "output_schema_digest": "sha256:b8d5798557fe3c2c517fe2f3fa82233a023c70bbe1175a28d0a6f9eb1a803c50",
+        "permission": "GRAPH_WRITE"
+      },
+      {
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_approve",
+        "facade_operations": [
+          "playbill_prepare_approval",
+          "playbill_submit_approval"
+        ],
+        "input_schema_digest": "sha256:5d7b6a28e0c75d129db8a217e299fca36dfc917a61c7745c2314b73a9ac8f7d1",
+        "name": "cruxible_playbill_approve",
+        "output_schema_digest": "sha256:0ab3d535937d4845070048f2c2e849ec30a4094fd561ee9644b2c4e1c199c791",
         "permission": "GRAPH_WRITE"
       },
       {

@@ -510,14 +510,17 @@ The default MCP profile is curated around the write-side loop. Use the `full`
 profile only when work requires lower-level document, Claim, ClaimType, or other
 diagnostic surfaces that the default catalog intentionally hides.
 
-Approval is intentionally split:
+Approval signs locally and sends only the public attestation:
 
 - prepare_approval obtains the exact challenge;
 - the client signs it with a local key;
 - submit_approval sends only the public attestation.
 
-The convenience CLI command playbill proposal approve performs those steps
-without exposing the key to the daemon.
+The CLI command playbill proposal approve and the MCP tool
+cruxible_playbill_approve perform those steps in one call without exposing the
+key to the daemon; the MCP tool signs with a key from the server's
+CRUXIBLE_MCP_KEY_DIR. prepare_approval and submit_approval stay in the full
+MCP profile for a signer outside the MCP process.
 
 ## Fail closed
 

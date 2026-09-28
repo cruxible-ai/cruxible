@@ -21,12 +21,14 @@ everyday agent loop:
   `cruxible_playbill_authoring_resume`, and
   `cruxible_playbill_authoring_list_pending`;
 - proposals through activation: `cruxible_playbill_proposal_list`,
-  `cruxible_playbill_review`, `cruxible_playbill_prepare_approval`,
-  `cruxible_playbill_submit_approval`, and `cruxible_playbill_activate`;
+  `cruxible_playbill_review`, `cruxible_playbill_approve`, and
+  `cruxible_playbill_activate`;
 - identity and versions: `cruxible_playbill_whoami` and `cruxible_server_info`.
 
 `full` advertises the complete catalog below, including curation, coverage, the
-floor, sources, blocks, kits, Procedures, and Lines. Curation changes
+floor, sources, blocks, kits, Procedures, Lines, and the split approval pair
+`cruxible_playbill_prepare_approval` and `cruxible_playbill_submit_approval` for
+a signer outside the MCP process. Curation changes
 discoverability only; permission tiers still gate every call. There is no
 separate version tool: `cruxible_playbill_whoami` and `cruxible_server_info`
 both report the MCP adapter's package version and the daemon's (`GET /version`).
@@ -53,6 +55,17 @@ a nested explicit root is refused rather than allowing a write above its
 configured filesystem boundary. When the root is in no Git worktree at all,
 `cruxible_playbill_activate` still activates and reports
 `floor_refresh.status: not_configured` with the reason.
+
+`CRUXIBLE_MCP_KEY_DIR` names the directory of local approval keys that
+`cruxible_playbill_approve` signs with: an absolute path outside the workspace
+holding `<signer_id>.ed25519`, the layout `cruxible playbill principal add
+--key-dir` and `cruxible playbill init --key-dir` write. Set it in the MCP
+server's environment; no tool argument can name a key path. The tool signs as
+`signer_id`, or as the directory's only key when `signer_id` is omitted, and
+passing the reviewed `candidate_digest` makes it refuse a candidate that
+changed since review. Unset, the tool refuses and says how to configure it.
+Only the public attestation leaves the process; key bytes never appear in a
+result or a log line.
 
 ## Which verb each tool publishes
 
@@ -120,6 +133,7 @@ approval stay the ordinary steps.
 | `cruxible_playbill_review` | Render review material | `READ_ONLY` |
 | `cruxible_playbill_prepare_approval` | Return the exact approval challenge | `READ_ONLY` |
 | `cruxible_playbill_submit_approval` | Submit a public signed attestation | `GRAPH_WRITE` |
+| `cruxible_playbill_approve` | Challenge, sign with a local key from `CRUXIBLE_MCP_KEY_DIR`, and submit in one call | `GRAPH_WRITE` |
 | `cruxible_playbill_activate` | Activate by compare-and-set and refresh any configured workspace floor | `GRAPH_WRITE` |
 | `cruxible_playbill_proposal_list` | List one page of open and terminal proposal evidence (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_playbill_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |

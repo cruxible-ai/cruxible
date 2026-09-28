@@ -10,6 +10,7 @@ from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.floor.workspace_advertisement import containing_git_workspace_root
 
 MCP_WORKSPACE_ROOT_ENV = "CRUXIBLE_MCP_WORKSPACE_ROOT"
+MCP_KEY_DIR_ENV = "CRUXIBLE_MCP_KEY_DIR"
 
 
 def mcp_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
@@ -83,3 +84,37 @@ __all__ = [
     "optional_mcp_git_workspace_root",
     "resolve_workspace_path",
 ]
+
+
+def mcp_approval_key_dir(environ: Mapping[str, str] | None = None) -> Path:
+    """The operator-configured directory of local approval keys, `<signer_id>.ed25519`.
+
+    Only the server's environment names it; no tool argument can point signing
+    at another path.
+    """
+
+    env = os.environ if environ is None else environ
+    raw = env.get(MCP_KEY_DIR_ENV)
+    if not raw:
+        raise ConfigError(
+            "cruxible_playbill_approve has no local approval key: set "
+            f"{MCP_KEY_DIR_ENV} in this MCP server's environment (the env block of the MCP "
+            "client config) to an absolute directory outside the workspace holding "
+            "<signer_id>.ed25519, as `cruxible playbill principal add --key-dir` writes it. "
+            "A remote signer uses cruxible_playbill_prepare_approval and "
+            "cruxible_playbill_submit_approval instead (profile full)."
+        )
+    directory = Path(raw).expanduser()
+    if not directory.is_absolute():
+        raise ConfigError(f"{MCP_KEY_DIR_ENV} must be an absolute directory path")
+    if not directory.is_dir():
+        raise ConfigError(f"{MCP_KEY_DIR_ENV} is not a directory: {directory}")
+    return directory
+
+
+def mcp_custody_forbidden_roots(environ: Mapping[str, str] | None = None) -> tuple[Path, ...]:
+    """Workspace roots a local signing key must stay outside, as the CLI refuses."""
+
+    root = mcp_workspace_root(environ)
+    git_root = containing_git_workspace_root(root)
+    return (root,) if git_root is None or git_root == root else (root, git_root)

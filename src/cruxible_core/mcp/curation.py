@@ -44,8 +44,7 @@ _DEFAULT_TOOLS = frozenset(
         # proposals through activation
         "cruxible_playbill_proposal_list",
         "cruxible_playbill_review",
-        "cruxible_playbill_prepare_approval",
-        "cruxible_playbill_submit_approval",
+        "cruxible_playbill_approve",
         "cruxible_playbill_activate",
         # identity and versions
         "cruxible_playbill_whoami",
