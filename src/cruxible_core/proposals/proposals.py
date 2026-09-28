@@ -149,6 +149,7 @@ from cruxible_client.contracts.governance import (
 from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_LAW_REVISION_4,
+    CLAIM_LAW_V2_REVISION_7,
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_LAW_V3_REVISION_9,
     PLAYBILL_ACCEPTANCE_LAWS,
@@ -2710,15 +2711,16 @@ def _capture_contract_dependents(
     *,
     identity: str,
     previous_digest: str,
-    retired: bool,
+    successor_digest: str | None,
 ) -> tuple[str, ...]:
     """Live definitions a CaptureContract change would silently strand.
 
     Read in the final candidate, so a dependent revised or retired in the same
     ChangeSet no longer counts. An identity rule (ClaimType v6) follows every
-    compatible successor and is stranded only by retirement. Everything that
-    still names the previous version by exact digest -- a historical evidence
-    rule, a ResolutionContract capture-event window -- is stranded by any move.
+    compatible successor and is stranded only by retirement (`successor_digest`
+    None). An exact-digest evidence rule is stranded when it names the previous
+    version but not the one that replaces it; a ResolutionContract capture-event
+    window matches one exact version, so naming the previous one strands it.
     Claims are never listed: the contract a Claim cites is provenance.
     """
 
@@ -2727,15 +2729,22 @@ def _capture_contract_dependents(
         claim_type = accepted.claim_type
         if claim_type.lifecycle.state != "live":
             continue
-        for rule in claim_type.evidence_admission_policy.rules:
-            names_identity = isinstance(rule, ClaimEvidenceAdmissionRuleV3) and any(
-                item.target.qualified == identity for item in rule.capture_contracts
-            )
-            names_previous = not isinstance(rule, ClaimEvidenceAdmissionRuleV3) and (
-                previous_digest in rule.capture_contract_digests
-            )
-            if (names_identity and retired) or names_previous:
-                stranded.add(claim_type.identity.qualified)
+        rules = claim_type.evidence_admission_policy.rules
+        names_identity = any(
+            item.target.qualified == identity
+            for rule in rules
+            if isinstance(rule, ClaimEvidenceAdmissionRuleV3)
+            for item in rule.capture_contracts
+        )
+        exact_digests = {
+            digest
+            for rule in rules
+            if not isinstance(rule, ClaimEvidenceAdmissionRuleV3)
+            for digest in rule.capture_contract_digests
+        }
+        exact_stranded = previous_digest in exact_digests and successor_digest not in exact_digests
+        if (names_identity and successor_digest is None) or exact_stranded:
+            stranded.add(claim_type.identity.qualified)
     for path, resolution in context.resolved.resolution_contracts.items():
         window = resolution.window
         if (
@@ -2774,7 +2783,9 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
             context,
             identity=contract.identity.qualified,
             previous_digest=predecessor.artifact_digest,
-            retired=contract.lifecycle.state == "retired",
+            successor_digest=(
+                None if contract.lifecycle.state == "retired" else law.artifact_digest
+            ),
         )
         if stranded:
             return _MemberVerdict(
@@ -2904,7 +2915,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         ),
         historical_capture_contract=(
             _historical_capture_contract(context, claim)
-            if installed.coordinate == CLAIM_LAW_V3_REVISION_9
+            if installed.coordinate in {CLAIM_LAW_V2_REVISION_7, CLAIM_LAW_V3_REVISION_9}
             else None
         ),
     )
@@ -2986,7 +2997,6 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_core.compiler.compiler import (
         AUTHORITY_VERBS_COMPILER,
         CLAIM_EVIDENCE_COMPILER,
-        IDENTITY_REFS_COMPILER,
         SOURCE_CHECKED_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
     )
@@ -2996,7 +3006,6 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         SOURCE_CHECKED_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
         AUTHORITY_VERBS_COMPILER,
-        IDENTITY_REFS_COMPILER,
     }:
         if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
             getattr(rule, "allowed_reducer_digests", ())

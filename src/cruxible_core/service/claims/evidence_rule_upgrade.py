@@ -1,6 +1,6 @@
 """Move accepted ClaimTypes to identity evidence rules, one reviewed change set.
 
-Compiler revision 32 admits ClaimType v6, whose evidence rules name
+Compiler revision 31 admits ClaimType v6, whose evidence rules name
 CaptureContracts by identity. This builds the ordinary change set that moves
 every live v5 ClaimType to v6 and carries its Claims, and proposes it; nothing
 is activated here.
@@ -49,7 +49,7 @@ from cruxible_core.claims.claim_type_migrations import (
     build_dependent_closure_candidate,
     dependent_closure_inventory,
 )
-from cruxible_core.compiler.compiler import IDENTITY_REFS_COMPILER
+from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER
 from cruxible_core.errors import DataValidationError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -190,9 +190,9 @@ def service_upgrade_evidence_rules(
     """Propose the change set moving every convertible live v5 ClaimType to v6."""
 
     base = instance.accepted_coordinate()
-    if base.compiler != IDENTITY_REFS_COMPILER:
+    if base.compiler != AUTHORITY_VERBS_COMPILER:
         raise DataValidationError(
-            "identity evidence rules need compiler revision 32; upgrade the compiler first"
+            "identity evidence rules need compiler revision 31; upgrade the compiler first"
         )
     tree = instance.immutable_tree_at(base.git_oid)
     lineages = _Lineages(instance, AcceptedCoordinate.from_internal(base))

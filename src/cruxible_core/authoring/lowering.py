@@ -68,6 +68,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_path,
     classify_capture_reuse,
+    foreign_source_capture_contract,
     parse_capture_contract,
     parse_capture_envelope,
     render_capture_contract,
@@ -1131,8 +1132,19 @@ def _lower_claim(
     else:
         source = payload.source
         assert isinstance(source, WorkingSelectionObservationV1)
+        # A source contract improved through a successor is captured under its
+        # accepted head, which is then already installed; the first capture of a
+        # source installs its deterministic contract.
+        head_path = capture_contract_path(
+            foreign_source_capture_contract(source.source_id).identity.name
+        )
+        head_bytes = candidate_base_tree.get(head_path)
+        head = None if head_bytes is None else parse_capture_contract(head_bytes, path=head_path)
+        if head is not None and head.lifecycle.state == "live":
+            install_contract = False
         try:
             built_selection = build_working_selection_capture(
+                accepted_contract=None if head is None or head.lifecycle.state != "live" else head,
                 store=instance.body_store(),
                 actor_id=actor_id,
                 claim_id=claim_id,

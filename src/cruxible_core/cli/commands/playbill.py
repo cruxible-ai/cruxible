@@ -2636,7 +2636,7 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
 def upgrade_evidence_rules(output_json: bool) -> None:
     """Propose moving every live ClaimType to identity evidence rules (v6).
 
-    Needs compiler revision 32. Each rule converts only when it keeps its meaning;
+    Needs compiler revision 31. Each rule converts only when it keeps its meaning;
     the rest are reported for an explicit decision. Approve the proposal as usual.
     """
 

@@ -35,7 +35,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV3,
 )
 from cruxible_client.contracts.types import CompilerCoordinate
-from cruxible_core.compiler.compiler import IDENTITY_REFS_COMPILER
+from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillProposalInspection
@@ -169,7 +169,7 @@ def claim_type_input_template() -> ClaimTypeInputV1:
 def identity_rules_supported(compiler: CompilerCoordinate) -> bool:
     """Whether this compiler accepts ClaimType v6 identity evidence rules."""
 
-    return compiler == IDENTITY_REFS_COMPILER
+    return compiler == AUTHORITY_VERBS_COMPILER
 
 
 def _contract_identities(tree: Mapping[str, bytes], source_ids: tuple[str, ...]) -> dict[str, str]:

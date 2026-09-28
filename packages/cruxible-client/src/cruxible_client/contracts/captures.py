@@ -2023,15 +2023,24 @@ def build_working_selection_capture(
     coordinate: object,
     selector: object,
     selected_content: bytes,
+    accepted_contract: CaptureContractV1 | None = None,
 ) -> DirectCaptureBuildResult:
     """Commit the bounded bytes from one typed proposer-observed working selection.
 
     The whole source is deliberately absent. The coordinate and selector record
     exactly what the client observed, while the retained commitment is only over
     the selected bytes that the daemon can reproduce.
+
+    `accepted_contract` is the source's contract as accepted now, when it has
+    been improved through a successor; the Capture then records that version.
+    Without it the Capture uses the source's deterministic first version.
     """
 
     contract = foreign_source_capture_contract(source_id)
+    if accepted_contract is not None:
+        if accepted_contract.identity != contract.identity:
+            raise CaptureFormatError("accepted contract is not this source's contract")
+        contract = accepted_contract
     if not selected_content:
         raise CaptureFormatError("working source selection must retain at least one byte")
     if len(selected_content) > contract.selection_budget.max_bytes:

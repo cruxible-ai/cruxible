@@ -177,11 +177,18 @@ PROCEDURE_RUNTIME_POLICY_LAW = _artifact_law_coordinate(
     "playbill-procedure-runtime-policy-v1",
     semantic_revision=1,
 )
-CLAIM_LAW_V2 = _artifact_law_coordinate(
+CLAIM_LAW_V2_REVISION_6 = _artifact_law_coordinate(
     CLAIM_LAW_V2_IDENTIFIER,
     "playbill-claim-v2",
     semantic_revision=6,
 )
+# Revision 7: capture-contract pins are provenance, as in Claim law v3 revision 9.
+CLAIM_LAW_V2_REVISION_7 = _artifact_law_coordinate(
+    CLAIM_LAW_V2_IDENTIFIER,
+    "playbill-claim-v2",
+    semantic_revision=7,
+)
+CLAIM_LAW_V2 = CLAIM_LAW_V2_REVISION_7
 CLAIM_LAW_V3_REVISION_7 = _artifact_law_coordinate(
     CLAIM_LAW_V3_IDENTIFIER,
     "playbill-claim-v3",
@@ -412,9 +419,15 @@ CAPTURE_CONTRACT_REVISION_3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     current=False,
 )
 CLAIM_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW_V2,
+    coordinate=CLAIM_LAW_V2_REVISION_7,
     artifact_kind="claim",
     artifact_tag="playbill-claim-v2",
+)
+CLAIM_V2_REVISION_6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_LAW_V2_REVISION_6,
+    artifact_kind="claim",
+    artifact_tag="playbill-claim-v2",
+    current=False,
 )
 CLAIM_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V3_REVISION_9,
@@ -551,14 +564,6 @@ LINE_V5_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     ),
     artifact_kind="line",
     artifact_tag="playbill-line-v5",
-)
-IDENTITY_REFS_UPGRADE_LAW = InstalledAcceptanceLaw(
-    coordinate=_artifact_law_coordinate(
-        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=10
-    ),
-    artifact_kind="compiler-upgrade",
-    artifact_tag="playbill-compiler-upgrade-v1",
-    current=False,
 )
 AUTHORITY_VERBS_UPGRADE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
@@ -705,7 +710,6 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         SOURCE_CHECKED_UPGRADE_LAW,
         TRIGGER_CAPTURE_UPGRADE_LAW,
         AUTHORITY_VERBS_UPGRADE_LAW,
-        IDENTITY_REFS_UPGRADE_LAW,
         PROVIDER_CONTRACT_PROCEDURE_LAW,
         PROVIDER_CONTRACT_UPGRADE_LAW,
         COMPILER_UPGRADE_ACCEPTANCE_LAW,
@@ -716,6 +720,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         ATTESTATION_ACCEPTANCE_LAW,
         RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_V2_ACCEPTANCE_LAW,
+        CLAIM_V2_REVISION_6_ACCEPTANCE_LAW,
         CLAIM_V3_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_8_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
@@ -780,7 +785,6 @@ __all__ = [
     "SOURCE_CHECKED_UPGRADE_LAW",
     "TRIGGER_CAPTURE_UPGRADE_LAW",
     "AUTHORITY_VERBS_UPGRADE_LAW",
-    "IDENTITY_REFS_UPGRADE_LAW",
     "LINE_V5_ACCEPTANCE_LAW",
     "CAPTURE_CONTRACT_ACCEPTANCE_LAW",
     "CAPTURE_CONTRACT_REVISION_3_ACCEPTANCE_LAW",
@@ -794,6 +798,9 @@ __all__ = [
     "CLAIM_LAW_V3_REVISION_7",
     "CLAIM_LAW_V3_REVISION_8",
     "CLAIM_LAW_V3_REVISION_9",
+    "CLAIM_LAW_V2_REVISION_6",
+    "CLAIM_LAW_V2_REVISION_7",
+    "CLAIM_V2_REVISION_6_ACCEPTANCE_LAW",
     "CLAIM_V3_REVISION_8_ACCEPTANCE_LAW",
     "CLAIM_LAW_V3_IDENTIFIER",
     "CLAIM_V2_ACCEPTANCE_LAW",

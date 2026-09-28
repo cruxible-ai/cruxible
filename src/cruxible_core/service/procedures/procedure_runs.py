@@ -186,7 +186,6 @@ from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
 from cruxible_core.compiler.compiler import (
     AUTHORITY_VERBS_COMPILER,
     CLAIM_EVIDENCE_COMPILER,
-    IDENTITY_REFS_COMPILER,
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
     SOURCE_CHECKED_COMPILER,
@@ -3825,7 +3824,6 @@ def _run_playbill_line(
             SOURCE_CHECKED_COMPILER,
             TRIGGER_CAPTURE_COMPILER,
             AUTHORITY_VERBS_COMPILER,
-            IDENTITY_REFS_COMPILER,
         },
     )
     capture_contracts = _accepted_capture_contracts(
