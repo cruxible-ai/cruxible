@@ -510,3 +510,45 @@ def test_the_upgrade_refuses_rules_that_would_start_matching_the_same_evidence(
     assert result.status == "unchanged"
     assert [item.claim_type for item in result.refused] == [f"ClaimType:{PREDICATE}"]
     assert "both match the same evidence" in result.refused[0].reason
+
+
+def test_moving_a_query_a_claim_type_corroborates_through_needs_the_claim_type_too(
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.query.definitions import (
+        query_definition_digest,
+        query_definition_path,
+        render_query_definition,
+    )
+    from tests.test_claims.test_claim_corroboration_integration import (
+        _corroborated_type,
+        _query,
+        _seed_vocabulary,
+    )
+
+    world = _World(tmp_path)
+    query = _query()
+    claim_type = _corroborated_type(query_definition_digest(query).tagged)
+    _seed_vocabulary(world.instance, None, claim_types=(claim_type,), query=query)
+    world.instance.refresh()
+    revised = query.model_copy(
+        update={
+            "description": "Whether the work item exists.",
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=query_definition_digest(query).tagged
+            ),
+        }
+    )
+    tree = world.tree()
+    tree[query_definition_path(query.identity.name)] = render_query_definition(revised)
+    assert "playbill.query_definition.corroboration_dependents_not_settled" in world.refusals(
+        tree, name="move-query"
+    )
+
+    tree[claim_type_path(claim_type.predicate)] = render_claim_type(
+        _corroborated_type(
+            query_definition_digest(revised).tagged,
+            predecessor_digest=claim_type_digest(claim_type).tagged,
+        )
+    )
+    world.accept(tree, name="move-query-and-type")
