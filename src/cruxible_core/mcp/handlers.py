@@ -286,6 +286,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_provider_install": TypeAdapter(PlaybillProviderInstallRequestV1),
     "cruxible_playbill_kit_add": TypeAdapter(PlaybillKitAddRequestV1),
     "cruxible_playbill_kit_remove": TypeAdapter(PlaybillKitRemoveRequestV1),
+    "cruxible_playbill_evidence_rules_upgrade": None,  # path only
     "cruxible_playbill_activate": None,  # path only
     "cruxible_playbill_authoring_abandon_insertion": TypeAdapter(PlaybillInsertionAbandonRequest),
     "cruxible_playbill_authoring_bind": TypeAdapter(PlaybillAuthoringInputCompileRequest),
