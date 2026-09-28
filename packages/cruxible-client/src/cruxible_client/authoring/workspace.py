@@ -661,6 +661,29 @@ def configured_floor_path(workspace: str | Path) -> str | None:
     return PLAYBILL_FLOOR_PATH
 
 
+def _holds_exactly(destination: Path, files: Mapping[str, bytes]) -> bool:
+    """Whether `destination` holds exactly these files, byte for byte, and no links."""
+
+    if not destination.is_dir() or destination.is_symlink():
+        return False
+    observed: set[str] = set()
+    for parent, directories, filenames in os.walk(destination, followlinks=False):
+        if any((Path(parent) / name).is_symlink() for name in directories):
+            return False
+        for name in filenames:
+            source = Path(parent) / name
+            relative = source.relative_to(destination).as_posix()
+            observed.add(relative)
+            if source.is_symlink() or relative not in files:
+                return False
+            try:
+                if source.read_bytes() != files[relative]:
+                    return False
+            except OSError:
+                return False
+    return observed == set(files)
+
+
 def _replace_exact(destination: Path, files: Mapping[str, bytes], *, root: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if not destination.parent.resolve().is_relative_to(root):
@@ -668,26 +691,8 @@ def _replace_exact(destination: Path, files: Mapping[str, bytes], *, root: Path)
     # Verify bytes, not just the manifest: a locally edited derived file must
     # be repaired even when the accepted coordinate has not moved. Never
     # reuse symlinks or share writable inodes with the previous installation.
-    reusable: dict[str, Path] = {}
-    exact = destination.is_dir() and not destination.is_symlink()
-    if exact:
-        observed: set[str] = set()
-        for parent, directories, filenames in os.walk(destination, followlinks=False):
-            for name in directories:
-                if (Path(parent) / name).is_symlink():
-                    exact = False
-            for name in filenames:
-                source = Path(parent) / name
-                relative = source.relative_to(destination).as_posix()
-                observed.add(relative)
-                if not source.is_symlink() and relative in files:
-                    try:
-                        if source.read_bytes() == files[relative]:
-                            reusable[relative] = source
-                    except OSError:
-                        pass
-        if exact and observed == set(files) and len(reusable) == len(files):
-            return
+    if _holds_exactly(destination, files):
+        return
     stage = Path(
         tempfile.mkdtemp(prefix=f".{destination.name}.playbill-floor-", dir=destination.parent)
     )
@@ -701,13 +706,7 @@ def _replace_exact(destination: Path, files: Mapping[str, bytes], *, root: Path)
             if not target.is_relative_to(stage_root):  # pragma: no cover - prevalidated
                 raise PlaybillWorkspaceError(f"floor export path escapes its stage: {path}")
             target.parent.mkdir(parents=True, exist_ok=True)
-            if path in reusable:
-                shutil.copy2(reusable[path], target)
-                # Concurrent local edits cannot contaminate the new export.
-                if target.read_bytes() != content:
-                    target.write_bytes(content)
-            else:
-                target.write_bytes(content)
+            target.write_bytes(content)
         if destination.exists() or destination.is_symlink():
             destination.rename(backup)
             moved_old = True
@@ -739,11 +738,22 @@ def materialize_playbill_floor(
     root = _workspace_root(workspace)
     relative_path = PLAYBILL_FLOOR_PATH
     destination = _relative_destination(root, relative_path)
-    if destination.exists() and any(destination.iterdir()) and not force:
-        raise PlaybillWorkspaceError(
-            f"refusing to write the floor into a non-empty directory: {destination}"
-        )
     files = verified_floor_files(export)
+    if destination.exists() and any(destination.iterdir()) and not force:
+        # Already exactly this floor (as it is right after an activation's
+        # refresh): nothing to write, and nothing of the caller's is at risk.
+        if not _holds_exactly(destination, files):
+            raise PlaybillWorkspaceError(
+                f"refusing to write the floor into a non-empty directory: {destination}"
+            )
+        return contracts.PlaybillWorkspaceFloorWriteResult(
+            status="unchanged",
+            path=relative_path,
+            destination=str(destination),
+            floor_digest=str(export.manifest["floor_digest"]),
+            coordinate=export.coordinate,
+            file_count=len(export.files),
+        )
     _replace_exact(destination, files, root=root)
     return contracts.PlaybillWorkspaceFloorWriteResult(
         path=relative_path,

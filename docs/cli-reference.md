@@ -1698,7 +1698,9 @@ cruxible playbill floor export [--force]
 Writes the deterministic greppable floor of accepted state to the fixed derived
 cache `.playbill/floor/` under the current workspace. The daemon returns bytes
 keyed by floor path and never writes a client path; export refuses a non-empty
-floor unless `--force` is given. The export carries its own coverage boundary
+floor unless `--force` is given, except that a floor already holding exactly
+this export (as it does right after an activation) is a no-op success reported
+as `unchanged`. The export carries its own coverage boundary
 in `coverage-manifest.json`, enumerated in the root manifest like every other
 floor file. `floor_output.path` is obsolete and refused; a v2 coverage config
 enables refresh with only the fixed profile. `floor export` records that profile

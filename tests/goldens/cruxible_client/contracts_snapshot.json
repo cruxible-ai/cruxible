@@ -64557,8 +64557,11 @@
           "json_name": "status",
           "required": false,
           "schema": {
-            "const": "written",
             "default": "written",
+            "enum": [
+              "written",
+              "unchanged"
+            ],
             "title": "Status",
             "type": "string"
           }
@@ -64681,8 +64684,11 @@
             "type": "string"
           },
           "status": {
-            "const": "written",
             "default": "written",
+            "enum": [
+              "written",
+              "unchanged"
+            ],
             "title": "Status",
             "type": "string"
           },

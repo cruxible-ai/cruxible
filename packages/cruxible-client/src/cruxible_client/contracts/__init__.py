@@ -2137,7 +2137,8 @@ class PlaybillWorkspaceFloorWriteResult(BaseModel):
     tag: Literal["playbill-workspace-floor-write-result-v1"] = (
         "playbill-workspace-floor-write-result-v1"
     )
-    status: Literal["written"] = "written"
+    # `unchanged`: the directory already held exactly this floor.
+    status: Literal["written", "unchanged"] = "written"
     path: str
     destination: str
     floor_digest: str

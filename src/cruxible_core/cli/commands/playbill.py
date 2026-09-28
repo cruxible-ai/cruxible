@@ -5144,7 +5144,10 @@ def export_floor(
             payload["git_workspace_note"] = written.git_workspace_note.model_dump(mode="json")
         _emit_json(payload)
         return
-    click.echo(f"Wrote {len(result.files)} floor file(s) to {written.destination}")
+    if written.status == "unchanged":
+        click.echo(f"Floor already current at {written.destination}; nothing written")
+    else:
+        click.echo(f"Wrote {len(result.files)} floor file(s) to {written.destination}")
     click.echo(f"Floor digest: {result.manifest['floor_digest']}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
