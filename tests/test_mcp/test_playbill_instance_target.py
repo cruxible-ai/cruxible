@@ -247,3 +247,16 @@ def test_a_malformed_workspace_binding_selects_nothing_and_breaks_nothing(
     monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", str(tmp_path / "d.sock"))
     with pytest.raises(ConfigError, match="No Playbill instance selected"):
         require_instance_id()
+
+
+def test_a_binding_socket_under_an_unknown_home_selects_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _bind_workspace(
+        tmp_path, server_socket="~no_such_user_cruxible/d.sock", instance_id="inst_bound"
+    )
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", str(tmp_path / "d.sock"))
+
+    with pytest.raises(ConfigError, match="No Playbill instance selected"):
+        require_instance_id()
