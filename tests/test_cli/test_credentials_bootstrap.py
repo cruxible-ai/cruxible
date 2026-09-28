@@ -117,7 +117,7 @@ def test_credential_claim_bootstrap_second_claim_renders_refusal(
         def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
             self.claims += 1
             if self.claims > 1:
-                raise AuthenticationError("Invalid bootstrap secret")
+                raise AuthenticationError("runtime_bootstrap.secret_already_claimed: claimed")
             return contracts.RuntimeCredentialBootstrapResult(
                 credential_id="rcred_bootstrap",
                 instance_id=instance_id,
@@ -141,7 +141,7 @@ def test_credential_claim_bootstrap_second_claim_renders_refusal(
 
     assert first.exit_code == 0, first.output
     assert second.exit_code == 1
-    assert "Error: AuthenticationError: Invalid bootstrap secret" in second.output
+    assert "Error: AuthenticationError: runtime_bootstrap.secret_already_claimed" in second.output
     assert "Traceback" not in second.output
 
 
@@ -155,7 +155,7 @@ def test_credential_claim_bootstrap_wrong_secret_renders_auth_error(
 
     class StubClient:
         def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
-            raise AuthenticationError("Invalid bootstrap secret")
+            raise AuthenticationError("runtime_bootstrap.secret_invalid: mismatch")
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = runner.invoke(
@@ -171,7 +171,7 @@ def test_credential_claim_bootstrap_wrong_secret_renders_auth_error(
     )
 
     assert result.exit_code == 1
-    assert "Error: AuthenticationError: Invalid bootstrap secret" in result.output
+    assert "Error: AuthenticationError: runtime_bootstrap.secret_invalid" in result.output
     assert "Traceback" not in result.output
 
 

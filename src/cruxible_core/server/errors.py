@@ -33,6 +33,7 @@ from cruxible_core.curation.review_operational import (
 from cruxible_core.derived.derived_runtime import BuildCapacityError
 from cruxible_core.errors import (
     AuthenticationError,
+    BootstrapClaimRefusedError,
     ConfigError,
     CoreError,
     CustomerCodeExecutionUnsupportedError,
@@ -82,6 +83,16 @@ _DAEMON_OPERATION_LABELS = {
 
 CREDENTIAL_REPAIR_OPERATION = "credential.mint"
 
+# A refused bootstrap claim is repaired either by claiming again with the right
+# secret (or after a race) or by recovering ADMIN from local state, because the
+# instance is already bootstrapped.
+_BOOTSTRAP_REPAIR_OPERATIONS = {
+    "runtime_bootstrap.secret_invalid": "credential.claim-bootstrap",
+    "runtime_bootstrap.secret_already_claimed": "credential.recover-admin",
+    "runtime_bootstrap.admin_exists": "credential.recover-admin",
+    "runtime_bootstrap.claim_conflict": "credential.claim-bootstrap",
+}
+
 
 def _message_for_error(exc: CoreError) -> str:
     if isinstance(exc, DaemonOperationScopeError):
@@ -113,6 +124,11 @@ def _repair_for_error(exc: CoreError) -> ServedRepairV1:
                 "credential_env": "CRUXIBLE_SERVER_BEARER_TOKEN",
                 "accepted_credentials": ["bootstrap secret", "daemon-scope token"],
             },
+        )
+    if isinstance(exc, BootstrapClaimRefusedError):
+        return RepairOperationV1(
+            operation=_BOOTSTRAP_REPAIR_OPERATIONS[exc.error_code],
+            arguments={"instance_id": exc.instance_id},
         )
     if isinstance(exc, AuthenticationError):
         return RepairOperationV1(

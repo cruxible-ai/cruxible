@@ -215,7 +215,7 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc = InstanceNotFoundError(context.get("instance_id", "unknown"))
     elif body.error_type == "RuntimeCredentialNotFoundError":
         exc = RuntimeCredentialNotFoundError(context.get("credential_id", "unknown"))
-    elif body.error_type == "AuthenticationError":
+    elif body.error_type in {"AuthenticationError", "BootstrapClaimRefusedError"}:
         exc = AuthenticationError(body.message)
     elif body.error_type == "InstanceScopeError":
         exc = InstanceScopeError(

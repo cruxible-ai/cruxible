@@ -71,6 +71,15 @@ def test_server_envelope_repairs_name_commands_the_cli_actually_serves() -> None
     assert isinstance(unauthenticated, RepairOperationV1)
     assert unauthenticated.operation in leaves
 
+    from typing import get_args
+
+    from cruxible_core.errors import BootstrapClaimRefusalCode, BootstrapClaimRefusedError
+
+    for code in get_args(BootstrapClaimRefusalCode):
+        bootstrap = _repair_for_error(BootstrapClaimRefusedError(code, instance_id="inst_a"))
+        assert isinstance(bootstrap, RepairOperationV1)
+        assert bootstrap.operation in leaves, code
+
 
 def test_the_served_refusal_models_read_the_declared_change() -> None:
     """A producer that carries no repair still projects the declared change."""
