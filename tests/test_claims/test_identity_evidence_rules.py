@@ -707,3 +707,15 @@ def test_the_upgrade_refuses_versions_that_would_newly_match_two_rules() -> None
     second = _digest_rule(_digest(other), _digest(improved), rule_id="b")
     with pytest.raises(_Refused, match="both match the same evidence"):
         _convert(_v5_type(first, second), Lineages())  # type: ignore[arg-type]
+
+
+def test_a_stricter_or_ambiguous_successor_rule_does_not_cover_an_exact_rule() -> None:
+    previous = _digest_rule(_digest(ORIGINAL), rule_id="old")
+    successor = _digest_rule(_digest(_successor(ORIGINAL)), rule_id="new")
+    assert _dependents(_v5_type(successor, previous)) == ()
+
+    stricter = successor.model_copy(update={"attestation_requirement": "verified_principal"})
+    assert _dependents(_v5_type(stricter, previous)) == (f"ClaimType:{PREDICATE}",)
+
+    twin = successor.model_copy(update={"rule_id": "newer"})
+    assert _dependents(_v5_type(successor, twin, previous)) == (f"ClaimType:{PREDICATE}",)

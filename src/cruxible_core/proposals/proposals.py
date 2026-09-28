@@ -2717,6 +2717,20 @@ def _verified_attestation_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _same_admission(first: object, second: object) -> bool:
+    """Whether two evidence rules demand the same of the evidence they admit."""
+
+    return all(
+        getattr(first, name, None) == getattr(second, name, None)
+        for name in (
+            "admission",
+            "subject_binding",
+            "attestation_requirement",
+            "allowed_reducer_digests",
+        )
+    )
+
+
 def _capture_contract_dependents(
     context: _MemberContext,
     *,
@@ -2729,8 +2743,9 @@ def _capture_contract_dependents(
     Read in the final candidate, so a dependent revised or retired in the same
     ChangeSet no longer counts. An identity rule (ClaimType v6) follows every
     compatible successor and is stranded only by retirement (`successor_digest`
-    None). An exact-digest evidence rule is stranded when it names the previous
-    version but not the one that replaces it; a ResolutionContract capture-event
+    None). An exact-digest evidence rule is stranded unless every (role, evidence
+    kind) it admits is admitted under the replacing version by exactly one rule
+    with the same requirements; a ResolutionContract capture-event
     window matches one exact version, so naming the previous one strands it.
     Claims are never listed: the contract a Claim cites is provenance.
     """
@@ -2741,29 +2756,38 @@ def _capture_contract_dependents(
         if claim_type.lifecycle.state != "live":
             continue
         rules = claim_type.evidence_admission_policy.rules
-        # The (role, evidence kind) pairs whose evidence the replacing version can
-        # still reach. Only a rule admitting that version covers a pair; a rule
-        # for other roles or kinds that happens to name it does not.
-        covered: set[tuple[str, str]] = set()
-        for rule in rules:
-            follows = (
-                any(item.target.qualified == identity for item in rule.capture_contracts)
-                if isinstance(rule, ClaimEvidenceAdmissionRuleV3)
-                else successor_digest in rule.capture_contract_digests
-            )
-            if successor_digest is not None and follows:
-                covered.update(
-                    (role, kind) for role in rule.claim_roles for kind in rule.evidence_kinds
-                )
+
+        def follows(rule: object) -> bool:
+            """Whether this rule admits evidence under the replacing version."""
+
+            if successor_digest is None:
+                return False
+            if isinstance(rule, ClaimEvidenceAdmissionRuleV3):
+                return any(item.target.qualified == identity for item in rule.capture_contracts)
+            return successor_digest in getattr(rule, "capture_contract_digests", ())
+
         for rule in rules:
             names_moving = (
                 any(item.target.qualified == identity for item in rule.capture_contracts)
                 if isinstance(rule, ClaimEvidenceAdmissionRuleV3)
                 else previous_digest in rule.capture_contract_digests
             )
-            domain = {(role, kind) for role in rule.claim_roles for kind in rule.evidence_kinds}
-            if names_moving and not domain <= covered:
-                stranded.add(claim_type.identity.qualified)
+            if not names_moving:
+                continue
+            # Every (role, evidence kind) the rule admits must be admitted under the
+            # replacing version by exactly one rule with the same requirements;
+            # a stricter or ambiguous successor rule refuses what used to pass.
+            for role in rule.claim_roles:
+                for kind in rule.evidence_kinds:
+                    covering = [
+                        other
+                        for other in rules
+                        if follows(other)
+                        and role in other.claim_roles
+                        and kind in other.evidence_kinds
+                    ]
+                    if len(covering) != 1 or not _same_admission(rule, covering[0]):
+                        stranded.add(claim_type.identity.qualified)
     for resolution in context.resolved.resolution_contracts.values():
         window = resolution.window
         if (
