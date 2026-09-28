@@ -527,6 +527,39 @@ def prepared_generation_for_handoff(
     )
 
 
+class _LedgerArtifactVersions:
+    """Historical artifact versions read straight from the signed ledger.
+
+    Replay has no history index, so a law that needs an exact superseded version
+    walks back from the generation it is bounded by, reading only the one path.
+    Found versions are remembered per path, so each lineage is walked at most
+    once however many members ask.
+    """
+
+    def __init__(self, ledger: GitLedger) -> None:
+        self._ledger = ledger
+        self._versions: dict[str, dict[str, bytes]] = {}
+        self._walked: dict[str, set[str]] = {}
+
+    def __call__(self, coordinate: AcceptedCoordinate, path: str, digest: str) -> bytes | None:
+        from cruxible_core.claims.closure import parse_dependency_artifact
+
+        versions = self._versions.setdefault(path, {})
+        walked = self._walked.setdefault(path, set())
+        oid: str | None = coordinate.git_oid
+        while oid is not None and oid not in walked:
+            walked.add(oid)
+            content = self._ledger.blobs_at(oid, (path,)).get(path)
+            if content is not None:
+                state = parse_dependency_artifact(path, content)
+                if state is not None:
+                    versions.setdefault(state.artifact_digest, content)
+            if digest in versions:
+                break
+            oid = self._ledger.parent_of(oid)
+        return versions.get(digest)
+
+
 def _verify_successor(
     ledger: GitLedger,
     oid: str,
@@ -608,6 +641,7 @@ def _verify_successor(
         query_facts_provider=query_facts_provider,
         replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
         retained_tree=ledger.read_tree,
+        historical_artifact_provider=_LedgerArtifactVersions(ledger),
         promotion_verifier=promotion_verifier,
         producer_receipt_resolver=producer_receipt_resolver,
         parent_state=window.state,

@@ -27,6 +27,11 @@ from cruxible_client.contracts.approval_policy import (
 from cruxible_client.contracts.attestations import ApprovalSubmission
 from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import canonical_bytes, is_candidate_card_path
+from cruxible_client.contracts.captures import (
+    AcceptedCaptureContract,
+    capture_contract_digest,
+    parse_capture_contract,
+)
 from cruxible_client.contracts.claims import (
     ClaimLawEvidenceAny,
     claim_path,
@@ -1238,6 +1243,44 @@ class PlaybillInstance:
             raise ProposalIntegrityError("Claim admission has no retained law evidence")
         return parse_claim_law_evidence(raw)
 
+    def accepted_artifact_version(
+        self, coordinate: AcceptedCoordinate, path: str, artifact_digest: str
+    ) -> bytes | None:
+        """Exact bytes of one accepted artifact version within a prefix, even if superseded.
+
+        A missing version is None; nothing ever substitutes today's version for a
+        historical one.
+        """
+
+        with self.accepted_history_reader(at=coordinate) as history:
+            location = history.artifact(artifact_digest)
+            if location is None or location.path != path:
+                return None
+            generation = history.generation(location.occurrence_sequence)
+        raw = self.blob_at(generation.git_oid, location.path)
+        if raw is None:
+            raise ProposalIntegrityError("an accepted artifact version's bytes are unavailable")
+        return raw
+
+    def accepted_capture_contract_version(
+        self, coordinate: AcceptedCoordinate, contract_digest: str
+    ) -> AcceptedCaptureContract | None:
+        """One exact CaptureContract version accepted within a prefix, even if superseded."""
+
+        with self.accepted_history_reader(at=coordinate) as history:
+            location = history.artifact(contract_digest)
+        if location is None or not location.path.startswith("capture-contracts/"):
+            return None
+        raw = self.accepted_artifact_version(coordinate, location.path, contract_digest)
+        if raw is None:
+            return None
+        contract = parse_capture_contract(raw, path=location.path)
+        if capture_contract_digest(contract).tagged != contract_digest:
+            return None
+        return AcceptedCaptureContract(
+            path=location.path, contract=contract, artifact_digest=contract_digest
+        )
+
     def proposal_service(self) -> ProposalService:
         """Bind PB-C proposal evaluation to authenticated main and inert storage."""
 
@@ -1254,6 +1297,7 @@ class PlaybillInstance:
             claim_law_provider=self.accepted_claim_law_evidence,
             attestation_principal_provider=self.accepted_principal,
             accepted_referents_provider=self.accepted_referent_coordinates,
+            historical_artifact_provider=self.accepted_artifact_version,
             prepared_evaluations=self.prepared_evaluations,
             principal_registry_provider=self.accepted_principal_registry,
             active_principal_provider=self.require_accepted_principal,
@@ -2115,6 +2159,7 @@ class PlaybillInstance:
             claim_law_provider=self.accepted_claim_law_evidence,
             attestation_principal_provider=self.accepted_principal,
             accepted_referents_provider=self.accepted_referent_coordinates,
+            historical_artifact_provider=self.accepted_artifact_version,
             principal_registry_provider=self.accepted_principal_registry,
         )
 

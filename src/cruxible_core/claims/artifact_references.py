@@ -13,6 +13,9 @@ from collections.abc import Iterator, Mapping
 from typing import Any
 
 _PIN = ("*", "artifact_digest")
+# A Claim's capture-contract pins are provenance -- the exact contract versions its
+# evidence used -- so a Claim's references skip them and they never move.
+_REQUIRED_CLAIM_PIN = ("*!role=capture-contract", "artifact_digest")
 
 # Paths are field names, with "*" stepping into each list element. For the
 # definition families every digest field is a reference; for Claims and
@@ -30,6 +33,8 @@ REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
     ),
     "claim-types/": (
         ("pins", *_PIN),
+        # Historical exact-digest evidence rules; v6 rules name contracts by
+        # identity and need no re-pinning.
         ("evidence_admission_policy", "rules", "*", "capture_contract_digests", "*"),
         ("evidence_admission_policy", "rules", "*", "allowed_reducer_digests", "*"),
         ("admission_policy", "corroboration_requirements", "*", "query_definition_digest"),
@@ -37,7 +42,7 @@ REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
     "query-definitions/": (("pins", *_PIN),),
     "claims/": (
         ("statement", "claim_type_digest"),
-        ("pins", *_PIN),
+        ("pins", *_REQUIRED_CLAIM_PIN),
         ("backing", "input_claim_digests", "*"),
         ("backing", "reducer_digest"),
     ),
@@ -60,6 +65,14 @@ def _at(value: object, steps: tuple[str, ...], remap: Mapping[str, str] | None) 
     if not steps:
         return
     head, rest = steps[0], steps[1:]
+    if head.startswith("*!"):
+        # "*!field=value": every list element except those whose field equals value.
+        field, _, excluded = head[2:].partition("=")
+        if isinstance(value, list):
+            for item in value:
+                if not (isinstance(item, dict) and item.get(field) == excluded):
+                    yield from _at(item, rest, remap)
+        return
     if head == "*":
         if isinstance(value, list):
             for index, item in enumerate(value):

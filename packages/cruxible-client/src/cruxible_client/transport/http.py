@@ -36,6 +36,7 @@ from cruxible_client.contracts.errors import (
     PlaybillDeprecatedWriteError,
     PlaybillSinceRequestInvalid,
 )
+from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -456,6 +457,12 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/playbill/kits", json=request.model_dump(mode="json")
         )
         return self._parse_model(response, PlaybillKitChangeResultV1)
+
+    def upgrade_playbill_evidence_rules(self, instance_id: str) -> EvidenceRuleUpgradeResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claim-types/evidence-rules/upgrade"
+        )
+        return self._parse_model(response, EvidenceRuleUpgradeResultV1)
 
     def remove_playbill_kit(
         self, instance_id: str, request: PlaybillKitRemoveRequestV1

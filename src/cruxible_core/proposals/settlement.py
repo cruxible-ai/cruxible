@@ -79,6 +79,7 @@ from cruxible_core.proposals.proposals import (
     ClaimLawEvidenceProvider,
     ClaimQueryFactsProvider,
     ExhaustPromotionVerifierProtocol,
+    HistoricalArtifactProvider,
     TreeStateProvider,
     claim_admission_accounts_from_candidate,
     claim_type_expansions_from_candidate,
@@ -743,6 +744,7 @@ def prepare_generation(
     accepted_referents_provider: AcceptedReferentsProvider | None = None,
     principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
     | None = None,
+    historical_artifact_provider: HistoricalArtifactProvider | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state."""
 
@@ -778,6 +780,7 @@ def prepare_generation(
         accepted_referents_provider=accepted_referents_provider,
         principal_registry_provider=principal_registry_provider,
         delegated_mandate_digest=mandate_digest,
+        historical_artifact_provider=historical_artifact_provider,
         historical_law_coordinates={
             member.path: (
                 member.law_identifier,

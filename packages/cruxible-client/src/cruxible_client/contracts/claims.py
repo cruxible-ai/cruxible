@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, TypeAlias
@@ -501,16 +501,36 @@ class ClaimBackingV2(_StrictClaimModel):
         return self
 
 
-def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes]:
-    return pin.role.encode("utf-8"), pin.target.qualified.encode("utf-8")
+CAPTURE_CONTRACT_PROVENANCE_ROLE = "capture-contract"
+"""The pin role that records which contract version a backing Capture used.
+
+It is provenance, not a requirement: it names the exact historical version and
+never obliges the Claim to follow the contract's head. A Claim whose evidence
+was captured under two versions of one contract pins both.
+"""
+
+
+def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
+    return (
+        pin.role.encode("utf-8"),
+        pin.target.qualified.encode("utf-8"),
+        pin.artifact_digest.encode("ascii"),
+    )
 
 
 def _canonical_claim_pins(value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
     if value != tuple(sorted(value, key=_pin_key)):
         raise ValueError("Claim pins must be canonically sorted")
-    identities = tuple((item.role, item.target.qualified) for item in value)
+    identities = tuple(
+        (item.role, item.target.qualified)
+        + ((item.artifact_digest,) if item.role == CAPTURE_CONTRACT_PROVENANCE_ROLE else ())
+        for item in value
+    )
     if len(identities) != len(set(identities)):
-        raise ValueError("Claim pins must be unique by role and target")
+        raise ValueError(
+            "Claim pins must be unique by role and target "
+            "(capture-contract provenance: by exact version)"
+        )
     return value
 
 
@@ -1283,7 +1303,10 @@ def _self_source_capture_admitted_by_rule(
         return False
     return any(
         claim.statement.role in rule.claim_roles
-        and capture_contract.artifact_digest in rule.capture_contract_digests
+        and rule.names_capture_contract(
+            digest=capture_contract.artifact_digest,
+            identity=capture_contract.contract.identity.qualified,
+        )
         for rule in claim_type.evidence_admission_policy.rules
     )
 
@@ -1346,7 +1369,10 @@ def _copy_capture_admitted_by_rule(
         return False
     return any(
         claim.statement.role in rule.claim_roles
-        and capture_contract.artifact_digest in rule.capture_contract_digests
+        and rule.names_capture_contract(
+            digest=capture_contract.artifact_digest,
+            identity=capture_contract.contract.identity.qualified,
+        )
         for rule in claim_type.evidence_admission_policy.rules
     )
 
@@ -1408,7 +1434,10 @@ def evaluate_capture_evidence_admissions(
             rule
             for rule in claim_type.evidence_admission_policy.rules
             if claim.statement.role in rule.claim_roles
-            and capture_contract.artifact_digest in rule.capture_contract_digests
+            and rule.names_capture_contract(
+                digest=capture_contract.artifact_digest,
+                identity=capture_contract.contract.identity.qualified,
+            )
             and kind in rule.evidence_kinds
         )
         source_bound = any(subject_binding_by_rule[rule.rule_id] for rule in matching_rules)
@@ -1420,6 +1449,7 @@ def evaluate_capture_evidence_admissions(
                     EvidenceAdmissionInputV1(
                         claim_role=claim.statement.role,
                         capture_contract_digest=capture_contract.artifact_digest,
+                        capture_contract_identity=capture_contract.contract.identity.qualified,
                         evidence_kind=kind,
                         reducer_digest=claim.backing.reducer_digest,
                         input_claim_artifact_digests=claim.backing.input_claim_digests,
@@ -1684,8 +1714,15 @@ def evaluate_claim_law(
     ledger_resolver: LedgerMaterialResolverProtocol | None = None,
     evaluation_time: datetime | None = None,
     allow_claim_type_retirement_shape_exemption: bool = False,
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
 ) -> ClaimLawResult:
-    """Evaluate one Claim against exact resolved dependencies and immutable Captures."""
+    """Evaluate one Claim against exact resolved dependencies and immutable Captures.
+
+    With `historical_capture_contract` (the revision-9 law), a backing Capture
+    verifies against the exact contract version it names even after that
+    contract has a successor: the Claim's capture-contract pins are provenance,
+    resolved in accepted history, never required to be the live head.
+    """
 
     try:
         validate_claim_path(claim, path)
@@ -2119,6 +2156,20 @@ def evaluate_claim_law(
     capture_contract_pin_digests = {
         pin.artifact_digest for pin in claim.pins if pin.role == "capture-contract"
     }
+    if historical_capture_contract is not None:
+        # Provenance pins are not closure edges, so the law proves each one names
+        # an accepted version of its contract -- live now or merely historical.
+        live_contract_digests = {item.artifact_digest for item in capture_contracts.values()}
+        for pin in claim.pins:
+            if pin.role != "capture-contract" or pin.artifact_digest in live_contract_digests:
+                continue
+            resolved_version = historical_capture_contract(pin.artifact_digest)
+            if resolved_version is None or resolved_version.contract.identity != pin.target:
+                return _diagnostic(
+                    "playbill.claim.capture_contract_pin_unresolved",
+                    "A capture-contract pin names no accepted version of its CaptureContract.",
+                    path=path,
+                )
     inherited_captures = inherited_capture_digests(claim, path=path, predecessor=predecessor)
     # Computed once per law: the producer digests every verification consults,
     # and the contracts grouped by the contract digest a Capture names.
@@ -2141,6 +2192,13 @@ def evaluate_claim_law(
         # The envelope names its exact contract digest, which verification
         # requires to match; only contracts with that digest can verify it.
         named = _named_capture_contract(capture_store, capture_digest_value)
+        if (
+            named
+            and named not in contracts_by_digest
+            and historical_capture_contract is not None
+            and (historical := historical_capture_contract(named)) is not None
+        ):
+            contracts_by_digest[named] = [historical]
         for contract_candidate in contracts_by_digest.get(named, []) if named else ():
             try:
                 candidate_envelope = verify_capture(
