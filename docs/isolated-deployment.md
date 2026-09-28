@@ -17,9 +17,12 @@ uv run cruxible server start \
 Clients select it with --server-socket or CRUXIBLE_SERVER_SOCKET.
 
 The daemon binds the socket with mode 0600. It creates a missing socket
-directory with mode 0700 and refuses to start when an existing one is writable
-by group or others, since anyone who can write that directory could replace the
-socket. Protect the state root with operating-system ownership and
+directory with mode 0700. It refuses to start unless that directory is a real
+directory you own with no group or other access, and every ancestor is owned by
+you or root and not writable by others (except a sticky root-owned directory
+such as `/tmp`): anyone who could replace the socket would receive the bearer
+tokens clients send. After binding it re-checks that the path still names the
+directory it validated, and removes the socket and refuses otherwise. Protect the state root with operating-system ownership and
 permissions. The daemon state includes bearer credential records, Playbill Git
 ledgers, CAS objects, projections, and daemon signing keys.
 

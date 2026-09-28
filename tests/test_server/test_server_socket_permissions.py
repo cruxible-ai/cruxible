@@ -37,22 +37,68 @@ def test_a_missing_socket_directory_is_created_owner_only(short_dir: Path) -> No
     assert stat.S_IMODE(directory.stat().st_mode) == 0o700
 
 
-@pytest.mark.parametrize("mode", [0o770, 0o707, 0o1777])
-def test_a_group_or_other_writable_socket_directory_is_refused(short_dir: Path, mode: int) -> None:
+@pytest.mark.parametrize("mode", [0o770, 0o707, 0o1777, 0o755, 0o750])
+def test_a_socket_directory_that_is_not_owner_only_is_refused(short_dir: Path, mode: int) -> None:
     directory = short_dir / "shared"
     directory.mkdir()
     os.chmod(directory, mode)
 
-    with pytest.raises(ConfigError, match="writable by group or others") as caught:
+    with pytest.raises(ConfigError, match="is not owner-only") as caught:
         server_app.prepare_socket_directory(directory)
 
-    assert f"chmod go-w {directory}" in str(caught.value)
+    assert f"chmod 700 {directory}" in str(caught.value)
+
+
+@pytest.mark.parametrize("mode", [0o777, 0o1777, 0o770])
+def test_a_writable_ancestor_that_is_not_sticky_and_root_owned_is_refused(
+    short_dir: Path, mode: int
+) -> None:
+    ancestor = short_dir / "shared"
+    directory = ancestor / "run"
+    directory.mkdir(parents=True, mode=0o700)
+    os.chmod(ancestor, mode)
+
+    with pytest.raises(ConfigError, match="writable by group or others"):
+        server_app.prepare_socket_directory(directory)
+
+
+def test_a_symlinked_socket_directory_is_refused(short_dir: Path) -> None:
+    real = short_dir / "real"
+    real.mkdir(mode=0o700)
+    link = short_dir / "link"
+    link.symlink_to(real)
+
+    with pytest.raises(ConfigError, match="not a directory"):
+        server_app.prepare_socket_directory(link)
 
 
 def test_a_private_existing_directory_is_accepted(short_dir: Path) -> None:
-    os.chmod(short_dir, 0o755)
+    os.chmod(short_dir, 0o700)
 
     server_app.prepare_socket_directory(short_dir)
+
+
+def test_a_directory_swapped_between_validation_and_bind_is_refused(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = short_dir / "run"
+    socket_file = directory / "d.sock"
+    real_bind = server_app._bind_socket_path
+
+    def swap_then_bind(sock: object, path: str) -> None:
+        # Another writer replaces the validated directory with an open one.
+        directory.rename(short_dir / "validated")
+        directory.mkdir()
+        os.chmod(directory, 0o777)
+        real_bind(sock, path)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(server_app, "_bind_socket_path", swap_then_bind)
+
+    with pytest.raises(ConfigError, match="changed while the socket was being bound"):
+        server_app.bind_private_unix_socket(socket_file)
+
+    assert not os.path.lexists(socket_file)
+    assert not os.path.lexists(short_dir / "validated" / "d.sock")
 
 
 def test_the_socket_is_bound_owner_only(short_dir: Path) -> None:
@@ -110,7 +156,7 @@ def test_run_server_refuses_a_shared_socket_directory_before_uvicorn(
     reset_runtime_credential_store()
     reset_registry()
     try:
-        with pytest.raises(ConfigError, match="writable by group or others"):
+        with pytest.raises(ConfigError, match="is not owner-only"):
             server_app.run_server(socket_path=str(short_dir / "d.sock"))
     finally:
         reset_runtime_credential_store()

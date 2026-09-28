@@ -345,46 +345,163 @@ def enable_fatal_fault_handler(path: Path | None = None) -> Path | None:
     return resolved
 
 
-def prepare_socket_directory(directory: Path) -> None:
-    """Make sure only this user can create or replace entries beside the socket.
+_SOCKET_LOCATION_REPAIR = (
+    "pass a --socket path inside a directory only you own and can access (mode 0700), "
+    "under ancestors other users cannot write"
+)
 
-    A directory this call creates is created 0700. An existing one is refused
-    when group or other can write it: anyone who can write the directory can
-    swap the socket for their own and receive every bearer token clients send.
+
+def _refuse_socket_location(detail: str) -> ConfigError:
+    return ConfigError(
+        f"Unsafe daemon socket location: {detail}. Repair: {_SOCKET_LOCATION_REPAIR}."
+    )
+
+
+def _check_socket_ancestor(path: Path, status: os.stat_result) -> None:
+    """An ancestor no other user can use to replace the directory below it.
+
+    Only root or this user may own it, and group/other write is allowed only on
+    a sticky root-owned directory such as ``/tmp``, where nobody but the entry's
+    owner (or root) may rename or remove an entry.
     """
-    if not directory.exists():
-        directory.mkdir(mode=0o700, parents=True)
-        return
-    try:
-        mode = directory.stat().st_mode
-    except OSError as exc:
-        raise ConfigError(f"Could not inspect the socket directory {directory}: {exc}") from exc
-    if not stat.S_ISDIR(mode):
-        raise ConfigError(f"The socket directory {directory} is not a directory.")
-    if mode & (stat.S_IWGRP | stat.S_IWOTH):
-        raise ConfigError(
-            f"The socket directory {directory} is writable by group or others "
-            f"(mode {stat.S_IMODE(mode):04o}), so another user could replace the daemon "
-            f"socket. Repair: run `chmod go-w {directory}`, or pass a --socket path "
-            "inside a directory only you can write."
+    uid = os.getuid()
+    if status.st_uid not in (0, uid):
+        raise _refuse_socket_location(
+            f"{path} is owned by uid {status.st_uid}, who could replace the directory below it"
+        )
+    writable = status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    sticky_root = bool(status.st_mode & stat.S_ISVTX) and status.st_uid == 0
+    if writable and not sticky_root:
+        raise _refuse_socket_location(
+            f"{path} is writable by group or others (mode {stat.S_IMODE(status.st_mode):04o}), "
+            "so the directory below it could be replaced"
         )
 
 
-def bind_private_unix_socket(socket_file: Path) -> socket.socket:
-    """Bind the daemon socket owner-only (0600); uvicorn's own bind makes it 0666."""
-    socket_file.unlink(missing_ok=True)
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    previous_umask = os.umask(0o177)
+def _check_socket_parent(path: Path, status: os.stat_result) -> None:
+    """The socket's own directory: a real directory this user owns, owner-only."""
+    if not stat.S_ISDIR(status.st_mode):
+        raise _refuse_socket_location(f"{path} is not a directory (a symlink is refused)")
+    if status.st_uid != os.getuid():
+        raise _refuse_socket_location(f"{path} is owned by uid {status.st_uid}, not by you")
+    if stat.S_IMODE(status.st_mode) & 0o077:
+        raise _refuse_socket_location(
+            f"{path} is not owner-only (mode {stat.S_IMODE(status.st_mode):04o}); "
+            f"run `chmod 700 {path}`"
+        )
+
+
+def _check_socket_ancestors(directory: Path) -> None:
+    # Both the path as given and its resolved form: a symlink in the chain is
+    # itself an entry that its directory's owner could replace.
+    for chain in (directory, directory.resolve(strict=True)):
+        for ancestor in chain.parents:
+            try:
+                status = os.lstat(ancestor)
+            except OSError as exc:
+                raise _refuse_socket_location(f"could not inspect {ancestor}: {exc}") from exc
+            _check_socket_ancestor(ancestor, status)
+
+
+def prepare_socket_directory(directory: Path) -> None:
+    """Make sure no other user can create or replace the daemon socket.
+
+    A missing directory is created 0700. The socket's own directory must be a
+    real directory this user owns with no group or other access, and no
+    ancestor may let another user replace it: anyone who can swap the socket
+    receives every bearer token clients send.
+    """
+    directory = Path(os.path.abspath(directory))
+    if not os.path.lexists(directory):
+        directory.mkdir(mode=0o700, parents=True)
     try:
-        sock.bind(str(socket_file))
-    except OSError:
-        sock.close()
-        raise
+        status = os.lstat(directory)
+    except OSError as exc:
+        raise _refuse_socket_location(f"could not inspect {directory}: {exc}") from exc
+    _check_socket_parent(directory, status)
+    _check_socket_ancestors(directory)
+
+
+def _bind_socket_path(sock: socket.socket, path: str) -> None:
+    sock.bind(path)
+
+
+def bind_private_unix_socket(socket_file: Path) -> socket.socket:
+    """Bind the daemon socket owner-only (0600) inside the directory it validated.
+
+    uvicorn's own bind makes the socket 0666, so the daemon binds it and hands
+    uvicorn the descriptor. The validated directory is held open; after the
+    bind, the path must still name that same directory and the bound entry must
+    be the one inside it, or the socket is unlinked and startup is refused.
+    """
+    socket_file = Path(os.path.abspath(socket_file))
+    directory, name = socket_file.parent, socket_file.name
+    prepare_socket_directory(directory)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        dir_fd = os.open(directory, flags)
+    except OSError as exc:
+        raise _refuse_socket_location(f"could not open {directory}: {exc}") from exc
+    try:
+        pinned = os.fstat(dir_fd)
+        _check_socket_parent(directory, pinned)
+        try:
+            os.unlink(name, dir_fd=dir_fd)
+        except FileNotFoundError:
+            pass
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        previous_umask = os.umask(0o177)
+        try:
+            _bind_socket_path(sock, str(socket_file))
+        except OSError:
+            sock.close()
+            raise
+        finally:
+            os.umask(previous_umask)
+        try:
+            _verify_bound_socket(socket_file, name=name, dir_fd=dir_fd, pinned=pinned)
+        except ConfigError:
+            sock.close()
+            raise
+        # The entry was just verified to be our socket, not a link.
+        os.chmod(name, 0o600, dir_fd=dir_fd)
+        sock.set_inheritable(True)
+        return sock
     finally:
-        os.umask(previous_umask)
-    os.chmod(socket_file, 0o600)
-    sock.set_inheritable(True)
-    return sock
+        os.close(dir_fd)
+
+
+def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
+    return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+
+
+def _verify_bound_socket(
+    socket_file: Path, *, name: str, dir_fd: int, pinned: os.stat_result
+) -> None:
+    """Refuse, and remove what was bound, unless the bind landed in the pinned directory."""
+    try:
+        current = os.stat(socket_file.parent)
+        inside = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        at_path = os.lstat(socket_file)
+        intact = (
+            _same_file(current, pinned)
+            and _same_file(inside, at_path)
+            and stat.S_ISSOCK(at_path.st_mode)
+            and at_path.st_uid == os.getuid()
+        )
+    except OSError:
+        intact = False
+    if intact:
+        return
+    try:
+        stray = os.lstat(socket_file)
+        if stat.S_ISSOCK(stray.st_mode) and stray.st_uid == os.getuid():
+            os.unlink(socket_file)
+    except OSError:
+        pass
+    raise _refuse_socket_location(
+        f"the socket directory {socket_file.parent} changed while the socket was being bound"
+    )
 
 
 def _serve(resolved_socket: str | None) -> None:

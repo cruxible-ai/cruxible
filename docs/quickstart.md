@@ -22,9 +22,10 @@ uv run cruxible server start \
 ~~~
 
 The daemon creates a one-time bootstrap secret with mode 0600. It binds the
-socket with mode 0600 in a directory it creates with mode 0700, and refuses to
-start when the socket's directory is writable by group or others (so a socket
-directly in `/tmp` is refused).
+socket with mode 0600 in a directory it creates with mode 0700. It refuses to
+start unless the socket's directory is yours and owner-only, and no ancestor
+lets another user replace it (a sticky root-owned `/tmp` is fine; a socket
+directly in `/tmp` is not).
 
 In shell two:
 
