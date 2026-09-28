@@ -4656,6 +4656,19 @@ __exit__(*_args: object) -> None
 version() -> str
 ```
 
+<a id="api-cruxibleclient-daemon-identity"></a>
+
+### `CruxibleClient.daemon_identity`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+daemon_identity() -> tuple[str, str | None]
+```
+
+The daemon's version and the boot id of its process image, from `/version`. A
+restarted daemon answers with a new boot id.
+
 <a id="api-cruxibleclient-check-playbill-projection-blocks"></a>
 
 ### `CruxibleClient.check_playbill_projection_blocks`
@@ -5137,6 +5150,21 @@ inspect_playbill_proposal(instance_id: str, proposal_id: str) -> contracts.Playb
 ```
 
 HTTP: `GET f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}'`.
+
+<a id="api-cruxibleclient-playbill-proposal-status"></a>
+
+### `CruxibleClient.playbill_proposal_status`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+playbill_proposal_status(instance_id: str, proposal_id: str) -> contracts.PlaybillProposalListEntry
+```
+
+One proposal's list entry at the current accepted coordinate, read by ID.
+`Proposal.status()` uses it.
+
+HTTP: `GET f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/status'`.
 
 <a id="api-cruxibleclient-inspect-playbill-refusal"></a>
 

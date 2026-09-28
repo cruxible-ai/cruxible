@@ -199,6 +199,21 @@ def service_list_playbill_proposals(
 _PROPOSAL_LIST = "proposal"
 
 
+def service_playbill_proposal_status(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+) -> PlaybillProposalListEntryV1:
+    """The one proposal's list entry at the current accepted coordinate, read by ID."""
+
+    resolved = instance.proposal_evidence().read_admission(proposal_id).proposal_id
+    coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    for entry in _proposal_entries(instance, coordinate, resolved):
+        if entry.proposal_id == resolved:
+            return entry
+    raise ProposalNotFoundError(proposal_id)  # pragma: no cover - a read admission lists
+
+
 def _proposal_entries(
     instance: PlaybillInstance,
     coordinate: PlaybillAcceptedCoordinate,
@@ -732,6 +747,7 @@ __all__ = [
     "proposals_awaiting_approval",
     "readmission_operation_digest",
     "service_list_playbill_proposals",
+    "service_playbill_proposal_status",
     "service_readmit_playbill_proposal",
     "service_withdraw_playbill_proposal",
     "service_playbill_whoami",

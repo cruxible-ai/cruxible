@@ -280,6 +280,7 @@ from cruxible_core.service.procedures.provider_installation import (
 from cruxible_core.service.proposals.proposals import (
     ProposalInventoryStatus,
     service_list_playbill_proposals,
+    service_playbill_proposal_status,
     service_playbill_whoami,
     service_readmit_playbill_proposal,
     service_resolve_playbill_proposal_selector,
@@ -789,6 +790,17 @@ def playbill_list_proposals(
         cursor=cursor,
     )
     return contracts.PlaybillProposalList.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_proposal_status(
+    instance_id: str,
+    proposal_id: str,
+) -> contracts.PlaybillProposalListEntry:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_playbill_proposal_status(
+        get_playbill_manager().get(instance_id), proposal_id=proposal_id
+    )
+    return contracts.PlaybillProposalListEntry.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_resolve_proposal_selector(

@@ -412,6 +412,19 @@ def withdraw_proposal(
 
 
 @router.get(
+    "/{instance_id}/playbill/proposals/{proposal_id}/status",
+    response_model=contracts.PlaybillProposalListEntry,
+)
+async def proposal_status(
+    instance_id: str,
+    proposal_id: str,
+) -> contracts.PlaybillProposalListEntry:
+    return playbill_api.playbill_proposal_status(
+        resolve_server_instance_id(instance_id), proposal_id
+    )
+
+
+@router.get(
     "/{instance_id}/playbill/proposals/{proposal_id}/refusal",
     response_model=contracts.PlaybillRefusalInspection,
 )

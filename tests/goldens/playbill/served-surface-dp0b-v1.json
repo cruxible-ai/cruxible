@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-28:audit-bugs-b06",
-    "surface_digest": "sha256:5a27306620933bdcafa7e3671d8e45cb2e3d9887ffc2928e7f9ead2383c8b63b"
+    "register_entry": "2026-09-28:audit-bugs-b09",
+    "surface_digest": "sha256:74d46e16e8b9b63cb0cc8dcdeb29868355b521bf488cca219b18ca34075cb0bf"
   },
   "surface": {
     "cli_leaves": [
@@ -932,6 +932,7 @@
       "playbill_procedure_run",
       "playbill_procedure_run_status",
       "playbill_procedure_source_preview",
+      "playbill_proposal_status",
       "playbill_propose_claim_type",
       "playbill_propose_claim_type_input",
       "playbill_propose_compiler_upgrade",
@@ -1998,6 +1999,18 @@
         "request_schema_digest": "sha256:70a6765d6ba4ad789528c53b35ee81c8acdc9f32e0d7caff6dd1a475a25108b3",
         "response_model": "cruxible_client.contracts.PlaybillProposalReview",
         "response_schema_digest": "sha256:98309ebc3ef82b06d39cf63bacf184a9ce115a3a6a996cd6d7b409bd9b9ebcb0"
+      },
+      {
+        "delegate": "cruxible_core.server.routes.playbill.proposal_status",
+        "facade_operations": [
+          "playbill_proposal_status"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/status",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.PlaybillProposalListEntry",
+        "response_schema_digest": "sha256:7bfad10fab16c7f0f024e3b2e2f70659081c83c36593c58e2ad2fa608d027012"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.withdraw_proposal",

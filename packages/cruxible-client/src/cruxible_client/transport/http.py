@@ -606,6 +606,15 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}")
         return self._parse_model(response, contracts.PlaybillProposalInspection)
 
+    def playbill_proposal_status(
+        self, instance_id: str, proposal_id: str
+    ) -> contracts.PlaybillProposalListEntry:
+        """One proposal's list entry at the current accepted coordinate, read by ID."""
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/status"
+        )
+        return self._parse_model(response, contracts.PlaybillProposalListEntry)
+
     def inspect_playbill_refusal(
         self, instance_id: str, proposal_id: str
     ) -> contracts.PlaybillRefusalInspection:
