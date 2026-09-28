@@ -14,7 +14,7 @@ from cruxible_client.authoring.insertions import (
     PlaybillInsertionApplyError,
     replace_publication_file,
 )
-from cruxible_client.authoring.projection_package import (
+from cruxible_client.authoring.projection_manifests import (
     load_projection_manifests,
     retain_local_manifests,
 )

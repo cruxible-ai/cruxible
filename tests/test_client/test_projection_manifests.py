@@ -1,4 +1,4 @@
-"""Compact pages remain portable, bounded, and excluded from independent evidence."""
+"""Compact pages resolve their local manifests, bounded and excluded from independent evidence."""
 
 from __future__ import annotations
 
@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from cruxible_client import Playbill
-from cruxible_client.authoring.projection_package import ProjectionPackage
+from cruxible_client.authoring.projection_manifests import (
+    load_projection_manifests,
+    retain_local_manifests,
+)
 from cruxible_client.contracts.declared_blocks import (
     ProjectionMarkerError,
     frame_projection_block,
@@ -21,7 +24,7 @@ from tests.test_client.test_playbill_block_sync import OLD_BODY, _stamp
 from tests.test_client.test_playbill_projection_repin import NOW, _RepinClient, _workspace
 
 
-def test_compact_package_roundtrip_and_refusals(tmp_path: Path) -> None:
+def test_compact_page_manifest_retention_and_refusals(tmp_path: Path) -> None:
     stamp = _stamp()
     digest, manifest = projection_manifest(stamp)
     page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
@@ -35,30 +38,27 @@ def test_compact_package_roundtrip_and_refusals(tmp_path: Path) -> None:
         parse_projection_blocks(page, source_id=stamp.source_id, manifests={digest: b"corrupt"})
     with pytest.raises(ProjectionMarkerError, match="source differs"):
         parse_projection_blocks(page, source_id="another.source", manifests={digest: manifest})
-    package = ProjectionPackage(page, {digest: manifest})
-    restored = ProjectionPackage.from_bytes(package.to_bytes())
-    restored.install(tmp_path, "view.md")
-    assert ProjectionPackage.read(tmp_path, "view.md").to_bytes() == package.to_bytes()
+    retain_local_manifests(tmp_path, {digest: manifest})
+    assert load_projection_manifests(tmp_path, page) == {digest: manifest}
     # Unavailable sidecars cannot turn the body into independently citable evidence.
     (tmp_path / ".playbill/manifests" / (digest[7:] + ".json")).unlink()
     with pytest.raises(ProjectionMarkerError, match="unavailable"):
-        ProjectionPackage.read(tmp_path, "view.md")
-    assert stamped_projection_windows((tmp_path / "view.md").read_bytes())
-    restored.install(tmp_path, "view.md")
-    assert ProjectionPackage.read(tmp_path, "view.md").content == page
+        load_projection_manifests(tmp_path, page)
+    assert stamped_projection_windows(page)
+    retain_local_manifests(tmp_path, {digest: manifest})
+    assert load_projection_manifests(tmp_path, page) == {digest: manifest}
 
 
-def test_full_manifest_references_still_verify_and_install(tmp_path: Path) -> None:
+def test_full_manifest_references_still_resolve(tmp_path: Path) -> None:
     stamp = _stamp()
     digest, manifest = projection_manifest(stamp)
     page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
     page = page.replace(f":ref:{digest[7:19]}".encode(), f":ref:{digest}".encode())
-    package = ProjectionPackage(page, {digest: manifest})
-    package.install(tmp_path, "view.md")
-    assert ProjectionPackage.read(tmp_path, "view.md").to_bytes() == package.to_bytes()
+    retain_local_manifests(tmp_path, {digest: manifest})
+    assert load_projection_manifests(tmp_path, page) == {digest: manifest}
 
 
-def test_short_reference_refuses_ambiguity_before_installing_page(tmp_path: Path) -> None:
+def test_short_reference_refuses_ambiguity(tmp_path: Path) -> None:
     stamp = _stamp()
     digest, manifest = projection_manifest(stamp)
     page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
@@ -72,9 +72,9 @@ def test_short_reference_refuses_ambiguity_before_installing_page(tmp_path: Path
     directory = tmp_path / ".playbill/manifests"
     directory.mkdir(parents=True)
     (directory / (other[7:] + ".json")).write_bytes(manifest)
+    retain_local_manifests(tmp_path, {digest: manifest})
     with pytest.raises(ProjectionMarkerError, match="ambiguous"):
-        ProjectionPackage(page, {digest: manifest}).install(tmp_path, "view.md")
-    assert not (tmp_path / "view.md").exists()
+        load_projection_manifests(tmp_path, page)
 
 
 def test_manifest_limits_and_server_observation() -> None:
@@ -104,7 +104,7 @@ def test_manifest_limits_and_server_observation() -> None:
         )
 
 
-def test_sdk_body_refresh_compact_package_and_failed_cas(tmp_path: Path) -> None:
+def test_sdk_body_refresh_compact_page_and_failed_cas(tmp_path: Path) -> None:
     path = _workspace(tmp_path)
     client = _RepinClient()
     pb = Playbill._from_client(
@@ -118,14 +118,15 @@ def test_sdk_body_refresh_compact_package_and_failed_cas(tmp_path: Path) -> None
         compact=True,
         evaluation_time=NOW,
     )
-    package = pb.block.package("corpus.runbook")
-    assert package.content.startswith(b"prefix\n") and package.content.endswith(b"suffix\n")
-    assert b":ref:" in package.content
+    content = path.read_bytes()
+    assert content.startswith(b"prefix\n") and content.endswith(b"suffix\n")
+    assert b":ref:" in content
+    assert load_projection_manifests(tmp_path, content)
     second = pb.block.repin(
         "corpus.runbook", "summary", body="Updated view.\n", evaluation_time=NOW
     )
     assert second.backing == first.backing
-    assert b"Updated view." in pb.block.package("corpus.runbook").content
+    assert b"Updated view." in path.read_bytes()
     before = path.read_bytes()
 
     def edit():
@@ -174,8 +175,7 @@ def test_compact_sync_and_coverage_preserve_manifest_binding(tmp_path: Path) -> 
     )
     assert coverage is not None and "Claim" in coverage["complete_kinds"]
     assert len(coverage["bindings"]) == 1
-    package = ProjectionPackage.read(tmp_path, path)
-    key = next(iter(package.manifests))
+    key = next(iter(load_projection_manifests(tmp_path, path.read_bytes())))
     (tmp_path / ".playbill/manifests" / (key[7:] + ".json")).unlink()
     missing = sync_projection_blocks(
         client, INSTANCE_ID, workspace=tmp_path, paths=(path,), check=True
@@ -187,20 +187,10 @@ def test_compact_sync_and_coverage_preserve_manifest_binding(tmp_path: Path) -> 
     assert coverage is not None and "Claim" not in coverage["complete_kinds"]
 
 
-def test_package_refuses_noncanonical_archive_and_manifest_path_escape(tmp_path: Path) -> None:
-    import json
-
-    from cruxible_client.authoring.projection_package import retain_local_manifests
-    from cruxible_client.contracts.canonical import canonical_bytes
-
+def test_block_mismatch_and_manifest_path_escape_refuse(tmp_path: Path) -> None:
     stamp = _stamp()
     digest, manifest = projection_manifest(stamp)
     page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
-    package = ProjectionPackage(page, {digest: manifest})
-    archive = json.loads(package.to_bytes())
-    archive["content_base64"] += "===="
-    with pytest.raises(ProjectionMarkerError):
-        ProjectionPackage.from_bytes(canonical_bytes(archive))
     with pytest.raises(ProjectionMarkerError, match="block differs"):
         parse_projection_blocks(
             page.replace(b"pub-example", b"another-block"),
@@ -239,7 +229,7 @@ def test_compact_observation_allows_adjacent_unstamped_draft() -> None:
     assert blocks[1].stamp is None
 
 
-def test_archive_processing_budget_is_configurable() -> None:
+def test_manifest_processing_budget_is_configurable(tmp_path: Path) -> None:
     from cruxible_client.contracts.declared_blocks import (
         ProjectionProcessingLimitExceeded,
         ProjectionProcessingPolicyV1,
@@ -249,10 +239,8 @@ def test_archive_processing_budget_is_configurable() -> None:
     stamp = _stamp()
     digest, manifest = projection_manifest(stamp)
     page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
-    package = ProjectionPackage(page + b"large plain page\n" * 600_000, {digest: manifest})
-    archive = package.to_bytes()
-    assert len(archive) > 12 * 1024 * 1024
-    with projection_processing_budget(ProjectionProcessingPolicyV1(max_bytes=1024)):
+    retain_local_manifests(tmp_path, {digest: manifest})
+    with projection_processing_budget(ProjectionProcessingPolicyV1(max_bytes=len(page))):
         with pytest.raises(ProjectionProcessingLimitExceeded):
-            ProjectionPackage.from_bytes(archive)
-    assert ProjectionPackage.from_bytes(archive).content == package.content
+            load_projection_manifests(tmp_path, page)
+    assert load_projection_manifests(tmp_path, page) == {digest: manifest}

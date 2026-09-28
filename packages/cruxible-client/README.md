@@ -3712,13 +3712,6 @@ Sync checks declared block backings and reports drift. It does not regenerate
 the author’s prose or silently repin. `check=True` raises when the configured
 currency policy makes drift a failure; `detach` is an explicit local mutation.
 
-ProjectionPackage carries page bytes and every referenced exact manifest.
-Construction/read/from_bytes validate the package and reject missing, unrelated,
-corrupt, or out-of-root material. `.install` writes local derived files; it is
-not governed retention. Author `.to_bytes()` as ExactContent in a normal
-reviewed Claim if ledger retention is desired. Package construction
-and installation do not grant evidence independence to a projection.
-
 <a id="api-projectionblocks"></a>
 
 ## `ProjectionBlocks`
@@ -3750,20 +3743,7 @@ repin(
 Refresh backing pins and optionally replace this block's authored body.
 
 Compact markers are the default: digest references with local manifests. Subsequent
-repins preserve that format. `package()` exports the complete view for
-transfer or an explicit governed archival Claim.
-
-<a id="api-projectionblocks-package"></a>
-
-### `ProjectionBlocks.package`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-package(source: str | SourceRef) -> ProjectionPackage
-```
-
-Export the page and exact manifests for transfer or governed retention.
+repins preserve that format.
 
 <a id="api-projectionblocks-sync"></a>
 
@@ -3781,57 +3761,6 @@ sync(
 ```
 
 Check every block; policy controls whether drift fails the check.
-
-<a id="api-projectionpackage"></a>
-
-## `ProjectionPackage`
-
-Import: `cruxible_client.authoring.projection_package.ProjectionPackage`. [Source](src/cruxible_client/authoring/projection_package.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `content` | `bytes` | `Required` |
-| `manifests` | `Mapping[str, bytes]` | `Required` |
-
-<a id="api-projectionpackage-read"></a>
-
-### `ProjectionPackage.read`
-
-[Source](src/cruxible_client/authoring/projection_package.py)
-
-```text
-read(workspace: str | Path, path: str | Path) -> ProjectionPackage
-```
-
-<a id="api-projectionpackage-to-bytes"></a>
-
-### `ProjectionPackage.to_bytes`
-
-[Source](src/cruxible_client/authoring/projection_package.py)
-
-```text
-to_bytes() -> bytes
-```
-
-<a id="api-projectionpackage-from-bytes"></a>
-
-### `ProjectionPackage.from_bytes`
-
-[Source](src/cruxible_client/authoring/projection_package.py)
-
-```text
-from_bytes(content: bytes) -> ProjectionPackage
-```
-
-<a id="api-projectionpackage-install"></a>
-
-### `ProjectionPackage.install`
-
-[Source](src/cruxible_client/authoring/projection_package.py)
-
-```text
-install(workspace: str | Path, path: str | Path) -> Path
-```
 
 ## Signing capabilities
 
@@ -6435,7 +6364,6 @@ include constructor/validator definitions for request and response contracts.
 | `PendingClaimTypeRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `PendingSubjectRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `Playbill` | `cruxible_client.authoring.sdk` · [Source](src/cruxible_client/authoring/sdk.py) |
-| `ProjectionPackage` | `cruxible_client.authoring.projection_package` · [Source](src/cruxible_client/authoring/projection_package.py) |
 | `Prediction` | `cruxible_client.authoring.sdk` · [Source](src/cruxible_client/authoring/sdk.py) |
 | `PredictionSettlement` | `cruxible_client.authoring.sdk` · [Source](src/cruxible_client/authoring/sdk.py) |
 | `PlaybillInsertionApplication` | Unavailable at this revision; stale export. |
@@ -6822,9 +6750,9 @@ replace_publication_file(path: 'Path', *, expected: 'bytes', replacement: 'bytes
 
 Durably replace one exact preimage without overwriting a concurrent edit.
 
-### Module `cruxible_client.authoring.projection_package`
+### Module `cruxible_client.authoring.projection_manifests`
 
-[Source](src/cruxible_client/authoring/projection_package.py)
+[Source](src/cruxible_client/authoring/projection_manifests.py)
 
 #### `load_projection_manifests`
 

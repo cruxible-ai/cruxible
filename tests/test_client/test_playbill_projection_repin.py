@@ -17,7 +17,7 @@ from cruxible_client.authoring.blocks import (
     parse_projection_blocks,
     repin_projection_block,
 )
-from cruxible_client.authoring.projection_package import load_projection_manifests
+from cruxible_client.authoring.projection_manifests import load_projection_manifests
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
 from cruxible_client.contracts.declared_blocks import ProjectionQueryBackingV1
@@ -435,7 +435,7 @@ def test_repin_preserves_omitted_categories_and_policy_and_removes_only_explicit
 
 
 def test_old_manifest_bytes_remain_verifiable_after_repin_adds_policy(tmp_path: Path) -> None:
-    from cruxible_client.authoring.projection_package import load_projection_manifests
+    from cruxible_client.authoring.projection_manifests import load_projection_manifests
     from cruxible_client.contracts.declared_blocks import (
         ProjectionBlockStampV1,
         frame_projection_block,

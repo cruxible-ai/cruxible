@@ -221,7 +221,6 @@ from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from cruxible_client.authoring.projection_package import ProjectionPackage
     from cruxible_client.authoring.world import World
 
 SDK_CONTRACT_SNAPSHOT_DIGEST = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
@@ -3533,8 +3532,7 @@ class ProjectionBlocks:
         """Refresh backing pins and optionally replace this block's authored body.
 
         Compact markers are the default: digest references with local manifests. Subsequent
-        repins preserve that format. ``package()`` exports the complete view for
-        transfer or an explicit governed archival Claim.
+        repins preserve that format.
         """
         source_id = _address(source, RefKind.SOURCE)
         if isinstance(source, SourceRef):
@@ -3569,16 +3567,6 @@ class ProjectionBlocks:
             body=body.encode("utf-8") if isinstance(body, str) else body,
             compact=compact,
         )
-
-    def package(self, source: str | SourceRef) -> ProjectionPackage:
-        """Export the page and exact manifests for transfer or governed retention."""
-        from cruxible_client.authoring.projection_package import ProjectionPackage
-        from cruxible_client.authoring.selectors import WorkspaceSources
-
-        root = self._playbill._workspace
-        source_id = _address(source, RefKind.SOURCE)
-        path = WorkspaceSources(Path(root)).path_for_source(source_id)
-        return ProjectionPackage.read(root, path)
 
     def sync(
         self,

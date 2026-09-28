@@ -1077,7 +1077,7 @@ def test_repin_with_an_exact_backing_digest_reads_the_single_held_member(
     assert stamped.declared_coordinate == NEW_COORDINATE
     content = source.read_bytes()
     assert content.startswith(b"PREFIX\n") and content.endswith(b"SUFFIX\n")
-    from cruxible_client.authoring.projection_package import load_projection_manifests
+    from cruxible_client.authoring.projection_manifests import load_projection_manifests
 
     (block,) = parse_projection_blocks(
         content[len(b"PREFIX\n") : -len(b"SUFFIX\n")],

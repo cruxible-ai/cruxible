@@ -10,7 +10,6 @@ if TYPE_CHECKING:
         ClaimAttestationV2Signer,
         LocalEd25519ClaimAttestationSigner,
     )
-    from cruxible_client.authoring.projection_package import ProjectionPackage
     from cruxible_client.authoring.sdk import Playbill, Prediction, PredictionSettlement
     from cruxible_client.authoring.sdk_types import (
         AbsentSubject,
@@ -129,7 +128,6 @@ __all__ = [
     "PendingClaimTypeRef",
     "PendingSubjectRef",
     "Playbill",
-    "ProjectionPackage",
     "Prediction",
     "PredictionSettlement",
     "PlaybillInsertionApplication",
@@ -166,10 +164,6 @@ __version__ = "0.5.1"
 
 
 def __getattr__(name: str) -> Any:
-    if name == "ProjectionPackage":
-        from cruxible_client.authoring.projection_package import ProjectionPackage
-
-        return ProjectionPackage
     """Load public adapters only when requested."""
     if name in {"ApprovalReviewMismatch", "ReviewedProposal"}:
         from cruxible_client.authoring import approval

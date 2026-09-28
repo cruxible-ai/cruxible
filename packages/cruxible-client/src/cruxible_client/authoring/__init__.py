@@ -11,7 +11,6 @@ if TYPE_CHECKING:
         LocalEd25519ClaimAttestationSigner,
     )
     from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
-    from cruxible_client.authoring.projection_package import ProjectionPackage
     from cruxible_client.authoring.sdk import Playbill, Prediction, PredictionSettlement
     from cruxible_client.authoring.signing import ApprovalSigner, LocalEd25519ApprovalSigner
 
@@ -23,7 +22,6 @@ __all__ = [
     "ClaimAttestationV2Signer",
     "LocalEd25519ClaimAttestationSigner",
     "Playbill",
-    "ProjectionPackage",
     "ProcedureSequence",
     "Prediction",
     "PredictionSettlement",
@@ -35,10 +33,6 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.authoring.procedures import Sequence
 
         return Sequence
-    if name == "ProjectionPackage":
-        from cruxible_client.authoring.projection_package import ProjectionPackage
-
-        return ProjectionPackage
     if name in {"ApprovalReviewMismatch", "ReviewedProposal"}:
         from cruxible_client.authoring import approval
 

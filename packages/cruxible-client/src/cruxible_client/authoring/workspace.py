@@ -28,7 +28,7 @@ from cruxible_client.authoring.blocks import (
     parse_projection_blocks,
     sync_projection_blocks,
 )
-from cruxible_client.authoring.projection_package import load_projection_manifests
+from cruxible_client.authoring.projection_manifests import load_projection_manifests
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
