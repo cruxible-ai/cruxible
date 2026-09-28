@@ -77,7 +77,9 @@ cruxible server stop [--timeout SECONDS] [--json]
 ~~~
 
 server start is the long-running daemon process and does not connect to an
-existing server. State defaults to `~/.cruxible`; `--state-root` overrides
+existing server. With `--socket`, the socket is bound with mode 0600;
+a missing socket directory is created 0700, and a directory writable by group or
+others is refused at startup. State defaults to `~/.cruxible`; `--state-root` overrides
 `CRUXIBLE_STATE_ROOT`. The obsolete `CRUXIBLE_SERVER_STATE_DIR` name is
 refused.
 

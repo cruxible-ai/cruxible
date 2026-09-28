@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import faulthandler
 import os
+import socket
 import sqlite3
+import stat
 import sys
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -25,7 +27,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.temporal import ISO_8601_FORMAT_HINT
 from cruxible_core import __version__
-from cruxible_core.errors import CoreError
+from cruxible_core.errors import ConfigError, CoreError
 from cruxible_core.ledger.checkpoints import QUIET_CHECKPOINT_SECONDS
 from cruxible_core.runtime.execution_policy import discover_isolated_executors
 from cruxible_core.runtime.permissions import init_permissions
@@ -343,9 +345,54 @@ def enable_fatal_fault_handler(path: Path | None = None) -> Path | None:
     return resolved
 
 
+def prepare_socket_directory(directory: Path) -> None:
+    """Make sure only this user can create or replace entries beside the socket.
+
+    A directory this call creates is created 0700. An existing one is refused
+    when group or other can write it: anyone who can write the directory can
+    swap the socket for their own and receive every bearer token clients send.
+    """
+    if not directory.exists():
+        directory.mkdir(mode=0o700, parents=True)
+        return
+    try:
+        mode = directory.stat().st_mode
+    except OSError as exc:
+        raise ConfigError(f"Could not inspect the socket directory {directory}: {exc}") from exc
+    if not stat.S_ISDIR(mode):
+        raise ConfigError(f"The socket directory {directory} is not a directory.")
+    if mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise ConfigError(
+            f"The socket directory {directory} is writable by group or others "
+            f"(mode {stat.S_IMODE(mode):04o}), so another user could replace the daemon "
+            f"socket. Repair: run `chmod go-w {directory}`, or pass a --socket path "
+            "inside a directory only you can write."
+        )
+
+
+def bind_private_unix_socket(socket_file: Path) -> socket.socket:
+    """Bind the daemon socket owner-only (0600); uvicorn's own bind makes it 0666."""
+    socket_file.unlink(missing_ok=True)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    previous_umask = os.umask(0o177)
+    try:
+        sock.bind(str(socket_file))
+    except OSError:
+        sock.close()
+        raise
+    finally:
+        os.umask(previous_umask)
+    os.chmod(socket_file, 0o600)
+    sock.set_inheritable(True)
+    return sock
+
+
 def _serve(resolved_socket: str | None) -> None:
     """Start uvicorn under an already-held state-root lock."""
     enable_fatal_fault_handler()
+    if resolved_socket:
+        # Refuse an unsafe socket directory before any store is opened.
+        prepare_socket_directory(Path(resolved_socket).parent)
     # Resolve and freeze the process ceiling before registry/config access or
     # uvicorn startup. Unknown names and attempts to reinitialize this process
     # at a different tier therefore fail closed before the daemon serves.
@@ -376,9 +423,12 @@ def _serve(resolved_socket: str | None) -> None:
 
     if resolved_socket:
         socket_file = Path(resolved_socket)
-        socket_file.parent.mkdir(parents=True, exist_ok=True)
-        socket_file.unlink(missing_ok=True)
-        uvicorn.run(app, uds=str(socket_file))
+        sock = bind_private_unix_socket(socket_file)
+        try:
+            uvicorn.run(app, fd=sock.fileno())
+        finally:
+            sock.close()
+            socket_file.unlink(missing_ok=True)
         return
 
     resolved_host = os.environ.get("CRUXIBLE_HOST", "127.0.0.1")
