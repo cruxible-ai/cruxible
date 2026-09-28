@@ -22,7 +22,7 @@ from cruxible_core.server.registry import reset_registry
 @pytest.fixture
 def short_dir() -> Iterator[Path]:
     # AF_UNIX paths are capped near 104 bytes; pytest's tmp_path can exceed it.
-    path = Path(tempfile.mkdtemp(prefix="cxsock", dir="/tmp"))
+    path = Path(tempfile.mkdtemp(prefix="cxs"))
     try:
         yield path
     finally:
