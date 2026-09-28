@@ -121,6 +121,36 @@ def test_a_symlink_owned_by_another_user_is_refused(
         server_app.prepare_socket_directory(link / "run")
 
 
+def test_a_socket_path_with_a_symlink_followed_by_dotdot_is_refused(short_dir: Path) -> None:
+    # hop -> open/inner: lexically `hop/../run` is `run`, but a lookup walks into
+    # `open` (writable by anyone) and then to `open/run`.
+    open_dir = short_dir / "open"
+    (open_dir / "inner").mkdir(parents=True)
+    os.chmod(open_dir, 0o777)
+    (short_dir / "run").mkdir(mode=0o700)
+    (short_dir / "hop").symlink_to(open_dir / "inner")
+    socket_file = Path(os.path.join(short_dir, "hop", "..", "run", "d.sock"))
+
+    with pytest.raises(ConfigError, match="contains a `..` component"):
+        server_app.bind_private_unix_socket(socket_file)
+    with pytest.raises(ConfigError, match="contains a `..` component"):
+        server_app.prepare_socket_directory(socket_file.parent)
+
+    assert not os.path.lexists(open_dir / "run")
+    assert not os.path.lexists(short_dir / "run" / "d.sock")
+
+
+def test_a_relative_socket_path_is_joined_to_the_working_directory(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(short_dir)
+
+    sock = server_app.bind_private_unix_socket(Path("run") / "d.sock")
+    sock.close()
+
+    assert stat.S_ISSOCK(os.lstat(short_dir / "run" / "d.sock").st_mode)
+
+
 def test_a_socket_under_the_system_temp_root_still_passes() -> None:
     # The sticky root-owned temp root; on macOS it is reached through a
     # root-owned symlink into the root-owned private directory.

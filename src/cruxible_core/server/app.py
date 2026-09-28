@@ -448,6 +448,23 @@ def _check_socket_ancestors(directory: Path) -> None:
         current = entry
 
 
+def _socket_location(path: str | os.PathLike[str]) -> Path:
+    """The path exactly as a client will look it up, never lexically normalized.
+
+    A relative path is joined to the working directory without normalizing it.
+    ``..`` is refused outright: collapsing it lexically, before the symlinks
+    ahead of it are resolved, names a different directory than the one a
+    lookup actually walks.
+    """
+    raw = os.fspath(path)
+    located = Path(raw if os.path.isabs(raw) else os.path.join(os.getcwd(), raw))
+    if ".." in located.parts:
+        raise _refuse_socket_location(
+            f"{raw} contains a `..` component; name the socket path without `..`"
+        )
+    return located
+
+
 def prepare_socket_directory(directory: Path) -> None:
     """Make sure no other user can create or replace the daemon socket.
 
@@ -456,7 +473,7 @@ def prepare_socket_directory(directory: Path) -> None:
     ancestor may let another user replace it: anyone who can swap the socket
     receives every bearer token clients send.
     """
-    directory = Path(os.path.abspath(directory))
+    directory = _socket_location(directory)
     if not os.path.lexists(directory):
         directory.mkdir(mode=0o700, parents=True)
     try:
@@ -479,7 +496,7 @@ def bind_private_unix_socket(socket_file: Path) -> socket.socket:
     bind, the path must still name that same directory and the bound entry must
     be the one inside it, or the socket is unlinked and startup is refused.
     """
-    socket_file = Path(os.path.abspath(socket_file))
+    socket_file = _socket_location(socket_file)
     directory, name = socket_file.parent, socket_file.name
     prepare_socket_directory(directory)
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
