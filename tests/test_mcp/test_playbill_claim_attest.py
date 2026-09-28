@@ -27,7 +27,7 @@ def test_mcp_examined_existing_signs_with_real_key_and_appends(
     )
     monkeypatch.setattr(handlers, "_get_client", lambda: client)
     monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY_PATH", str(owner.private_key_path))
-    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "state_authoring")
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
     monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
     server = create_server()
 

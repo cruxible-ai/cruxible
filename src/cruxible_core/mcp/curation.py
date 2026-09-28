@@ -11,165 +11,50 @@ from cruxible_core.runtime.permissions import TOOL_PERMISSIONS, PermissionMode
 
 PROFILE_FULL = "full"
 PROFILE_DEFAULT = "default"
-PROFILE_STATE_AUTHORING = "state_authoring"
-PROFILE_REVIEW = "review"
 
-_PROFILE_ALIASES = {
-    "all": PROFILE_FULL,
-    "expert": PROFILE_FULL,
-    PROFILE_DEFAULT: PROFILE_DEFAULT,
-    PROFILE_FULL: PROFILE_FULL,
-    "state-authoring": PROFILE_STATE_AUTHORING,
-    PROFILE_STATE_AUTHORING: PROFILE_STATE_AUTHORING,
-    PROFILE_REVIEW: PROFILE_REVIEW,
-}
+_PROFILES = (PROFILE_DEFAULT, PROFILE_FULL)
 
-_DEFAULT_TOOLS = {
-    "cruxible_server_info",
-    "cruxible_playbill_kit_status",
-    "cruxible_playbill_kit_add",
-    "cruxible_playbill_authoring_create",
-    "cruxible_playbill_authoring_example",
-    "cruxible_playbill_authoring_get",
-    "cruxible_playbill_authoring_resume",
-    "cruxible_playbill_authoring_list_pending",
-    "cruxible_playbill_authoring_compile",
-    "cruxible_playbill_authoring_bind",
-    "cruxible_playbill_authoring_preflight",
-    "cruxible_playbill_authoring_rebase",
-    "cruxible_playbill_authoring_submit",
-    "cruxible_playbill_authoring_status",
-    "cruxible_playbill_authoring_abandon_insertion",
-    "cruxible_playbill_block_declare",
-    "cruxible_playbill_block_depublish",
-    "cruxible_playbill_next",
-    "cruxible_playbill_discover",
-    "cruxible_playbill_search",
-    "cruxible_playbill_since",
-    "cruxible_playbill_policies_in_force",
-    "cruxible_playbill_curation_list",
-    "cruxible_playbill_audit",
-    "cruxible_playbill_curation_overrule",
-    "cruxible_playbill_curation_accept_fixed",
-    "cruxible_playbill_curation_suppress",
-    "cruxible_playbill_expand",
-    "cruxible_playbill_source_context",
-    "cruxible_playbill_source_check",
-    "cruxible_playbill_coverage",
-    "cruxible_playbill_workspace_source_compile",
-    "cruxible_playbill_seed_plan",
-    "cruxible_playbill_floor_export",
-    "cruxible_playbill_proposal_list",
-    "cruxible_playbill_proposal_readmit",
-    "cruxible_playbill_proposal_withdraw",
-    "cruxible_playbill_claim_type_migrate",
-    "cruxible_playbill_claim_retire",
-    "cruxible_playbill_claim_attest",
-    "cruxible_playbill_submit_approval",
-    "cruxible_playbill_activate",
-    "cruxible_playbill_whoami",
-}
-
-_COMMON_READS = {
-    "cruxible_server_info",
-    "cruxible_playbill_inspect_proposal",
-    "cruxible_playbill_inspect_refusal",
-    "cruxible_playbill_review",
-    "cruxible_playbill_prepare_approval",
-    "cruxible_playbill_list_documents",
-    "cruxible_playbill_get_document",
-    "cruxible_playbill_dereference",
-    "cruxible_playbill_history",
-    "cruxible_playbill_explain",
-    "cruxible_playbill_source_context",
-    "cruxible_playbill_list_principals",
-    "cruxible_playbill_list_subjects",
-    "cruxible_playbill_get_subject",
-    "cruxible_playbill_subject_history",
-    "cruxible_playbill_list_claim_types",
-    "cruxible_playbill_get_claim_type",
-    "cruxible_playbill_list_claims",
-    "cruxible_playbill_get_claim",
-    "cruxible_playbill_claim_history",
-    "cruxible_playbill_explain_claim",
-    "cruxible_playbill_list_query_definitions",
-    "cruxible_playbill_policies_in_force",
-    "cruxible_playbill_get_query_definition",
-    "cruxible_playbill_run_query",
-    "cruxible_playbill_discover",
-    "cruxible_playbill_search",
-    "cruxible_playbill_since",
-    "cruxible_playbill_next",
-    "cruxible_playbill_curation_list",
-    "cruxible_playbill_audit",
-    "cruxible_playbill_expand",
-    "cruxible_playbill_floor_export",
-    "cruxible_playbill_coverage",
-    "cruxible_playbill_source_check",
-    "cruxible_playbill_workspace_source_compile",
-    "cruxible_playbill_seed_plan",
-    "cruxible_playbill_authoring_get",
-    "cruxible_playbill_authoring_resume",
-    "cruxible_playbill_authoring_list_pending",
-    "cruxible_playbill_authoring_status",
-    "cruxible_playbill_authoring_example",
-    "cruxible_playbill_whoami",
-    "cruxible_playbill_proposal_list",
-}
+#: The everyday agent loop: orient and pick work, read Claims, author, and settle.
+_DEFAULT_TOOLS = frozenset(
+    {
+        # orient (search mode=orient), next, search, and expand
+        "cruxible_playbill_search",
+        "cruxible_playbill_next",
+        "cruxible_playbill_expand",
+        # Claim, ClaimType, and Subject reads
+        "cruxible_playbill_list_claims",
+        "cruxible_playbill_get_claim",
+        "cruxible_playbill_explain_claim",
+        "cruxible_playbill_list_claim_types",
+        "cruxible_playbill_get_claim_type",
+        "cruxible_playbill_list_subjects",
+        "cruxible_playbill_get_subject",
+        "cruxible_playbill_run_query",
+        # the authoring write loop
+        "cruxible_playbill_authoring_example",
+        "cruxible_playbill_authoring_create",
+        "cruxible_playbill_authoring_compile",
+        "cruxible_playbill_authoring_preflight",
+        "cruxible_playbill_authoring_submit",
+        "cruxible_playbill_authoring_status",
+        "cruxible_playbill_authoring_get",
+        "cruxible_playbill_authoring_resume",
+        "cruxible_playbill_authoring_list_pending",
+        # proposals through activation
+        "cruxible_playbill_proposal_list",
+        "cruxible_playbill_review",
+        "cruxible_playbill_prepare_approval",
+        "cruxible_playbill_submit_approval",
+        "cruxible_playbill_activate",
+        # identity and versions
+        "cruxible_playbill_whoami",
+        "cruxible_server_info",
+    }
+)
 
 _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
     PROFILE_FULL: None,
-    PROFILE_DEFAULT: frozenset(_DEFAULT_TOOLS),
-    PROFILE_STATE_AUTHORING: frozenset(
-        _COMMON_READS
-        | {
-            "cruxible_playbill_store_body",
-            "cruxible_playbill_propose_document",
-            "cruxible_playbill_propose_source_bundle",
-            "cruxible_playbill_propose_subject",
-            "cruxible_playbill_propose_claim_type",
-            "cruxible_playbill_propose_query_definition",
-            "cruxible_playbill_authoring_create",
-            "cruxible_playbill_authoring_example",
-            "cruxible_playbill_authoring_compile",
-            "cruxible_playbill_authoring_bind",
-            "cruxible_playbill_authoring_preflight",
-            "cruxible_playbill_authoring_rebase",
-            "cruxible_playbill_authoring_submit",
-            "cruxible_playbill_authoring_abandon_insertion",
-            "cruxible_playbill_block_declare",
-            "cruxible_playbill_block_depublish",
-            "cruxible_playbill_claim_type_migrate",
-            "cruxible_playbill_claim_retire",
-            "cruxible_playbill_claim_attest",
-            "cruxible_playbill_procedure_readiness",
-            "cruxible_playbill_procedure_bind",
-            "cruxible_playbill_procedure_run",
-            "cruxible_playbill_procedure_run_status",
-            "cruxible_playbill_line_check",
-            "cruxible_playbill_line_arm",
-            "cruxible_playbill_line_disarm",
-            "cruxible_playbill_line_arm_status",
-            "cruxible_playbill_line_evaluate",
-            "cruxible_playbill_line_dispatch",
-            "cruxible_playbill_line_run",
-            "cruxible_playbill_proposal_readmit",
-            "cruxible_playbill_proposal_withdraw",
-            "cruxible_playbill_curation_overrule",
-            "cruxible_playbill_curation_accept_fixed",
-            "cruxible_playbill_curation_suppress",
-        }
-    ),
-    PROFILE_REVIEW: frozenset(
-        _COMMON_READS
-        | {
-            "cruxible_playbill_submit_approval",
-            "cruxible_playbill_activate",
-            "cruxible_playbill_curation_overrule",
-            "cruxible_playbill_curation_accept_fixed",
-            "cruxible_playbill_curation_suppress",
-        }
-    ),
+    PROFILE_DEFAULT: _DEFAULT_TOOLS,
 }
 
 
@@ -196,11 +81,10 @@ def resolve_tool_curation(
     environ: Mapping[str, str] | None = None,
 ) -> ToolCuration:
     env = environ or os.environ
-    raw_profile = env.get("CRUXIBLE_MCP_PROFILE", PROFILE_DEFAULT).strip().lower()
-    profile = _PROFILE_ALIASES.get(raw_profile)
-    if profile is None:
-        valid = ", ".join(sorted(_PROFILE_ALIASES))
-        raise ConfigError(f"Invalid CRUXIBLE_MCP_PROFILE='{raw_profile}'. Valid values: {valid}")
+    profile = env.get("CRUXIBLE_MCP_PROFILE", PROFILE_DEFAULT).strip().lower()
+    if profile not in _PROFILES:
+        valid = ", ".join(_PROFILES)
+        raise ConfigError(f"Invalid CRUXIBLE_MCP_PROFILE='{profile}'. Valid values: {valid}")
     allowlist = _parse_tool_list(
         env.get("CRUXIBLE_MCP_TOOLS") or env.get("CRUXIBLE_MCP_TOOL_ALLOWLIST")
     )

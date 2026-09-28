@@ -25,7 +25,7 @@ def _run(coro: Any) -> Any:
 def test_protocol_list_hides_tools_outside_playbill_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "state_authoring")
+    monkeypatch.delenv("CRUXIBLE_MCP_PROFILE", raising=False)
     server = create_server()
 
     async def exercise() -> set[str]:
@@ -35,39 +35,40 @@ def test_protocol_list_hides_tools_outside_playbill_profile(
             return {tool.name for tool in listed.tools}
 
     names = _run(exercise())
-    assert "cruxible_playbill_propose_document" in names
-    assert "cruxible_playbill_authoring_abandon_insertion" in names
-    assert "cruxible_playbill_block_declare" in names
-    assert "cruxible_playbill_submit_approval" not in names
-    assert "cruxible_playbill_activate" not in names
+    assert "cruxible_playbill_list_claims" in names
+    assert "cruxible_playbill_authoring_compile" in names
+    assert "cruxible_playbill_activate" in names
+    assert "cruxible_playbill_propose_document" not in names
+    assert "cruxible_playbill_block_declare" not in names
+    assert "cruxible_playbill_curation_list" not in names
 
 
 def test_protocol_call_refuses_hidden_playbill_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "state_authoring")
+    monkeypatch.delenv("CRUXIBLE_MCP_PROFILE", raising=False)
     server = create_server()
 
     async def exercise() -> tuple[bool, str]:
         async with _protocol_session(server) as session:
             await session.initialize()
             result = await session.call_tool(
-                "cruxible_playbill_activate",
-                {"instance_id": "inst_missing", "proposal_id": "sha256:" + "0" * 64},
+                "cruxible_playbill_block_declare",
+                {"instance_id": "inst_missing", "stamp": {}},
             )
             text = " ".join(block.text for block in result.content if hasattr(block, "text"))
             return bool(result.isError), text
 
     is_error, message = _run(exercise())
     assert is_error
-    assert "cruxible_playbill_activate" in message
-    assert "state_authoring" in message
+    assert "cruxible_playbill_block_declare" in message
+    assert "profile 'default'" in message
 
 
 def test_protocol_call_allows_advertised_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "state_authoring")
+    monkeypatch.delenv("CRUXIBLE_MCP_PROFILE", raising=False)
     server = create_server()
 
     async def exercise() -> tuple[bool, str]:
@@ -165,7 +166,7 @@ def test_protocol_listing_is_static_when_daemon_transport_is_missing(
 
     names, is_error, message = _run(exercise())
     assert "cruxible_playbill_search" in names
-    assert "cruxible_playbill_since" in names
+    assert "cruxible_playbill_next" in names
     assert is_error
     assert "CRUXIBLE_SERVER_URL" in message
 

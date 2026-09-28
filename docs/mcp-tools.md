@@ -3,14 +3,32 @@
 The MCP surface is Playbill-only. All tools delegate to the same service core as
 HTTP and CLI.
 
-The unset/default MCP profile advertises the writer path: authoring, discovery,
-search/list/orient, expansion, source context, coverage, floor export, proposal
-approval/activation, and runtime identity/version reads. There is no separate
-version tool: `cruxible_playbill_whoami` and `cruxible_server_info` both report
-the MCP adapter's package version and the daemon's (`GET /version`). Set
-`CRUXIBLE_MCP_PROFILE=expert` (aliases: `full`, `all`) to advertise the complete
-catalog below. Curation changes discoverability only; permission tiers still gate
-every call, and hidden expert tools remain available through the API.
+`CRUXIBLE_MCP_PROFILE` takes two values. `default` (or unset) advertises the
+everyday agent loop:
+
+- orient and pick work: `cruxible_playbill_search` (its `orient` mode),
+  `cruxible_playbill_next`, and `cruxible_playbill_expand`;
+- Claim, ClaimType, and Subject reads: `cruxible_playbill_list_claims`,
+  `cruxible_playbill_get_claim`, `cruxible_playbill_explain_claim`,
+  `cruxible_playbill_list_claim_types`, `cruxible_playbill_get_claim_type`,
+  `cruxible_playbill_list_subjects`, `cruxible_playbill_get_subject`, and
+  `cruxible_playbill_run_query`;
+- the authoring write loop: `cruxible_playbill_authoring_example`,
+  `cruxible_playbill_authoring_create`, `cruxible_playbill_authoring_compile`,
+  `cruxible_playbill_authoring_preflight`, `cruxible_playbill_authoring_submit`,
+  `cruxible_playbill_authoring_status`, `cruxible_playbill_authoring_get`,
+  `cruxible_playbill_authoring_resume`, and
+  `cruxible_playbill_authoring_list_pending`;
+- proposals through activation: `cruxible_playbill_proposal_list`,
+  `cruxible_playbill_review`, `cruxible_playbill_prepare_approval`,
+  `cruxible_playbill_submit_approval`, and `cruxible_playbill_activate`;
+- identity and versions: `cruxible_playbill_whoami` and `cruxible_server_info`.
+
+`full` advertises the complete catalog below, including curation, coverage, the
+floor, sources, blocks, kits, Procedures, and Lines. Curation changes
+discoverability only; permission tiers still gate every call. There is no
+separate version tool: `cruxible_playbill_whoami` and `cruxible_server_info`
+both report the MCP adapter's package version and the daemon's (`GET /version`).
 
 Every tool that acts on one instance takes an optional `instance_id`. Omitted,
 it defaults to `CRUXIBLE_INSTANCE_ID` in the MCP server's own environment (set it
