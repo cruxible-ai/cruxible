@@ -153,12 +153,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "attribution in one governed ChangeSet."
     ),
     "cruxible_playbill_claim_attest": (
-        "Sign and append an exact-Claim observation. The local signature binds the caller's "
-        "ordinary principal to having examined the named Claim. Choose an explicit stance."
-    ),
-    "cruxible_playbill_claim_attest_new_capture": (
-        "Sign and append a structured new-Capture observation using a prepared digest-free "
-        "client request."
+        "Use when you examined a Claim and want to sign support, contradict, or unsure on it, "
+        "optionally citing new Captures you examined."
     ),
     "cruxible_playbill_authoring_create": (
         "Use when you need a durable machine-owned intent before iterating on a governed write."

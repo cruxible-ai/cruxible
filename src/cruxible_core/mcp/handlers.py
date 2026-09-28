@@ -35,6 +35,7 @@ from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, Captur
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationAppendResultV1,
+    ClaimAttestationCaptureReferenceV1,
     ClaimStance,
     PreparedClaimAttestationRequestV1,
 )
@@ -299,7 +300,6 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_block_declare": TypeAdapter(PlaybillBlockDeclareRequest),
     "cruxible_playbill_block_depublish": TypeAdapter(PlaybillBlockDepublishRequest),
     "cruxible_playbill_claim_attest": None,  # shared preparation helper builds the body
-    "cruxible_playbill_claim_attest_new_capture": None,  # same shared helper
     "cruxible_playbill_claim_retire": TypeAdapter(ClaimRetireRequestV1),
     "cruxible_playbill_claim_type_migrate": TypeAdapter(ClaimTypeMigrationRequest),
     "cruxible_playbill_curation_accept_fixed": TypeAdapter(PlaybillCurationAcceptFixedRequest),
@@ -1123,32 +1123,38 @@ def handle_playbill_claim_attest(
     stance: ClaimStance,
     note: str | None,
     valid_until: datetime | None = None,
+    *,
+    capture_digests: list[str] | None = None,
+    referent_coordinate: Mapping[str, Any] | None = None,
 ) -> ClaimAttestationAppendResultV1:
-    prepared = PreparedClaimAttestationRequestV1(
-        claim_id=claim_id.removeprefix("Claim:"),
-        attestation_basis="examined_existing",
-        stance=stance,
-        attested_at=datetime.now(UTC),
-        valid_until=valid_until,
-        note=note,
-    )
+    """Attest the examined Claim, or a new Capture of it when capture digests are given."""
+
+    if referent_coordinate is not None and not capture_digests:
+        raise DataValidationError("referent_coordinate applies only with capture_digests")
+    try:
+        prepared = PreparedClaimAttestationRequestV1(
+            claim_id=claim_id.removeprefix("Claim:"),
+            attestation_basis="new_capture" if capture_digests else "examined_existing",
+            stance=stance,
+            capture_references=tuple(
+                ClaimAttestationCaptureReferenceV1(capture_digest=digest)
+                for digest in sorted(set(capture_digests or ()), key=lambda d: d.encode())
+            ),
+            referent_coordinate=(
+                None
+                if referent_coordinate is None
+                else AcceptedCoordinate.model_validate(referent_coordinate)
+            ),
+            attested_at=datetime.now(UTC),
+            valid_until=valid_until,
+            note=note,
+        )
+    except ValidationError as exc:
+        raise DataValidationError(f"cruxible_playbill_claim_attest: {exc}") from exc
     return _dispatch_remote_or_local(
         lambda client: _handle_claim_attestation(client, instance_id, prepared),
         lambda: _handle_claim_attestation(_LocalAttestationClient(), instance_id, prepared),
         operation_name="cruxible_playbill_claim_attest",
-    )
-
-
-def handle_playbill_claim_attest_new_capture(
-    instance_id: str,
-    request: PreparedClaimAttestationRequestV1,
-) -> ClaimAttestationAppendResultV1:
-    if request.attestation_basis != "new_capture":
-        raise DataValidationError("new-Capture attestation requires attestation_basis=new_capture")
-    return _dispatch_remote_or_local(
-        lambda client: _handle_claim_attestation(client, instance_id, request),
-        lambda: _handle_claim_attestation(_LocalAttestationClient(), instance_id, request),
-        operation_name="cruxible_playbill_claim_attest_new_capture",
     )
 
 

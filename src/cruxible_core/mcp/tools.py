@@ -14,10 +14,7 @@ from cruxible_client import contracts
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.authoring.seed import SeedPlanResultV1
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
-from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationAppendResultV1,
-    PreparedClaimAttestationRequestV1,
-)
+from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -522,6 +519,19 @@ def register_tools(
         stance: Literal["support", "contradict", "unsure"],
         note: str | None = None,
         valid_until: datetime | None = None,
+        capture_digests: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "New Captures you examined; attests on that new evidence instead of "
+                    "the Claim's own citations."
+                )
+            ),
+        ] = None,
+        referent_coordinate: Annotated[
+            dict[str, Any] | None,
+            Field(description="With capture_digests: the accepted coordinate you read."),
+        ] = None,
     ) -> ClaimAttestationAppendResultV1:
         """Sign that the caller examined this exact Claim, then append the evidence.
 
@@ -531,19 +541,13 @@ def register_tools(
         """
 
         return handlers.handle_playbill_claim_attest(
-            require_instance_id(instance_id), claim_id, stance, note, valid_until
-        )
-
-    @_tool
-    def cruxible_playbill_claim_attest_new_capture(
-        instance_id: InstanceId = None,
-        *,
-        request: PreparedClaimAttestationRequestV1,
-    ) -> ClaimAttestationAppendResultV1:
-        """Sign and append a structured new-Capture Claim observation."""
-
-        return handlers.handle_playbill_claim_attest_new_capture(
-            require_instance_id(instance_id), request
+            require_instance_id(instance_id),
+            claim_id,
+            stance,
+            note,
+            valid_until,
+            capture_digests=capture_digests,
+            referent_coordinate=referent_coordinate,
         )
 
     @_tool

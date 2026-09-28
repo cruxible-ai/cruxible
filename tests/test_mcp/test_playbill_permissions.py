@@ -86,7 +86,6 @@ def test_admin_default_profile_is_exactly_the_writer_path(
         "cruxible_playbill_claim_type_migrate",
         "cruxible_playbill_claim_retire",
         "cruxible_playbill_claim_attest",
-        "cruxible_playbill_claim_attest_new_capture",
         "cruxible_playbill_submit_approval",
         "cruxible_playbill_activate",
     }

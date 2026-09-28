@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
@@ -49,3 +51,52 @@ def test_mcp_examined_existing_signs_with_real_key_and_appends(
     assert "playbill-claim-attestation-append-result-v1" in output
     assert str(owner.private_key_path) not in output
     assert len(instance.claim_attestation_evidence_store().events()) == 1
+
+
+def _captured_attestation(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    prepared: list[Any] = []
+
+    def capture(_client: Any, _instance_id: str, request: Any) -> str:
+        prepared.append(request)
+        return "appended"
+
+    monkeypatch.setattr(handlers, "_handle_claim_attestation", capture)
+    monkeypatch.setattr(handlers, "_get_client", lambda: object())
+    return prepared
+
+
+def test_capture_digests_turn_the_attestation_into_a_new_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _captured_attestation(monkeypatch)
+    later, earlier = "sha256:" + "b" * 64, "sha256:" + "a" * 64
+
+    handlers.handle_playbill_claim_attest(
+        "inst_test",
+        "Claim:CLM-1",
+        "support",
+        None,
+        capture_digests=[later, earlier, later],
+    )
+    handlers.handle_playbill_claim_attest("inst_test", "CLM-1", "unsure", None)
+
+    new_capture, examined = prepared
+    assert new_capture.attestation_basis == "new_capture"
+    assert new_capture.claim_id == "CLM-1"
+    assert [item.capture_digest for item in new_capture.capture_references] == [earlier, later]
+    assert examined.attestation_basis == "examined_existing"
+    assert examined.capture_references == ()
+
+
+def test_referent_coordinate_needs_capture_digests(monkeypatch: pytest.MonkeyPatch) -> None:
+    prepared = _captured_attestation(monkeypatch)
+
+    with pytest.raises(DataValidationError, match="only with capture_digests"):
+        handlers.handle_playbill_claim_attest(
+            "inst_test", "CLM-1", "support", None, referent_coordinate={}
+        )
+    with pytest.raises(DataValidationError, match="cruxible_playbill_claim_attest"):
+        handlers.handle_playbill_claim_attest(
+            "inst_test", "CLM-1", "support", None, capture_digests=["not-a-digest"]
+        )
+    assert prepared == []
