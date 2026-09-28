@@ -6278,7 +6278,7 @@ def _validate_node_contract(
             details["element_index"] = element_index
         raise _RunRefusal(
             code,
-            f"The Procedure node {direction} contract refused its value.",
+            f"The Procedure node {direction} contract refused its value: {exc}",
             node_id=node_id,
             details=details,
         ) from exc
