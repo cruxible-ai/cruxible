@@ -187,7 +187,6 @@ MCP tools are gated by `CRUXIBLE_MODE` env var. Four cumulative tiers
 | `GRAPH_WRITE` | `graph_write` | Retained tier boundary; no legacy graph-write product surface |
 | `ADMIN` | `admin` (default) | Instance/principal lifecycle and published-state trust boundaries |
 
-- `CRUXIBLE_ALLOWED_ROOTS` env var (comma-separated absolute paths) restricts which directories `cruxible_init` can access.
 - Audit logging uses structlog to stderr.
 
 ### Error Handling

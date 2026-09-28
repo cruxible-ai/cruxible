@@ -19,7 +19,6 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from enum import IntEnum
-from pathlib import Path
 
 import structlog
 
@@ -222,7 +221,6 @@ PERMISSION_REQUIREMENTS: dict[str, PermissionMode] = {
 # ---------------------------------------------------------------------------
 
 _cached_mode: PermissionMode | None = None
-_cached_allowed_roots: list[Path] | None | bool = False  # False = not yet parsed
 
 # Per-request narrowing (for authenticated/cloud multi-tenant use)
 _request_mode: contextvars.ContextVar[PermissionMode | None] = contextvars.ContextVar(
@@ -249,27 +247,6 @@ def _default_read_only_opt_in() -> bool:
     return (raw or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def validate_allowed_roots() -> list[Path] | None:
-    """Parse and validate ``CRUXIBLE_ALLOWED_ROOTS`` at startup.
-
-    Returns ``None`` if the env var is unset.
-    Raises :class:`ConfigError` for empty lists or relative paths.
-    """
-    raw = os.environ.get("CRUXIBLE_ALLOWED_ROOTS")
-    if raw is None:
-        return None
-    paths = [p.strip() for p in raw.split(",") if p.strip()]
-    if not paths:
-        raise ConfigError("CRUXIBLE_ALLOWED_ROOTS is set but empty")
-    result: list[Path] = []
-    for p in paths:
-        path = Path(p)
-        if not path.is_absolute():
-            raise ConfigError(f"CRUXIBLE_ALLOWED_ROOTS contains relative path: '{p}'")
-        result.append(path.resolve())
-    return result
-
-
 def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
     """Read ``CRUXIBLE_MODE`` once and cache the process capability ceiling.
 
@@ -287,7 +264,7 @@ def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
     Raises:
         ConfigError: If the env var contains an invalid value.
     """
-    global _cached_mode, _cached_allowed_roots
+    global _cached_mode
 
     if mode is not None:
         resolved_mode = mode
@@ -331,10 +308,6 @@ def init_permissions(mode: PermissionMode | None = None) -> PermissionMode:
         return _cached_mode
 
     _cached_mode = resolved_mode
-
-    # Parse allowed roots (fail-fast on bad config)
-    _cached_allowed_roots = validate_allowed_roots()
-
     return _cached_mode
 
 
@@ -366,10 +339,9 @@ def get_current_mode() -> PermissionMode:
 
 
 def reset_permissions() -> None:
-    """Clear cached mode, allowed roots, and request scope. Used for test isolation."""
-    global _cached_mode, _cached_allowed_roots
+    """Clear cached mode and request scope. Used for test isolation."""
+    global _cached_mode
     _cached_mode = None
-    _cached_allowed_roots = False
     _request_mode.set(None)
     _request_instance_scope.set(None)
 
@@ -526,34 +498,6 @@ def require_unscoped_operator(operation: str) -> None:
             credential_scope=credential_scope,
         )
         raise DaemonOperationScopeError(operation, credential_scope)
-
-
-# ---------------------------------------------------------------------------
-# Root directory sandboxing
-# ---------------------------------------------------------------------------
-
-
-def validate_root_dir(root_dir: str) -> None:
-    """Validate *root_dir* against ``CRUXIBLE_ALLOWED_ROOTS`` if set."""
-    global _cached_allowed_roots
-    # Ensure allowed roots are parsed
-    if _cached_allowed_roots is False:
-        _cached_allowed_roots = validate_allowed_roots()
-
-    allowed = _cached_allowed_roots
-    if allowed is None:
-        return  # No restriction — backward compatible
-    if not isinstance(allowed, list):
-        return  # Not yet parsed — should not happen after init
-
-    resolved = Path(root_dir).resolve()
-    if not any(resolved == a or a in resolved.parents for a in allowed):
-        _log.warning(
-            "root_dir_denied",
-            root_dir=root_dir,
-            allowed_roots=[str(a) for a in allowed],
-        )
-        raise ConfigError(f"root_dir '{root_dir}' is not under any allowed root")
 
 
 # ---------------------------------------------------------------------------

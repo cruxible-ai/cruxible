@@ -18,8 +18,6 @@ from cruxible_core.runtime.permissions import (
     request_instance_scope,
     request_permission_scope,
     reset_permissions,
-    validate_allowed_roots,
-    validate_root_dir,
     validate_tool_permissions,
 )
 
@@ -36,7 +34,5 @@ __all__ = [
     "request_instance_scope",
     "request_permission_scope",
     "reset_permissions",
-    "validate_allowed_roots",
-    "validate_root_dir",
     "validate_tool_permissions",
 ]

@@ -16,7 +16,6 @@ from cruxible_core.server.registry import reset_registry
 def reset_mcp_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     for name in (
         "CRUXIBLE_MODE",
-        "CRUXIBLE_ALLOWED_ROOTS",
         "CRUXIBLE_REQUIRE_SERVER",
         "CRUXIBLE_SERVER_URL",
         "CRUXIBLE_SERVER_SOCKET",
