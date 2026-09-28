@@ -68,6 +68,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_path,
     classify_capture_reuse,
+    foreign_source_capture_contract,
     parse_capture_contract,
     parse_capture_envelope,
     render_capture_contract,
@@ -187,6 +188,7 @@ from cruxible_core.claims.claim_retirement import (
     build_claim_retirement_candidate,
     claim_retirement_inventory,
 )
+from cruxible_core.claims.claim_type_inputs import identity_rules_supported
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
     ClaimTypeMigrationError,
@@ -267,6 +269,13 @@ def _capture_contract_at_base(
     with instance.bind_accepted_projection(base) as projection:
         path = projection.citations.capture_contract_path(contract_digest)
     if path is None:
+        # The Capture used a version that has since been succeeded. That version
+        # is still its exact provenance, so reuse resolves it in accepted history.
+        historical = instance.accepted_capture_contract_version(
+            AcceptedCoordinate.from_internal(base), contract_digest
+        )
+        if historical is not None:
+            return historical
         _refuse(
             "playbill.authoring.capture_contract_unresolved",
             "source.capture_digest",
@@ -538,11 +547,25 @@ class _ClaimPredicateIndex:
 
 
 def _merge_pins(*groups: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
-    by_key: dict[tuple[str, str], ArtifactPin] = {}
+    """Later groups replace a required pin; capture-contract provenance accumulates.
+
+    A revision keeps its predecessor's backing Captures, so it keeps the exact
+    contract version each of them used beside the version a new Capture used.
+    """
+
+    by_key: dict[tuple[str, str, str], ArtifactPin] = {}
     for pin in (item for group in groups for item in group):
-        by_key[(pin.role, pin.target.qualified)] = pin
+        version = pin.artifact_digest if pin.role == "capture-contract" else ""
+        by_key[(pin.role, pin.target.qualified, version)] = pin
     return tuple(
-        by_key[key] for key in sorted(by_key, key=lambda item: (item[0].encode(), item[1].encode()))
+        sorted(
+            by_key.values(),
+            key=lambda pin: (
+                pin.role.encode("utf-8"),
+                pin.target.qualified.encode("utf-8"),
+                pin.artifact_digest.encode("ascii"),
+            ),
+        )
     )
 
 
@@ -1109,8 +1132,19 @@ def _lower_claim(
     else:
         source = payload.source
         assert isinstance(source, WorkingSelectionObservationV1)
+        # A source contract improved through a successor is captured under its
+        # accepted head, which is then already installed; the first capture of a
+        # source installs its deterministic contract.
+        head_path = capture_contract_path(
+            foreign_source_capture_contract(source.source_id).identity.name
+        )
+        head_bytes = candidate_base_tree.get(head_path)
+        head = None if head_bytes is None else parse_capture_contract(head_bytes, path=head_path)
+        if head is not None and head.lifecycle.state == "live":
+            install_contract = False
         try:
             built_selection = build_working_selection_capture(
+                accepted_contract=None if head is None or head.lifecycle.state != "live" else head,
                 store=instance.body_store(),
                 actor_id=actor_id,
                 claim_id=claim_id,
@@ -3018,6 +3052,7 @@ def _stage_claim_type_succession(
         type_path, predecessor, successor = resolve_claim_type_succession(
             staged_tree,
             member.successor,
+            identity_rules=identity_rules_supported(base.compiler),
         )
     except ClaimTypeMigrationError as error:
         _refuse(

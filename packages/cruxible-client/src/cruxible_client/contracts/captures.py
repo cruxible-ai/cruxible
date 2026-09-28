@@ -637,13 +637,63 @@ def _diagnostic(code: str, message: str, *, path: str) -> CompilerDiagnostic:
     )
 
 
+_EQUAL_ON_SUCCESSION: tuple[str, ...] = (
+    "epistemic_grade",
+    "commitment_canonicalizer",
+    "coordinate_schema_pins",
+    "selector_schema_pins",
+    "replay_policy_digest",
+    "provenance_rule_digest",
+    "source_subject_mapping_digest",
+    "retention_erasure_policy",
+    "pins",
+)
+_WIDEN_ON_SUCCESSION: tuple[str, ...] = (
+    "allowed_source_kinds",
+    "allowed_materialization_modes",
+    "logical_source_identities",
+    "evidence_kinds",
+)
+
+
+def capture_contract_successor_break(
+    previous: CaptureContractV1,
+    successor: CaptureContractV1,
+) -> str | None:
+    """Name the first field a live successor changes incompatibly, or None.
+
+    Every accepted version of a contract is admitted by the rules that name its
+    identity, so evidence captured under any version must mean the same thing.
+    A successor may widen what it accepts and raise its budgets; everything that
+    decides what a Capture commits to, how it replays, what its provenance is and
+    which subject it binds must stay identical. Anything else is a new identity.
+    """
+
+    for name in _EQUAL_ON_SUCCESSION:
+        if getattr(previous, name) != getattr(successor, name):
+            return name
+    for name in _WIDEN_ON_SUCCESSION:
+        if not set(getattr(previous, name)).issubset(getattr(successor, name)):
+            return name
+    for name in ("max_bytes", "max_rows", "max_items"):
+        if getattr(successor.selection_budget, name) < getattr(previous.selection_budget, name):
+            return f"selection_budget.{name}"
+    return None
+
+
 def evaluate_capture_contract_law(
     contract: CaptureContractV1,
     *,
     path: str,
     predecessor: AcceptedCaptureContract | None,
+    compatible_succession: bool = False,
 ) -> CaptureContractLawResult:
-    """Evaluate the complete v1 contract without granting source or Claim authority."""
+    """Evaluate the complete v1 contract without granting source or Claim authority.
+
+    `compatible_succession` is the revision-4 law: a live successor must be
+    compatible with its predecessor and a retired contract cannot be revived.
+    Retirement is its own transition and is never judged for compatibility.
+    """
 
     try:
         validate_capture_contract_path(contract, path)
@@ -703,6 +753,34 @@ def evaluate_capture_contract_law(
                     ),
                 ),
             )
+        if compatible_succession and contract.lifecycle.state == "live":
+            if predecessor.contract.lifecycle.state == "retired":
+                return CaptureContractLawResult(
+                    verdict="refused",
+                    diagnostics=(
+                        _diagnostic(
+                            "playbill.capture_contract.revival_refused",
+                            "A retired CaptureContract cannot be revived; propose a new "
+                            "contract identity instead.",
+                            path=path,
+                        ),
+                    ),
+                )
+            broken = capture_contract_successor_break(predecessor.contract, contract)
+            if broken is not None:
+                return CaptureContractLawResult(
+                    verdict="refused",
+                    diagnostics=(
+                        _diagnostic(
+                            "playbill.capture_contract.incompatible_successor",
+                            f"A CaptureContract successor changes {broken!r} incompatibly. "
+                            "Evidence captured under every version of a contract is admitted "
+                            "alike, so a breaking change is a new contract identity: propose it "
+                            "under a new name and update the evidence rules that should admit it.",
+                            path=path,
+                        ),
+                    ),
+                )
     registry_roles = {
         (pin.role, pin.artifact_digest)
         for pin in (
@@ -1945,15 +2023,24 @@ def build_working_selection_capture(
     coordinate: object,
     selector: object,
     selected_content: bytes,
+    accepted_contract: CaptureContractV1 | None = None,
 ) -> DirectCaptureBuildResult:
     """Commit the bounded bytes from one typed proposer-observed working selection.
 
     The whole source is deliberately absent. The coordinate and selector record
     exactly what the client observed, while the retained commitment is only over
     the selected bytes that the daemon can reproduce.
+
+    `accepted_contract` is the source's contract as accepted now, when it has
+    been improved through a successor; the Capture then records that version.
+    Without it the Capture uses the source's deterministic first version.
     """
 
     contract = foreign_source_capture_contract(source_id)
+    if accepted_contract is not None:
+        if accepted_contract.identity != contract.identity:
+            raise CaptureFormatError("accepted contract is not this source's contract")
+        contract = accepted_contract
     if not selected_content:
         raise CaptureFormatError("working source selection must retain at least one byte")
     if len(selected_content) > contract.selection_budget.max_bytes:
@@ -2810,6 +2897,7 @@ __all__ = [
     "capture_digest",
     "foreign_source_capture_contract",
     "foreign_source_contract_id",
+    "capture_contract_successor_break",
     "evaluate_capture_contract_law",
     "parse_capture_contract",
     "parse_capture_envelope",

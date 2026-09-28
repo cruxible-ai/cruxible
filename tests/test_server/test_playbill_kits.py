@@ -845,7 +845,7 @@ def _digest_fields(
 def test_the_reference_table_names_every_digest_field_of_each_kit_family(
     prefix: str, model: type[BaseModel]
 ) -> None:
-    table = {tuple(step for step in steps if step != "*") for steps in REFERENCE_FIELDS[prefix]}
+    table = {tuple(s for s in steps if not s.startswith("*")) for steps in REFERENCE_FIELDS[prefix]}
     assert table == _digest_fields(model)
 
 
@@ -854,7 +854,7 @@ def test_the_reference_table_names_every_digest_field_of_each_kit_family(
 )
 def test_state_reference_fields_are_real_digest_fields(prefix: str, model: type[BaseModel]) -> None:
     # Claims and Documents also hold content digests, which are never references.
-    table = {tuple(step for step in steps if step != "*") for steps in REFERENCE_FIELDS[prefix]}
+    table = {tuple(s for s in steps if not s.startswith("*")) for steps in REFERENCE_FIELDS[prefix]}
     assert table <= _digest_fields(model)
 
 

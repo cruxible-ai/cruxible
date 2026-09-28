@@ -402,7 +402,9 @@ def schema_sql() -> str:
                OR (resolution_status IN ('unresolved','ambiguous') AND target_identity IS NULL)),
             CHECK(edge_kind!='required_pin' OR resolution_status='resolved')
         ) STRICT""",
-            "CREATE UNIQUE INDEX pins_required_target_unique ON pins(source_identity,target_identity) WHERE edge_kind='required_pin'",
+            # A Claim pins every contract version its evidence used, so a required
+            # pin is unique by the exact version it names.
+            "CREATE UNIQUE INDEX pins_required_target_unique ON pins(source_identity,target_identity,target_digest) WHERE edge_kind='required_pin'",
             "CREATE INDEX pins_by_target ON pins(target_identity,edge_kind,source_identity,ordinal) WHERE target_identity IS NOT NULL",
             "CREATE INDEX pins_by_target_digest ON pins(target_digest,edge_kind,source_identity,ordinal)",
             """CREATE TABLE claim_type_names (

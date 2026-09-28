@@ -601,6 +601,22 @@ no accepted query yet backs.
 """
 
 
+PROVENANCE_PIN_ROLES: Final = frozenset({("claim", "capture-contract")})
+"""(source kind, pin role) pairs that record history rather than require a version.
+
+A Claim pins the exact CaptureContract version each backing Capture used. That
+pin is provenance: the Claim law verifies it against accepted history, and the
+contract moving on to a successor -- or retiring -- never obliges the Claim to
+move with it. The edge still exists while its target version is live, so proofs
+and the committed edge root are unchanged; closure only never demands anything
+of it.
+"""
+
+
+def is_provenance_pin(source_kind: str, pin_role: str) -> bool:
+    return (source_kind, pin_role) in PROVENANCE_PIN_ROLES
+
+
 def _edge_order(edge: DependencyProofReferenceV1) -> bytes:
     return canonical_bytes(edge.model_dump(mode="json"))
 
@@ -666,6 +682,8 @@ def _unresolved_pins_for(
     missing: list[UnresolvedArtifactPinV1] = []
     for pin in source.pins:
         if pin.target.kind in DEFERRED_PIN_TARGET_KINDS:
+            continue
+        if is_provenance_pin(source.artifact_kind, pin.role):
             continue
         target_path = paths_by_identity.get(pin.target.qualified)
         target = None if target_path is None else states[target_path]
@@ -819,11 +837,18 @@ def _walk_reverse_pin_closure(
     inventory = {}
     while pending:
         triggering = pending.popleft()
-        for state, roles in neighbors(triggering):
+        for state, all_roles in neighbors(triggering):
+            if not all_roles:
+                raise ValueError("reverse-pin index lacks an exact dependency edge")
+            # Provenance is never a dependency: a Claim that only records which
+            # version of the triggering artifact its evidence used is not reached.
+            roles = tuple(
+                role for role in all_roles if not is_provenance_pin(state.artifact_kind, role)
+            )
+            if not roles:
+                continue
             if state.identity.qualified in seen_identities or not include(state):
                 continue
-            if not roles:
-                raise ValueError("reverse-pin index lacks an exact dependency edge")
             inventory[state.identity.qualified] = ReversePinClosureItem(
                 state=state,
                 triggering_identity=parse_artifact_identity(triggering),
@@ -1073,6 +1098,8 @@ def judge_dependency_closure(
                 continue
             dependent = parent.states[edge.source_path]
             if dependent.lifecycle.state != "live":
+                continue
+            if is_provenance_pin(dependent.artifact_kind, edge.pin_role):
                 continue
             missing.append(
                 IncompleteClosureItemV1(

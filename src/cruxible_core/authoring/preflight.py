@@ -938,6 +938,7 @@ def compute_preflight(
                         retained_tree=instance.immutable_tree_at,
                         claim_law_provider=service.claim_law_provider,
                         attestation_principal_provider=service.attestation_principal_provider,
+                        historical_artifact_provider=service.historical_artifact_provider,
                         accepted_referents_provider=service.accepted_referents_provider,
                     )
                     if prepared is not None:

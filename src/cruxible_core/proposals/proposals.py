@@ -147,10 +147,14 @@ from cruxible_client.contracts.governance import (
 )
 from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
+    CAPTURE_CONTRACT_LAW_REVISION_4,
+    CLAIM_LAW_V2_REVISION_7,
     CLAIM_LAW_V3_REVISION_8,
+    CLAIM_LAW_V3_REVISION_9,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
+    QUERY_DEFINITION_LAW,
     AcceptanceLawRegistry,
     InstalledAcceptanceLaw,
 )
@@ -166,6 +170,7 @@ from cruxible_client.contracts.policies import (
     ClaimAdmissionEvaluationAccountV1,
     ClaimAdmissionPolicyV1,
     ClaimCorroborationResultV1,
+    ClaimEvidenceAdmissionRuleV3,
     evaluate_claim_admission_candidate,
 )
 from cruxible_client.contracts.principals import (
@@ -202,6 +207,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_digest,
     parse_line_spec,
 )
+from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
 from cruxible_client.contracts.proposal_models import (
     AuthenticatedActor,
     ProposalAdmissionRecord,
@@ -236,6 +242,10 @@ from cruxible_client.contracts.query.definitions import (
     evaluate_query_definition_law,
     parse_query_definition,
     query_definition_digest,
+)
+from cruxible_client.contracts.resolution_contracts import (
+    ResolutionContractV1,
+    parse_resolution_contract,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import (
@@ -330,6 +340,19 @@ ClaimLawEvidenceProvider = Callable[[AcceptedCoordinate, str, str], ClaimLawEvid
 
 AcceptedReferentsProvider = Callable[[AcceptedProjectionCoordinate], frozenset[AcceptedCoordinate]]
 AttestationPrincipalProvider = Callable[[AcceptedCoordinate, str], PrincipalRecord]
+
+
+class HistoricalArtifactProvider(Protocol):
+    """One exact accepted artifact version within an accepted prefix, even if superseded.
+
+    Returns ``(path, bytes)`` for the version with ``artifact_digest`` whose path
+    lies under ``family`` (e.g. ``"capture-contracts/"``), or None when the prefix
+    never accepted it. Nothing ever substitutes a later version.
+    """
+
+    def __call__(
+        self, coordinate: AcceptedCoordinate, artifact_digest: str, *, family: str
+    ) -> tuple[str, bytes] | None: ...
 
 
 @dataclass(frozen=True)
@@ -1754,6 +1777,7 @@ class _ResolvedArtifacts:
     providers: Mapping[str, AcceptedProviderV1]
     provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1]
     procedures: Mapping[str, AcceptedProcedureV1]
+    resolution_contracts: Mapping[str, ResolutionContractV1]
 
 
 @dataclass(frozen=True)
@@ -1777,6 +1801,7 @@ class _MemberContext:
     retained_tree: Callable[[str], Mapping[str, bytes]] | None
     claim_law_provider: ClaimLawEvidenceProvider | None
     attestation_principal_provider: AttestationPrincipalProvider | None
+    historical_artifact_provider: HistoricalArtifactProvider | None
     candidate_states: Mapping[str, ArtifactDependencyStateV1]
     candidate_identities: Mapping[str, tuple[ArtifactIdentity, str]]
     resolved: _ResolvedArtifacts
@@ -2205,6 +2230,11 @@ def _literal_object_traversal(
     return None
 
 
+def _corroboration_digests(claim_type: ClaimType) -> frozenset[str]:
+    requirements = claim_type.admission_policy.corroboration_requirements
+    return frozenset(item.query_definition_digest for item in requirements)
+
+
 def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
     query = parse_query_definition(context.content, path=context.path)
     predecessor: AcceptedQueryDefinitionV1 | None = None
@@ -2228,9 +2258,40 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=(literal_traversal,))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted QueryDefinition law result is incomplete")
+    installed = _installed(context, query.artifact_format)
+    if (
+        installed.coordinate == QUERY_DEFINITION_LAW
+        and predecessor is not None
+        and predecessor.artifact_digest != law.artifact_digest
+    ):
+        # Corroboration names its query by exact digest, so moving the query
+        # would silently leave every ClaimType that corroborates through it
+        # unable to admit a Claim. Read in the final candidate: a ClaimType
+        # revised in this ChangeSet to the new digest no longer counts.
+        stranded = sorted(
+            (
+                accepted.claim_type.identity.qualified
+                for accepted in context.resolved.claim_types.values()
+                if accepted.claim_type.lifecycle.state == "live"
+                and predecessor.artifact_digest in _corroboration_digests(accepted.claim_type)
+            ),
+            key=lambda item: item.encode("utf-8"),
+        )
+        if stranded:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.query_definition.corroboration_dependents_not_settled",
+                        "Live ClaimTypes corroborate through this exact QueryDefinition; revise "
+                        "them to the new digest or retire them in the same ChangeSet: "
+                        + ", ".join(stranded),
+                        context.path,
+                    ),
+                )
+            )
     return _accepted(
         context,
-        _installed(context, query.artifact_format),
+        installed,
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -2632,6 +2693,11 @@ def _verified_attestation_member(context: _MemberContext) -> _MemberVerdict:
         bodies=context.bodies,
         law=law,
         producer_receipt_resolver=context.producer_receipt_resolver,
+        # Evidence under a since-succeeded contract version verifies against that
+        # version, accepted at or before the signed referent.
+        historical_capture_contract=historical_capture_contract_resolver(
+            context.historical_artifact_provider, s.referent_coordinate
+        ),
     )
     digest = attestation_artifact_digest(value).tagged
     return _accepted(
@@ -2651,6 +2717,89 @@ def _verified_attestation_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _same_admission(first: object, second: object) -> bool:
+    """Whether two evidence rules demand the same of the evidence they admit."""
+
+    return all(
+        getattr(first, name, None) == getattr(second, name, None)
+        for name in (
+            "admission",
+            "subject_binding",
+            "attestation_requirement",
+            "allowed_reducer_digests",
+        )
+    )
+
+
+def _capture_contract_dependents(
+    context: _MemberContext,
+    *,
+    identity: str,
+    previous_digest: str,
+    successor_digest: str | None,
+) -> tuple[str, ...]:
+    """Live definitions a CaptureContract change would silently strand.
+
+    Read in the final candidate, so a dependent revised or retired in the same
+    ChangeSet no longer counts. An identity rule (ClaimType v6) follows every
+    compatible successor and is stranded only by retirement (`successor_digest`
+    None). An exact-digest evidence rule is stranded unless every (role, evidence
+    kind) it admits is admitted under the replacing version by exactly one rule
+    with the same requirements; a ResolutionContract capture-event
+    window matches one exact version, so naming the previous one strands it.
+    Claims are never listed: the contract a Claim cites is provenance.
+    """
+
+    stranded: set[str] = set()
+    for accepted in context.resolved.claim_types.values():
+        claim_type = accepted.claim_type
+        if claim_type.lifecycle.state != "live":
+            continue
+        rules = claim_type.evidence_admission_policy.rules
+
+        def follows(rule: object) -> bool:
+            """Whether this rule admits evidence under the replacing version."""
+
+            if successor_digest is None:
+                return False
+            if isinstance(rule, ClaimEvidenceAdmissionRuleV3):
+                return any(item.target.qualified == identity for item in rule.capture_contracts)
+            return successor_digest in getattr(rule, "capture_contract_digests", ())
+
+        for rule in rules:
+            names_moving = (
+                any(item.target.qualified == identity for item in rule.capture_contracts)
+                if isinstance(rule, ClaimEvidenceAdmissionRuleV3)
+                else previous_digest in rule.capture_contract_digests
+            )
+            if not names_moving:
+                continue
+            # Every (role, evidence kind) the rule admits must be admitted under the
+            # replacing version by exactly one rule with the same requirements;
+            # a stricter or ambiguous successor rule refuses what used to pass.
+            for role in rule.claim_roles:
+                for kind in rule.evidence_kinds:
+                    covering = [
+                        other
+                        for other in rules
+                        if follows(other)
+                        and role in other.claim_roles
+                        and kind in other.evidence_kinds
+                    ]
+                    if len(covering) != 1 or not _same_admission(rule, covering[0]):
+                        stranded.add(claim_type.identity.qualified)
+    for resolution in context.resolved.resolution_contracts.values():
+        window = resolution.window
+        if (
+            resolution.lifecycle.state == "live"
+            and isinstance(window, CaptureEventWindowV1)
+            and window.event.capture_contract_identity.qualified == identity
+            and window.event.capture_contract_digest == previous_digest
+        ):
+            stranded.add(resolution.identity.qualified)
+    return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
+
+
 def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     contract = parse_capture_contract(context.content, path=context.path)
     predecessor: AcceptedCaptureContract | None = None
@@ -2661,18 +2810,41 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
             contract=previous,
             artifact_digest=capture_contract_digest(previous).tagged,
         )
+    installed = _installed(context, contract.artifact_format)
+    revision_4 = installed.coordinate == CAPTURE_CONTRACT_LAW_REVISION_4
     law = evaluate_capture_contract_law(
         contract,
         path=context.path,
         predecessor=predecessor,
+        compatible_succession=revision_4,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted CaptureContract law result is incomplete")
+    if revision_4 and predecessor is not None:
+        stranded = _capture_contract_dependents(
+            context,
+            identity=contract.identity.qualified,
+            previous_digest=predecessor.artifact_digest,
+            successor_digest=(
+                None if contract.lifecycle.state == "retired" else law.artifact_digest
+            ),
+        )
+        if stranded:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.capture_contract.dependents_not_settled",
+                        "This CaptureContract change would strand live definitions that name "
+                        "it; revise or retire them in the same ChangeSet: " + ", ".join(stranded),
+                        context.path,
+                    ),
+                )
+            )
     return _accepted(
         context,
-        _installed(context, contract.artifact_format),
+        installed,
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -2681,6 +2853,36 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
         result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
         retired=contract.lifecycle.state == "retired",
     )
+
+
+def historical_capture_contract_resolver(
+    provider: HistoricalArtifactProvider | None, at: AcceptedCoordinate
+) -> Callable[[str], AcceptedCaptureContract | None]:
+    """Resolve exact CaptureContract versions accepted within the prefix ending at ``at``.
+
+    Bounded by one accepted coordinate, so replaying a generation reads exactly
+    what its first evaluation read. Without a provider nothing historical
+    resolves and only live contracts verify.
+    """
+
+    cache: dict[str, AcceptedCaptureContract | None] = {}
+
+    def resolve(digest: str) -> AcceptedCaptureContract | None:
+        if digest in cache:
+            return cache[digest]
+        found = None if provider is None else provider(at, digest, family="capture-contracts/")
+        accepted = None
+        if found is not None:
+            path, raw = found
+            contract = parse_capture_contract(raw, path=path)
+            if capture_contract_digest(contract).tagged == digest:
+                accepted = AcceptedCaptureContract(
+                    path=path, contract=contract, artifact_digest=digest
+                )
+        cache[digest] = accepted
+        return accepted
+
+    return resolve
 
 
 def _claim_member(context: _MemberContext) -> _MemberVerdict:
@@ -2741,7 +2943,14 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         accepted_referent_coordinates=context.accepted_referent_coordinates,
         evaluation_time=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
         allow_claim_type_retirement_shape_exemption=(
-            installed.coordinate == CLAIM_LAW_V3_REVISION_8
+            installed.coordinate in {CLAIM_LAW_V3_REVISION_8, CLAIM_LAW_V3_REVISION_9}
+        ),
+        historical_capture_contract=(
+            historical_capture_contract_resolver(
+                context.historical_artifact_provider, context.accepted_coordinate()
+            )
+            if installed.coordinate in {CLAIM_LAW_V2_REVISION_7, CLAIM_LAW_V3_REVISION_9}
+            else None
         ),
     )
     if law.verdict == "refused":
@@ -2785,6 +2994,23 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         query_receipt_digests=context.claim_admission_query_digests_by_path.get(context.path, ()),
         retired=claim.lifecycle.state == "retired",
     )
+
+
+def _claim_type_v6_unresolved(context: _MemberContext, claim_type: ClaimType) -> tuple[str, ...]:
+    """Retired contracts a live v6 ClaimType still names in the final candidate.
+
+    A rule may name a contract that is not accepted yet: a foreign source's
+    contract is installed by the first Claim bound to it, and until then the
+    rule simply admits nothing. What it may not name is a retired contract.
+    """
+
+    retired: set[str] = set()
+    for rule in claim_type.evidence_admission_policy.rules:
+        for item in getattr(rule, "capture_contracts", ()):
+            accepted = context.resolved.capture_contracts.get(item.target.qualified)
+            if accepted is not None and accepted.contract.lifecycle.state == "retired":
+                retired.add(item.target.qualified)
+    return tuple(sorted(retired, key=lambda item: item.encode("utf-8")))
 
 
 def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
@@ -2835,6 +3061,21 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted ClaimType law result is incomplete")
+    if claim_type.artifact_format == "playbill-claim-type-v6" and claim_type.lifecycle.state == (
+        "live"
+    ):
+        unresolved = _claim_type_v6_unresolved(context, claim_type)
+        if unresolved:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.claim_type.reference_unresolved",
+                        "A ClaimType's evidence rules name retired CaptureContracts: "
+                        + ", ".join(unresolved),
+                        context.path,
+                    ),
+                )
+            )
     reuse: dict[str, object] | None = None
     if predecessor is None:
         reuse = _claim_type_reuse_evidence(
@@ -3475,6 +3716,11 @@ def _resolved_artifacts(
                 path=path, procedure=parse_procedure(content, path=path), artifact_digest=digest
             ),
         ),
+        rows(
+            "resolution-contract",
+            lambda path, content, digest: parse_resolution_contract(content, path=path),
+            path_key=True,
+        ),
     )
 
 
@@ -3604,6 +3850,7 @@ def _evaluate_scoped_members(
     attestation_principal_provider: AttestationPrincipalProvider | None,
     accepted_referents_provider: AcceptedReferentsProvider | None,
     delegated_mandate_digest: str | None = None,
+    historical_artifact_provider: HistoricalArtifactProvider | None = None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -3877,6 +4124,7 @@ def _evaluate_scoped_members(
                 retained_tree=retained_tree,
                 claim_law_provider=claim_law_provider,
                 attestation_principal_provider=attestation_principal_provider,
+                historical_artifact_provider=historical_artifact_provider,
                 candidate_states=candidate_states,
                 candidate_identities=candidate_identities,
                 resolved=resolved,
@@ -4257,6 +4505,7 @@ def evaluate_proposal_tree(
     attestation_principal_provider: AttestationPrincipalProvider | None = None,
     accepted_referents_provider: AcceptedReferentsProvider | None = None,
     delegated_mandate_digest: str | None = None,
+    historical_artifact_provider: HistoricalArtifactProvider | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -4385,6 +4634,7 @@ def evaluate_proposal_tree(
             claim_law_provider=claim_law_provider,
             attestation_principal_provider=attestation_principal_provider,
             accepted_referents_provider=accepted_referents_provider,
+            historical_artifact_provider=historical_artifact_provider,
             principal_registry_provider=principal_registry_provider,
             delegated_mandate_digest=delegated_mandate_digest,
         )
@@ -4462,6 +4712,7 @@ class ProposalService:
         claim_law_provider: ClaimLawEvidenceProvider | None = None,
         attestation_principal_provider: AttestationPrincipalProvider | None = None,
         accepted_referents_provider: AcceptedReferentsProvider | None = None,
+        historical_artifact_provider: HistoricalArtifactProvider | None = None,
         prepared_evaluations: PreparedEvaluationAdapter | None = None,
         principal_registry_provider: Callable[
             [AcceptedProjectionCoordinate], PrincipalRegistrySnapshot
@@ -4492,6 +4743,7 @@ class ProposalService:
         self.claim_law_provider = claim_law_provider
         self.attestation_principal_provider = attestation_principal_provider
         self.accepted_referents_provider = accepted_referents_provider
+        self.historical_artifact_provider = historical_artifact_provider
         self.tree_state_provider = tree_state_provider
         self._accepted_tree_provider = accepted_tree_provider or self.transport.read_tree
         self._prepared_evaluations = prepared_evaluations
@@ -4639,6 +4891,7 @@ class ProposalService:
                 claim_law_provider=self.claim_law_provider,
                 attestation_principal_provider=self.attestation_principal_provider,
                 accepted_referents_provider=self.accepted_referents_provider,
+                historical_artifact_provider=self.historical_artifact_provider,
                 delegated_mandate_digest=delegated_mandate_digest,
             )
         _require_executed_derivations(

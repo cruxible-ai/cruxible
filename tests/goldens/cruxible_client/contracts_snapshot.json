@@ -7323,6 +7323,25 @@
             "title": "ArtifactPin",
             "type": "object"
           },
+          "ArtifactRef": {
+            "additionalProperties": false,
+            "description": "A governed dependency named by identity: whatever version is accepted.\n\nA pin names exact bytes, which is right for code, fixed content and the\nrecords of what happened. A definition that names another governed\ndefinition names its identity instead, so improving the dependency through an\nordinary successor does not strand everything that names it.",
+            "properties": {
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target"
+            ],
+            "title": "ArtifactRef",
+            "type": "object"
+          },
           "CanonicalDurationV1": {
             "additionalProperties": false,
             "properties": {
@@ -7633,6 +7652,27 @@
             "title": "ClaimEvidenceAdmissionPolicyV2",
             "type": "object"
           },
+          "ClaimEvidenceAdmissionPolicyV3": {
+            "additionalProperties": false,
+            "properties": {
+              "rules": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV3"
+                },
+                "title": "Rules",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-policy-v3",
+                "default": "playbill-claim-evidence-admission-policy-v3",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "ClaimEvidenceAdmissionPolicyV3",
+            "type": "object"
+          },
           "ClaimEvidenceAdmissionRuleV1": {
             "additionalProperties": false,
             "description": "Frozen producer allowlist for historical ClaimTypes only.",
@@ -7714,10 +7754,10 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "capture_contract_digests",
               "evidence_kinds",
               "admission",
-              "subject_binding"
+              "subject_binding",
+              "capture_contract_digests"
             ],
             "title": "ClaimEvidenceAdmissionRuleV1",
             "type": "object"
@@ -7795,12 +7835,93 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "capture_contract_digests",
               "evidence_kinds",
               "admission",
-              "subject_binding"
+              "subject_binding",
+              "capture_contract_digests"
             ],
             "title": "ClaimEvidenceAdmissionRuleV2",
+            "type": "object"
+          },
+          "ClaimEvidenceAdmissionRuleV3": {
+            "additionalProperties": false,
+            "description": "Evidence requirements naming CaptureContracts by identity.\n\nThe rule admits evidence captured under any accepted version of a named\ncontract. That is safe because a contract successor must be compatible with\nits predecessor; a change that alters what the evidence means is a new\ncontract identity, which the rule does not name until someone edits it.",
+            "properties": {
+              "admission": {
+                "enum": [
+                  "origin_only",
+                  "direct",
+                  "derivational"
+                ],
+                "title": "Admission",
+                "type": "string"
+              },
+              "attestation_requirement": {
+                "default": "none",
+                "enum": [
+                  "none",
+                  "verified_provider",
+                  "verified_principal",
+                  "any_verified"
+                ],
+                "title": "Attestation Requirement",
+                "type": "string"
+              },
+              "capture_contracts": {
+                "items": {
+                  "$ref": "#/$defs/ArtifactRef"
+                },
+                "title": "Capture Contracts",
+                "type": "array"
+              },
+              "claim_roles": {
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Claim Roles",
+                "type": "array"
+              },
+              "evidence_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence Kinds",
+                "type": "array"
+              },
+              "rule_id": {
+                "title": "Rule Id",
+                "type": "string"
+              },
+              "subject_binding": {
+                "enum": [
+                  "exact_claim_subject",
+                  "contract_source_mapping"
+                ],
+                "title": "Subject Binding",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-rule-v3",
+                "default": "playbill-claim-evidence-admission-rule-v3",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule_id",
+              "claim_roles",
+              "evidence_kinds",
+              "admission",
+              "subject_binding",
+              "capture_contracts"
+            ],
+            "title": "ClaimEvidenceAdmissionRuleV3",
             "type": "object"
           },
           "ClaimEvidenceFreshnessV1": {
@@ -8199,7 +8320,8 @@
                   "playbill-claim-type-v1",
                   "playbill-claim-type-v3",
                   "playbill-claim-type-v4",
-                  "playbill-claim-type-v5"
+                  "playbill-claim-type-v5",
+                  "playbill-claim-type-v6"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -8230,6 +8352,9 @@
                   },
                   {
                     "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV2"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV3"
                   }
                 ],
                 "title": "Evidence Admission Policy"
@@ -52145,6 +52270,25 @@
             "title": "ArtifactPin",
             "type": "object"
           },
+          "ArtifactRef": {
+            "additionalProperties": false,
+            "description": "A governed dependency named by identity: whatever version is accepted.\n\nA pin names exact bytes, which is right for code, fixed content and the\nrecords of what happened. A definition that names another governed\ndefinition names its identity instead, so improving the dependency through an\nordinary successor does not strand everything that names it.",
+            "properties": {
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target"
+            ],
+            "title": "ArtifactRef",
+            "type": "object"
+          },
           "CallNodeV5": {
             "additionalProperties": false,
             "description": "A contracted call; Provider names its implementation, not a node category.",
@@ -52546,6 +52690,27 @@
             "title": "ClaimEvidenceAdmissionPolicyV2",
             "type": "object"
           },
+          "ClaimEvidenceAdmissionPolicyV3": {
+            "additionalProperties": false,
+            "properties": {
+              "rules": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimEvidenceAdmissionRuleV3"
+                },
+                "title": "Rules",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-policy-v3",
+                "default": "playbill-claim-evidence-admission-policy-v3",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "ClaimEvidenceAdmissionPolicyV3",
+            "type": "object"
+          },
           "ClaimEvidenceAdmissionRuleV1": {
             "additionalProperties": false,
             "description": "Frozen producer allowlist for historical ClaimTypes only.",
@@ -52627,10 +52792,10 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "capture_contract_digests",
               "evidence_kinds",
               "admission",
-              "subject_binding"
+              "subject_binding",
+              "capture_contract_digests"
             ],
             "title": "ClaimEvidenceAdmissionRuleV1",
             "type": "object"
@@ -52708,12 +52873,93 @@
             "required": [
               "rule_id",
               "claim_roles",
-              "capture_contract_digests",
               "evidence_kinds",
               "admission",
-              "subject_binding"
+              "subject_binding",
+              "capture_contract_digests"
             ],
             "title": "ClaimEvidenceAdmissionRuleV2",
+            "type": "object"
+          },
+          "ClaimEvidenceAdmissionRuleV3": {
+            "additionalProperties": false,
+            "description": "Evidence requirements naming CaptureContracts by identity.\n\nThe rule admits evidence captured under any accepted version of a named\ncontract. That is safe because a contract successor must be compatible with\nits predecessor; a change that alters what the evidence means is a new\ncontract identity, which the rule does not name until someone edits it.",
+            "properties": {
+              "admission": {
+                "enum": [
+                  "origin_only",
+                  "direct",
+                  "derivational"
+                ],
+                "title": "Admission",
+                "type": "string"
+              },
+              "attestation_requirement": {
+                "default": "none",
+                "enum": [
+                  "none",
+                  "verified_provider",
+                  "verified_principal",
+                  "any_verified"
+                ],
+                "title": "Attestation Requirement",
+                "type": "string"
+              },
+              "capture_contracts": {
+                "items": {
+                  "$ref": "#/$defs/ArtifactRef"
+                },
+                "title": "Capture Contracts",
+                "type": "array"
+              },
+              "claim_roles": {
+                "items": {
+                  "enum": [
+                    "normative",
+                    "observation",
+                    "environment_binding",
+                    "derivation"
+                  ],
+                  "type": "string"
+                },
+                "title": "Claim Roles",
+                "type": "array"
+              },
+              "evidence_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence Kinds",
+                "type": "array"
+              },
+              "rule_id": {
+                "title": "Rule Id",
+                "type": "string"
+              },
+              "subject_binding": {
+                "enum": [
+                  "exact_claim_subject",
+                  "contract_source_mapping"
+                ],
+                "title": "Subject Binding",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-claim-evidence-admission-rule-v3",
+                "default": "playbill-claim-evidence-admission-rule-v3",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "rule_id",
+              "claim_roles",
+              "evidence_kinds",
+              "admission",
+              "subject_binding",
+              "capture_contracts"
+            ],
+            "title": "ClaimEvidenceAdmissionRuleV3",
             "type": "object"
           },
           "ClaimEvidenceFreshnessV1": {
@@ -53129,7 +53375,8 @@
                   "playbill-claim-type-v1",
                   "playbill-claim-type-v3",
                   "playbill-claim-type-v4",
-                  "playbill-claim-type-v5"
+                  "playbill-claim-type-v5",
+                  "playbill-claim-type-v6"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -53160,6 +53407,9 @@
                   },
                   {
                     "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV2"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimEvidenceAdmissionPolicyV3"
                   }
                 ],
                 "title": "Evidence Admission Policy"

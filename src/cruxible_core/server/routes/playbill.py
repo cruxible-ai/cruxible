@@ -23,6 +23,7 @@ from cruxible_client.contracts.claim_reads import (
 )
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -238,6 +239,14 @@ def kit_status(instance_id: str) -> PlaybillKitStatusV1:
 @router.post("/{instance_id}/playbill/kits", response_model=PlaybillKitChangeResultV1)
 def kit_add(instance_id: str, request: PlaybillKitAddRequestV1) -> PlaybillKitChangeResultV1:
     return playbill_api.playbill_kit_add(resolve_server_instance_id(instance_id), request)
+
+
+@router.post(
+    "/{instance_id}/playbill/claim-types/evidence-rules/upgrade",
+    response_model=EvidenceRuleUpgradeResultV1,
+)
+def evidence_rules_upgrade(instance_id: str) -> EvidenceRuleUpgradeResultV1:
+    return playbill_api.playbill_evidence_rules_upgrade(resolve_server_instance_id(instance_id))
 
 
 @router.post("/{instance_id}/playbill/kits/remove", response_model=PlaybillKitChangeResultV1)

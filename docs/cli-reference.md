@@ -650,6 +650,7 @@ package" from the object side.
 cruxible playbill claim-type propose --template
 cruxible playbill claim-type propose --input FILE --name NAME
 cruxible playbill claim-type migrate REQUEST_FILE
+cruxible playbill claim-type upgrade-evidence-rules
 cruxible playbill claim-type list
 cruxible playbill claim-type get PREDICATE
 ~~~
@@ -659,9 +660,13 @@ may state it. `propose --input` accepts a complete `ClaimTypeInputV1`; ClaimType
 is not part of the authoring coordinator's example vocabulary. `propose
 --template` prints a complete literal `project.work_item.status` input with a
 `repo.replace-me` foreign-source evidence rule and does not contact the daemon.
-Replace `anticipated_source_ids` with the logical source used by `authoring bind`;
+An evidence rule names the CaptureContracts it admits by identity, in
+`capture_contracts` (`CaptureContract:<name>` or just the name); it admits
+evidence captured under every accepted version of those contracts, so improving
+a contract through a compatible successor needs no ClaimType change. Replace
+`anticipated_source_ids` with the logical source used by `authoring bind`;
 the source-intent lint then names the deterministic foreign-source
-CaptureContract digest to place in the rule. Flow-A binding carries that exact
+CaptureContract to place in the rule. Flow-A binding carries that exact
 contract into the governed Claim candidate, so accepting the bound Claim accepts
 the contract and gives the rule a shipped evidence producer. The dormant
 direct-self-asserted constant has no production producer or acceptance surface
@@ -683,6 +688,21 @@ vocabulary and adds one disposition the operator form has no use for --
 `re_author`, whose successor is a sibling Claim member of the same set. Both
 roads build their candidate with the same function, so neither can drift from
 the other's law.
+
+`upgrade-evidence-rules` proposes one change set moving every live ClaimType
+whose rules still name contracts by exact digest to identity rules, carrying
+their Claims. A rule converts only when it keeps its meaning: every version of a
+named contract must be compatible with its predecessor, and two rules that did
+not overlap may not start matching the same evidence. It lists, per ClaimType,
+the accepted contract versions a converted rule newly admits, and leaves the
+rest unchanged with the reason. Approve and activate the proposal as usual.
+
+A CaptureContract successor must be compatible with its predecessor: it may
+widen the sources, modes, identities and evidence kinds it accepts and raise its
+budgets, and nothing else. A breaking change is a new contract identity. A
+contract cannot be retired while live evidence rules name it, and cannot move
+while exact-digest rules or ResolutionContract windows still name its previous
+version; the refusal names them.
 
 ## playbill claim
 

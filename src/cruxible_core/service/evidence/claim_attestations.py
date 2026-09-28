@@ -95,6 +95,9 @@ def service_append_claim_attestation(
             instance_id=instance.descriptor.instance_id,
             bodies=instance.body_store(),
         ),
+        historical_capture_contract=lambda digest: instance.accepted_capture_contract_version(
+            AcceptedCoordinate.from_internal(referent), digest
+        ),
     )
     current = _accepted_claim(append_tree, statement.claim_identity.name)
     account = VerifiedClaimAttestationV2(

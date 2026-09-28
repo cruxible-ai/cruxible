@@ -18,6 +18,7 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendResultV1,
     PreparedClaimAttestationRequestV1,
 )
+from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -109,6 +110,13 @@ def register_tools(
     ) -> PlaybillKitChangeResultV1:
         """Propose installing or upgrading a kit as one change set; activation is separate."""
         return handlers.handle_playbill_kit_add(instance_id, request)
+
+    @_tool
+    def cruxible_playbill_evidence_rules_upgrade(
+        instance_id: str,
+    ) -> EvidenceRuleUpgradeResultV1:
+        """Propose moving live ClaimTypes to evidence rules that name contracts by identity."""
+        return handlers.handle_playbill_evidence_rules_upgrade(instance_id)
 
     @_tool
     def cruxible_playbill_kit_remove(

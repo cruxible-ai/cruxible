@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import pickle
 from collections import OrderedDict
-from collections.abc import Iterator, Mapping, MutableSet
+from collections.abc import Callable, Iterator, Mapping, MutableSet
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
@@ -20,6 +20,8 @@ from cruxible_client.contracts.accepted_attestations import (
 )
 from cruxible_client.contracts.candidates import MemberLawEvaluationV2
 from cruxible_client.contracts.captures import (
+    capture_contract_digest,
+    parse_capture_contract,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.cas_contracts import BodyProjectionProtocol
@@ -55,6 +57,7 @@ from cruxible_client.contracts.claims import (
     parse_claim_law_evidence,
 )
 from cruxible_client.contracts.errors import ClaimNotFoundError, ProposalIntegrityError
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRuleV3
 from cruxible_client.contracts.providers import ProviderV1, parse_provider
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
@@ -763,6 +766,26 @@ class ClaimReadHistoryIndex:
     generation_oids: tuple[str, ...]
     law_evidence: Mapping[str, ClaimLawEvidenceAny]
     _claim_types: Mapping[tuple[str, str], ClaimType] | None = None
+    _contract_identity: Callable[[str], str | None] | None = None
+    _contract_identities: dict[str, str] | None = None
+
+    def capture_contract_identity(self, digest: str) -> str | None:
+        """The identity of one accepted CaptureContract version, however old."""
+
+        if self._contract_identity is not None:
+            return self._contract_identity(digest)
+        if self._contract_identities is None:
+            identities: dict[str, str] = {}
+            for oid in self.generation_oids:
+                tree = self.instance.tree_at(oid)
+                for path in tree:
+                    if path.startswith("capture-contracts/"):
+                        contract = parse_capture_contract(tree[path], path=path)
+                        identities[capture_contract_digest(contract).tagged] = (
+                            contract.identity.qualified
+                        )
+            self._contract_identities = identities
+        return self._contract_identities.get(digest)
 
     def claim_types(self) -> Mapping[tuple[str, str], ClaimType]:
         """Materialize historical trees once, only when stale evidence needs them."""
@@ -897,6 +920,16 @@ def _claim_read_history_index(
             generation_oids=(),
             law_evidence=_IndexedClaimLawEvidence(instance, coordinate, records),
             _claim_types=_IndexedClaimTypes(instance, coordinate),
+            _contract_identity=lambda digest: (
+                None
+                if (
+                    found := instance.accepted_capture_contract_version(
+                        AcceptedCoordinate.from_internal(coordinate), digest
+                    )
+                )
+                is None
+                else found.contract.identity.qualified
+            ),
         )
     return _build_claim_read_history_index(instance, coordinate=coordinate)
 
@@ -965,6 +998,27 @@ def _reproduced_claim_adjudication_rule(
             if item.evidence_freshness is None
             else item.evidence_freshness.model_dump(mode="json")
         )
+        # Moving evidence rules from exact contract digests (v5) to contract
+        # identities (v6) keeps their meaning: both spell the contracts a rule
+        # admits by the identities those versions belong to.
+        payload["evidence_admission_policy"] = [
+            {
+                **{
+                    key: value
+                    for key, value in rule.model_dump(mode="json").items()
+                    if key not in {"tag", "capture_contract_digests", "capture_contracts"}
+                },
+                "contracts": sorted(
+                    {item.target.qualified for item in rule.capture_contracts}
+                    if isinstance(rule, ClaimEvidenceAdmissionRuleV3)
+                    else {
+                        history.capture_contract_identity(digest) or digest
+                        for digest in rule.capture_contract_digests
+                    }
+                ),
+            }
+            for rule in item.evidence_admission_policy.rules
+        ]
         return payload
 
     current_digest = claim_type_digest(claim_type).tagged

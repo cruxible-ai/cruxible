@@ -10,11 +10,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
+    ArtifactRef,
+    parse_artifact_identity,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     foreign_source_capture_contract,
+    parse_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
@@ -26,7 +29,13 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV2
+from cruxible_client.contracts.policies import (
+    CAPTURE_CONTRACT_REF_ROLE,
+    ClaimEvidenceAdmissionPolicyV2,
+    ClaimEvidenceAdmissionPolicyV3,
+)
+from cruxible_client.contracts.types import CompilerCoordinate
+from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillProposalInspection
@@ -134,7 +143,7 @@ def claim_type_input_template() -> ClaimTypeInputV1:
                 {
                     "rule_id": f"source-{source_id}",
                     "claim_roles": ["normative", "observation"],
-                    "capture_contract_digests": [capture_contract_digest(contract).tagged],
+                    "capture_contracts": [contract.identity.qualified],
                     "evidence_kinds": ["self_asserted"],
                     "admission": "direct",
                     "subject_binding": "exact_claim_subject",
@@ -157,10 +166,119 @@ def claim_type_input_template() -> ClaimTypeInputV1:
     )
 
 
+def identity_rules_supported(compiler: CompilerCoordinate) -> bool:
+    """Whether this compiler accepts ClaimType v6 identity evidence rules."""
+
+    return compiler == AUTHORITY_VERBS_COMPILER
+
+
+def _contract_identities(tree: Mapping[str, bytes], source_ids: tuple[str, ...]) -> dict[str, str]:
+    """Accepted (and anticipated foreign-source) contract digests to their identities."""
+
+    identities: dict[str, str] = {}
+    for source_id in source_ids:
+        contract = foreign_source_capture_contract(source_id)
+        identities[capture_contract_digest(contract).tagged] = contract.identity.qualified
+    for path in tree:
+        if path.startswith("capture-contracts/") and path.endswith(".json"):
+            contract = parse_capture_contract(tree[path], path=path)
+            identities[capture_contract_digest(contract).tagged] = contract.identity.qualified
+    return identities
+
+
+def _contract_ref(value: object) -> ArtifactRef:
+    if isinstance(value, dict):
+        return ArtifactRef.model_validate(value)
+    if not isinstance(value, str):
+        raise ClaimTypeInputReferenceError("a capture_contracts entry must be a contract name")
+    identity = (
+        parse_artifact_identity(value)
+        if value.partition(":")[0] == "CaptureContract" and ":" in value
+        else ArtifactIdentity(kind="CaptureContract", name=value)
+    )
+    return ArtifactRef(role=CAPTURE_CONTRACT_REF_ROLE, target=identity)
+
+
+def _identity_evidence_policy(
+    raw: Mapping[str, object], *, identities: Mapping[str, str]
+) -> dict[str, object]:
+    """Lower authored evidence rules to identity rules.
+
+    A rule names contracts by `capture_contracts` (a name, `CaptureContract:<name>`
+    or a reference). An exact `capture_contract_digests` list is still accepted as
+    input and lowered to the identities those accepted versions belong to.
+    """
+
+    rules: list[object] = []
+    raw_rules = raw.get("rules", [])
+    for raw_rule in raw_rules if isinstance(raw_rules, list | tuple) else ():
+        if not isinstance(raw_rule, dict):
+            rules.append(raw_rule)
+            continue
+        rule = dict(raw_rule)
+        refs = [_contract_ref(item) for item in rule.pop("capture_contracts", []) or []]
+        for digest in rule.pop("capture_contract_digests", []) or []:
+            identity = identities.get(digest) if isinstance(digest, str) else None
+            if identity is None:
+                raise ClaimTypeInputReferenceError(
+                    f"capture contract digest {digest!r} is not an accepted CaptureContract; "
+                    "name the contract in capture_contracts instead"
+                )
+            refs.append(_contract_ref(identity))
+        unique = {item.target.qualified: item for item in refs}
+        rule["capture_contracts"] = [
+            unique[key].model_dump(mode="json")
+            for key in sorted(unique, key=lambda item: item.encode("utf-8"))
+        ]
+        rule.pop("tag", None)
+        rules.append(rule)
+    return {**{k: v for k, v in raw.items() if k not in {"rules", "tag"}}, "rules": rules}
+
+
+def _digest_evidence_policy(
+    raw: Mapping[str, object], *, identities: Mapping[str, str]
+) -> Mapping[str, object]:
+    """Lower identity-named rules to exact digests for a compiler without v6.
+
+    Each named contract resolves to its accepted (or anticipated) version, so an
+    input written for identity rules still lowers where only exact rules exist.
+    """
+
+    raw_rules = raw.get("rules", [])
+    rule_list = raw_rules if isinstance(raw_rules, list | tuple) else ()
+    if not any(isinstance(rule, dict) and "capture_contracts" in rule for rule in rule_list):
+        return raw
+    digest_for = {identity: digest for digest, identity in identities.items()}
+    rules: list[object] = []
+    for raw_rule in rule_list:
+        if not isinstance(raw_rule, dict) or "capture_contracts" not in raw_rule:
+            rules.append(raw_rule)
+            continue
+        rule = dict(raw_rule)
+        digests = set(rule.pop("capture_contract_digests", []) or [])
+        for item in rule.pop("capture_contracts") or []:
+            identity = _contract_ref(item).target.qualified
+            if identity not in digest_for:
+                raise ClaimTypeInputReferenceError(
+                    f"{identity} is not an accepted or anticipated CaptureContract"
+                )
+            digests.add(digest_for[identity])
+        rule["capture_contract_digests"] = sorted(digests)
+        rules.append(rule)
+    return {**raw, "rules": rules}
+
+
+class ClaimTypeInputReferenceError(PlaybillFormatError):
+    """An authored evidence rule names a contract that cannot be referenced."""
+
+    error_code = "playbill.claim_type.input_invalid"
+
+
 def lower_claim_type_input(
     value: ClaimTypeInputV1,
     *,
     tree: Mapping[str, bytes],
+    identity_rules: bool = False,
 ) -> ClaimType:
     path = claim_type_path(value.predicate)
     predecessor = None
@@ -168,11 +286,29 @@ def lower_claim_type_input(
         predecessor = parse_claim_type(tree[path], path=path)
     payload = value.model_dump(mode="json")
     payload.pop("anticipated_source_ids", None)
-    payload["artifact_format"] = "playbill-claim-type-v5"
+    payload["artifact_format"] = (
+        "playbill-claim-type-v6" if identity_rules else "playbill-claim-type-v5"
+    )
+    identities = _contract_identities(tree, value.anticipated_source_ids)
+    identity_policy = None
+    if identity_rules:
+        try:
+            identity_policy = _identity_evidence_policy(
+                value.evidence_admission_policy, identities=identities
+            )
+        except ClaimTypeInputReferenceError:
+            # A rule names an exact version that is not accepted yet, so it has no
+            # identity to follow; it keeps its exact meaning as a v5 rule.
+            payload["artifact_format"] = "playbill-claim-type-v5"
     try:
-        payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicyV2.model_validate(
-            value.evidence_admission_policy
-        ).model_dump(mode="json")
+        if identity_policy is not None:
+            payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicyV3.model_validate(
+                identity_policy
+            ).model_dump(mode="json")
+        else:
+            payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicyV2.model_validate(
+                _digest_evidence_policy(value.evidence_admission_policy, identities=identities)
+            ).model_dump(mode="json")
     except ValidationError as exc:
         raise ClaimTypeInputValidationError(exc) from exc
     payload["identity"] = ArtifactIdentity(kind="ClaimType", name=value.predicate).model_dump(
@@ -221,9 +357,32 @@ def lint_claim_type_input(
     rules = raw_rules if isinstance(raw_rules, list | tuple) else []
     warnings: list[ClaimTypeLintWarningV1] = []
     admitted: set[str] = set()
+    admitted_identities: set[str] = set()
+    resolvable_identities = set(resolvable_contracts.values())
     for index, raw_rule in enumerate(rules):
         if not isinstance(raw_rule, dict):
             continue
+        named: list[str] = []
+        for item in raw_rule.get("capture_contracts", []) or []:
+            try:
+                named.append(_contract_ref(item).target.qualified)
+            except (PlaybillFormatError, ValueError):
+                continue
+        admitted_identities.update(named)
+        for identity in named:
+            if identity not in resolvable_identities:
+                warnings.append(
+                    ClaimTypeLintWarningV1(
+                        code="playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+                        field_path=f"$.evidence_admission_policy.rules[{index}].capture_contracts",
+                        contract_identity=identity,
+                        replacement_rule_fragment={
+                            "capture_contracts": sorted(
+                                resolvable_identities, key=lambda item: item.encode("utf-8")
+                            )
+                        },
+                    )
+                )
         raw_digests = raw_rule.get("capture_contract_digests", [])
         digests = tuple(item for item in raw_digests if isinstance(item, str))
         admitted.update(digests)
@@ -242,7 +401,12 @@ def lint_claim_type_input(
                         },
                     )
                 )
-    if not admitted.intersection(resolvable_contracts) and accepted_contracts and not warnings:
+    if (
+        not admitted.intersection(resolvable_contracts)
+        and not admitted_identities.intersection(resolvable_identities)
+        and accepted_contracts
+        and not warnings
+    ):
         contract_digest = sorted(accepted_contracts)[0]
         warnings.append(
             ClaimTypeLintWarningV1(
@@ -256,7 +420,7 @@ def lint_claim_type_input(
     for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
         contract = foreign_source_capture_contract(source_id)
         contract_digest = capture_contract_digest(contract).tagged
-        if contract_digest in admitted:
+        if contract_digest in admitted or contract.identity.qualified in admitted_identities:
             continue
         warnings.append(
             ClaimTypeLintWarningV1(
@@ -297,6 +461,7 @@ __all__ = [
     "ClaimTypeLintWarningV1",
     "ClaimTypeProposalLintV1",
     "claim_type_input_template",
+    "identity_rules_supported",
     "lint_claim_type_input",
     "lower_claim_type_input",
 ]
