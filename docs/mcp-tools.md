@@ -33,9 +33,11 @@ both report the MCP adapter's package version and the daemon's (`GET /version`).
 
 Every tool that acts on one instance takes an optional `instance_id`. Omitted,
 it defaults to `CRUXIBLE_INSTANCE_ID` in the MCP server's own environment (set it
-in the `env` block of the MCP client config); the server reads neither remembered
-CLI context nor a workspace binding. With neither, the call fails and names that
-variable. `cruxible_playbill_whoami` returns the instance it resolved together
+in the `env` block of the MCP client config), and then to the instance the MCP
+workspace's `.playbill/coverage.json` binds, provided the binding names the same
+daemon the server is configured for; a binding on another daemon is refused. The
+server never reads remembered CLI context. With none of these, the call fails and
+names `CRUXIBLE_INSTANCE_ID`. `cruxible_playbill_whoami` returns the instance it resolved together
 with the caller's identity there.
 
 `CRUXIBLE_MCP_WORKSPACE_ROOT` selects the client-owned workspace for tools that
