@@ -183,6 +183,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_authoring_preflight": (
         "Use when you need a complete binding check of an existing authoring intent."
     ),
+    "cruxible_playbill_authoring_rebase": (
+        "Use when an authoring intent went stale because accepted state moved and must be "
+        "rebased onto the current coordinate before preflight or submit."
+    ),
+    "cruxible_playbill_next": (
+        "Use when you need what to work on next: ranked repair work, conflicts, and stale "
+        "evidence, each with its exact next operation."
+    ),
     "cruxible_playbill_authoring_submit": (
         "Use when an authoring intent has passed preflight and should become one candidate."
     ),

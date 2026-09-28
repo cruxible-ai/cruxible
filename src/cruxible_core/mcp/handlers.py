@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import base64
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal, TypeVar, cast
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from cruxible_client import (
     CruxibleClient,
@@ -16,6 +16,7 @@ from cruxible_client import (
     contracts,
     inspect_workspace_floor,
     materialize_playbill_floor,
+    observe_playbill_next_workspace,
 )
 from cruxible_client.authoring.attestations import (
     append_prepared_claim_attestation,
@@ -30,6 +31,7 @@ from cruxible_client.authoring.sources import (
     load_source_catalog,
     mapped_root_aliases,
 )
+from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import (
@@ -71,7 +73,7 @@ from cruxible_core.claims.claim_type_inputs import (
 )
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.coverage.adapter import WorkingSourceObservationV1
-from cruxible_core.coverage.contracts import CoverageCardBudgetV1
+from cruxible_core.coverage.contracts import CoverageAccessProfileV1, CoverageCardBudgetV1
 from cruxible_core.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.coverage.workspace import (
     bindings_from_mapping,
@@ -100,6 +102,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringInputCompileRequest,
     PlaybillAuthoringInputCreateRequest,
     PlaybillAuthoringPreflightRequest,
+    PlaybillAuthoringRebaseRequest,
     PlaybillAuthoringSubmitRequest,
     PlaybillBlockDeclareRequest,
     PlaybillBlockDepublishRequest,
@@ -170,6 +173,46 @@ class _LocalFloorClient:
         request: contracts.PlaybillBlockSyncReadRequestV1,
     ) -> contracts.PlaybillBlockSyncReadResultV1:
         return playbill_api.playbill_read_block_sync_backing(instance_id, request=request)
+
+
+class _LocalCoverageClient:
+    """Serve the shared next-workspace coverage scan in library mode."""
+
+    def resolve_playbill_coverage(
+        self,
+        instance_id: str,
+        *,
+        observations: Sequence[Mapping[str, Any]],
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        budget: Mapping[str, Any] | None = None,
+        scan_budget: Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillCoverageResult:
+        return playbill_api.playbill_resolve_coverage(
+            instance_id,
+            observations=tuple(
+                WorkingSourceObservationV1.model_validate(item) for item in observations
+            ),
+            at=None if at is None else AcceptedCoordinate.model_validate(_json(at)),
+            budget=None if budget is None else CoverageCardBudgetV1.model_validate(budget),
+            scan_budget=(
+                None if scan_budget is None else CoverageScanBudgetV1.model_validate(scan_budget)
+            ),
+        )
+
+    def search_playbill(
+        self,
+        instance_id: str,
+        *,
+        mode: Literal["search", "list", "orient"],
+        kinds: Sequence[str] = SEARCH_KINDS,
+    ) -> contracts.PlaybillSearchResult:
+        return playbill_api.playbill_search(
+            instance_id, mode=mode, kinds=tuple(cast(SearchKind, kind) for kind in kinds)
+        )
+
+
+def _json(value: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any]) -> dict[str, Any]:
+    return value.model_dump(mode="json") if isinstance(value, BaseModel) else dict(value)
 
 
 class _LocalSourceContextClient:
@@ -296,6 +339,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_authoring_compile": TypeAdapter(PlaybillAuthoringInputCompileRequest),
     "cruxible_playbill_authoring_create": TypeAdapter(PlaybillAuthoringInputCreateRequest),
     "cruxible_playbill_authoring_preflight": TypeAdapter(PlaybillAuthoringPreflightRequest),
+    "cruxible_playbill_authoring_rebase": TypeAdapter(PlaybillAuthoringRebaseRequest),
     "cruxible_playbill_authoring_submit": TypeAdapter(PlaybillAuthoringSubmitRequest),
     "cruxible_playbill_block_declare": TypeAdapter(PlaybillBlockDeclareRequest),
     "cruxible_playbill_block_depublish": TypeAdapter(PlaybillBlockDepublishRequest),
@@ -1289,6 +1333,18 @@ def handle_playbill_authoring_preflight(
     )
 
 
+def handle_playbill_authoring_rebase(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.PlaybillAuthoringIntentView:
+    return _dispatch_remote_or_local(
+        lambda client: client.rebase_playbill_authoring_intent(instance_id, intent_id),
+        lambda: playbill_api.playbill_authoring_rebase(instance_id, intent_id),
+        operation_name="cruxible_playbill_authoring_rebase",
+        local_payload={},
+    )
+
+
 def handle_playbill_authoring_submit(
     instance_id: str,
     intent_id: str,
@@ -1900,6 +1956,81 @@ def handle_playbill_since(
             request=request,
         ),
         operation_name="cruxible_playbill_since",
+    )
+
+
+def handle_playbill_next(
+    instance_id: str,
+    *,
+    evaluation_time: str | None = None,
+    access_profile: Mapping[str, Any] | None = None,
+    expiring_within: Mapping[str, Any] | None = None,
+    since_result_digest: str | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> contracts.PlaybillNextResult:
+    """Rank outstanding repair work, observing the MCP workspace as `playbill next` does."""
+
+    stamped = (
+        datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        if evaluation_time is None
+        else evaluation_time
+    )
+    profile = CoverageAccessProfileV1.model_validate(
+        access_profile
+        or {"profile_id": "mcp-next", "permitted_access_classes": ["instance", "public"]}
+    ).model_dump(mode="json")
+    workspace = mcp_workspace_root()
+    observation = observe_playbill_next_workspace(workspace)
+
+    def remote(client: CruxibleClient) -> contracts.PlaybillNextResult:
+        observed, coordinate = observe_playbill_next_workspace_with_coverage(
+            client,
+            instance_id,
+            workspace,
+            observation=observation,
+            access_profile=profile,
+        )
+        return client.next_playbill(
+            instance_id,
+            evaluation_time=stamped,
+            access_profile=profile,
+            at=coordinate,
+            expiring_within=expiring_within,
+            workspace_observation=observed,
+            since_result_digest=since_result_digest,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def local() -> contracts.PlaybillNextResult:
+        observed, coordinate = observe_playbill_next_workspace_with_coverage(
+            _LocalCoverageClient(),
+            instance_id,
+            workspace,
+            observation=observation,
+            access_profile=profile,
+        )
+        request: dict[str, Any] = {
+            "tag": "playbill-next-request-v2",
+            "at": None if coordinate is None else coordinate.model_dump(mode="json"),
+            "evaluation_time": stamped,
+            "access_profile": profile,
+            "workspace_observation": observed,
+            "expiring_within": None if expiring_within is None else dict(expiring_within),
+            "since_result_digest": since_result_digest,
+            "limit": limit,
+            "cursor": cursor,
+        }
+        return playbill_api.playbill_next(
+            instance_id,
+            request={key: value for key, value in request.items() if value is not None},
+        )
+
+    return _dispatch_remote_or_local(
+        remote,
+        local,
+        operation_name="cruxible_playbill_next",
     )
 
 

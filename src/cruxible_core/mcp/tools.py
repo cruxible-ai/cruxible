@@ -645,6 +645,17 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_playbill_authoring_rebase(
+        instance_id: InstanceId = None,
+        *,
+        intent_id: str,
+    ) -> contracts.PlaybillAuthoringIntentView:
+        """Rebase one stale authoring intent onto the current accepted coordinate."""
+        return handlers.handle_playbill_authoring_rebase(
+            require_instance_id(instance_id), intent_id
+        )
+
+    @_tool
     def cruxible_playbill_authoring_submit(
         instance_id: InstanceId = None,
         *,
@@ -1027,6 +1038,38 @@ def register_tools(
             cursor=cursor,
             evaluation_time=evaluation_time,
             budgets=budgets,
+        )
+
+    @_tool
+    def cruxible_playbill_next(
+        instance_id: InstanceId = None,
+        *,
+        evaluation_time: str | None = None,
+        access_profile: dict[str, Any] | None = None,
+        expiring_within: Annotated[
+            dict[str, Any] | None,
+            Field(
+                description=(
+                    "Evidence-expiration lead window as {'microseconds': N}; defaults to 7 days."
+                )
+            ),
+        ] = None,
+        since_result_digest: Annotated[
+            str | None,
+            Field(description="A prior result_digest; return only rows new since that queue."),
+        ] = None,
+        limit: Annotated[int | None, Field(ge=1, le=contracts.PLAYBILL_NEXT_MAX_LIMIT)] = None,
+        cursor: str | None = None,
+    ) -> contracts.PlaybillNextResult:
+        """Rank outstanding repair work with the exact next operation for each row."""
+        return handlers.handle_playbill_next(
+            require_instance_id(instance_id),
+            evaluation_time=evaluation_time,
+            access_profile=access_profile,
+            expiring_within=expiring_within,
+            since_result_digest=since_result_digest,
+            limit=limit,
+            cursor=cursor,
         )
 
     @_tool

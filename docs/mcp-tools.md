@@ -172,6 +172,7 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_playbill_authoring_compile` | Create or update an intent and preflight it | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_bind` | Read an anchored workspace selection, derive commitments, and compile | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_rebase` | Rebase a stale intent onto the current accepted coordinate | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_submit` | Idempotently submit a passing intent | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
 | `cruxible_playbill_authoring_abandon_insertion` | Release a publication expectation an instance already holds | `GOVERNED_WRITE` |
@@ -241,6 +242,7 @@ Claims. It does not create a second authority plane beside accepted state.
 | `cruxible_playbill_discover` | Find interfaces and Subjects by name | `READ_ONLY` |
 | `cruxible_playbill_search` | Search, list, or orient over accepted state | `READ_ONLY` |
 | `cruxible_playbill_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
+| `cruxible_playbill_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible playbill next` does | `READ_ONLY` |
 | `cruxible_playbill_policies_in_force` | List live standalone and embedded governed policies | `READ_ONLY` |
 | `cruxible_playbill_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
 | `cruxible_playbill_curation_list` | List curation patterns and ingest an explicit declared-block observation | `READ_ONLY` |
