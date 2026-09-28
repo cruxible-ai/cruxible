@@ -331,3 +331,32 @@ def test_http_permission_modes_separate_read_store_propose_approval_and_activati
     assert approved.status_code == 200, approved.text
     activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
     assert activated.status_code == 200, activated.text
+
+
+@pytest.mark.parametrize(
+    "selector",
+    (
+        "sha256:121448",  # a prefix shorter than the resolvable minimum
+        "121448",  # a bare hex prefix without the digest tag
+        "bogus-no-prefix",
+        "sha256:" + "0" * 64,  # well formed, but no such proposal
+    ),
+)
+def test_http_inspect_and_review_refuse_an_unknown_proposal_id_as_typed_404(
+    playbill_http: tuple[TestClient, str, Path],
+    selector: str,
+) -> None:
+    client, instance_id, _ = playbill_http
+
+    inspected = client.get(f"/api/v1/{instance_id}/playbill/proposals/{selector}")
+    reviewed = client.post(
+        f"/api/v1/{instance_id}/playbill/proposals/{selector}/review",
+        json={"include_body": False},
+    )
+
+    for response in (inspected, reviewed):
+        assert response.status_code == 404, response.text
+        body = response.json()
+        assert body["error_code"] == "playbill.proposal_not_found"
+        assert body["context"]["selector"] == selector
+        assert body["repair"]["operation"] == "playbill.proposal.list"

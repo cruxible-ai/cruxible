@@ -16,6 +16,7 @@ from cruxible_client.contracts.attestations import (
 )
 from cruxible_client.contracts.candidates import CandidateMemberEvidence, CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import ProposalDigest, file_digest
+from cruxible_client.contracts.compiler_upgrade import CompilerUpgradeV1
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     DocumentShell,
@@ -33,12 +34,14 @@ from cruxible_client.contracts.errors import (
     SettlementIntegrityError,
 )
 from cruxible_client.contracts.principal_rendering import render_principal
+from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.types import CompilerCoordinate, PrincipalRecord
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     PlaybillWorkspaceAdvertisement,
 )
 from cruxible_core.documents.projection_documents import DocumentProjectionView
+from cruxible_core.errors import RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
@@ -684,6 +687,46 @@ def service_playbill_document_history(
     return PlaybillDocumentHistory(identity=identity, entries=tuple(entries))
 
 
+def _compiler_upgrade_refusal(
+    value: CompilerUpgradeV1,
+    current: AcceptedProjectionCoordinate,
+) -> RequestRefusedError:
+    """Name why an upgrade cannot be proposed and the forward edges that can."""
+
+    from cruxible_core.compiler.upgrades import supported_upgrade_targets, upgrade_base_matches
+
+    current_digest = current.compiler.rule_digest
+    if value.target.rule_digest == current_digest:
+        return RequestRefusedError(
+            "playbill.compiler_upgrade.already_current",
+            f"the accepted state already runs compiler {current_digest}",
+            repair=hand_edit_repair(
+                "playbill.compiler_upgrade.already_current",
+                required_change="Nothing to upgrade; no proposal is needed.",
+            ),
+        )
+    if not upgrade_base_matches(value, current):
+        return RequestRefusedError(
+            "playbill.compiler_upgrade.stale_base",
+            "the upgrade names a base that is not the current accepted coordinate",
+            repair=hand_edit_repair(
+                "playbill.compiler_upgrade.stale_base",
+                required_change="Propose against the current accepted coordinate.",
+            ),
+        )
+    targets = supported_upgrade_targets(current.compiler)
+    named = ", ".join(targets) if targets else "none"
+    return RequestRefusedError(
+        "playbill.compiler_upgrade.unsupported_transition",
+        f"no forward edge from compiler {current_digest} to {value.target.rule_digest}; "
+        f"supported targets: {named}",
+        repair=hand_edit_repair(
+            "playbill.compiler_upgrade.unsupported_transition",
+            required_change=f"Target one supported compiler: {named}.",
+        ),
+    )
+
+
 def service_propose_compiler_upgrade(
     instance: PlaybillInstance,
     *,
@@ -714,7 +757,11 @@ def service_propose_compiler_upgrade(
         ),
         target=target,
     )
-    validate_upgrade(value, instance.accepted_coordinate())
+    current = instance.accepted_coordinate()
+    try:
+        validate_upgrade(value, current)
+    except ValueError as exc:
+        raise _compiler_upgrade_refusal(value, current) from exc
     tree = instance.immutable_tree_at(at.git_oid).fork()
     tree[COMPILER_UPGRADE_PATH] = render_compiler_upgrade(value)
     name = canonical_playbill_proposal_name(proposal_name, family="compiler")

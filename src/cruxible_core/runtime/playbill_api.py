@@ -86,6 +86,7 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallResultV1,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.temporal import format_datetime, utc_now
@@ -110,7 +111,12 @@ from cruxible_core.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.coverage.contracts import CoverageCardBudgetV1
 from cruxible_core.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.documents.workspace_file import WorkspaceFileReadRefused
-from cruxible_core.errors import AuthenticationError, ConfigError, DataValidationError
+from cruxible_core.errors import (
+    AuthenticationError,
+    ConfigError,
+    DataValidationError,
+    RequestRefusedError,
+)
 from cruxible_core.exhaust.consumption import (
     ConsumptionContextV1,
     ConsumptionOperation,
@@ -2308,6 +2314,26 @@ def playbill_search(
     budgets: PlaybillSearchBudgetsV1 | None = None,
 ) -> contracts.PlaybillSearchResult:
     check_permission("cruxible_playbill_search", instance_id=instance_id)
+    if mode == "search" and not (query or "").strip():
+        raise RequestRefusedError(
+            "playbill.search.query_required",
+            "search mode needs a nonblank query",
+            repair=hand_edit_repair(
+                "playbill.search.query_required",
+                required_change=(
+                    "Pass a query with mode 'search', or use mode 'list' to page without one."
+                ),
+            ),
+        )
+    if mode != "search" and query is not None:
+        raise RequestRefusedError(
+            "playbill.search.query_forbidden",
+            f"mode {mode!r} takes no query",
+            repair=hand_edit_repair(
+                "playbill.search.query_forbidden",
+                required_change="Drop the query, or use mode 'search' to match it.",
+            ),
+        )
     instance = get_playbill_manager().get(instance_id)
     result = service_search_playbill(
         instance,

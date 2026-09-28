@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import difflib
+from collections.abc import Iterable
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -13,6 +15,7 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.errors import ClaimNotFoundError
+from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputProposalResultV1,
     ClaimTypeInputV1,
@@ -170,9 +173,38 @@ def service_get_playbill_claim_type(
     path = claim_type_path(predicate)
     with instance.bind_accepted_projection(coordinate) as projection:
         claim_type = projection.typed.source(f"ClaimType:{predicate}")
-    if claim_type is None:
-        raise ClaimNotFoundError(path)
+        if claim_type is None:
+            declared = tuple(
+                row.identity.removeprefix("ClaimType:")
+                for row in projection.typed.envelopes(kind="claim-type")
+            )
+            raise ClaimTypeNotFoundError(predicate, nearest=nearest_names(predicate, declared))
     return _view(claim_type, path=path, coordinate=coordinate)
+
+
+def nearest_names(value: str, names: Iterable[str], *, limit: int = 5) -> tuple[str, ...]:
+    """Name the declared entries a mistyped or shortened name most likely meant."""
+
+    ordered = sorted(set(names))
+    by_leaf = [name for name in ordered if name.endswith(f".{value}")]
+    close = difflib.get_close_matches(value, ordered, n=limit, cutoff=0.6)
+    return tuple(dict.fromkeys([*by_leaf, *close]))[:limit]
+
+
+class ClaimTypeNotFoundError(ClaimNotFoundError):
+    """No accepted ClaimType has this predicate; names the nearest declared ones."""
+
+    error_code = "playbill.claim_type_not_found"
+
+    def __init__(self, predicate: str, *, nearest: tuple[str, ...]) -> None:
+        self.predicate = predicate
+        self.nearest = nearest
+        self.repair = RepairOperationV1(operation="playbill.claim-type.list")
+        hint = f"; nearest: {', '.join(nearest)}" if nearest else ""
+        super().__init__(
+            f"{self.error_code}: no accepted ClaimType has predicate {predicate!r}{hint}; "
+            "run `cruxible playbill claim-type list` for every declared predicate"
+        )
 
 
 def service_list_playbill_claim_types(
@@ -196,10 +228,12 @@ def service_list_playbill_claim_types(
 
 
 __all__ = [
+    "ClaimTypeNotFoundError",
     "PlaybillClaimTypeList",
     "PlaybillClaimTypeView",
     "service_get_playbill_claim_type",
     "service_list_playbill_claim_types",
     "service_propose_playbill_claim_type",
     "service_propose_playbill_claim_type_input",
+    "nearest_names",
 ]

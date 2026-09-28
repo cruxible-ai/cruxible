@@ -101,3 +101,31 @@ def test_upgrade_surfaces_create_the_same_reviewable_proposal(
     finally:
         monkeypatch.delenv("CRUXIBLE_MODE")
         reset_permissions()
+
+
+def test_upgrade_to_the_current_compiler_is_a_coded_400_not_a_500(
+    tmp_path, monkeypatch, host_client
+):
+    instance, _, _ = old_instance(tmp_path, monkeypatch)
+    instance_id = instance.descriptor.instance_id
+    get_registry().create_governed_instance_with_id(instance_id)
+    before = instance.accepted_coordinate()
+    base = PlaybillAcceptedCoordinate.from_internal(before)
+    monkeypatch.setattr(playbill_api.get_playbill_manager(), "get", lambda _: instance)
+    monkeypatch.setattr(playbill_api, "_actor_id", lambda: "owner")
+
+    response = host_client.post(
+        f"/api/v1/{instance_id}/playbill/compiler/proposals",
+        json={
+            "target": before.compiler.model_dump(mode="json"),
+            "base": base.model_dump(mode="json"),
+            "proposal_name": "noop",
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["error_code"] == "playbill.compiler_upgrade.already_current"
+    assert before.compiler.rule_digest in body["message"]
+    assert body["repair"]["hand_edit"]["required_change"]
+    assert instance.accepted_coordinate() == before

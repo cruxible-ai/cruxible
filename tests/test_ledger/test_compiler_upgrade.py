@@ -108,13 +108,27 @@ def test_upgrade_preserves_historical_coordinates_and_reopens(
 
 
 @pytest.mark.parametrize(
-    "target", [RESOLUTION_COMPILER, CompilerCoordinate(rule_digest="sha256:" + "ff" * 32)]
+    ("target", "code"),
+    [
+        (RESOLUTION_COMPILER, "playbill.compiler_upgrade.already_current"),
+        (
+            CompilerCoordinate(rule_digest="sha256:" + "ff" * 32),
+            "playbill.compiler_upgrade.unsupported_transition",
+        ),
+    ],
 )
-def test_unsupported_transition_does_not_change_state(tmp_path, monkeypatch, target):
+def test_unsupported_transition_does_not_change_state(tmp_path, monkeypatch, target, code):
+    from cruxible_core.errors import RequestRefusedError
+
     instance, _, _ = old_instance(tmp_path, monkeypatch)
     before = instance.accepted_coordinate()
-    with pytest.raises(ValueError, match="unsupported compiler transition"):
+    assert before.compiler == RESOLUTION_COMPILER
+    with pytest.raises(RequestRefusedError, match=code) as refused:
         propose(instance, target)
+    assert refused.value.error_code == code
+    if code.endswith("unsupported_transition"):
+        # The refusal names the forward edges that exist from here.
+        assert UPGRADE_COMPILER.rule_digest in str(refused.value)
     assert instance.accepted_coordinate() == before
 
 

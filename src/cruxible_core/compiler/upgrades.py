@@ -155,15 +155,48 @@ def upgrade_law(source: CompilerCoordinate, target: CompilerCoordinate) -> Insta
     raise ValueError("unsupported compiler transition; only explicit forward edges are allowed")
 
 
+# Every compiler an explicit forward edge can reach, in edge order.
+_UPGRADE_TARGETS = (
+    UPGRADE_COMPILER,
+    PROVIDER_CONTRACT_COMPILER,
+    PROVIDER_PACKAGE_COMPILER,
+    RESOURCE_BUDGET_COMPILER,
+    SDK_SOURCE_COMPILER,
+    CLAIM_EVIDENCE_COMPILER,
+    SOURCE_CHECKED_COMPILER,
+    TRIGGER_CAPTURE_COMPILER,
+    AUTHORITY_VERBS_COMPILER,
+)
+
+
+def supported_upgrade_targets(source: CompilerCoordinate) -> tuple[str, ...]:
+    """Name the compiler digests one explicit forward edge reaches from `source`."""
+
+    targets = []
+    for target in _UPGRADE_TARGETS:
+        try:
+            upgrade_law(source, target)
+        except ValueError:
+            continue
+        targets.append(target.rule_digest)
+    return tuple(targets)
+
+
+def upgrade_base_matches(value: CompilerUpgradeV1, base: AcceptedProjectionCoordinate) -> bool:
+    """Whether the upgrade is bound to exactly this accepted base."""
+
+    return (
+        value.instance_id == base.instance_id
+        and value.base.git_oid == base.git_oid
+        and value.base.semantic_root == base.semantic_root
+        and value.base.generation_root == base.generation_root
+        and value.base.compiler_digest == base.compiler.rule_digest
+    )
+
+
 def validate_upgrade(value: CompilerUpgradeV1, base: AcceptedProjectionCoordinate) -> None:
     """Explicit supported edges; installing another compiler never implies permission to use it."""
-    if (
-        value.instance_id != base.instance_id
-        or value.base.git_oid != base.git_oid
-        or value.base.semantic_root != base.semantic_root
-        or value.base.generation_root != base.generation_root
-        or value.base.compiler_digest != base.compiler.rule_digest
-    ):
+    if not upgrade_base_matches(value, base):
         raise ValueError("compiler upgrade is bound to a different accepted base")
     upgrade_law(base.compiler, value.target)
 
