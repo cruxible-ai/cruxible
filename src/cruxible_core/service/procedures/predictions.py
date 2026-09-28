@@ -60,7 +60,6 @@ from cruxible_core.procedures.resolution import (
     ProcedureResolutionBook,
     ProcedureResolutionV2,
     ResolutionClaimEndpointV1,
-    ResolutionContractActivationV2,
     ResolutionContractActivationV3,
     append_procedure_resolution,
     build_independent_activation,
@@ -588,51 +587,3 @@ def service_settle_playbill_prediction(
         resolution=resolution.model_dump(mode="json"),
         relation=relation.model_dump(mode="json"),
     )
-
-
-def load_prediction_activations(
-    instance: PlaybillInstance,
-) -> tuple[ResolutionContractActivationV2 | ResolutionContractActivationV3, ...]:
-    """Read retained activations, preserving each generation's verification law."""
-    activations: dict[str, ResolutionContractActivationV2 | ResolutionContractActivationV3] = {}
-    for independent in (False, True):
-        journal, stream = _journal(instance, independent=independent)
-        model = ResolutionContractActivationV3 if independent else ResolutionContractActivationV2
-        for partition in journal.partition_ids(stream):
-            for stored in journal.all_records(stream, partition):
-                if stored.record.event_kind != "resolution_activation":
-                    continue
-                payload = parse_journal_payload(
-                    instance.body_store().read(
-                        stored.record.payload_digest,
-                        access=BodyAccessContext(
-                            principal_id="prediction-replay", can_read_body=True
-                        ),
-                    )
-                )
-                activation = model.model_validate(payload)
-                if partition != resolution_contract_partition_id(activation):
-                    raise PlaybillFormatError("prediction activation crossed its journal partition")
-                if isinstance(activation, ResolutionContractActivationV3):
-                    retained = read_resolution_contract(instance, activation.investigation.contract)
-                    if (
-                        canonical_contract_reference(instance, activation.investigation.contract)
-                        != activation.investigation.contract
-                        or artifact_accepted_time(instance, activation.investigation.contract)
-                        != activation.activated_at
-                        or retained != activation.contract
-                        or bind_window(
-                            instance,
-                            retained.window,
-                            activation.investigation.window.event,
-                            now=stored.record.recorded_at,
-                        )
-                        != activation.investigation.window
-                    ):
-                        raise PlaybillFormatError(
-                            "resolution activation differs from its retained authority"
-                        )
-                previous = activations.setdefault(activation.contract_id, activation)
-                if previous != activation:
-                    raise PlaybillFormatError("prediction activation history diverged")
-    return tuple(activations[key] for key in sorted(activations))

@@ -45,6 +45,7 @@ from cruxible_client.contracts.resolution_contracts import (
     resolution_contract_digest,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.resolution import (
@@ -58,14 +59,15 @@ from cruxible_core.procedures.settled_outcomes import (
     query_settled_outcomes,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor
+from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from cruxible_core.service.procedures.predictions import (
     PredictionRefused,
     _journal,
-    load_prediction_activations,
     service_predict_playbill,
     service_settle_playbill_prediction,
 )
+from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._knowledge_loop_support import (
     PREDICATE,
     accept_proposal,
@@ -78,6 +80,25 @@ from tests.test_query.test_query_execution_service import _instance_with_query
 PREDICTED_AT = datetime(2026, 9, 2, 12, 1, tzinfo=UTC)
 OBSERVED_AT = PREDICTED_AT + timedelta(minutes=1)
 RECORDED_AT = OBSERVED_AT + timedelta(minutes=1)
+
+
+def _retained_activations(instance: PlaybillInstance) -> tuple[dict[str, object], ...]:
+    """Every activation payload either resolution journal retains, in partition order."""
+    retained: list[dict[str, object]] = []
+    for independent in (False, True):
+        journal, stream = _journal(instance, independent=independent)
+        retained.extend(
+            parse_journal_payload(
+                instance.body_store().read(
+                    stored.record.payload_digest,
+                    access=BodyAccessContext(principal_id="test", can_read_body=True),
+                )
+            )
+            for partition in journal.partition_ids(stream)
+            for stored in journal.all_records(stream, partition)
+            if stored.record.event_kind == "resolution_activation"
+        )
+    return tuple(retained)
 
 
 def _world(tmp_path: Path):
@@ -255,7 +276,7 @@ def test_observation_settlement_replays_into_existing_fold_and_survives_change(t
     relation = SettledOutcomeRelationV2.model_validate(result.relation)
     assert relation.resolution.settlement_outcome is True
     assert activation.procedure_artifact_digest is None
-    assert load_prediction_activations(instance) == (activation,)
+    assert _retained_activations(instance) == (activation.model_dump(mode="json"),)
     journal, stream = _journal(instance)
     records = {p: journal.all_records(stream, p) for p in journal.partition_ids(stream)}
     folded, _ = query_settled_outcomes(
@@ -289,7 +310,7 @@ def test_observation_settlement_replays_into_existing_fold_and_survives_change(t
         _settle(instance, later_reference, observation, at=RECORDED_AT + timedelta(days=2))
         == result
     )
-    assert load_prediction_activations(instance) == (activation,)
+    assert _retained_activations(instance) == (activation.model_dump(mode="json"),)
 
 
 PRESENCE_PREDICATE = "project.work_item.presence"
@@ -446,7 +467,7 @@ def test_attempt_without_settlement_preserves_binding_and_stays_unresolved(
     # establishes that the hypothesis is false (or creates any settlement).
     assert instance.accepted_coordinate() == before
     assert journal.partition_ids(stream) == ()
-    assert load_prediction_activations(instance) == ()
+    assert _retained_activations(instance) == ()
 
 
 def test_unevaluable_observation_stays_unresolved_until_replaced(tmp_path: Path):
@@ -481,7 +502,7 @@ def test_unevaluable_observation_stays_unresolved_until_replaced(tmp_path: Path)
         _settle(instance, contract, unknown)
     journal, stream = _journal(instance)
     assert journal.partition_ids(stream) == ()
-    assert load_prediction_activations(instance) == ()
+    assert _retained_activations(instance) == ()
     measured = _accept_payload(
         instance,
         owner,
