@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-28:small-idempotent-arm",
-    "surface_digest": "sha256:75813446dcd19ef819f51f58d6b46674cbdb4ce1b783b8bba3103818ceb878da"
+    "register_entry": "2026-09-28:small-cut-seed-plan",
+    "surface_digest": "sha256:c0175fbcc0d04e5fa77ef43b095d87c46865d077cf657d0a5bc9c9f9778869cb"
   },
   "surface": {
     "cli_leaves": [
@@ -3180,14 +3180,6 @@
         "input_schema_digest": "sha256:65852be00d9fefdd307fce7eb5ec282e2c9889d6415129930c817f051f8ccf49",
         "name": "cruxible_playbill_search",
         "output_schema_digest": "sha256:35b0af9895535e60ccc27737945c0d192997192335ff84d6c0b892dc0144729c",
-        "permission": "READ_ONLY"
-      },
-      {
-        "delegate": "cruxible_core.mcp.handlers.handle_playbill_seed_plan",
-        "facade_operations": [],
-        "input_schema_digest": "sha256:d7fb1b5a9ecbb281ea0cbd60e79e95fe8b92f53bc6c0ec6cd33177ae86c191d8",
-        "name": "cruxible_playbill_seed_plan",
-        "output_schema_digest": "sha256:54603bb797769ab148599d2f32da05f4dd78e461112740250ab49ff06497ca09",
         "permission": "READ_ONLY"
       },
       {

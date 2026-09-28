@@ -352,10 +352,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use to compile catalog-declared files under this MCP client's workspace without "
         "constructing source digests or compilation wire."
     ),
-    "cruxible_playbill_seed_plan": (
-        "Use to inspect the deterministic proposal sequence for a workspace seed bundle; this "
-        "does not contact or mutate an instance."
-    ),
 }
 
 

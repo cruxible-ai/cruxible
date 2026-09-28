@@ -25,7 +25,6 @@ from cruxible_client.authoring.attestations import (
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
-from cruxible_client.authoring.seed import SeedPlanResultV1, plan_seed_directory
 from cruxible_client.authoring.sources import (
     compile_client_source_context,
     load_source_catalog,
@@ -2427,19 +2426,6 @@ def _workspace_observations(
             whole_working_set=whole_working_set,
         )
     )
-
-
-def handle_playbill_seed_plan(
-    *,
-    bundle_path: str,
-    proposal_name: str,
-) -> SeedPlanResultV1:
-    root = resolve_workspace_path(
-        bundle_path,
-        root=mcp_workspace_root(),
-        kind="directory",
-    )
-    return plan_seed_directory(root, proposal_name=proposal_name)
 
 
 FloorExportMode = Literal["bytes", "write", "status"]

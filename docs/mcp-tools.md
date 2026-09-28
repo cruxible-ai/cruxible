@@ -67,8 +67,8 @@ The list is a reachability closure, not a read of the handler's own body: it
 covers the verbs the handler names itself, the verbs reached through a local
 adapter object it constructs, and the verbs reached through a sibling handler
 it delegates to. An empty list therefore means the tool reaches no facade verb
-at all -- two tools are in that position today, and both are
-`READ_ONLY`. A mutating tool may not publish an empty list without a declared
+at all -- one tool is in that position today,
+`cruxible_playbill_authoring_example`, and it is `READ_ONLY`. A mutating tool may not publish an empty list without a declared
 exception naming its reason
 (`tests/test_guardrails/test_playbill_v1_served_surface.py`), because an
 overlay reading `[]` as "reaches nothing" would fail open.
@@ -303,7 +303,6 @@ evidence-index, overlay, and manifest digests it returns reproduce the answer.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_seed_plan` | Deterministically plan a local seed bundle without contacting an instance | `READ_ONLY` |
 
 Seed application stores referenced bodies and composes only existing proposal
 and authoring operations. It never approves or activates. Plan and operation

@@ -12,7 +12,6 @@ from pydantic import Field
 
 from cruxible_client import contracts
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
-from cruxible_client.authoring.seed import SeedPlanResultV1
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendResultV1
 from cruxible_client.contracts.claim_reads import ClaimValuesResultV1
@@ -1310,17 +1309,6 @@ def register_tools(
             repository_root=repository_root,
             local_catalog_path=local_catalog_path,
             root_aliases=root_aliases or {},
-        )
-
-    @_tool
-    def cruxible_playbill_seed_plan(
-        bundle_path: str,
-        proposal_name: str,
-    ) -> SeedPlanResultV1:
-        """Plan a workspace seed bundle offline without opening a proposal."""
-        return handlers.handle_playbill_seed_plan(
-            bundle_path=bundle_path,
-            proposal_name=proposal_name,
         )
 
     @_tool
