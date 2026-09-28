@@ -2963,23 +2963,20 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
 
 
 def _claim_type_v6_unresolved(context: _MemberContext, claim_type: ClaimType) -> tuple[str, ...]:
-    """What a live v6 ClaimType names that the final candidate does not hold live."""
+    """Retired contracts a live v6 ClaimType still names in the final candidate.
 
-    missing: set[str] = set()
+    A rule may name a contract that is not accepted yet: a foreign source's
+    contract is installed by the first Claim bound to it, and until then the
+    rule simply admits nothing. What it may not name is a retired contract.
+    """
+
+    retired: set[str] = set()
     for rule in claim_type.evidence_admission_policy.rules:
         for item in getattr(rule, "capture_contracts", ()):
             accepted = context.resolved.capture_contracts.get(item.target.qualified)
-            if accepted is None or accepted.contract.lifecycle.state != "live":
-                missing.add(item.target.qualified)
-    live_queries = {
-        digest
-        for identity, digest in context.candidate_identities.values()
-        if identity.kind == "QueryDefinition"
-    }
-    for requirement in claim_type.admission_policy.corroboration_requirements:
-        if requirement.query_definition_digest not in live_queries:
-            missing.add(f"QueryDefinition@{requirement.query_definition_digest}")
-    return tuple(sorted(missing, key=lambda item: item.encode("utf-8")))
+            if accepted is not None and accepted.contract.lifecycle.state == "retired":
+                retired.add(item.target.qualified)
+    return tuple(sorted(retired, key=lambda item: item.encode("utf-8")))
 
 
 def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
@@ -3039,8 +3036,8 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
                 diagnostics=(
                     _diagnostic(
                         "playbill.claim_type.reference_unresolved",
-                        "A ClaimType names governed definitions that are not live in the "
-                        "resulting state: " + ", ".join(unresolved),
+                        "A ClaimType's evidence rules name retired CaptureContracts: "
+                        + ", ".join(unresolved),
                         context.path,
                     ),
                 )

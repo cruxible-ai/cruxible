@@ -274,6 +274,9 @@ class ClaimEvidenceAdmissionRuleV3(_EvidenceRuleBase):
     contract identity, which the rule does not name until someone edits it.
     """
 
+    # One schema for requests and responses: served ClaimTypes carry this rule.
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
+
     tag: Literal["playbill-claim-evidence-admission-rule-v3"] = (
         "playbill-claim-evidence-admission-rule-v3"
     )
@@ -342,6 +345,8 @@ class ClaimEvidenceAdmissionPolicyV2(_StrictPolicyModel):
 
 
 class ClaimEvidenceAdmissionPolicyV3(_StrictPolicyModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
+
     tag: Literal["playbill-claim-evidence-admission-policy-v3"] = (
         "playbill-claim-evidence-admission-policy-v3"
     )

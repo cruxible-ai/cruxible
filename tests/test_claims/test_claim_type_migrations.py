@@ -47,10 +47,6 @@ from cruxible_client.contracts.laws import (
     PLAYBILL_ACCEPTANCE_LAWS,
     AcceptanceLawRegistry,
 )
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV2,
-    ClaimEvidenceAdmissionRuleV2,
-)
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
@@ -227,14 +223,13 @@ def _decision_only_input(current: ClaimType) -> ClaimTypeInputV1:
         not getattr(rule, "allowed_reducer_digests", ())
         for rule in current.evidence_admission_policy.rules
     )
-    values["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicyV2(
-        rules=tuple(
-            ClaimEvidenceAdmissionRuleV2.model_validate(
-                rule.model_dump(mode="json", exclude={"tag", "allowed_reducer_digests"})
-            )
+    # Input rules name contracts by digest or by identity; lowering accepts both.
+    values["evidence_admission_policy"] = {
+        "rules": [
+            rule.model_dump(mode="json", exclude={"tag", "allowed_reducer_digests"})
             for rule in current.evidence_admission_policy.rules
-        )
-    ).model_dump(mode="json")
+        ]
+    }
     return ClaimTypeInputV1.model_validate(values)
 
 
@@ -1073,7 +1068,7 @@ def test_decision_only_successor_migrates_freshness_and_its_live_claim(
     assert tree_oid is not None
     path = claim_type_path(_claim_type().predicate)
     governed = parse_claim_type(instance.proposal_tree(tree_oid)[path], path=path)
-    assert governed.artifact_format == "playbill-claim-type-v5"
+    assert governed.artifact_format == "playbill-claim-type-v6"
     assert governed.evidence_freshness == freshness
     assert preflight.successor_artifact_digest == claim_type_digest(governed).tagged  # type: ignore[union-attr]
 
@@ -1123,7 +1118,7 @@ def test_current_successions_preserve_freshness_and_accept_policy(
     accepted_freshness = parse_claim_type(
         instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
     )
-    assert accepted_freshness.artifact_format == "playbill-claim-type-v5"
+    assert accepted_freshness.artifact_format == "playbill-claim-type-v6"
 
     policy = ClaimAttestationConsequencePolicyV1(
         rules=(
@@ -1167,7 +1162,7 @@ def test_current_successions_preserve_freshness_and_accept_policy(
     accepted_policy = parse_claim_type(
         instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
     )
-    assert accepted_policy.artifact_format == "playbill-claim-type-v5"
+    assert accepted_policy.artifact_format == "playbill-claim-type-v6"
     assert accepted_policy.evidence_freshness == accepted_freshness.evidence_freshness
     assert accepted_policy.attestation_consequence_policy == policy
     assert (

@@ -235,6 +235,39 @@ def _identity_evidence_policy(
     return {**{k: v for k, v in raw.items() if k not in {"rules", "tag"}}, "rules": rules}
 
 
+def _digest_evidence_policy(
+    raw: Mapping[str, object], *, identities: Mapping[str, str]
+) -> Mapping[str, object]:
+    """Lower identity-named rules to exact digests for a compiler without v6.
+
+    Each named contract resolves to its accepted (or anticipated) version, so an
+    input written for identity rules still lowers where only exact rules exist.
+    """
+
+    raw_rules = raw.get("rules", [])
+    rule_list = raw_rules if isinstance(raw_rules, list | tuple) else ()
+    if not any(isinstance(rule, dict) and "capture_contracts" in rule for rule in rule_list):
+        return raw
+    digest_for = {identity: digest for digest, identity in identities.items()}
+    rules: list[object] = []
+    for raw_rule in rule_list:
+        if not isinstance(raw_rule, dict) or "capture_contracts" not in raw_rule:
+            rules.append(raw_rule)
+            continue
+        rule = dict(raw_rule)
+        digests = set(rule.pop("capture_contract_digests", []) or [])
+        for item in rule.pop("capture_contracts") or []:
+            identity = _contract_ref(item).target.qualified
+            if identity not in digest_for:
+                raise ClaimTypeInputReferenceError(
+                    f"{identity} is not an accepted or anticipated CaptureContract"
+                )
+            digests.add(digest_for[identity])
+        rule["capture_contract_digests"] = sorted(digests)
+        rules.append(rule)
+    return {**raw, "rules": rules}
+
+
 class ClaimTypeInputReferenceError(PlaybillFormatError):
     """An authored evidence rule names a contract that cannot be referenced."""
 
@@ -256,17 +289,25 @@ def lower_claim_type_input(
     payload["artifact_format"] = (
         "playbill-claim-type-v6" if identity_rules else "playbill-claim-type-v5"
     )
+    identities = _contract_identities(tree, value.anticipated_source_ids)
+    identity_policy = None
+    if identity_rules:
+        try:
+            identity_policy = _identity_evidence_policy(
+                value.evidence_admission_policy, identities=identities
+            )
+        except ClaimTypeInputReferenceError:
+            # A rule names an exact version that is not accepted yet, so it has no
+            # identity to follow; it keeps its exact meaning as a v5 rule.
+            payload["artifact_format"] = "playbill-claim-type-v5"
     try:
-        if identity_rules:
+        if identity_policy is not None:
             payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicyV3.model_validate(
-                _identity_evidence_policy(
-                    value.evidence_admission_policy,
-                    identities=_contract_identities(tree, value.anticipated_source_ids),
-                )
+                identity_policy
             ).model_dump(mode="json")
         else:
             payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicyV2.model_validate(
-                value.evidence_admission_policy
+                _digest_evidence_policy(value.evidence_admission_policy, identities=identities)
             ).model_dump(mode="json")
     except ValidationError as exc:
         raise ClaimTypeInputValidationError(exc) from exc

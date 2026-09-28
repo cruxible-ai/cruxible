@@ -29,6 +29,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you want to install or upgrade a kit. It only proposes one change set; "
         "approval and activation remain the ordinary steps."
     ),
+    "cruxible_playbill_evidence_rules_upgrade": (
+        "Use once after upgrading, to move ClaimTypes whose evidence rules name contracts "
+        "by exact digest to identity rules. It only proposes; rules whose meaning would "
+        "change are left as they are and reported."
+    ),
     "cruxible_playbill_kit_remove": (
         "Use when you want to retire what a kit installed. It only proposes; live Claims "
         "that depend on those definitions block it."

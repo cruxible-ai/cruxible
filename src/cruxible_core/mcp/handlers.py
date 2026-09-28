@@ -42,6 +42,7 @@ from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -511,6 +512,14 @@ def handle_playbill_kit_add(
         lambda: playbill_api.playbill_kit_add(instance_id, request),
         operation_name="cruxible_playbill_kit_add",
         local_payload=request.model_dump(mode="json"),
+    )
+
+
+def handle_playbill_evidence_rules_upgrade(instance_id: str) -> EvidenceRuleUpgradeResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.upgrade_playbill_evidence_rules(instance_id),
+        lambda: playbill_api.playbill_evidence_rules_upgrade(instance_id),
+        operation_name="cruxible_playbill_evidence_rules_upgrade",
     )
 
 
