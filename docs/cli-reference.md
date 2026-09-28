@@ -65,6 +65,13 @@ cruxible credential recover-admin
 These credentials authorize transport operations. They are distinct from
 Playbill signing principals.
 
+`credential mint --mode` picks a cumulative tier. `read_only` reads only.
+`governed_write` also proposes and authors, but cannot submit approvals or
+activate. `graph_write` also submits approvals and activates. `admin` also
+performs operator actions: credentials, host and init, principal changes,
+compiler upgrades, provider installs, ledger mirrors, and daemon stop/restart. A
+permission refusal names the tier it needs and what that tier allows.
+
 ## server
 
 ~~~text

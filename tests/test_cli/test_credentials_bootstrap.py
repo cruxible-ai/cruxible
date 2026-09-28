@@ -291,3 +291,14 @@ def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
         "socket_path": None,
         "capability_ceiling": None,
     }
+
+
+def test_credential_mint_mode_help_explains_each_tier(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["credential", "mint", "--help"])
+
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    assert "read_only: reads only" in text
+    assert "cannot submit approvals or activate" in text
+    assert "graph_write: also submits approvals and activates" in text
+    assert "admin: also operator actions" in text

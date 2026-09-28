@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Literal
 
 from cruxible_client._error_base import CoreError as CoreError
+from cruxible_client.errors import permission_denied_message
 
 _MAX_DISPLAY_ERRORS = 10
 
@@ -263,14 +264,6 @@ class PermissionDeniedError(CoreError):
         self.current_mode = current_mode
         self.required_mode = required_mode
         self.ceiling_mode = ceiling_mode
-        if ceiling_mode is not None:
-            super().__init__(
-                f"Operation '{tool_name}' requires {required_mode} mode, but the daemon "
-                f"capability ceiling is {ceiling_mode} mode "
-                f"(effective request mode: {current_mode})"
-            )
-            return
         super().__init__(
-            f"Tool '{tool_name}' requires {required_mode} mode, "
-            f"but server is running in {current_mode} mode"
+            permission_denied_message(tool_name, current_mode, required_mode, ceiling_mode)
         )

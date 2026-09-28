@@ -132,6 +132,47 @@ class InstanceScopeError(CoreError):
         )
 
 
+# What each cumulative permission tier allows, and what it still does not.
+PERMISSION_TIER_SUMMARIES: dict[str, str] = {
+    "read_only": "reads state and writes nothing",
+    "governed_write": ("reads, proposes and authors, but cannot submit approvals or activate"),
+    "graph_write": (
+        "does everything governed_write does, plus submitting approvals and activating"
+    ),
+    "admin": (
+        "does everything graph_write does, plus operator actions: credentials, host "
+        "and init, principal changes, compiler upgrades, provider installs, ledger "
+        "mirrors and daemon stop/restart"
+    ),
+}
+
+
+def permission_tier_summary(mode: str) -> str:
+    """What ``mode`` allows, as ``<mode> mode <predicate>``."""
+    summary = PERMISSION_TIER_SUMMARIES.get(mode.strip().lower())
+    return f"{mode} mode {summary}" if summary is not None else f"{mode} mode"
+
+
+def permission_denied_message(
+    tool_name: str,
+    current_mode: str,
+    required_mode: str,
+    ceiling_mode: str | None,
+) -> str:
+    if ceiling_mode is not None:
+        denial = (
+            f"Operation '{tool_name}' requires {required_mode} mode, but the daemon "
+            f"capability ceiling is {ceiling_mode} mode "
+            f"(effective request mode: {current_mode})"
+        )
+    else:
+        denial = (
+            f"Tool '{tool_name}' requires {required_mode} mode, "
+            f"but server is running in {current_mode} mode"
+        )
+    return f"{denial}. {permission_tier_summary(required_mode)}."
+
+
 class PermissionDeniedError(CoreError):
     def __init__(
         self,
@@ -145,16 +186,8 @@ class PermissionDeniedError(CoreError):
         self.current_mode = current_mode
         self.required_mode = required_mode
         self.ceiling_mode = ceiling_mode
-        if ceiling_mode is not None:
-            super().__init__(
-                f"Operation '{tool_name}' requires {required_mode} mode, but the daemon "
-                f"capability ceiling is {ceiling_mode} mode "
-                f"(effective request mode: {current_mode})"
-            )
-            return
         super().__init__(
-            f"Tool '{tool_name}' requires {required_mode} mode, "
-            f"but server is running in {current_mode} mode"
+            permission_denied_message(tool_name, current_mode, required_mode, ceiling_mode)
         )
 
 

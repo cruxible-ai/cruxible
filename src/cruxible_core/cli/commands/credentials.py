@@ -122,7 +122,13 @@ def claim_bootstrap_cmd(secret_file: str | None) -> None:
     "permission_mode",
     required=True,
     type=click.Choice(_PERMISSION_MODES),
-    help="Credential permission mode.",
+    help=(
+        "Credential permission tier (cumulative). read_only: reads only. "
+        "governed_write: also proposes and authors, but cannot submit approvals or "
+        "activate. graph_write: also submits approvals and activates. admin: also "
+        "operator actions (credentials, host and init, principal changes, compiler "
+        "upgrades, provider installs, ledger mirrors, daemon stop/restart)."
+    ),
 )
 @handle_errors
 def mint_cmd(label: str, permission_mode: str) -> None:
