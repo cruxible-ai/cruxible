@@ -52,10 +52,11 @@ from cruxible_core.service.discovery.next import (
 )
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from cruxible_core.service.list_pages import (
-    PlaybillListCursorMismatch,
+    PlaybillListCursorStale,
     decode_list_cursor,
     encode_list_cursor,
     list_snapshot,
+    page_after_boundary,
 )
 
 BLOCK_OBSERVATION_ID_DOMAIN = "playbill-block-observation-v1"
@@ -619,17 +620,16 @@ def service_list_playbill_curation(
     internal_coordinate = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(internal_coordinate)
     selection = {"access_profile": request.access_profile.model_dump(mode="json")}
-    after: tuple[str, ...] | None = None
-    if request.cursor is not None:
-        continuation = decode_list_cursor(
-            request.cursor, list_name=_CURATION_LIST, selection=selection
+    continuation = (
+        None
+        if request.cursor is None
+        else decode_list_cursor(request.cursor, list_name=_CURATION_LIST, selection=selection)
+    )
+    if continuation is not None and continuation.coordinate != coordinate.model_dump(mode="json"):
+        raise PlaybillListCursorStale(
+            f"{PlaybillListCursorStale.error_code}: accepted state moved since the "
+            "cursor's first page; list the curation queue again without a cursor"
         )
-        if continuation.coordinate != coordinate.model_dump(mode="json"):
-            raise PlaybillListCursorMismatch(
-                f"{PlaybillListCursorMismatch.error_code}: accepted state moved since the "
-                "cursor's first page; list the curation queue again without a cursor"
-            )
-        after = continuation.last_key
     generation = _generation(instance, coordinate)
     store = instance.review_operational_store()
     # G9 visibility note: all present curation facts are instance-class.  Until
@@ -784,14 +784,24 @@ def service_list_playbill_curation(
             key=_curation_sort_key,
         )
     )
-    page, truncated = _curation_page(items, after=after, limit=request.limit)
+    # The queue is operational and re-detected on every call: an item appended
+    # or resolved between pages changes it, and the cursor is then stale.
+    snapshot = list_snapshot([[item.item_id, item.status] for item in items])
+    page, truncated = page_after_boundary(
+        items,
+        keys=tuple(_curation_key(item) for item in items),
+        snapshot=snapshot,
+        continuation=continuation,
+        limit=request.limit,
+        list_name=_CURATION_LIST,
+    )
     next_cursor = (
         encode_list_cursor(
             list_name=_CURATION_LIST,
             coordinate=coordinate.model_dump(mode="json"),
             selection=selection,
-            snapshot=list_snapshot([item.item_id for item in items]),
-            last_key=(page[-1].pattern_kind, page[-1].subject.qualified, page[-1].item_id),
+            snapshot=snapshot,
+            last_key=_curation_key(page[-1]),
         )
         if truncated and page
         else None
@@ -835,29 +845,8 @@ def _curation_sort_key(item: CurationItemV1) -> tuple[bytes, bytes, bytes]:
     )
 
 
-def _curation_page(
-    items: tuple[CurationItemV1, ...],
-    *,
-    after: tuple[str, ...] | None,
-    limit: int,
-) -> tuple[tuple[CurationItemV1, ...], bool]:
-    """One page after the cursor's last item, by the queue's own sort order.
-
-    The queue is re-detected on every call, so an item the previous page
-    carried may since have been resolved; the page continues after its place
-    in the order rather than requiring it to still be listed.
-    """
-
-    remaining = (
-        items
-        if after is None
-        else tuple(
-            item
-            for item in items
-            if _curation_sort_key(item) > tuple(part.encode("utf-8") for part in after)
-        )
-    )
-    return remaining[:limit], len(remaining) > limit
+def _curation_key(item: CurationItemV1) -> tuple[str, str, str]:
+    return (item.pattern_kind, item.subject.qualified, item.item_id)
 
 
 def _open_item(

@@ -1580,7 +1580,8 @@ Lists the mechanical curation queue and explicitly submits the declared-block
 observation produced by the client-side workspace scanner. The daemon does not
 read workspace files. The queue is paged (default 25 items, at most 200); a cut
 page has `truncated: true` and a `next_cursor` for `--cursor`, which continues
-only while accepted state is unchanged. The lifecycle commands append attributed
+only while accepted state and the queue itself are unchanged; otherwise it is
+refused as `playbill.list.cursor_stale`. The lifecycle commands append attributed
 operational events; they do not create governed proposals or mutate accepted
 knowledge.
 

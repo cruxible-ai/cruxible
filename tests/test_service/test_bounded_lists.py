@@ -4,17 +4,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from cruxible_client import contracts
+from cruxible_client.contracts.claims import LiteralClaimObject, parse_claim, render_claim
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.service.claims.policies import list_playbill_policies_in_force
 from cruxible_core.service.discovery.curation import (
     PlaybillCurationListRequestV1,
-    _curation_page,
     service_list_playbill_curation,
 )
 from cruxible_core.service.list_pages import (
@@ -133,65 +133,94 @@ def test_policy_pages_walk_the_whole_inventory(tmp_path: Path) -> None:
         service_list_playbill_proposals(instance, cursor=first.next_cursor)
 
 
-def test_curation_pages_continue_after_the_last_items_place_in_order() -> None:
-    items = tuple(
-        SimpleNamespace(pattern_kind=kind, subject=SimpleNamespace(qualified=subject), item_id=item)
-        for kind, subject, item in (
-            ("a.kind", "Subject:x/1", "sha256:1"),
-            ("a.kind", "Subject:x/2", "sha256:2"),
-            ("b.kind", "Subject:x/1", "sha256:3"),
-        )
+_ACTOR = GovernedActorContext(
+    actor_type="human_user",
+    actor_id="curator",
+    org_id="org-test",
+    operation_id="op-list",
+    timestamp=NOW,
+)
+_PROFILE = CoverageAccessProfileV1(profile_id="paging-test")
+
+
+def _curation(instance, *, limit: int, cursor: str | None = None):  # type: ignore[no-untyped-def]
+    return service_list_playbill_curation(
+        instance,
+        request=PlaybillCurationListRequestV1(
+            evaluation_time=NOW, access_profile=_PROFILE, limit=limit, cursor=cursor
+        ),
+        actor_context=_ACTOR,
     )
 
-    first, more = _curation_page(items, after=None, limit=2)  # type: ignore[arg-type]
-    assert [item.item_id for item in first] == ["sha256:1", "sha256:2"] and more
-    # The boundary item may have been resolved since; the page still continues after it.
-    rest, more = _curation_page(
-        items[2:],  # type: ignore[arg-type]
-        after=("a.kind", "Subject:x/2", "sha256:2"),
-        limit=2,
+
+def _curation_cursor(listing) -> str:  # type: ignore[no-untyped-def]
+    """A cursor over ``listing`` (the whole queue), cut after its first item."""
+    first = listing.items[0] if listing.items else None
+    return encode_list_cursor(
+        list_name="curation",
+        coordinate=listing.coordinate.model_dump(mode="json"),
+        selection={"access_profile": _PROFILE.model_dump(mode="json")},
+        snapshot=list_snapshot([[item.item_id, item.status] for item in listing.items]),
+        last_key=(
+            ("", "", "")
+            if first is None
+            else (first.pattern_kind, first.subject.qualified, first.item_id)
+        ),
     )
-    assert [item.item_id for item in rest] == ["sha256:3"] and not more
+
+
+def _append_refused_proposals(instance) -> None:  # type: ignore[no-untyped-def]
+    """Two refused Claim proposals: the admission-failure detector clusters them."""
+    valid = _propose(instance, "invalid-claim-template", "wi-44")
+    evaluated_oid = valid.proposal.proposal.evaluation.evaluated_tree_oid
+    tree = instance.proposal_tree(evaluated_oid)
+    claim = parse_claim(tree[valid.claim_path], path=valid.claim_path)
+    tree[valid.claim_path] = render_claim(
+        claim.model_copy(
+            update={
+                "statement": claim.statement.model_copy(
+                    update={"object": LiteralClaimObject(value=1)}
+                )
+            }
+        )
+    )
+    base = instance.accepted_coordinate()
+    for suffix in ("one", "two"):
+        refused = instance.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=ProposalAdmissionRequest(
+                target_ref=f"refs/proposals/owner/refused-{suffix}",
+                proposed_base_oid=base.git_oid,
+            ),
+            candidate_tree=tree,
+            timestamp=TIMESTAMP,
+        )
+        assert refused.evaluation.verdict == "refused"
+
+
+def test_a_curation_cursor_refuses_once_the_queue_changes(tmp_path: Path) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    whole = _curation(instance, limit=200)
+    cursor = _curation_cursor(whole)
+    if whole.items:
+        # An unchanged queue continues after the cursor's last item.
+        continued = _curation(instance, limit=200, cursor=cursor)
+        assert list(continued.items) == list(whole.items[1:])
+
+    _append_refused_proposals(instance)
+    grown = _curation(instance, limit=200)
+    assert grown.coordinate == whole.coordinate
+    assert len(grown.items) > len(whole.items)
+
+    with pytest.raises(PlaybillListCursorStale, match="listing changed") as caught:
+        _curation(instance, limit=1, cursor=cursor)
+    assert caught.value.error_code == "playbill.list.cursor_stale"
 
 
 def test_a_curation_cursor_refuses_once_accepted_state_moves(tmp_path: Path) -> None:
     instance, owner = seed_claims(tmp_path)
-    profile = CoverageAccessProfileV1(profile_id="paging-test")
-    actor = GovernedActorContext(
-        actor_type="human_user",
-        actor_id="curator",
-        org_id="org-test",
-        operation_id="op-list",
-        timestamp=NOW,
-    )
-    first = service_list_playbill_curation(
-        instance,
-        request=PlaybillCurationListRequestV1(evaluation_time=NOW, access_profile=profile, limit=1),
-        actor_context=actor,
-    )
-    assert first.truncated is (first.next_cursor is not None)
-    cursor = encode_list_cursor(
-        list_name="curation",
-        coordinate=first.coordinate.model_dump(mode="json"),
-        selection={"access_profile": profile.model_dump(mode="json")},
-        snapshot=list_snapshot([]),
-        last_key=("a.kind", "Subject:x/1", "sha256:1"),
-    )
-    continued = service_list_playbill_curation(
-        instance,
-        request=PlaybillCurationListRequestV1(
-            evaluation_time=NOW, access_profile=profile, limit=1, cursor=cursor
-        ),
-        actor_context=actor,
-    )
-    assert continued.coordinate == first.coordinate
+    cursor = _curation_cursor(_curation(instance, limit=200))
 
     activate(instance, owner, _propose(instance, "moves-state", "wi-60"))
-    with pytest.raises(PlaybillListCursorMismatch, match="accepted state moved"):
-        service_list_playbill_curation(
-            instance,
-            request=PlaybillCurationListRequestV1(
-                evaluation_time=NOW, access_profile=profile, limit=1, cursor=cursor
-            ),
-            actor_context=actor,
-        )
+    with pytest.raises(PlaybillListCursorStale, match="accepted state moved"):
+        _curation(instance, limit=1, cursor=cursor)
