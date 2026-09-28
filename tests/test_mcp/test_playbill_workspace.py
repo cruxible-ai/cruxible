@@ -160,6 +160,26 @@ def test_activate_from_nested_cwd_refreshes_the_containing_git_worktree(
     assert not (nested / ".playbill/floor").exists()
 
 
+def test_activate_outside_a_git_worktree_skips_the_floor_refresh_and_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plain = tmp_path / "not-a-worktree"
+    plain.mkdir()
+    monkeypatch.chdir(plain)
+    monkeypatch.delenv("CRUXIBLE_MCP_WORKSPACE_ROOT", raising=False)
+    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+
+    result = handlers.handle_playbill_activate("inst_test", "proposal-1")
+
+    assert result.status == "accepted"
+    assert result.floor_refresh.status == "not_configured"
+    assert result.floor_refresh.message is not None
+    assert "Git worktree" in result.floor_refresh.message
+    assert result.block_sync is None
+    assert not (plain / ".playbill").exists()
+
+
 def test_library_mode_activate_checks_an_attached_workspace(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

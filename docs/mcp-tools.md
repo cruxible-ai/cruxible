@@ -48,7 +48,9 @@ Floor operations always target the containing Git worktree's canonical
 worktree from its working directory. An explicit `CRUXIBLE_MCP_WORKSPACE_ROOT`
 must equal the worktree root for floor export, status, and activation refresh;
 a nested explicit root is refused rather than allowing a write above its
-configured filesystem boundary.
+configured filesystem boundary. When the root is in no Git worktree at all,
+`cruxible_playbill_activate` still activates and reports
+`floor_refresh.status: not_configured` with the reason.
 
 ## Which verb each tool publishes
 
