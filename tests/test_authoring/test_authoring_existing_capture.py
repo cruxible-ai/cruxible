@@ -162,7 +162,7 @@ def test_existing_capture_submits_through_real_proposal_and_retry_is_idempotent(
         payload,
     ) = shared_capture_world(tmp_path)
 
-    retry_payload = payload.model_copy(update={"claim_ref": second_claim_id})
+    retry_payload = payload.model_copy(update={"revises": second_claim_id})
     retry = coordinator.create(
         actor=actor,
         payload=retry_payload,

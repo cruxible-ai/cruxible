@@ -551,7 +551,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         for item in missing_revision.diagnostics
         if item.code == "playbill.authoring.claim_predecessor_not_found"
     )
-    assert diagnostic.offending_element == "claim_ref"
+    assert diagnostic.offending_element == "revises"
     assert diagnostic.call_site is not None
     assert diagnostic.call_site.expression == "missing_revision_id"
 

@@ -2373,7 +2373,7 @@ class Playbill:
             rationale=rationale,
             source=source,
             citation_role=citation_role,
-            claim_ref=(None if revises is None else _claim_id(revises)),
+            revises=(None if revises is None else _claim_id(revises)),
             existing_claim_dispositions=tuple(
                 AuthoringExistingClaimDispositionV1(
                     claim_id=claim_id, disposition=disposition.value
@@ -2414,7 +2414,7 @@ class Playbill:
             )
         if revises is not None:
             expectations.append(
-                _expectation(revises, expected=RefKind.CLAIM, payload_path="claim_ref")
+                _expectation(revises, expected=RefKind.CLAIM, payload_path="revises")
             )
         capture_ref = (
             supported_by
@@ -2461,7 +2461,7 @@ class Playbill:
             "self_source": ("source",),
             "qualifier": ("statement.qualifier",),
             "effective_period": ("statement.effective_from", "statement.effective_until"),
-            "revises": ("claim_ref",),
+            "revises": ("revises",),
             "dispositions": ("existing_claim_dispositions",),
             "subject_definition": ("dependency_drafts.subject",),
             "claim_type_definition": ("dependency_drafts.claim_type",),

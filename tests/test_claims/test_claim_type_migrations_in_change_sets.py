@@ -155,7 +155,7 @@ def _claim(
     *,
     subject_id: str,
     value: object,
-    claim_ref: str | None = None,
+    revises: str | None = None,
     rationale: str = "The scanner observed this package in the advisory.",
     body: str = "package: demo-package\n",
 ) -> ClaimAuthoringPayloadV1:
@@ -168,7 +168,7 @@ def _claim(
         ),
         rationale=rationale,
         source=SelfSourceBodyV1(content_base64=base64.b64encode(body.encode("utf-8")).decode()),
-        claim_ref=claim_ref,
+        revises=revises,
     )
 
 
@@ -308,7 +308,7 @@ def test_the_affects_package_migration_lands_as_one_generation(tmp_path: Path) -
         value=SubjectClaimObject(
             address=SemanticAddress.whole_artifact(subject_path("package", "demo-package"))
         ),
-        claim_ref=claims["wi-42"],
+        revises=claims["wi-42"],
         rationale="The advisory names the package, so say which package it is.",
     )
     edge_b = _claim(
@@ -316,7 +316,7 @@ def test_the_affects_package_migration_lands_as_one_generation(tmp_path: Path) -
         value=SubjectClaimObject(
             address=SemanticAddress.whole_artifact(subject_path("package", "demo-package"))
         ),
-        claim_ref=claims["wi-2"],
+        revises=claims["wi-2"],
         rationale="The advisory names the package, so say which package it is.",
     )
     fresh = _claim(
@@ -449,7 +449,7 @@ def test_an_enum_narrowing_carries_what_fits_and_re_authors_what_does_not(
     repaired = _claim(
         subject_id="wi-2",
         value=LiteralClaimObject(value="ready"),
-        claim_ref=claims["wi-2"],
+        revises=claims["wi-2"],
         rationale="The narrowed vocabulary has one word for this state.",
     )
     succession = ClaimTypeSuccessionMemberV1(
@@ -619,7 +619,7 @@ def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
         source=SelfSourceBodyV1(
             content_base64=base64.b64encode(b"status: ready\n").decode(),
         ),
-        claim_ref=claims["wi-42"],
+        revises=claims["wi-42"],
     )
     succession = ClaimTypeSuccessionMemberV1(
         successor=_subject_valued_successor(instance),
@@ -940,7 +940,7 @@ def test_a_re_author_sibling_that_moves_the_subject_refuses(tmp_path: Path) -> N
     moved = _claim(
         subject_id="wi-3",
         value=LiteralClaimObject(value="ready"),
-        claim_ref=claims["wi-42"],
+        revises=claims["wi-42"],
         rationale="A revision that quietly changes which work item this is about.",
     )
     succession = ClaimTypeSuccessionMemberV1(
@@ -994,7 +994,7 @@ def test_a_machine_applying_the_re_author_repair_lands_the_set(tmp_path: Path) -
         _claim(
             subject_id=subject_id,
             value=SubjectClaimObject(address=package),
-            claim_ref=claims[subject_id],
+            revises=claims[subject_id],
             rationale="The advisory names the package, so say which package it is.",
         )
         for subject_id in ("wi-42", "wi-2")

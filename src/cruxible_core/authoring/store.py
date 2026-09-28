@@ -414,12 +414,40 @@ def build_authoring_intent_event(
     )
 
 
+def _refuse_pre_revises_intent(event: dict[str, object]) -> None:
+    """Name an intent stored before a Claim's revision field was `revises`.
+
+    Such an intent spells it `claim_ref`, which no longer validates and whose
+    digests no current build reproduces, so it can only be recreated.
+    """
+
+    intent = event.get("intent")
+    payload = intent.get("payload") if isinstance(intent, dict) else None
+    if not isinstance(intent, dict) or not isinstance(payload, dict):
+        return
+    members = payload.get("members")
+    if not any(
+        isinstance(item, dict)
+        and str(item.get("tag", "")).startswith("playbill-claim-authoring-payload-")
+        and "claim_ref" in item
+        for item in (payload, *(members if isinstance(members, list) else ()))
+    ):
+        return
+    intent_id = str(intent.get("intent_id"))
+    raise AuthoringIntentStoreError(
+        f"AuthoringIntent {intent_id!r} predates the `revises` Claim field and cannot be "
+        "read by this build; discard it (remove its entry under authoring-intents) and "
+        "author it again"
+    )
+
+
 def _authoring_event_input(
     raw: bytes,
 ) -> tuple[type[AuthoringIntentEventAny], dict[str, object]]:
     payload = json.loads(raw)
     if not isinstance(payload, dict):
         raise ValueError("AuthoringIntent event must be an object")
+    _refuse_pre_revises_intent(payload)
     if payload.get("tag") == "playbill-authoring-intent-event-v2":
         return AuthoringIntentEventV2, payload
     if payload.get("tag") == "playbill-authoring-intent-event-v3":

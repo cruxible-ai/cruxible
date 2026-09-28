@@ -35,7 +35,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalReceiveLimits,
 )
 from cruxible_client.contracts.workspace_advertisement import PlaybillWorkspaceAdvertisement
-from cruxible_core.authoring.store import AuthoringIntentStore
+from cruxible_core.authoring.store import AuthoringIntentStore, AuthoringIntentStoreError
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.proposals.proposals import (
@@ -734,10 +734,15 @@ def test_a_preflight_certificate_from_before_the_record_ceiling_still_validates(
     )
 
 
-def test_an_authoring_intent_written_before_the_record_ceiling_still_reads(
+def test_an_authoring_intent_written_before_revises_is_refused_by_name(
     tmp_path: Path,
 ) -> None:
-    """The carrier that made the certificate a durability problem, end to end."""
+    """A stored intent whose Claim still spells its revision `claim_ref` is named.
+
+    Intents are discarded at deploy rather than migrated, so these events no
+    longer read; what matters is that the refusal says why and what to do,
+    instead of reporting a malformed event.
+    """
 
     records = _pre_hotfix_records()
     intent_id = records["intent_id"]
@@ -751,11 +756,8 @@ def test_an_authoring_intent_written_before_the_record_ceiling_still_reads(
         (directory / name).write_text(str(content), encoding="utf-8")
 
     store = AuthoringIntentStore(exhaust)
-    intent = store.get(intent_id, actor_id="owner")
-
-    assert intent.intent_id == intent_id
-    assert intent.last_preflight is not None
-    assert intent.last_preflight.certificate.certificate_digest.startswith("sha256:")
+    with pytest.raises(AuthoringIntentStoreError, match="predates the `revises` Claim field"):
+        store.get(intent_id, actor_id="owner")
 
 
 def test_an_admission_written_before_the_record_ceiling_reads_and_rewrites(

@@ -70,7 +70,7 @@ def _claim_payload() -> dict[str, Any]:
             "content_base64": "cmVhZHk=",
         },
         "citation_role": None,
-        "claim_ref": None,
+        "revises": None,
         "existing_claim_dispositions": [],
         "insertion_target": None,
     }

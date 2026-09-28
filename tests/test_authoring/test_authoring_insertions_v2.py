@@ -174,7 +174,7 @@ def _successor_payload(claim_id: str, *, value: str):  # type: ignore[no-untyped
     payload = _self_source_payload()
     return payload.model_copy(
         update={
-            "claim_ref": claim_id,
+            "revises": claim_id,
             "insertion_target": None,
             "rationale": f"Publish the {value} successor.",
             "statement": payload.statement.model_copy(

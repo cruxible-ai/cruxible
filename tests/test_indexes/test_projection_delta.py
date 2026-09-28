@@ -141,7 +141,7 @@ def test_successor_matches_every_cold_row_across_create_revise_and_retire(tmp_pa
     ids = [ids_by_qualifier["a"], ids_by_qualifier["b"]]
     historical = Path(seen[0].manifest_path).parent / seen[0].manifest.pieces[0].name
     old_bytes = hashlib.sha256(historical.read_bytes()).digest()
-    accept(_change_set(_claim(qualifier="a", claim_ref=ids[0], value="done")))
+    accept(_change_set(_claim(qualifier="a", revises=ids[0], value="done")))
     accept(_change_set(ClaimRetirementMemberV1(claim_ref=ids[1], reason="was-rescinded")))
     assert len(seen) == 3
     assert hashlib.sha256(historical.read_bytes()).digest() == old_bytes

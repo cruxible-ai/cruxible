@@ -52,7 +52,7 @@ def test_author_once_and_revise_only_changed_field(tmp_path):
     )._compiled()
     assert len(revised.payload.members) == 1
     member = revised.payload.members[0]
-    assert member.claim_ref == prior_claim.address
+    assert member.revises == prior_claim.address
     assert member.statement.object.value == updated.rule
     assert member.existing_claim_dispositions[0].disposition == "contradict"
     for kwargs in ({"previous": record}, {"replacements": {"rule": prior_claim}}):

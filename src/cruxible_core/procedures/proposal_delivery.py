@@ -253,7 +253,7 @@ def _claim_members(
                 if isinstance(item, ProcedureClaimProposalItemV2)
                 else ()
             ),
-            claim_ref=item.revises,
+            revises=item.revises,
             dependency_drafts=ClaimDependencyDraftsV1(),
         )
         identity = authoring_member_identity(member)

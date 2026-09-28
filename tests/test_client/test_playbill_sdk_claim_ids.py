@@ -41,7 +41,7 @@ def test_bare_and_qualified_revision_have_equal_payload_and_typed_assertions(pb,
     first = draft(pb, bare, {bare: Disposition.CONTRADICT})
     second = draft(pb, qualified, {qualified: Disposition.CONTRADICT})
     assert first.payload == second.payload
-    assert first.payload.claim_ref == claim_id
+    assert first.payload.revises == claim_id
     assert first.payload.existing_claim_dispositions[0].claim_id == claim_id
     assert first.reference_expectations == second.reference_expectations
     assert len(first.reference_expectations) == (2 if typed else 0)

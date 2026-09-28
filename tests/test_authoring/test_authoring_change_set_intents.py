@@ -121,7 +121,7 @@ def _claim(
     qualifier: str | None = None,
     rationale: str = "The writer observed the current work status.",
     body: str = "status: ready\n",
-    claim_ref: str | None = None,
+    revises: str | None = None,
     insertion_target: object | None = None,
     dispositions: tuple[object, ...] = (),
 ) -> ClaimAuthoringPayloadV1:
@@ -135,7 +135,7 @@ def _claim(
         ),
         rationale=rationale,
         source=SelfSourceBodyV1(content_base64=base64.b64encode(body.encode("utf-8")).decode()),
-        claim_ref=claim_ref,
+        revises=revises,
         existing_claim_dispositions=dispositions,  # type: ignore[arg-type]
         insertion_target=insertion_target,  # type: ignore[arg-type]
     )
@@ -333,7 +333,7 @@ def test_two_members_on_one_path_and_one_slot_name_their_member_indices(
     collided = coordinator.create(
         actor=actor,
         payload=_change_set(
-            _claim(claim_ref=accepted_claim_id, value="done", rationale="Revise the status."),
+            _claim(revises=accepted_claim_id, value="done", rationale="Revise the status."),
             ClaimRetirementMemberV1(
                 claim_ref=accepted_claim_id,
                 reason="was-wrong",
@@ -532,7 +532,7 @@ def test_eighty_members_of_every_kind_become_exactly_one_generation(tmp_path: Pa
     revision = _claim(
         qualifier="seed2",
         value="done",
-        claim_ref=seeded[2],
+        revises=seeded[2],
         rationale="Revise the seeded status in place.",
     )
     published = [
@@ -1091,7 +1091,7 @@ def test_a_retirement_member_spells_its_claim_ref_the_way_a_claim_does(
     with pytest.raises(ClaimFormatError, match="Claim ID must be CLM-"):
         ClaimRetirementMemberV1(claim_ref=f"Claim:{claim_id}", reason="was-rescinded")
     with pytest.raises(ClaimFormatError, match="Claim ID must be CLM-"):
-        _claim(claim_ref=f"Claim:{claim_id}")
+        _claim(revises=f"Claim:{claim_id}")
 
     # The tagless surface carries the same rule through its own lowering.
     prefixed = ChangeSetInput(
@@ -1538,7 +1538,7 @@ def test_a_revision_that_moves_the_subject_refuses_by_name(tmp_path: Path) -> No
         payload=_change_set(
             SubjectAuthoringPayloadV1(subject=_shell("wi-9")),
             _claim(
-                claim_ref=accepted_claim_id,
+                revises=accepted_claim_id,
                 subject_id="wi-9",
                 value="done",
                 rationale="Revise the status, about a different work item.",
@@ -1573,7 +1573,7 @@ def test_a_revision_that_moves_the_predicate_refuses_by_name(tmp_path: Path) -> 
         payload=_change_set(
             ClaimTypeAuthoringPayloadV1(claim_type=_predicate_type("project.work_item.owner")),
             _claim(
-                claim_ref=accepted_claim_id,
+                revises=accepted_claim_id,
                 predicate="project.work_item.owner",
                 value="done",
                 rationale="Revise the status into an owner.",

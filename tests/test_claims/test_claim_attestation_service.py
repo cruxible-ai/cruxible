@@ -793,7 +793,7 @@ def _assert_successor_resolves_attestation_membership(
             rationale="Adjudicate the newly observed Capture through the shipped citation path.",
             source=ExistingCaptureCitationSourceV1(capture_digest=capture.capture_digest),
             citation_role=role,  # type: ignore[arg-type]
-            claim_ref=claim_id,
+            revises=claim_id,
             dependency_drafts=ClaimDependencyDraftsV1(),
         )
         actor = AuthenticatedActor(actor_id="owner")

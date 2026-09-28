@@ -507,7 +507,7 @@ def test_unevaluable_observation_stays_unresolved_until_replaced(tmp_path: Path)
         instance,
         owner,
         _presence_payload(capture, qualifier="prediction-outcome", value=4).model_copy(
-            update={"claim_ref": unknown.identity.name}
+            update={"revises": unknown.identity.name}
         ),
         "2026-09-02T12:04:00.000000Z",
     )

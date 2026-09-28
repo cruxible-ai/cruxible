@@ -140,7 +140,7 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
             "content_base64": "cmVhZHk=",
         },
         "citation_role": None,
-        "claim_ref": None,
+        "revises": None,
         "existing_claim_dispositions": [],
         "insertion_target": None,
     }
@@ -200,7 +200,7 @@ def test_http_compile_renders_a_lowering_fault_typed_instead_of_a_bare_500(
         "rationale": "Observed ready.",
         "source": {"tag": "playbill-self-source-body-v1", "content_base64": "cmVhZHk="},
         "citation_role": None,
-        "claim_ref": None,
+        "revises": None,
         "existing_claim_dispositions": [],
     }
     response = client.post(

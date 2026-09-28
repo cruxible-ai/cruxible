@@ -938,7 +938,7 @@ def _lower_claim(
     expected = {item.identity.name for item in slot_claims}
     dispositionable = {item.identity.name for item in existing}
     supplied = {item.claim_id for item in payload.existing_claim_dispositions}
-    inferred = {payload.claim_ref} if payload.claim_ref in expected else set()
+    inferred = {payload.revises} if payload.revises in expected else set()
     required_ids = expected - inferred
     if not required_ids.issubset(supplied) or not supplied.issubset(dispositionable):
         required = tuple(sorted(slot_claims, key=lambda item: item.identity.name.encode("ascii")))
@@ -973,19 +973,19 @@ def _lower_claim(
         if isinstance(predecessor, ClaimArtifactV3):
             _refuse(
                 "playbill.authoring.claim_terminal",
-                "claim_ref",
+                "revises",
                 "An attributed retired Claim is terminal and cannot be authored again.",
-                repair_kind="omit_claim_ref",
+                repair_kind="omit_revises",
                 repair_description="Mint a new Claim lineage instead of reviving a retired one.",
                 replacement=None,
             )
-    elif payload.claim_ref is not None:
+    elif payload.revises is not None:
         _refuse(
             "playbill.authoring.claim_predecessor_not_found",
-            "claim_ref",
+            "revises",
             "The requested Claim lineage does not exist at the intent base.",
-            repair_kind="omit_claim_ref",
-            repair_description="Omit claim_ref to mint a new Claim lineage.",
+            repair_kind="omit_revises",
+            repair_description="Omit revises to mint a new Claim lineage.",
             replacement=None,
         )
 

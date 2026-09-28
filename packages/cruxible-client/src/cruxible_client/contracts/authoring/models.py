@@ -768,7 +768,7 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
     rationale: str
     source: ClaimAuthoringSourceV1
     citation_role: Literal["evidence", "copy"] | None = None
-    claim_ref: str | None = None
+    revises: str | None = None
     existing_claim_dispositions: tuple[AuthoringExistingClaimDispositionV1, ...] = ()
     insertion_target: InsertionTargetV2 | None = None
 
@@ -779,9 +779,9 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
             raise ValueError("Claim authoring rationale must not be empty")
         return value
 
-    @field_validator("claim_ref")
+    @field_validator("revises")
     @classmethod
-    def _claim_ref(cls, value: str | None) -> str | None:
+    def _revises(cls, value: str | None) -> str | None:
         if value is not None:
             claim_path(value)
         return value
@@ -1246,7 +1246,7 @@ class ClaimRetirementMemberV1(_StrictAuthoringModel):
     would only name the same inventory twice.
 
     `claim_ref` is the bare Claim ID, spelled exactly as
-    `ClaimAuthoringPayloadV1.claim_ref` spells it. Tolerating a `Claim:` prefix
+    `ClaimAuthoringPayloadV1.revises` spells it. Tolerating a `Claim:` prefix
     here would give two spellings of one retirement the same member identity but
     different payload digests, so create-dedup would miss and two live intents
     could carry one semantic identity.
@@ -1321,8 +1321,8 @@ def authoring_claim_member_identity(payload: ClaimAuthoringPayloadV1) -> str:
     collision -- is what refuses them.
     """
 
-    if payload.claim_ref is not None:
-        return f"Claim:{payload.claim_ref}"
+    if payload.revises is not None:
+        return f"Claim:{payload.revises}"
     statement = payload.statement.model_dump(mode="json")
     statement.pop("tag")
     digest = typed_digest(
@@ -2325,7 +2325,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
         by_member = {item.member_identity: item.claim_id for item in minted}
         for member_identity, member in claim_members.items():
             claim_id = by_member[member_identity]
-            if member.claim_ref is not None and member.claim_ref != claim_id:
+            if member.revises is not None and member.revises != claim_id:
                 raise ValueError("a revising Claim member keeps the lineage it names")
         expectations = self.insertion_expectations
         expectation_ids = tuple(item.expectation_id for item in expectations)

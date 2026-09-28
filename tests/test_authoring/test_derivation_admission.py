@@ -296,7 +296,7 @@ def test_real_execution_accepts_but_manual_revision_cannot_reuse_its_provenance(
     )
     revised = world.payload.model_copy(
         update={
-            "claim_ref": derived.identity.name,
+            "revises": derived.identity.name,
             "statement": world.payload.statement.model_copy(
                 update={"object": LiteralClaimObject(value=False)}
             ),

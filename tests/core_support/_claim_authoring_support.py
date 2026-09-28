@@ -232,7 +232,7 @@ def _payload(
         "rationale": authoring.rationale,
         "source": source_value,
         "citation_role": citation_role,
-        "claim_ref": (
+        "revises": (
             authoring.claim_id
             if authoring.claim_id is not None
             and claim_path(authoring.claim_id)

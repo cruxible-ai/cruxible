@@ -1229,7 +1229,7 @@ class AuthoringIntentCoordinator:
         minted = tuple(
             ChangeSetClaimIdentityV1(
                 member_identity=authoring_member_identity(member),
-                claim_id=member.claim_ref or self.claim_id_factory(),
+                claim_id=member.revises or self.claim_id_factory(),
             )
             for member in payload.members
             if isinstance(member, ClaimAuthoringPayloadV1)
@@ -1238,7 +1238,7 @@ class AuthoringIntentCoordinator:
 
     def _mint_semantic_identity(self, payload: AuthoringPayloadV1) -> str:
         if isinstance(payload, ClaimAuthoringPayloadV1):
-            return payload.claim_ref or self.claim_id_factory()
+            return payload.revises or self.claim_id_factory()
         if isinstance(payload, ChangeSetAuthoringPayloadV1):
             digest = typed_digest(
                 Sha256Value,

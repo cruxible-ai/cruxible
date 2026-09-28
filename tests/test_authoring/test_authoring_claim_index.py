@@ -299,11 +299,9 @@ def test_revised_sibling_dispositions_use_its_new_statement_and_retirement_updat
     intent = coordinator.create(
         actor=actor,
         payload=_change_set(
+            _claim(revises=first.identity.name, qualifier=first.statement.qualifier, value="done"),
             _claim(
-                claim_ref=first.identity.name, qualifier=first.statement.qualifier, value="done"
-            ),
-            _claim(
-                claim_ref=second.identity.name,
+                revises=second.identity.name,
                 qualifier=second.statement.qualifier,
                 value="blocked",
                 dispositions=(observed,),
@@ -352,7 +350,7 @@ def test_succession_consumed_reauthor_and_retired_siblings_are_visible_to_follow
         ),
     )
     repaired = _migration_claim(
-        subject_id="wi-2", value=LiteralClaimObject(value="ready"), claim_ref=claims["wi-2"]
+        subject_id="wi-2", value=LiteralClaimObject(value="ready"), revises=claims["wi-2"]
     )
     independent = _migration_claim(subject_id="wi-2", value=LiteralClaimObject(value="ready"))
     independent = independent.model_copy(
