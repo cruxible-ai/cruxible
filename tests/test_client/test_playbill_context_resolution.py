@@ -548,8 +548,8 @@ def test_sdk_connect_consumes_the_shared_workspace_resolution(
 def test_context_connect_through_a_symlinked_socket_dir_keeps_the_instance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # macOS /tmp is a symlink to /private/tmp; the remembered instance must
-    # survive resolution comparing realpaths.
+    # macOS's system temp directory is a symlink into /private; the remembered
+    # instance must survive resolution comparing realpaths.
     _clear_target_env(monkeypatch)
     real = tmp_path / "real"
     real.mkdir()

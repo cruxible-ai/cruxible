@@ -236,8 +236,8 @@ def test_a_sigterm_stop_removes_the_socket_file_it_bound(tmp_path: Path) -> None
     import time
 
     repo = Path(__file__).resolve().parents[2]
-    # AF_UNIX paths are short; the pytest tmp_path is not.
-    socket_dir = Path(tempfile.mkdtemp(prefix="cxs", dir="/tmp"))
+    # AF_UNIX paths are short; the pytest tmp_path is not, the default temp dir is.
+    socket_dir = Path(tempfile.mkdtemp(prefix="cxs"))
     socket_path = socket_dir / "d.sock"
     env = {
         key: value

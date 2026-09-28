@@ -18,12 +18,13 @@ from __future__ import annotations
 import os
 import sys
 import threading
-import uuid
 from collections.abc import Callable
+
+from cruxible_client.contracts.primitives import new_id
 
 # One token per process image. ``os.execv`` keeps the pid but re-imports every
 # module, so this is what tells a restarted daemon from the image it replaced.
-PROCESS_BOOT_ID = uuid.uuid4().hex
+PROCESS_BOOT_ID = new_id("boot", length=32)
 
 # Grace period before the process re-execs, leaving uvicorn time to flush the
 # restart acknowledgement response and close the connection.
