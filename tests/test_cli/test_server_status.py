@@ -71,7 +71,6 @@ def test_status_down_daemon_errors_clearly(monkeypatch, runner: CliRunner) -> No
     "command",
     (
         ("server", "status"),
-        ("server", "info"),
         ("playbill", "host", "show", "inst_mismatch"),
     ),
 )
@@ -164,9 +163,17 @@ def test_status_reports_daemon_metadata(monkeypatch, runner: CliRunner) -> None:
     assert "Version: 0.2.0" in result.output
     assert "State root: /srv/state" in result.output
     assert "Instances: 3" in result.output
+    assert "Server required: no" in result.output
     assert "Auth enabled: yes" in result.output
     assert "Auth required: yes" in result.output
     assert "Provider lane: available" in result.output
+
+
+def test_server_info_is_merged_into_status(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["server", "info"])
+
+    assert result.exit_code == 2
+    assert "No such command 'info'" in result.output
 
 
 def test_status_json_includes_transport(monkeypatch, runner: CliRunner) -> None:

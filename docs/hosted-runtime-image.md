@@ -228,7 +228,7 @@ the same outcome: the daemon **refuses to start**, with error code
 its group and the distribution that advertises it, and nothing in the group is
 registered — not even the executors whose entry points loaded first. A bad
 advertisement is a startup failure to repair, not a Provider lane that comes up
-degraded. `server info` and `server status` report the registered backend ids on
+degraded. `server status` reports the registered backend ids on
 the Provider lane, so an operator can confirm what a started daemon discovered.
 
 **The trust boundary is installation, and nothing else.** Any distribution on

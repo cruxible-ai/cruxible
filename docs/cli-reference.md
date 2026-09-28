@@ -78,7 +78,6 @@ permission refusal names the tier it needs and what that tier allows.
 cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port PORT]
 cruxible server install-service [SERVER-START FLAGS] [--print] [--replace]
 cruxible server status
-cruxible server info
 cruxible server restart
 cruxible server stop [--timeout SECONDS] [--json]
 ~~~
@@ -151,8 +150,7 @@ reads that window's own resolution journal, and it reads it again whenever a
 settlement or overturn lands there. A retired or revised contract withdraws its
 windows. `CRUXIBLE_DISABLED_CONSUMERS=prediction` turns it off; list both names,
 comma-separated, to turn off both workers.
-`server status` and `server info`
-also render `Provider lane:` and, when degraded,
+`server status` also renders `Provider lane:` and, when degraded,
 `Provider lane reason:`. Provider-lane degradation never prevents the daemon's
 non-Provider surfaces from starting, so these lines are the operator's recovery
 signal rather than a daemon-startup failure. When transient process-table reads
@@ -285,7 +283,7 @@ local socket when the daemon must advertise ledger refs into that worktree.
 
 With auth on, `host create` is authorized by the daemon's runtime bootstrap
 secret, which is its unscoped operator credential. That authorization is
-repeatable, exactly as it is for `server info`, `server restart` and
+repeatable, exactly as it is for `server status`, `server restart` and
 `server stop`: a daemon hosting several instances allocates each of them with
 the same secret, and `credential claim-bootstrap` -- which stays one-shot --
 does not revoke it. An instance-scoped credential cannot allocate a host on the

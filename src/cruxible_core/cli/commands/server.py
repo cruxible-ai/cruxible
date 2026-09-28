@@ -6,7 +6,7 @@ This group holds both the daemon-launch verb and the client RPCs:
   it is the process that becomes the daemon. ``--host`` / ``--port`` /
   ``--state-root`` mirror ``CRUXIBLE_HOST`` / ``CRUXIBLE_PORT`` /
   ``CRUXIBLE_STATE_ROOT`` (env vars are honored as defaults).
-* ``status`` / ``info`` / ``restart`` are CLIENT RPCs that talk to an
+* ``status`` / ``restart`` / ``stop`` are CLIENT RPCs that talk to an
   already-running daemon. They require a transport (``--server-url`` /
   ``--server-socket``, or the ``CRUXIBLE_SERVER_URL`` / ``CRUXIBLE_SERVER_SOCKET``
   env vars, or a remembered CLI context) and fail with a clear message when no
@@ -54,7 +54,7 @@ from cruxible_core.server.state_lock import state_lock_holder_is_alive, state_lo
 # Poll cadence while waiting for the re-exec'd daemon to start answering again.
 _RESTART_POLL_INTERVAL_SECONDS = 0.25
 
-# Client RPCs (status/info/restart) need a reachable daemon; surface a single,
+# Client RPCs (status/restart/stop) need a reachable daemon; surface a single,
 # actionable line instead of a hang or an opaque transport traceback when the
 # daemon is down or no transport is configured.
 _DAEMON_REQUIRED_HINT = (
@@ -418,7 +418,7 @@ def server_install_service_cmd(
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
 def server_status_cmd(output_json: bool) -> None:
-    """Report a running daemon's version, state root, transport, and instances.
+    """Report a running daemon's version, state root, transport, auth, and instances.
 
     A CLIENT command: it queries an already-running daemon over the configured
     transport (`--server-url` / `--server-socket` or the matching env vars). If
@@ -452,35 +452,9 @@ def server_status_cmd(output_json: bool) -> None:
             f"Consumer {consumer.instance_id} {consumer.kind} {consumer.consumer_id}: "
             f"{consumer.state}"
         )
-    click.echo(f"Auth enabled: {'yes' if result.auth_enabled else 'no'}")
-    click.echo(f"Auth required: {'yes' if result.auth_required else 'no'}")
-    click.echo(f"Provider lane: {result.provider_lane.state}")
-    if result.provider_lane.code is not None:
-        click.echo(
-            f"Provider lane reason: {result.provider_lane.code}: {result.provider_lane.detail}"
-        )
-    elif result.provider_lane.detail is not None:
-        click.echo(f"Provider lane detail: {result.provider_lane.detail}")
-
-
-@server_group.command("info")
-@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
-@handle_errors
-def server_info_cmd(output_json: bool) -> None:
-    """Show live daemon metadata such as transport policy and state dir."""
-    client = _get_client()
-    if client is None:
-        raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
-    result = client.server_info()
-    if output_json:
-        _emit_json(result.model_dump(mode="python"))
-        return
-    click.echo(f"Version: {result.version}")
     click.echo(f"Server required: {'yes' if result.server_required else 'no'}")
     click.echo(f"Auth enabled: {'yes' if result.auth_enabled else 'no'}")
     click.echo(f"Auth required: {'yes' if result.auth_required else 'no'}")
-    click.echo(f"State root: {result.state_root}")
-    click.echo(f"Instances: {result.instance_count}")
     click.echo(f"Provider lane: {result.provider_lane.state}")
     if result.provider_lane.code is not None:
         click.echo(
