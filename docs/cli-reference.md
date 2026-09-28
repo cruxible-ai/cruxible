@@ -141,7 +141,10 @@ an explicit `--auth`/`--no-auth` disagreement is refused. Service files contain
 no bearer or bootstrap secret, and auth-on installation requires an active
 durable runtime credential first.
 
-`server status` lists the daemon's exact current compiler coordinate and each
+`server status` answers an instance-scoped credential with its own host and
+identity (`"scope": "instance"`) instead of refusing; the daemon-wide view below
+needs the bootstrap secret. `server status` lists the daemon's exact current
+compiler coordinate and each
 governed host as `uninitialized`, `writable`, `reseed_required`, or
 `decommissioned`, retaining a typed reason for malformed, retired or
 decommissioned state. Its `Instances` count is the number
@@ -316,7 +319,8 @@ different registration is a typed refusal and no config is written.
 holds one host per worktree, so moving a worktree to a second host needs the
 first one released; nothing governed changes, the host keeps its ledger and
 every read it has ever served, and it stops being the host of this directory.
-It requires the same local socket for the same reason attaching does. It refuses
+It requires the same local socket for the same reason attaching does. The
+instance's own ADMIN credential or the bootstrap secret may detach it. It refuses
 while the host still registers published blocks in that worktree, because
 detaching under them leaves a page carrying markers no host owns: depublish
 those blocks (`playbill block depublish`) or retire their backing Claims first.

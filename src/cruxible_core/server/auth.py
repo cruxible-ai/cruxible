@@ -30,6 +30,7 @@ from cruxible_core.server.route_paths import (
     HEALTH_PATH,
     PLAYBILL_HOST_CREATE_PATH,
     PLAYBILL_HOST_SHOW_PATH,
+    PLAYBILL_WORKSPACE_DETACH_PATH,
     RUNTIME_BOOTSTRAP_CLAIM_PATH,
     SERVER_INFO_PATH,
     SERVER_RESTART_PATH,
@@ -186,6 +187,7 @@ _SERVER_OPERATION_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", api_v1_path(SERVER_RESTART_PATH)),
     ("POST", api_v1_path(SERVER_STOP_PATH)),
     ("GET", _PLAYBILL_HOST_SHOW_ROUTE),
+    ("POST", api_v1_path(PLAYBILL_WORKSPACE_DETACH_PATH)),
 )
 
 

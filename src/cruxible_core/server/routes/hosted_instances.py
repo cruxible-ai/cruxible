@@ -8,7 +8,11 @@ from cruxible_client import contracts
 from cruxible_core.runtime import host_api
 from cruxible_core.server.config import resolve_server_settings
 from cruxible_core.server.request_models import PlaybillHostCreateRequest
-from cruxible_core.server.route_paths import PLAYBILL_HOST_CREATE_PATH, PLAYBILL_HOST_SHOW_PATH
+from cruxible_core.server.route_paths import (
+    PLAYBILL_HOST_CREATE_PATH,
+    PLAYBILL_HOST_SHOW_PATH,
+    PLAYBILL_WORKSPACE_DETACH_PATH,
+)
 from cruxible_core.server.routes import resolve_server_instance_id
 
 router = APIRouter(prefix="/api/v1", tags=["playbill-hosts"])
@@ -42,7 +46,7 @@ def create_playbill_host(
 
 
 @router.post(
-    "/{instance_id}/playbill/workspace-detach",
+    PLAYBILL_WORKSPACE_DETACH_PATH,
     response_model=contracts.PlaybillWorkspaceDetachResultV1,
 )
 def playbill_host_workspace_detach(

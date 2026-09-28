@@ -292,7 +292,10 @@ def playbill_host_workspace_detach(
     which is the state that has no repair from inside the workspace.
     """
 
-    require_unscoped_operator("cruxible_playbill_host_workspace_detach")
+    # Detaching acts on this one host's registration, so it is an instance act:
+    # the instance's own ADMIN may take it, and the scope check below refuses a
+    # credential scoped to any other instance. The unscoped operator (bootstrap
+    # secret) may too, as it may for every host.
     check_permission("cruxible_playbill_host_workspace_detach", instance_id=instance_id)
     if not workspace_attachment_authorized:
         raise ConfigError(

@@ -283,3 +283,61 @@ def test_status_against_ephemeral_daemon_reports_live_fields(
     assert payload["version"] == __version__
     assert payload["instance_count"] == 0
     assert payload["transport"] == "http://cruxible-daemon"
+
+
+def test_status_answers_an_instance_scoped_token_with_its_own_host(
+    monkeypatch, runner: CliRunner
+) -> None:
+    """A pure read must not send an instance admin hunting for the bootstrap secret."""
+    from cruxible_client.errors import DaemonOperationScopeError
+
+    coordinate = contracts.PlaybillAcceptedCoordinate(
+        git_oid="1" * 40,
+        semantic_root="sha256:" + "2" * 64,
+        generation_root="sha256:" + "3" * 64,
+        compiler_digest="sha256:" + "4" * 64,
+    )
+
+    class ScopedClient:
+        def server_info(self) -> contracts.ServerInfoResult:
+            raise DaemonOperationScopeError("cruxible_server_info", "inst_scoped")
+
+        def version(self) -> str:
+            return "0.5.1"
+
+        def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspectionV1:
+            assert instance_id == "inst_scoped"
+            return contracts.PlaybillHostInspectionV1(
+                instance_id=instance_id,
+                managed_root=None,
+                workspace_root=None,
+                compatibility="writable",
+                writable=True,
+            )
+
+        def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
+            assert instance_id == "inst_scoped"
+            return contracts.PlaybillWhoAmI(
+                actor_id="agent",
+                credential_label="agent",
+                actor_id_source="runtime_credential_label",
+                credential_permission_mode="admin",
+                principal_registration_status="active",
+                active_principal_ids=["agent"],
+                coordinate=coordinate,
+            )
+
+    _patch_client(monkeypatch, ScopedClient())
+    text = runner.invoke(cli, ["--server-url", "http://server", "server", "status"])
+    assert text.exit_code == 0, text.output
+    assert "Scope: instance inst_scoped" in text.output
+    assert "Host inst_scoped: writable" in text.output
+    assert "Actor: agent (admin, principal active)" in text.output
+
+    as_json = runner.invoke(cli, ["--server-url", "http://server", "server", "status", "--json"])
+    assert as_json.exit_code == 0, as_json.output
+    payload = json.loads(as_json.output)
+    assert payload["scope"] == "instance"
+    assert payload["instance_id"] == "inst_scoped"
+    assert payload["host"]["compatibility"] == "writable"
+    assert payload["identity"]["actor_id"] == "agent"

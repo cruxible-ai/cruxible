@@ -24,6 +24,7 @@ from typing import Literal, cast
 import click
 
 from cruxible_client import CruxibleClient
+from cruxible_client.errors import CoreError, DaemonOperationScopeError
 from cruxible_core.cli.commands._common import (
     SERVER_MODE_REQUIRED_MESSAGE,
     _emit_json,
@@ -422,6 +423,46 @@ def server_install_service_cmd(
     )
 
 
+def _echo_instance_scoped_status(
+    client: CruxibleClient, instance_id: str, transport: str, output_json: bool
+) -> None:
+    version = client.version()
+    host = client.show_playbill_host(instance_id)
+    try:
+        identity = client.playbill_whoami(instance_id)
+    except CoreError:  # an uninitialized host has no identity to read yet
+        identity = None
+    if output_json:
+        _emit_json(
+            {
+                "scope": "instance",
+                "instance_id": instance_id,
+                "version": version,
+                "transport": transport,
+                "host": host.model_dump(mode="python"),
+                "identity": None if identity is None else identity.model_dump(mode="python"),
+            }
+        )
+        return
+    click.echo(f"Daemon: reachable ({transport})")
+    click.echo(f"Version: {version}")
+    click.echo(
+        f"Scope: instance {instance_id} (the credential is instance-scoped; daemon-wide "
+        "status needs the bootstrap secret or a daemon-scope token)"
+    )
+    click.echo(
+        f"Host {host.instance_id}: {host.compatibility} "
+        f"({host.compiler_revision or '-'}, {host.compiler_coordinate or '-'})"
+    )
+    if host.reason is not None:
+        click.echo(f"  Reason: {host.reason.code}: {host.reason.detail}")
+    if identity is not None:
+        click.echo(
+            f"Actor: {identity.actor_id} ({identity.credential_permission_mode}, "
+            f"principal {identity.principal_registration_status})"
+        )
+
+
 @server_group.command("status")
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
@@ -435,10 +476,17 @@ def server_status_cmd(output_json: bool) -> None:
     client = _get_client()
     if client is None:
         raise click.UsageError(f"{SERVER_MODE_REQUIRED_MESSAGE} {_DAEMON_REQUIRED_HINT}")
-    result = client.server_info()
     transport = _client_transport_label()
+    try:
+        result = client.server_info()
+    except DaemonOperationScopeError as exc:
+        # An instance-scoped credential cannot read daemon-wide state, but it
+        # can read its own host and identity; answer with exactly that.
+        _echo_instance_scoped_status(client, exc.credential_scope, transport, output_json)
+        return
     if output_json:
         payload = result.model_dump(mode="python")
+        payload["scope"] = "daemon"
         payload["transport"] = transport
         _emit_json(payload)
         return

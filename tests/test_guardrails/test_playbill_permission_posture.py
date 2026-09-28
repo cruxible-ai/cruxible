@@ -56,7 +56,9 @@ def test_runtime_bootstrap_secret_repeatably_authorizes_every_daemon_wide_action
     assert "bootstrap_secret_claimed" not in operator_branch
 
 
-def test_repeatable_bootstrap_server_operations_are_info_host_show_restart_and_stop() -> None:
+def test_repeatable_bootstrap_server_operations_are_info_host_show_detach_restart_and_stop() -> (
+    None
+):
     """Pin the exact daemon-operation route set an unscoped operator may repeat.
 
     PC-DF4 added the pre-init host-show route to the set without moving the
@@ -64,12 +66,14 @@ def test_repeatable_bootstrap_server_operations_are_info_host_show_restart_and_s
     ops hotfix 1 added the stop route and moved the name with it. Host creation
     is authorized alongside this set through its own route predicate rather than
     by joining it, because it is the one daemon-wide action that carries a body
-    and a route of its own shape.
+    and a route of its own shape. Workspace detach joined so the operator who
+    attached a worktree at host creation can release it on an auth-on daemon.
     """
 
     assert set(auth_module._SERVER_OPERATION_ROUTES) == {
         ("GET", "/api/v1/server/info"),
         ("GET", "/api/v1/{instance_id}/playbill/host"),
+        ("POST", "/api/v1/{instance_id}/playbill/workspace-detach"),
         ("POST", "/api/v1/server/restart"),
         ("POST", "/api/v1/server/stop"),
     }
