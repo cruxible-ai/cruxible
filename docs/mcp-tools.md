@@ -252,6 +252,8 @@ Claims. It does not create a second authority plane beside accepted state.
 Lists that can outgrow one answer are paged. `proposal_list`,
 `policies_in_force` and `curation_list` take `limit` and `cursor`; a cut page
 carries top-level `truncated: true` and a `next_cursor` to pass back as `cursor`.
+A cursor whose listing changed since its first page is refused as
+`playbill.list.cursor_stale`; list again without it.
 `search` pages the same way with its structured cursor. `discover` has no
 cursor; its top-level `truncated` says a budget clipped the hits.
 

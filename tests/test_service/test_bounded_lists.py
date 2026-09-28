@@ -19,9 +19,14 @@ from cruxible_core.service.discovery.curation import (
 )
 from cruxible_core.service.list_pages import (
     PlaybillListCursorMismatch,
+    PlaybillListCursorStale,
     encode_list_cursor,
+    list_snapshot,
 )
-from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
+from cruxible_core.service.proposals.proposals import (
+    service_list_playbill_proposals,
+    service_withdraw_playbill_proposal,
+)
 from tests.core_support._claim_authoring_support import service_propose_playbill_claim
 from tests.core_support._knowledge_loop_support import TIMESTAMP, activate, authoring, seed_claims
 
@@ -70,6 +75,34 @@ def test_a_proposal_cursor_is_bound_to_its_selection(tmp_path: Path) -> None:
         service_list_playbill_proposals(instance, status="open", limit=1, cursor=first.next_cursor)
     with pytest.raises(PlaybillListCursorMismatch, match="not a list cursor"):
         service_list_playbill_proposals(instance, limit=1, cursor="not-a-cursor")
+
+
+def test_withdrawing_an_unseen_proposal_between_pages_makes_the_cursor_stale(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    _propose(instance, "open-a", "wi-50")
+    _propose(instance, "open-b", "wi-51")
+    first = service_list_playbill_proposals(instance, status="open", limit=1)
+    assert first.next_cursor is not None
+    seen = {entry.proposal_id for entry in first.entries}
+    unseen = next(
+        entry.proposal_id
+        for entry in service_list_playbill_proposals(instance, status="open").entries
+        if entry.proposal_id not in seen
+    )
+
+    service_withdraw_playbill_proposal(
+        instance,
+        proposal_id=unseen,
+        actor_id="owner",
+        reason="superseded",
+        withdrawn_at=TIMESTAMP,
+    )
+
+    with pytest.raises(PlaybillListCursorStale, match="listing changed") as caught:
+        service_list_playbill_proposals(instance, status="open", limit=1, cursor=first.next_cursor)
+    assert caught.value.error_code == "playbill.list.cursor_stale"
 
 
 def test_policy_pages_walk_the_whole_inventory(tmp_path: Path) -> None:
@@ -141,6 +174,7 @@ def test_a_curation_cursor_refuses_once_accepted_state_moves(tmp_path: Path) -> 
         list_name="curation",
         coordinate=first.coordinate.model_dump(mode="json"),
         selection={"access_profile": profile.model_dump(mode="json")},
+        snapshot=list_snapshot([]),
         last_key=("a.kind", "Subject:x/1", "sha256:1"),
     )
     continued = service_list_playbill_curation(

@@ -1805,7 +1805,9 @@ permission mode, accepted principal-registration status, and current coordinate.
 separates current open candidates from accepted, refused, and stale terminal
 evidence so retries do not depend on remembered IDs. It returns one page
 (default 50, at most 500); a cut page has `truncated: true` and a `next_cursor`
-for `--cursor`, which keeps reading the first page's accepted coordinate. Proposal actions accept a
+for `--cursor`, which keeps reading the first page's accepted coordinate. A
+proposal admitted or withdrawn between pages changes the listing, and the
+cursor is then refused as `playbill.list.cursor_stale`: list again without it. Proposal actions accept a
 full digest, a unique digest prefix, or a target ref whose current Git target
 names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.

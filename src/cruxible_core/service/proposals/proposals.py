@@ -35,6 +35,7 @@ from cruxible_core.service.authoring.documents import (
 from cruxible_core.service.list_pages import (
     decode_list_cursor,
     encode_list_cursor,
+    list_snapshot,
     page_after_boundary,
 )
 
@@ -164,10 +165,15 @@ def service_list_playbill_proposals(
         for entry in _proposal_entries(instance, coordinate)
         if status is None or status == entry.status
     )
+    # The inventory is operational evidence, not only accepted state: a
+    # withdrawal or admission between pages changes the listing, so the cursor
+    # pins a digest of every entry and a changed listing is refused as stale.
+    snapshot = list_snapshot([entry.model_dump(mode="json") for entry in entries])
     page, truncated = page_after_boundary(
         entries,
         keys=tuple((entry.proposal_id,) for entry in entries),
-        after=None if continuation is None else continuation.last_key,
+        snapshot=snapshot,
+        continuation=continuation,
         limit=len(entries) if limit is None else limit,
         list_name=_PROPOSAL_LIST,
     )
@@ -181,6 +187,7 @@ def service_list_playbill_proposals(
                 list_name=_PROPOSAL_LIST,
                 coordinate=coordinate.model_dump(mode="json"),
                 selection=selection,
+                snapshot=snapshot,
                 last_key=(page[-1].proposal_id,),
             )
             if truncated and page

@@ -41,6 +41,7 @@ from cruxible_core.service.list_pages import (
     PlaybillListCursorMismatch,
     decode_list_cursor,
     encode_list_cursor,
+    list_snapshot,
     page_after_boundary,
 )
 
@@ -328,10 +329,12 @@ def list_playbill_policies_in_force(
     keys = tuple(
         (item.declaring_artifact_identity, item.field_path, item.policy_kind) for item in rows
     )
+    snapshot = list_snapshot([list(key) for key in keys])
     page, truncated = page_after_boundary(
         rows,
         keys=keys,
-        after=None if continuation is None else continuation.last_key,
+        snapshot=snapshot,
+        continuation=continuation,
         limit=len(rows) if limit is None else limit,
         list_name=_POLICY_LIST,
     )
@@ -350,6 +353,7 @@ def list_playbill_policies_in_force(
                 list_name=_POLICY_LIST,
                 coordinate=served.model_dump(mode="json"),
                 selection={},
+                snapshot=snapshot,
                 last_key=(
                     page[-1].declaring_artifact_identity,
                     page[-1].field_path,

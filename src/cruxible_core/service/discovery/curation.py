@@ -55,6 +55,7 @@ from cruxible_core.service.list_pages import (
     PlaybillListCursorMismatch,
     decode_list_cursor,
     encode_list_cursor,
+    list_snapshot,
 )
 
 BLOCK_OBSERVATION_ID_DOMAIN = "playbill-block-observation-v1"
@@ -789,6 +790,7 @@ def service_list_playbill_curation(
             list_name=_CURATION_LIST,
             coordinate=coordinate.model_dump(mode="json"),
             selection=selection,
+            snapshot=list_snapshot([item.item_id for item in items]),
             last_key=(page[-1].pattern_kind, page[-1].subject.qualified, page[-1].item_id),
         )
         if truncated and page
