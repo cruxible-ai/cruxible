@@ -123,20 +123,6 @@ def register_tools(
         return handlers.handle_playbill_kit_remove(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_playbill_host_create(
-        instance_id: str | None = None,
-    ) -> contracts.PlaybillHostResult:
-        """Allocate an empty daemon host before Playbill bootstrap."""
-        return handlers.handle_playbill_host_create(instance_id)
-
-    @_tool
-    def cruxible_playbill_host_workspace_detach(
-        instance_id: InstanceId = None,
-    ) -> contracts.PlaybillWorkspaceDetachResultV1:
-        """Release one daemon host from the Git worktree it registers."""
-        return handlers.handle_playbill_host_workspace_detach(require_instance_id(instance_id))
-
-    @_tool
     def cruxible_playbill_init(
         instance_id: InstanceId = None,
         *,
@@ -155,15 +141,6 @@ def register_tools(
             operating_profile,
             require_independent_approval,
             git_object_format=git_object_format,
-        )
-
-    @_tool
-    def cruxible_playbill_instance_decommission(
-        instance_id: InstanceId = None, *, reason: str
-    ) -> contracts.PlaybillInstanceDecommissionResultV1:
-        """End one instance's governed writes; reads keep serving and nothing is deleted."""
-        return handlers.handle_playbill_instance_decommission(
-            require_instance_id(instance_id), reason
         )
 
     @_tool

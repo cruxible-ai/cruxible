@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-28:small-cut-seed-plan",
-    "surface_digest": "sha256:c0175fbcc0d04e5fa77ef43b095d87c46865d077cf657d0a5bc9c9f9778869cb"
+    "register_entry": "2026-09-28:small-operator-tools-leave-mcp",
+    "surface_digest": "sha256:33a5c1db9e3c6e3b7692c86f23e589ab05cb52b4f147dfaa959889579f6bb16b"
   },
   "surface": {
     "cli_leaves": [
@@ -2256,7 +2256,6 @@
       "playbill_init",
       "playbill_inspect_proposal",
       "playbill_inspect_refusal",
-      "playbill_instance_decommission",
       "playbill_kit_add",
       "playbill_kit_build",
       "playbill_kit_remove",
@@ -2711,26 +2710,6 @@
         "permission": "READ_ONLY"
       },
       {
-        "delegate": "cruxible_core.mcp.handlers.handle_playbill_host_create",
-        "facade_operations": [
-          "create_playbill_host"
-        ],
-        "input_schema_digest": "sha256:c3f11ea178cce173c5ccfbd24762ab3627e3c41179dc2ee58e5b5a0220b84fe1",
-        "name": "cruxible_playbill_host_create",
-        "output_schema_digest": "sha256:df9e2165f44f13985f004b00b2e805905b4c226fd15d9cfa0eb6fe3257172b6d",
-        "permission": "ADMIN"
-      },
-      {
-        "delegate": "cruxible_core.mcp.handlers.handle_playbill_host_workspace_detach",
-        "facade_operations": [
-          "playbill_host_workspace_detach"
-        ],
-        "input_schema_digest": "sha256:a3e47776d1ccb2dcf5fbb053f3236815a5113f05cb0f5683a18c8aea60f6b687",
-        "name": "cruxible_playbill_host_workspace_detach",
-        "output_schema_digest": "sha256:6045ff5afdfe3eb926042a675bab26b8ee33b41bca54228c93336b026b93eaf1",
-        "permission": "ADMIN"
-      },
-      {
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_init",
         "facade_operations": [
           "playbill_init"
@@ -2759,16 +2738,6 @@
         "name": "cruxible_playbill_inspect_refusal",
         "output_schema_digest": "sha256:5bb8bd9cec33f63873198c84120cbaacde49deda4d93f2192f091445a23a3054",
         "permission": "READ_ONLY"
-      },
-      {
-        "delegate": "cruxible_core.mcp.handlers.handle_playbill_instance_decommission",
-        "facade_operations": [
-          "playbill_instance_decommission"
-        ],
-        "input_schema_digest": "sha256:188c648781ed39abe0997f1c9c5472ba8f63fa865ec0f07c77ee1bc45f1ac94b",
-        "name": "cruxible_playbill_instance_decommission",
-        "output_schema_digest": "sha256:519c9b57ae41752d90d72ebf71faab8c169f272eb4d3d96bcbc2ce87a3b14063",
-        "permission": "ADMIN"
       },
       {
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_kit_add",

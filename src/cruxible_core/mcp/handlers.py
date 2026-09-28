@@ -111,7 +111,6 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillCurationSuppressRequest,
     PlaybillInitRequest,
     PlaybillInsertionAbandonRequest,
-    PlaybillInstanceDecommissionRequest,
     PlaybillProposalReadmitRequest,
     PlaybillProposalWithdrawRequest,
     PlaybillProposeClaimTypeInputRequest,
@@ -120,7 +119,6 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillSourceProposeRequest,
     PlaybillStoreBodyRequest,
 )
-from cruxible_core.server.request_models import PlaybillHostCreateRequest
 from cruxible_core.service.discovery.since import validate_playbill_since_request
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequestV1,
@@ -348,10 +346,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_curation_suppress": TypeAdapter(PlaybillCurationSuppressRequest),
     "cruxible_playbill_dereference": None,  # path and query only
     "cruxible_playbill_read_capture": TypeAdapter(CaptureReadRequestV1),
-    "cruxible_playbill_host_create": TypeAdapter(PlaybillHostCreateRequest),
-    "cruxible_playbill_host_workspace_detach": None,  # path only
     "cruxible_playbill_init": TypeAdapter(PlaybillInitRequest),
-    "cruxible_playbill_instance_decommission": TypeAdapter(PlaybillInstanceDecommissionRequest),
     "cruxible_playbill_predict": TypeAdapter(contracts.PlaybillPredictRequestV2),
     "cruxible_playbill_procedure_bind": TypeAdapter(ProcedureBindRequestV1),
     "cruxible_playbill_proposal_readmit": TypeAdapter(PlaybillProposalReadmitRequest),
@@ -461,25 +456,6 @@ def handle_server_info() -> McpServerInfoResult:
     )
 
 
-def handle_playbill_host_create(instance_id: str | None) -> contracts.PlaybillHostResult:
-    return _dispatch_remote_or_local(
-        lambda client: client.create_playbill_host(instance_id=instance_id),
-        lambda: host_api.create_playbill_host(instance_id=instance_id),
-        operation_name="cruxible_playbill_host_create",
-        local_payload={"instance_id": instance_id},
-    )
-
-
-def handle_playbill_host_workspace_detach(
-    instance_id: str,
-) -> contracts.PlaybillWorkspaceDetachResultV1:
-    return _dispatch_remote_or_local(
-        lambda client: client.playbill_host_workspace_detach(instance_id),
-        lambda: host_api.playbill_host_workspace_detach(instance_id),
-        operation_name="cruxible_playbill_host_workspace_detach",
-    )
-
-
 def handle_playbill_init(
     instance_id: str,
     principals: list[dict[str, Any]],
@@ -511,17 +487,6 @@ def handle_playbill_init(
             "require_independent_approval": require_independent_approval,
             "git_object_format": git_object_format,
         },
-    )
-
-
-def handle_playbill_instance_decommission(
-    instance_id: str, reason: str
-) -> contracts.PlaybillInstanceDecommissionResultV1:
-    return _dispatch_remote_or_local(
-        lambda client: client.decommission_playbill_instance(instance_id, reason=reason),
-        lambda: playbill_api.playbill_instance_decommission(instance_id, reason=reason),
-        operation_name="cruxible_playbill_instance_decommission",
-        local_payload={"reason": reason},
     )
 
 

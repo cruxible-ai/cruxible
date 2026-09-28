@@ -84,14 +84,15 @@ that starts reaching one more verb moves the pin.
 
 ## Host and initialization
 
+Allocating a host (`cruxible playbill host create`), releasing its worktree
+(`cruxible playbill workspace detach`) and decommissioning an instance
+(`cruxible playbill instance decommission`) are operator acts with no MCP tool.
+
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_host_create` | Allocate an empty daemon-owned host | `ADMIN` |
-| `cruxible_playbill_host_workspace_detach` | Release one host from the Git worktree it registers | `ADMIN` |
 | `cruxible_playbill_init` | Bootstrap a host with public principal records | `ADMIN` |
 | `cruxible_playbill_provider_catalog` | List provider packages from the configured daemon repository | `READ_ONLY` |
 | `cruxible_playbill_provider_install` | Install exact package bytes and propose its definitions, without execution grants | `ADMIN` |
-| `cruxible_playbill_instance_decommission` | End one instance's governed writes; reads keep serving and nothing is deleted | `ADMIN` |
 
 ## Kits
 

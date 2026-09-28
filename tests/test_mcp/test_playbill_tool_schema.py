@@ -82,9 +82,7 @@ def test_every_instance_id_is_optional_and_names_its_default() -> None:
             continue
         if "instance_id" in tool.inputSchema.get("required", ()):
             offenders.append(f"{name}: required")
-        elif name != "cruxible_playbill_host_create" and "CRUXIBLE_INSTANCE_ID" not in (
-            properties["instance_id"].get("description", "")
-        ):
+        elif "CRUXIBLE_INSTANCE_ID" not in (properties["instance_id"].get("description", "")):
             offenders.append(f"{name}: undocumented default")
     assert offenders == []
 

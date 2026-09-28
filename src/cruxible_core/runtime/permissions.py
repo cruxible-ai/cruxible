@@ -165,15 +165,15 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_submit_approval": PermissionMode.GRAPH_WRITE,
     "cruxible_playbill_activate": PermissionMode.GRAPH_WRITE,
     "cruxible_playbill_compiler_upgrade": PermissionMode.ADMIN,
-    "cruxible_playbill_host_create": PermissionMode.ADMIN,
-    "cruxible_playbill_host_workspace_detach": PermissionMode.ADMIN,
     "cruxible_playbill_init": PermissionMode.ADMIN,
     "cruxible_playbill_propose_principal_change": PermissionMode.ADMIN,
-    "cruxible_playbill_instance_decommission": PermissionMode.ADMIN,
 }
 
 # HTTP/CLI operations that share the same runtime boundary without being MCP tools.
 RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
+    "cruxible_playbill_host_create": PermissionMode.ADMIN,
+    "cruxible_playbill_host_workspace_detach": PermissionMode.ADMIN,
+    "cruxible_playbill_instance_decommission": PermissionMode.ADMIN,
     "cruxible_playbill_claim_attestation_recover": PermissionMode.ADMIN,
     "cruxible_playbill_host_workspace_registration": PermissionMode.READ_ONLY,
     "cruxible_playbill_host_show": PermissionMode.READ_ONLY,

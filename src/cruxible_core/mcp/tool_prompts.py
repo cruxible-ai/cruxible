@@ -32,16 +32,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need adapter and daemon versions with state, auth, and host metadata; "
         "an instance-scoped credential gets its own instance's host and identity."
     ),
-    "cruxible_playbill_host_create": (
-        "Use when you need an empty daemon-owned host before Playbill bootstrap; "
-        "this adopts no config or semantic state."
-    ),
     "cruxible_playbill_init": (
         "Use when you need to bootstrap Playbill from client-generated public keys."
-    ),
-    "cruxible_playbill_instance_decommission": (
-        "Use when an instance must stop accepting governed writes for good; reads keep "
-        "serving, nothing is deleted, and the state cannot be reversed."
     ),
     "cruxible_playbill_store_body": (
         "Use when you need to store exact Document bytes inertly before proposing them."
@@ -203,10 +195,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_authoring_abandon_insertion": (
         "Use to release a publication expectation an instance already holds; nothing mints "
         "a new one."
-    ),
-    "cruxible_playbill_host_workspace_detach": (
-        "Use when a Git worktree is moving from one governed host to another, so the host "
-        "it is registered against releases it first."
     ),
     "cruxible_playbill_block_depublish": (
         "Use when a published page block is being taken down for good, so the registration "
