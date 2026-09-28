@@ -261,7 +261,6 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         error_code=error_code if isinstance(error_code, str) else None,
         errors=errors,
         context=context,
-        mutation_receipt_id=exc.mutation_receipt_id,
         repair=None if isinstance(exc, BuildCapacityError) else _repair_for_error(exc),
     )
     return _status_for_error(exc), body

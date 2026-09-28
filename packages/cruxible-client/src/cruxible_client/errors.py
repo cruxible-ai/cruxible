@@ -27,22 +27,20 @@ class ConfigError(CoreError):
         self,
         message: str,
         errors: list[str] | None = None,
-        *,
-        mutation_receipt_id: str | None = None,
     ) -> None:
         self.summary = message
         self.errors = errors or []
-        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
+        super().__init__(message)
 
     def __str__(self) -> str:
         if not self.errors:
-            return self.summary + self._receipt_suffix()
+            return self.summary
         shown = self.errors[:_MAX_DISPLAY_ERRORS]
         detail = "; ".join(shown)
         suffix = ""
         if len(self.errors) > _MAX_DISPLAY_ERRORS:
             suffix = f" ... and {len(self.errors) - _MAX_DISPLAY_ERRORS} more error(s)"
-        return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
+        return f"{self.summary}: {detail}{suffix}"
 
 
 class DataValidationError(CoreError):
@@ -50,22 +48,20 @@ class DataValidationError(CoreError):
         self,
         message: str,
         errors: list[str] | None = None,
-        *,
-        mutation_receipt_id: str | None = None,
     ) -> None:
         self.summary = message
         self.errors = errors or []
-        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
+        super().__init__(message)
 
     def __str__(self) -> str:
         if not self.errors:
-            return self.summary + self._receipt_suffix()
+            return self.summary
         shown = self.errors[:_MAX_DISPLAY_ERRORS]
         detail = "; ".join(shown)
         suffix = ""
         if len(self.errors) > _MAX_DISPLAY_ERRORS:
             suffix = f" ... and {len(self.errors) - _MAX_DISPLAY_ERRORS} more error(s)"
-        return f"{self.summary}: {detail}{suffix}" + self._receipt_suffix()
+        return f"{self.summary}: {detail}{suffix}"
 
 
 class CustomerCodeExecutionUnsupportedError(CoreError):
@@ -166,7 +162,6 @@ class ErrorResponse(BaseModel):
     error_code: str | None = None
     errors: list[str] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
-    mutation_receipt_id: str | None = None
     # The daemon always fills this in (server.errors.error_to_response). It stays
     # optional on the parsing side so a client never invents a repair the server
     # did not send: a null repair is the truthful reading of an envelope that
@@ -242,6 +237,4 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
     if body.error_code is not None:
         setattr(exc, "error_code", body.error_code)
     setattr(exc, "repair", body.repair)
-
-    exc.mutation_receipt_id = body.mutation_receipt_id
     return exc

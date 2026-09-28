@@ -95,7 +95,6 @@ def test_http_since_refuses_oversized_limits(
         "error_code": "playbill.since.request_invalid",
         "errors": ["body.max_rows: Input should be less than or equal to 1000"],
         "context": {"field_path": "$.max_rows"},
-        "mutation_receipt_id": None,
         "repair": {
             "hand_edit": {
                 "target": "refusal/playbill.since.request_invalid",

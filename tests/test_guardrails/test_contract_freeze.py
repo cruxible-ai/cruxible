@@ -21,7 +21,6 @@ ERROR_ENVELOPE_FIELDS = {
     "message",
     "errors",
     "context",
-    "mutation_receipt_id",
     # P2-B5 U4: the structured repair carrier replaces prose repair strings.
     "repair",
 }

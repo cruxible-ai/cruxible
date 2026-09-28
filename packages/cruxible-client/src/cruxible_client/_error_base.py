@@ -6,18 +6,6 @@ from __future__ import annotations
 class CoreError(Exception):
     """Base exception for all local and reconstructed Cruxible errors."""
 
-    def __init__(self, message: str, *, mutation_receipt_id: str | None = None) -> None:
-        self.mutation_receipt_id = mutation_receipt_id
-        super().__init__(message)
-
-    def _receipt_suffix(self) -> str:
-        if self.mutation_receipt_id:
-            return f" (receipt: {self.mutation_receipt_id})"
-        return ""
-
-    def __str__(self) -> str:
-        return super().__str__() + self._receipt_suffix()
-
 
 def printable(value: str) -> str:
     """Render caller-supplied prose so it cannot forge a line of daemon output.

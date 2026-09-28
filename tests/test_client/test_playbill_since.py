@@ -113,7 +113,6 @@ def test_client_reconstructs_the_typed_http_refusal() -> None:
                 "error_code": "playbill.since.request_invalid",
                 "errors": [],
                 "context": {"field_path": "$.cursor"},
-                "mutation_receipt_id": None,
             },
         )
 

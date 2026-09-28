@@ -43,18 +43,16 @@ class ConfigError(CoreError):
         self,
         message: str,
         errors: list[str] | None = None,
-        *,
-        mutation_receipt_id: str | None = None,
     ):
         self.summary = message
         self.errors = errors or []
-        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
+        super().__init__(message)
 
     def __str__(self) -> str:
         if not self.errors:
-            return self.summary + self._receipt_suffix()
+            return self.summary
         detail = _format_capped_errors(self.errors)
-        return f"{self.summary}: {detail}" + self._receipt_suffix()
+        return f"{self.summary}: {detail}"
 
 
 class DataValidationError(CoreError):
@@ -68,18 +66,16 @@ class DataValidationError(CoreError):
         self,
         message: str,
         errors: list[str] | None = None,
-        *,
-        mutation_receipt_id: str | None = None,
     ):
         self.summary = message
         self.errors = errors or []
-        super().__init__(message, mutation_receipt_id=mutation_receipt_id)
+        super().__init__(message)
 
     def __str__(self) -> str:
         if not self.errors:
-            return self.summary + self._receipt_suffix()
+            return self.summary
         detail = _format_capped_errors(self.errors)
-        return f"{self.summary}: {detail}" + self._receipt_suffix()
+        return f"{self.summary}: {detail}"
 
 
 class CustomerCodeExecutionUnsupportedError(CoreError):

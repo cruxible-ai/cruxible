@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from cruxible_core.errors import (
     ConfigError,
-    CoreError,
     DataValidationError,
 )
 
@@ -80,32 +79,3 @@ class TestErrorMessageCapping:
         for i in range(10):
             assert f"e{i}" in msg
         assert "more error(s)" not in msg
-
-
-class TestMutationReceiptId:
-    def test_core_error_with_receipt_id(self):
-        exc = CoreError("msg", mutation_receipt_id="RCP-xxx")
-        assert exc.mutation_receipt_id == "RCP-xxx"
-        assert "(receipt: RCP-xxx)" in str(exc)
-
-    def test_core_error_without_receipt_id(self):
-        exc = CoreError("msg")
-        assert exc.mutation_receipt_id is None
-        assert "(receipt:" not in str(exc)
-
-    def test_config_error_with_receipt_id(self):
-        exc = ConfigError("msg", ["err1"], mutation_receipt_id="RCP-xxx")
-        assert "(receipt: RCP-xxx)" in str(exc)
-
-    def test_config_error_no_errors_with_receipt_id(self):
-        exc = ConfigError("msg", mutation_receipt_id="RCP-xxx")
-        assert str(exc) == "msg (receipt: RCP-xxx)"
-
-    def test_data_validation_error_with_receipt_id(self):
-        exc = DataValidationError("msg", ["err1"], mutation_receipt_id="RCP-xxx")
-        assert "(receipt: RCP-xxx)" in str(exc)
-
-    def test_post_construction_mutation(self):
-        exc = CoreError("msg")
-        exc.mutation_receipt_id = "RCP-zzz"
-        assert "(receipt: RCP-zzz)" in str(exc)
