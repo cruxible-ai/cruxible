@@ -38,20 +38,21 @@ Playbill is deterministic, governed state with no LLM inside. Agents propose;
 accepted laws, principals, attestations, and compare-and-set settlement decide
 what becomes canonical.
 
-Every instance tool's instance_id defaults to the server's CRUXIBLE_INSTANCE_ID;
-cruxible_playbill_whoami names the instance and who you are there.
+Every instance tool's instance_id defaults to the server's CRUXIBLE_INSTANCE_ID.
+Start with cruxible_playbill_whoami: it names the instance and who you are there,
+then cruxible_playbill_next for what needs attention.
 
-Start by allocating a host with cruxible_playbill_host_create, bootstrap public
-principals with cruxible_playbill_init, then use authoring_compile followed by
-authoring_submit for ergonomic Claim or Procedure writes. The returned status
-names every remaining approval and activation step. Body storage is inert. A
-proposal is not accepted state, an approval is not activation, and diagnostics
-never carry authority.
+Read cheapest first: cruxible_playbill_claim_values for a status table of one
+Subject kind, list_claims and get_claim for Claims, search and expand to find
+things by name. Write with authoring_create or authoring_compile, then
+authoring_submit; authoring_example prints payload shapes. The returned status
+names every remaining approval and activation step. A proposal is not accepted
+state, an approval is not activation, and diagnostics never carry authority.
 
-The daemon retains four temporary transport tiers while the destructive pivot
-is in progress: READ_ONLY, GOVERNED_WRITE, GRAPH_WRITE, and ADMIN. These only
-control endpoint reachability; Playbill principals and acceptance laws control
-semantic authority.
+Setting up a host and its first principals is operator work on the cruxible CLI
+(server start, playbill host create, playbill init), not part of this tool set.
+Transport tiers control which tools are reachable; Playbill principals and
+acceptance laws control semantic authority.
 """
 
 
