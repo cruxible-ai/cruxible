@@ -274,10 +274,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_line_arm": (
         "Arm a Line so the daemon admits what it matches from now on, under your credential "
         "and the Line version current now. Never catches up: earlier pending work and daemon "
-        "downtime need evaluate and dispatch."
+        "downtime need evaluate and dispatch. Repeating it unchanged returns already_armed."
     ),
     "cruxible_playbill_line_disarm": (
-        "Stop a Line admitting work on its own. Runs already admitted keep going."
+        "Stop a Line admitting work on its own. Runs already admitted keep going. "
+        "A Line already stopped returns already_disarmed."
     ),
     "cruxible_playbill_line_arm_status": (
         "Read whether a Line is armed, its pending work, and why an arm stopped "

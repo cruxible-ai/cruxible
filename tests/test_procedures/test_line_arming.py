@@ -825,7 +825,6 @@ def test_a_retried_lapsed_tick_never_blocks_the_arms_own_ticks(tmp_path):
 def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tmp_path):
     from cruxible_core.service.procedures.procedure_runs import (
         LineNeverArmed,
-        LineNotArmed,
         LineRunNotAccepted,
     )
 
@@ -841,20 +840,48 @@ def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tm
     with pytest.raises(LineNeverArmed):
         service_disarm_line(instance, name, actor=_actor(instance), now=READ_TIME)
 
-    start = READ_TIME + timedelta(seconds=10)
-    service_arm_line(
-        instance, name, principal=LOCAL, actor=_actor(instance), now=start, daemon_id="daemon"
-    )
-    service_disarm_line(instance, name, actor=_actor(instance), now=start)
-    with pytest.raises(LineNotArmed) as again:
-        service_disarm_line(instance, name, actor=_actor(instance), now=start)
-    assert again.value.error_code == "playbill.line.not_armed"
-    assert repr(name) in str(again.value)
-    assert "disarmed" in str(again.value)
-
     typo = name[:-1]
     with pytest.raises(LineRunNotAccepted) as unknown:
         service_line_arm_status(instance, typo)
     assert f"no live accepted Line named {typo!r}" in str(unknown.value)
     assert f"nearest: {name}" in str(unknown.value)
     assert "sha256:" not in str(unknown.value)
+
+
+def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    name = line.identity.name
+    start = READ_TIME + timedelta(seconds=10)
+
+    def arm(principal, at):  # type: ignore[no-untyped-def]
+        return service_arm_line(
+            instance, name, principal=principal, actor=_actor(instance), now=at, daemon_id="daemon"
+        )
+
+    armed = arm(LOCAL, start)
+    assert armed.outcome == "armed"
+    again = arm(LOCAL, start + timedelta(seconds=5))
+    assert again.outcome == "already_armed"
+    assert again.model_copy(update={"outcome": None}) == service_line_arm_status(instance, name)
+    assert (again.arm_id, again.armed_at) == (armed.arm_id, armed.armed_at)
+
+    # A different credential is a different setting: the arm rebinds from now.
+    rebound = arm(CREDENTIAL, start + timedelta(seconds=6))
+    assert rebound.outcome == "rearmed" and rebound.arm_id != armed.arm_id
+    assert rebound.armed_by == CREDENTIAL
+
+    disarmed = service_disarm_line(
+        instance, name, actor=_actor(instance), now=start + timedelta(seconds=7)
+    )
+    assert (disarmed.outcome, disarmed.state, disarmed.stop_reason) == (
+        "disarmed",
+        "stopped",
+        "disarmed",
+    )
+    repeat = service_disarm_line(
+        instance, name, actor=_actor(instance), now=start + timedelta(seconds=8)
+    )
+    assert repeat.outcome == "already_disarmed"
+    stopped = disarmed.model_copy(update={"outcome": None})
+    assert repeat.model_copy(update={"outcome": None}) == stopped
+    assert service_line_arm_status(instance, name) == stopped

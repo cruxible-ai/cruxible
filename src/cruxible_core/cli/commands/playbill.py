@@ -4161,7 +4161,9 @@ def check_line(
 
 def _echo_line_arm(result: Any) -> None:
     state = "armed" if result.state == "armed" else f"stopped ({result.stop_reason})"
-    click.echo(f"{result.line}: {state}")
+    unchanged = {"already_armed": "already armed", "already_disarmed": "already disarmed"}
+    note = unchanged.get(result.outcome or "")
+    click.echo(f"{result.line}: {state}" + (f" ({note}; nothing changed)" if note else ""))
     click.echo(f"Armed by: {result.armed_by.label} at {result.armed_at.isoformat()}")
     click.echo(f"Matched through: {result.evaluated_until.isoformat()}")
     click.echo(

@@ -1514,6 +1514,8 @@ version current now. It never catches up: earlier pending work and daemon
 downtime still need `evaluate_line` and `dispatch_line`. `pb.line_arm(name)`
 reports whether the Line is armed, its automatic and explicit pending counts,
 and why an arm stopped; `pb.disarm_line(name)` stops further admissions.
+Both calls are idempotent: repeating one returns the arm unchanged with
+`outcome` `already_armed` or `already_disarmed`.
 
 Matching itself never executes a Procedure; admission does. Admission verifies
 the exact retained Capture against its producer coordinate, acquisition policy,

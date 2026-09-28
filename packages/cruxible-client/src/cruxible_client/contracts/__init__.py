@@ -34,6 +34,9 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
 from cruxible_client.contracts.line_dispatch import (
+    LineArmOutcomeV1 as LineArmOutcomeV1,
+)
+from cruxible_client.contracts.line_dispatch import (
     LineArmPrincipalV1 as LineArmPrincipalV1,
 )
 from cruxible_client.contracts.line_dispatch import (

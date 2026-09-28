@@ -416,19 +416,6 @@ class LineNeverArmed(ProcedureSurfaceError):
         self.repair = RepairOperationV1(operation="playbill.line.arm", arguments={"line": line})
 
 
-class LineNotArmed(ProcedureSurfaceError):
-    """A disarm found no active arm to stop."""
-
-    code = "playbill.line.not_armed"
-    error_code = "playbill.line.not_armed"
-    http_status = 409
-
-    def __init__(self, line: str, *, last_stop: str | None) -> None:
-        detail = f" (its last arm stopped: {last_stop})" if last_stop else ""
-        super().__init__(f"{self.code}: Line {line!r} is not armed{detail}; nothing to disarm")
-        self.repair = RepairOperationV1(operation="playbill.line.status", arguments={"line": line})
-
-
 class LineRunIdentityMismatch(ProcedureSurfaceError):
     code = "playbill.line.run.line_identity_mismatch"
     error_code = "line_identity_mismatch"

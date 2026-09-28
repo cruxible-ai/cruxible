@@ -6,6 +6,15 @@
         "independent_approval_required"
       ]
     },
+    "LineArmOutcomeV1": {
+      "values": [
+        "armed",
+        "rearmed",
+        "already_armed",
+        "disarmed",
+        "already_disarmed"
+      ]
+    },
     "LineArmStopReasonV1": {
       "values": [
         "disarmed",
@@ -1401,6 +1410,34 @@
             "type": "integer"
           }
         },
+        "outcome": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "outcome",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "armed",
+                  "rearmed",
+                  "already_armed",
+                  "disarmed",
+                  "already_disarmed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "What this arm or disarm call did; absent on a status read. `already_armed` and `already_disarmed` changed nothing.",
+            "title": "Outcome"
+          }
+        },
         "pending_automatic": {
           "default": 0,
           "default_json_serializable": true,
@@ -1579,6 +1616,26 @@
           "occurrence_epoch": {
             "title": "Occurrence Epoch",
             "type": "integer"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "armed",
+                  "rearmed",
+                  "already_armed",
+                  "disarmed",
+                  "already_disarmed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "What this arm or disarm call did; absent on a status read. `already_armed` and `already_disarmed` changed nothing.",
+            "title": "Outcome"
           },
           "pending_automatic": {
             "default": 0,

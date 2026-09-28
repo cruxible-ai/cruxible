@@ -112,6 +112,12 @@ LineArmStopReasonV1 = Literal[
 ]
 
 
+#: What one arm or disarm call did. Arming an arm that already stands with the
+#: same credential, Line version and epoch, or disarming a stopped arm, changes
+#: nothing and says so.
+LineArmOutcomeV1 = Literal["armed", "rearmed", "already_armed", "disarmed", "already_disarmed"]
+
+
 class LineArmPrincipalV1(BaseModel):
     """Who armed a Line: the credential rechecked before every automatic admission.
 
@@ -153,6 +159,13 @@ class LineArmV1(BaseModel):
     detail: str | None = None
     pending_automatic: int = Field(default=0, ge=0)
     pending_explicit: int = Field(default=0, ge=0)
+    outcome: LineArmOutcomeV1 | None = Field(
+        default=None,
+        description=(
+            "What this arm or disarm call did; absent on a status read. "
+            "`already_armed` and `already_disarmed` changed nothing."
+        ),
+    )
 
     @model_validator(mode="after")
     def _state(self) -> LineArmV1:

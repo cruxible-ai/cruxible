@@ -1129,10 +1129,16 @@ armed or its arm resumes, a tick still pending from before closes as `lapsed`
 with `dispatch --occurrence-id DIGEST --retry`, even after newer ticks ran --
 and the arm ticks on from its own start rather than catching up on ticks it
 missed. `disarm` stops further
-admissions; a run already admitted keeps going. `status` shows whether the
+admissions; a run already admitted keeps going. Both are idempotent: arming a
+Line already armed by the same credential at the same version returns it
+unchanged with `outcome: already_armed`, and disarming a stopped arm returns
+it with `outcome: already_disarmed`. Arming under a different credential or
+after the Line changed rebinds the arm from now (`outcome: rearmed`).
+`status` shows whether the
 Line is armed, how many pending occurrences it will admit on its own
 (`pending_automatic`) and how many await explicit dispatch
-(`pending_explicit`), and why an arm stopped. Idle coverage is checkpointed at
+(`pending_explicit`), and why an arm stopped; a Line never armed refuses with
+`playbill.line.never_armed`. Idle coverage is checkpointed at
 one-minute intervals; event progress and partial scans are retained
 immediately. Each armed Line is drained by at most one worker at a time, so a
 slow Procedure never delays matching or another Line.

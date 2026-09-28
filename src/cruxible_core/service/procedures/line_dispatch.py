@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from cruxible_client.contracts.errors import PlaybillError, PlaybillExecutionError
 from cruxible_client.contracts.line_dispatch import (
+    LineArmOutcomeV1,
     LineArmPrincipalV1,
     LineArmStopReasonV1,
     LineArmV1,
@@ -52,7 +53,6 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 from cruxible_core.service.procedures.procedure_runs import (
     LineNeverArmed,
-    LineNotArmed,
     LineRunRequestV1,
     _accepted_line_by_reference,
     _journal,
@@ -304,7 +304,13 @@ def _active_session(conn: Any, line_id: str) -> dict[str, Any] | None:
     return None if row is None else json.loads(row[0])
 
 
-def _arm_view(store: LineDispatchStore, conn: Any, data: dict[str, Any]) -> LineArmV1:
+def _arm_view(
+    store: LineDispatchStore,
+    conn: Any,
+    data: dict[str, Any],
+    *,
+    outcome: LineArmOutcomeV1 | None = None,
+) -> LineArmV1:
     active = data["stops_at"] is None
     automatic = (
         conn.execute(
@@ -318,7 +324,8 @@ def _arm_view(store: LineDispatchStore, conn: Any, data: dict[str, Any]) -> Line
         "SELECT count(*) FROM pending WHERE line_id=? AND disposition='pending'",
         (data["line_id"],),
     ).fetchone()[0]
-    return store.arm_view(data, pending_automatic=automatic, pending_explicit=total - automatic)
+    view = store.arm_view(data, pending_automatic=automatic, pending_explicit=total - automatic)
+    return view if outcome is None else view.model_copy(update={"outcome": outcome})
 
 
 def service_arm_line(
@@ -333,8 +340,10 @@ def service_arm_line(
     """Arm the current Line version forward-only under the caller's credential.
 
     Arming never catches up: matching starts at `now`, and any work already
-    pending stays for explicit dispatch. Rearming an armed Line rebinds it to
-    this caller and the current version, again from `now`.
+    pending stays for explicit dispatch. Arming a Line already armed by this
+    caller, at the current version and epoch, on this daemon changes nothing
+    and reports `already_armed`. Rearming with any of those different rebinds
+    it to this caller and the current version, again from `now`.
     """
 
     instance.require_writable()
@@ -345,6 +354,13 @@ def service_arm_line(
     store = LineDispatchStore(instance)
     with line_arm_boundary(instance.root, identity), store.locked() as conn:
         current = _active_session(conn, identity)
+        if current is not None and (
+            current["armed_by"] == principal.model_dump(mode="json")
+            and current["line_artifact_digest"] == accepted.artifact_digest
+            and current["occurrence_epoch"] == accepted.line.occurrence_epoch
+            and current["daemon_id"] == daemon_id
+        ):
+            return _arm_view(store, conn, current, outcome="already_armed")
         if current is not None:
             _stop(
                 store,
@@ -368,7 +384,7 @@ def service_arm_line(
         data = _open_segment(
             store, conn, arm, instance=instance, actor=actor, now=now, daemon_id=daemon_id
         )
-        return _arm_view(store, conn, data)
+        return _arm_view(store, conn, data, outcome="armed" if current is None else "rearmed")
 
 
 def service_disarm_line(
@@ -378,7 +394,11 @@ def service_disarm_line(
     actor: GovernedActorContext,
     now: datetime,
 ) -> LineArmV1:
-    """Stop admitting new work; a run already admitted is not cancelled."""
+    """Stop admitting new work; a run already admitted is not cancelled.
+
+    Disarming a Line whose arm already stopped changes nothing and returns that
+    arm with `already_disarmed`. A Line never armed has no arm to return.
+    """
 
     instance.require_writable()
     accepted = _accepted_line_by_reference(
@@ -393,18 +413,13 @@ def service_disarm_line(
                 "SELECT payload FROM sessions WHERE line_id=? ORDER BY rowid DESC LIMIT 1",
                 (identity,),
             ).fetchone()
-            name = accepted.line.identity.name
             if last is None:
-                raise LineNeverArmed(name)
-            session = json.loads(last[0])
-            reason, at = session.get("stop_reason"), session.get("stops_at")
-            raise LineNotArmed(
-                name, last_stop=" at ".join(str(part) for part in (reason, at) if part) or None
-            )
+                raise LineNeverArmed(accepted.line.identity.name)
+            return _arm_view(store, conn, json.loads(last[0]), outcome="already_disarmed")
         data = _stop(
             store, conn, current, reason="disarmed", detail="Disarmed.", actor=actor, now=now
         )
-        return _arm_view(store, conn, data)
+        return _arm_view(store, conn, data, outcome="disarmed")
 
 
 def service_line_arm_status(instance: PlaybillInstance, line: str) -> LineArmV1:
