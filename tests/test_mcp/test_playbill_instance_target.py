@@ -223,3 +223,27 @@ def test_client_decodes_the_daemon_scope_refusal_with_its_scope() -> None:
     assert isinstance(exc, DaemonOperationScopeError)
     assert exc.credential_scope == "inst_scoped"
     assert exc.operation == "cruxible_server_info"
+
+
+def test_a_malformed_workspace_binding_selects_nothing_and_breaks_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    (tmp_path / ".playbill").mkdir()
+    (tmp_path / ".playbill" / "coverage.json").write_bytes(b"\xff\xfe not utf-8")
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
+    with pytest.raises(ConfigError, match="No Playbill instance selected"):
+        require_instance_id()
+
+    (tmp_path / ".playbill" / "coverage.json").write_text(
+        json.dumps(
+            {
+                "tag": "playbill-coverage-workspace-config-v2",
+                "server_socket": "/tmp/bad\u0000path.sock",
+                "instance_id": "inst_bound",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", str(tmp_path / "d.sock"))
+    with pytest.raises(ConfigError, match="No Playbill instance selected"):
+        require_instance_id()

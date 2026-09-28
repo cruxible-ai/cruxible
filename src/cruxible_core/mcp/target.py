@@ -46,12 +46,16 @@ def _workspace_instance_id(env: Mapping[str, str]) -> str | None:
             remembered={},
             workspace=mcp_workspace_root(env),
         )
-    except (PlaybillContextResolutionError, ConfigError):
+    except (PlaybillContextResolutionError, ConfigError, OSError, UnicodeError, ValueError):
+        # An unreadable or malformed binding selects nothing; it never breaks tools.
         return None
     if binding.instance_source != "workspace" or binding.instance_id is None:
         return None
-    bound = _transport(binding.server_url, binding.server_socket)
-    adapter = _transport(env.get("CRUXIBLE_SERVER_URL"), env.get("CRUXIBLE_SERVER_SOCKET"))
+    try:
+        bound = _transport(binding.server_url, binding.server_socket)
+        adapter = _transport(env.get("CRUXIBLE_SERVER_URL"), env.get("CRUXIBLE_SERVER_SOCKET"))
+    except (OSError, ValueError):
+        return None
     if adapter is None or adapter != bound:
         raise ConfigError(
             f"The workspace binding {binding.workspace_binding_path} selects instance "
