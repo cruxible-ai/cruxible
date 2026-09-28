@@ -40,6 +40,7 @@ from cruxible_core.curation.audit import (
 from cruxible_core.exhaust.consumption import (
     ConsumptionContextV1,
     consumption_aggregate,
+    note_consumption_unobserved,
     record_consumption,
 )
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -407,6 +408,47 @@ def test_audit_caps_self_heating_without_changing_receipts_or_other_consumers(
     assert consumption_aggregate(instance) == aggregate_before
     assert store.events(family="curation") == ()
     assert len(completed_audit_runs(instance)) == 1
+
+
+def test_observation_gap_and_resume_markers_do_not_break_the_fold(tmp_path: Path) -> None:
+    """A daemon that once served reads with receipts off leaves gap markers."""
+
+    instance, _owner = seed_claims(tmp_path)
+    facts_at_head = build_accepted_query_facts(
+        instance,
+        coordinate=instance.accepted_coordinate(),
+    )
+    claim = facts_at_head.claims[0].accepted
+    artifact = (claim.claim.identity, claim.artifact_digest)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    context = ConsumptionContextV1(
+        actor_context=GovernedActorContext(
+            actor_type="service_account",
+            actor_id="reader-a",
+            org_id="org-test",
+            operation_id="op-reader-a",
+            timestamp=NOW,
+        ),
+        access_profile_id="instance",
+    )
+    record_consumption(
+        instance,
+        context=context,
+        operation="playbill.claim.get",
+        coordinate=coordinate,
+        artifacts=(artifact,),
+    )
+    note_consumption_unobserved(instance, context=context, coordinate=coordinate)
+    tags = {
+        payload.get("tag")
+        for _event, payload in instance.review_operational_store().events(family="consumption")
+    }
+    assert "playbill-consumption-gap-v1" in tags
+
+    result = service_playbill_audit(instance, request=_request(), actor_context=_actor())
+
+    assert result.coverage.access_permitted
+    assert _audit_consumption_touch_counts(instance) == {claim.claim.identity.qualified: 1}
 
 
 def test_byte_budget_records_exact_omission_without_skipping_the_row(

@@ -77,6 +77,8 @@ from cruxible_core.curation.review_operational import (
 from cruxible_core.exhaust.consumption import (
     QUALIFYING_CONSUMPTION_OPERATIONS,
     ConsumptionEpochV1,
+    ConsumptionObservationGapV1,
+    ConsumptionObservationResumeV1,
     ConsumptionReceiptV1,
 )
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -239,6 +241,14 @@ def _operational_input_head(instance: PlaybillInstance) -> ReviewOperationalHead
     )
 
 
+_OBSERVATION_MARKER_TAGS = frozenset(
+    {
+        ConsumptionObservationGapV1.model_fields["tag"].default,
+        ConsumptionObservationResumeV1.model_fields["tag"].default,
+    }
+)
+
+
 def _audit_consumption_touch_counts(instance: PlaybillInstance) -> dict[str, int]:
     """Fold raw verified receipts under audit's per-reader demand cap."""
 
@@ -251,6 +261,10 @@ def _audit_consumption_touch_counts(instance: PlaybillInstance) -> dict[str, int
             if epoch is not None and parsed_epoch != epoch:
                 raise ReviewOperationalStoreError("consumption epoch is not unique")
             epoch = parsed_epoch
+            continue
+        if payload.get("tag") in _OBSERVATION_MARKER_TAGS:
+            # Gap and resume markers bound unobserved periods for dead-vocabulary
+            # detection; they record no read and carry no demand.
             continue
         if payload.get("tag") != "playbill-consumption-receipt-v1":
             raise ReviewOperationalStoreError("consumption partition has an unknown payload")
@@ -912,7 +926,7 @@ def service_playbill_audit(
         )
     except ReviewOperationalStoreError as exc:
         raise PlaybillAuditOperationalStoreInvalid(
-            "audit operational inputs or completion store failed verification"
+            f"audit operational inputs or completion store failed verification: {exc}"
         ) from exc
 
 
