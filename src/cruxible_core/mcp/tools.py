@@ -873,7 +873,7 @@ def register_tools(
         resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
         trigger_event: contracts.TriggerEventReferenceV1 | None = None,
     ) -> contracts.PlaybillProcedureRunState:
-        """Run one accepted query-only Procedure deterministically."""
+        """Run one accepted Procedure deterministically."""
         return handlers.handle_playbill_procedure_run(
             require_instance_id(instance_id),
             name,

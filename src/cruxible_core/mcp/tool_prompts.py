@@ -252,7 +252,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "artifacts through governance."
     ),
     "cruxible_playbill_procedure_run": (
-        "Use when you need to execute an accepted query-only Procedure with durable outcomes."
+        "Use when you need to execute an accepted Procedure with durable outcomes."
     ),
     "cruxible_playbill_procedure_run_status": (
         "Use when you need one Procedure run's typed outcomes and exact next operation."

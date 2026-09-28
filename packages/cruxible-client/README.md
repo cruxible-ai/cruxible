@@ -3212,8 +3212,9 @@ when diagnostics remain. Unbound providers are errors, not hidden defaults.
 | Not served by this SDK authoring API | PostInbox |
 
 Bounded Repeat is available in shared ProcedureInput but has no Sequence step
-class. Current Sequence has no general value-merge, nested invoke, recursion,
-parallel execution, or Python-source compiler. StateTap binds at admission;
+class. Current Sequence has no general value-merge, nested invoke, recursion, or
+parallel execution. Python source compiles through `@procedure` /
+`ProcedureBlueprint` in `cruxible_client.authoring.source`, not through Sequence. StateTap binds at admission;
 Source requests can depend on prior runtime outputs. Graph legality does not
 promise availability in every run lane.
 

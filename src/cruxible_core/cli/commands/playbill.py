@@ -3807,7 +3807,7 @@ def run_query(
 
 @playbill_group.group("procedure")
 def procedure_group() -> None:
-    """Inspect, bind, and run accepted query-only Procedures."""
+    """Inspect, bind, run, and measure accepted Procedures."""
 
 
 @procedure_group.command("readiness")

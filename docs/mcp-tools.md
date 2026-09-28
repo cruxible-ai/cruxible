@@ -223,7 +223,7 @@ exactly one may omit it.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_procedure_readiness` | Report exact binding requirements or query-only readiness | `READ_ONLY` |
+| `cruxible_playbill_procedure_readiness` | Report exact binding requirements or run readiness | `READ_ONLY` |
 | `cruxible_playbill_procedure_bind` | Attach accepted input-plane bindings through a same-identity successor | `GOVERNED_WRITE` |
 | `cruxible_playbill_procedure_run` | Execute a ready Procedure -- accepted-state reads, deterministic computation, and graph-v4 `source` reads through an accepted Provider -- at an explicit coordinate and time | `READ_ONLY` |
 | `cruxible_playbill_procedure_run_status` | Read one finalized Procedure run and its receipt | `READ_ONLY` |
@@ -249,8 +249,9 @@ themselves a governed track record; promotion remains a separate governed act.
 | `cruxible_playbill_predict` | Propose a governed resolution contract | `GOVERNED_WRITE` |
 | `cruxible_playbill_settle` | Settle one prediction from accepted observation evidence or its governed terminal | `GOVERNED_WRITE` |
 
-Prediction settlement records the declared score and resolution as governed
-Claims. It does not create a second authority plane beside accepted state.
+Prediction settlement records the activation and resolution in operational
+exhaust; it does not create or mutate Claims, and it does not create a second
+authority plane beside accepted state.
 
 ## Queries, discovery, and the floor
 

@@ -1828,7 +1828,8 @@ evidence so retries do not depend on remembered IDs. It returns one page
 for `--cursor`, which keeps reading the first page's accepted coordinate. A
 proposal admitted or withdrawn between pages changes the listing, and the
 cursor is then refused as `playbill.list.cursor_stale`: list again without it. Proposal actions accept a
-full digest, a unique digest prefix, or a target ref whose current Git target
+full digest, a unique digest prefix (`sha256:` plus at least 8 hex characters),
+or a target ref whose current Git target
 names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
 `proposal readmit` replays a stale proposal's authored content through the current
