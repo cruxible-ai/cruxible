@@ -51,7 +51,7 @@ state, an approval is not activation, and diagnostics never carry authority.
 
 Setting up a host and its first principals is operator work on the cruxible CLI
 (server start, playbill host create, playbill init), not part of this tool set.
-Transport tiers control which tools are reachable; Playbill principals and
+Transport tiers only control endpoint reachability; Playbill principals and
 acceptance laws control semantic authority.
 """
 

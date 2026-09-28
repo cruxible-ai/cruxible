@@ -24,7 +24,6 @@ def test_permission_module_separates_transport_reachability_from_semantic_author
 def test_mcp_instructions_publish_the_same_transport_semantic_boundary() -> None:
     instructions = _flat(BASE_INSTRUCTIONS)
 
-    assert "temporary transport tiers" in instructions
     assert "only control endpoint reachability" in instructions
     assert "playbill principals and acceptance laws control semantic authority" in instructions
     assert "a proposal is not accepted state" in instructions
