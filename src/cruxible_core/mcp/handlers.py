@@ -1170,11 +1170,22 @@ def handle_playbill_claim_attest(
     *,
     capture_digests: list[str] | None = None,
     referent_coordinate: Mapping[str, Any] | None = None,
+    attested_at: datetime | None = None,
 ) -> ClaimAttestationAppendResultV1:
     """Attest the examined Claim, or a new Capture of it when capture digests are given."""
 
+    if capture_digests is not None and not capture_digests:
+        raise DataValidationError(
+            "capture_digests must name at least one new Capture; omit it to attest the "
+            "Claim's own citations"
+        )
     if referent_coordinate is not None and not capture_digests:
         raise DataValidationError("referent_coordinate applies only with capture_digests")
+    if attested_at is not None and not capture_digests:
+        raise DataValidationError(
+            "attested_at applies only with capture_digests; an examined-Claim attestation "
+            "is signed at the time of the call"
+        )
     try:
         prepared = PreparedClaimAttestationRequestV1(
             claim_id=claim_id.removeprefix("Claim:"),
@@ -1189,7 +1200,7 @@ def handle_playbill_claim_attest(
                 if referent_coordinate is None
                 else AcceptedCoordinate.model_validate(referent_coordinate)
             ),
-            attested_at=datetime.now(UTC),
+            attested_at=datetime.now(UTC) if attested_at is None else attested_at,
             valid_until=valid_until,
             note=note,
         )

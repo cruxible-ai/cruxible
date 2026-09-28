@@ -532,6 +532,10 @@ def register_tools(
             dict[str, Any] | None,
             Field(description="With capture_digests: the accepted coordinate you read."),
         ] = None,
+        attested_at: Annotated[
+            datetime | None,
+            Field(description="With capture_digests: when you observed the new Capture."),
+        ] = None,
     ) -> ClaimAttestationAppendResultV1:
         """Sign that the caller examined this exact Claim, then append the evidence.
 
@@ -548,6 +552,7 @@ def register_tools(
             valid_until,
             capture_digests=capture_digests,
             referent_coordinate=referent_coordinate,
+            attested_at=attested_at,
         )
 
     @_tool

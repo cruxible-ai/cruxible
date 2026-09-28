@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-27:mcp-next-and-rebase",
-    "surface_digest": "sha256:ef612753664cb2fc146e77bbf002f5ec607487d4ade8b4701dfd88c2fc0ebfca"
+    "register_entry": "2026-09-28:mcp-attest-review",
+    "surface_digest": "sha256:318a18aa260c46096ebfdaeb3b463cf40858ee17162e7d20dc3be3f34d74f45d"
   },
   "surface": {
     "cli_leaves": [
@@ -2520,7 +2520,7 @@
           "playbill_whoami",
           "server_info"
         ],
-        "input_schema_digest": "sha256:b58d3a604cc918c0a0a2d1ca9195ee8be4e063e3602ce95345b6331ff21daece",
+        "input_schema_digest": "sha256:3437536b99248b4b9baa3e2a018dd365ca372e8bc4be918037d1bd6a483a3a47",
         "name": "cruxible_playbill_claim_attest",
         "output_schema_digest": "sha256:8bdc1292a33abdde84cdcd403758af061c6a46f76a41199dc8b03b983b2d7064",
         "permission": "GOVERNED_WRITE"

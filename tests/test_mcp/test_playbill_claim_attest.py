@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -100,3 +101,38 @@ def test_referent_coordinate_needs_capture_digests(monkeypatch: pytest.MonkeyPat
             "inst_test", "CLM-1", "support", None, capture_digests=["not-a-digest"]
         )
     assert prepared == []
+
+
+def test_an_empty_capture_list_refuses_instead_of_attesting_the_citations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _captured_attestation(monkeypatch)
+
+    with pytest.raises(DataValidationError, match="at least one new Capture"):
+        handlers.handle_playbill_claim_attest(
+            "inst_test", "CLM-1", "support", None, capture_digests=[]
+        )
+    assert prepared == []
+
+
+def test_a_new_capture_keeps_the_caller_observation_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _captured_attestation(monkeypatch)
+    observed = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+
+    handlers.handle_playbill_claim_attest(
+        "inst_test",
+        "CLM-1",
+        "support",
+        None,
+        capture_digests=["sha256:" + "a" * 64],
+        attested_at=observed,
+    )
+    with pytest.raises(DataValidationError, match="attested_at applies only"):
+        handlers.handle_playbill_claim_attest(
+            "inst_test", "CLM-1", "support", None, attested_at=observed
+        )
+
+    (new_capture,) = prepared
+    assert new_capture.attested_at == observed
