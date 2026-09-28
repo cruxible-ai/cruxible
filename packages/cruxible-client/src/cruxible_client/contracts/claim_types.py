@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from typing import Any, Callable, Literal, cast
+from typing import Any, Callable, Final, Literal, cast
 
 from pydantic import (
     BaseModel,
@@ -43,6 +43,7 @@ from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV2,
+    ClaimEvidenceAdmissionPolicyV3,
     ClaimResolutionPolicyV1,
 )
 
@@ -110,6 +111,10 @@ class ClaimAttestationConsequencePolicyV1(_StrictClaimTypeModel):
         return value
 
 
+CURRENT_CLAIM_TYPE_FORMAT: Final = "playbill-claim-type-v6"
+_CURRENT_POLICY_FORMATS: Final = frozenset({"playbill-claim-type-v5", "playbill-claim-type-v6"})
+
+
 class ClaimType(_StrictClaimTypeModel):
     @classmethod
     def __get_pydantic_json_schema__(
@@ -132,6 +137,7 @@ class ClaimType(_StrictClaimTypeModel):
         "playbill-claim-type-v3",
         "playbill-claim-type-v4",
         "playbill-claim-type-v5",
+        "playbill-claim-type-v6",
     ] = "playbill-claim-type-v1"
     identity: ArtifactIdentity
     predicate: str
@@ -144,7 +150,11 @@ class ClaimType(_StrictClaimTypeModel):
         Literal["normative", "observation", "environment_binding", "derivation"], ...
     ]
     referent_sensitivity: Literal["identity", "shell"] = "identity"
-    evidence_admission_policy: ClaimEvidenceAdmissionPolicyV1 | ClaimEvidenceAdmissionPolicyV2
+    evidence_admission_policy: (
+        ClaimEvidenceAdmissionPolicyV1
+        | ClaimEvidenceAdmissionPolicyV2
+        | ClaimEvidenceAdmissionPolicyV3
+    )
     admission_policy: ClaimAdmissionPolicyV1
     resolution_policy: ClaimResolutionPolicyV1
     pins: tuple[ArtifactPin, ...] = ()
@@ -219,11 +229,23 @@ class ClaimType(_StrictClaimTypeModel):
         ):
             raise ValueError("ClaimType v4 requires an attestation consequence policy")
         if self.unsure_hold_for is not None:
-            if self.artifact_format != "playbill-claim-type-v5":
-                raise ValueError("only ClaimType v5 can declare unsure_hold_for")
+            if self.artifact_format not in _CURRENT_POLICY_FORMATS:
+                raise ValueError("only ClaimType v5 and v6 can declare unsure_hold_for")
             if self.unsure_hold_for.microseconds <= 0:
                 raise ValueError("ClaimType unsure_hold_for must be positive")
-        if self.artifact_format == "playbill-claim-type-v5":
+        if self.artifact_format == "playbill-claim-type-v6":
+            if not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV3):
+                raise ValueError(
+                    "ClaimType v6 requires evidence policy v3 naming CaptureContracts by identity"
+                )
+            if any(pin.target.kind == "Procedure" for pin in self.pins):
+                raise ValueError("ClaimTypes cannot depend on producing Procedures")
+            if any(pin.target.kind == "CaptureContract" for pin in self.pins):
+                raise ValueError(
+                    "ClaimType v6 names CaptureContracts by identity in its evidence rules, "
+                    "never by an exact pin"
+                )
+        elif self.artifact_format == "playbill-claim-type-v5":
             if not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV2):
                 raise ValueError(
                     "ClaimType v5 requires evidence policy v2 without producer authorization"
@@ -311,6 +333,7 @@ def parse_claim_type(
         "playbill-claim-type-v3",
         "playbill-claim-type-v4",
         "playbill-claim-type-v5",
+        "playbill-claim-type-v6",
     }:
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise ClaimTypeFormatError(f"unsupported ClaimType artifact format: {declared!r}")
@@ -365,11 +388,20 @@ def _claim_type_digest_v5(claim_type: ClaimType) -> ArtifactDigest:
     )
 
 
+def _claim_type_digest_v6(claim_type: ClaimType) -> ArtifactDigest:
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-envelope-v1",
+        claim_type.model_dump(mode="json"),
+    )
+
+
 CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = {
     "playbill-claim-type-v1": _claim_type_digest_v1,
     "playbill-claim-type-v3": _claim_type_digest_v3,
     "playbill-claim-type-v4": _claim_type_digest_v4,
     "playbill-claim-type-v5": _claim_type_digest_v5,
+    "playbill-claim-type-v6": _claim_type_digest_v6,
 }
 
 

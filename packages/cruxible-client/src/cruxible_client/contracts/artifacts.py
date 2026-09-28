@@ -83,6 +83,27 @@ class ArtifactPin(_StrictArtifactModel):
         return value
 
 
+class ArtifactRef(_StrictArtifactModel):
+    """A governed dependency named by identity: whatever version is accepted.
+
+    A pin names exact bytes, which is right for code, fixed content and the
+    records of what happened. A definition that names another governed
+    definition names its identity instead, so improving the dependency through an
+    ordinary successor does not strand everything that names it.
+    """
+
+    role: str
+    target: ArtifactIdentity
+
+    @field_validator("role")
+    @classmethod
+    def _role(cls, value: str) -> str:
+        _nfc(value, label="artifact reference role")
+        if not _ROLE_RE.fullmatch(value):
+            raise ValueError("artifact reference role is not canonical")
+        return value
+
+
 class ArtifactLifecycle(_StrictArtifactModel):
     state: Literal["live", "retired"] = "live"
     predecessor_digest: str | None = None

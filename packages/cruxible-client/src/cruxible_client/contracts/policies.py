@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.contracts.artifacts import ArtifactRef
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     Sha256Value,
@@ -181,10 +182,9 @@ class ClaimResolutionPolicyV1(_StrictPolicyModel):
         return self
 
 
-class _EvidenceRule(_StrictPolicyModel):
+class _EvidenceRuleBase(_StrictPolicyModel):
     rule_id: str
     claim_roles: tuple[ClaimRole, ...]
-    capture_contract_digests: tuple[str, ...]
     evidence_kinds: tuple[str, ...]
     admission: Literal["origin_only", "direct", "derivational"]
     subject_binding: Literal["exact_claim_subject", "contract_source_mapping"]
@@ -195,22 +195,32 @@ class _EvidenceRule(_StrictPolicyModel):
     def _rule_id(cls, value: str) -> str:
         return governance_identifier(value, label="evidence-admission rule_id")
 
-    @field_validator(
-        "claim_roles",
-        "capture_contract_digests",
-        "evidence_kinds",
-    )
+    @field_validator("claim_roles", "evidence_kinds")
     @classmethod
     def _rule_sets(cls, value: tuple[str, ...], info: object) -> tuple[str, ...]:
         field_name = str(getattr(info, "field_name", "evidence-admission field"))
         _sorted_unique(value, label=field_name, nonempty=True)
-        if field_name == "capture_contract_digests":
-            for item in value:
-                ArtifactDigest.from_tagged(item)
-        elif field_name == "evidence_kinds":
+        if field_name == "evidence_kinds":
             if any(not _EVIDENCE_KIND_RE.fullmatch(item) for item in value):
                 raise ValueError("evidence kinds must be canonical identifiers")
         return value
+
+
+class _EvidenceRule(_EvidenceRuleBase):
+    capture_contract_digests: tuple[str, ...]
+
+    @field_validator("capture_contract_digests")
+    @classmethod
+    def _contract_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        _sorted_unique(value, label="capture_contract_digests", nonempty=True)
+        for item in value:
+            ArtifactDigest.from_tagged(item)
+        return value
+
+    def names_capture_contract(self, *, digest: str, identity: str | None) -> bool:
+        """Exact-digest rules name one accepted version each, never a lineage."""
+
+        return digest in self.capture_contract_digests
 
 
 class ClaimEvidenceAdmissionRuleV1(_EvidenceRule):
@@ -246,7 +256,52 @@ class ClaimEvidenceAdmissionRuleV2(_EvidenceRule):
     )
 
 
-ClaimEvidenceAdmissionRule = ClaimEvidenceAdmissionRuleV1 | ClaimEvidenceAdmissionRuleV2
+CAPTURE_CONTRACT_REF_ROLE = "capture-contract"
+
+
+class ClaimEvidenceAdmissionRuleV3(_EvidenceRuleBase):
+    """Evidence requirements naming CaptureContracts by identity.
+
+    The rule admits evidence captured under any accepted version of a named
+    contract. That is safe because a contract successor must be compatible with
+    its predecessor; a change that alters what the evidence means is a new
+    contract identity, which the rule does not name until someone edits it.
+    """
+
+    # One schema for requests and responses: served ClaimTypes carry this rule.
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
+
+    tag: Literal["playbill-claim-evidence-admission-rule-v3"] = (
+        "playbill-claim-evidence-admission-rule-v3"
+    )
+    capture_contracts: tuple[ArtifactRef, ...]
+
+    @field_validator("capture_contracts")
+    @classmethod
+    def _contracts(cls, value: tuple[ArtifactRef, ...]) -> tuple[ArtifactRef, ...]:
+        if not value:
+            raise ValueError("capture_contracts must not be empty")
+        names = tuple(item.target.qualified for item in value)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("capture_contracts must be sorted and unique by identity")
+        for item in value:
+            if item.role != CAPTURE_CONTRACT_REF_ROLE or item.target.kind != "CaptureContract":
+                raise ValueError(
+                    "capture_contracts must name CaptureContracts with role 'capture-contract'"
+                )
+        return value
+
+    def names_capture_contract(self, *, digest: str, identity: str | None) -> bool:
+        """Identity rules name every accepted version of the named contracts."""
+
+        return identity is not None and any(
+            item.target.qualified == identity for item in self.capture_contracts
+        )
+
+
+ClaimEvidenceAdmissionRule = (
+    ClaimEvidenceAdmissionRuleV1 | ClaimEvidenceAdmissionRuleV2 | ClaimEvidenceAdmissionRuleV3
+)
 
 
 class ClaimEvidenceAdmissionPolicyV1(_StrictPolicyModel):
@@ -283,7 +338,37 @@ class ClaimEvidenceAdmissionPolicyV2(_StrictPolicyModel):
         return value
 
 
-ClaimEvidenceAdmissionPolicy = ClaimEvidenceAdmissionPolicyV1 | ClaimEvidenceAdmissionPolicyV2
+class ClaimEvidenceAdmissionPolicyV3(_StrictPolicyModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
+
+    tag: Literal["playbill-claim-evidence-admission-policy-v3"] = (
+        "playbill-claim-evidence-admission-policy-v3"
+    )
+    rules: tuple[ClaimEvidenceAdmissionRuleV3, ...] = ()
+
+    @field_validator("rules")
+    @classmethod
+    def _rules(
+        cls, value: tuple[ClaimEvidenceAdmissionRuleV3, ...]
+    ) -> tuple[ClaimEvidenceAdmissionRuleV3, ...]:
+        ids = tuple(item.rule_id for item in value)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("evidence-admission rules must be sorted and unique by rule_id")
+        return value
+
+    @property
+    def capture_contract_identities(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {item.target.qualified for rule in self.rules for item in rule.capture_contracts},
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
+
+
+ClaimEvidenceAdmissionPolicy = (
+    ClaimEvidenceAdmissionPolicyV1 | ClaimEvidenceAdmissionPolicyV2 | ClaimEvidenceAdmissionPolicyV3
+)
 
 
 class ClaimCorroborationResultV1(_StrictPolicyModel):
@@ -451,6 +536,9 @@ def evaluate_claim_admission_candidate(
 class EvidenceAdmissionInputV1(_StrictPolicyModel):
     claim_role: ClaimRole
     capture_contract_digest: str
+    #: The accepted identity of the exact contract version the Capture names.
+    #: Identity rules match it; exact-digest rules ignore it.
+    capture_contract_identity: str | None = None
     evidence_kind: str
     reducer_digest: str | None = None
     input_claim_artifact_digests: tuple[str, ...] = ()
@@ -516,7 +604,7 @@ def _derivation_satisfied(
     evidence: EvidenceAdmissionInputV1,
 ) -> bool:
     if rule.admission == "derivational":
-        if isinstance(rule, ClaimEvidenceAdmissionRuleV2):
+        if not isinstance(rule, ClaimEvidenceAdmissionRuleV1):
             return evidence.reducer_digest is not None and bool(
                 evidence.input_claim_artifact_digests
             )
@@ -537,7 +625,10 @@ def evaluate_claim_evidence_admission_trace(
     contract_rules = tuple(
         rule
         for rule in policy.rules
-        if evidence.capture_contract_digest in rule.capture_contract_digests
+        if rule.names_capture_contract(
+            digest=evidence.capture_contract_digest,
+            identity=evidence.capture_contract_identity,
+        )
     )
     closest_rule_id: str | None = None
     if contract_rules:
@@ -569,7 +660,10 @@ def evaluate_claim_evidence_admission_trace(
         rule
         for rule in policy.rules
         if evidence.claim_role in rule.claim_roles
-        and evidence.capture_contract_digest in rule.capture_contract_digests
+        and rule.names_capture_contract(
+            digest=evidence.capture_contract_digest,
+            identity=evidence.capture_contract_identity,
+        )
         and evidence.evidence_kind in rule.evidence_kinds
     ]
     if len(matches) != 1:

@@ -403,8 +403,8 @@ def test_claim_type_template_proposes_without_policy_lint_in_a_fresh_world(
     assert result.lint.warnings == ()
     template = claim_type_input_template()
     source_id = template.anticipated_source_ids[0]
-    assert template.evidence_admission_policy["rules"][0]["capture_contract_digests"] == [
-        capture_contract_digest(foreign_source_capture_contract(source_id)).tagged
+    assert template.evidence_admission_policy["rules"][0]["capture_contracts"] == [
+        foreign_source_capture_contract(source_id).identity.qualified
     ]
 
 

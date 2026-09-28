@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Mapping, NoReturn, Protocol
+from typing import Callable, Literal, Mapping, NoReturn, Protocol
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
@@ -209,8 +209,14 @@ def _new_capture_accounts(
     claim: ClaimArtifactAny,
     referent_tree: Mapping[str, bytes],
     append_tree: Mapping[str, bytes],
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
 ) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifactV1, ...]]:
     contracts = _capture_contracts(referent_tree)
+    live_identities = {
+        accepted.contract.identity.qualified
+        for accepted in contracts.values()
+        if accepted.contract.lifecycle.state == "live"
+    }
     providers = _provider_digests(referent_tree)
     procedures = _procedure_digests(referent_tree)
     producers = providers | procedures
@@ -247,6 +253,15 @@ def _new_capture_accounts(
         except (PlaybillError, ValueError) as exc:
             raise ClaimAttestationRefusal("capture_invalid", "Capture envelope is invalid") from exc
         accepted = contracts.get(envelope.capture_contract_digest)
+        if accepted is None and historical_capture_contract is not None:
+            # A Capture made under a version since succeeded is still exact
+            # evidence of that version, provided its contract is live at referent.
+            accepted = historical_capture_contract(envelope.capture_contract_digest)
+            if accepted is not None and accepted.contract.identity.qualified not in live_identities:
+                _refuse(
+                    "capture_contract_not_live_at_referent",
+                    "CaptureContract is not live at referent",
+                )
         if accepted is None:
             _refuse("capture_contract_unresolved", "CaptureContract is not accepted at referent")
         contract: CaptureContractV1 = accepted.contract
@@ -444,8 +459,14 @@ def verify_attestation_admission(
     bodies: CaptureObjectStoreProtocol,
     law: ClaimLawEvidenceAny | None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
 ) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifactV1, ...]]:
-    """Check current eligibility after authenticating the exact signed referent."""
+    """Check current eligibility after authenticating the exact signed referent.
+
+    `historical_capture_contract` resolves an exact contract version accepted at
+    or before the signed referent, for Captures made under a since-succeeded
+    version of a still-live contract.
+    """
     s = attestation.statement
     _verify_principal(attestation, current_principals, phase="append")
     current = _accepted_claim(current_tree, s.claim_identity.name)
@@ -466,6 +487,7 @@ def verify_attestation_admission(
         claim=claim,
         referent_tree=referent_tree,
         append_tree=current_tree,
+        historical_capture_contract=historical_capture_contract,
     )
 
 
@@ -481,6 +503,7 @@ def verify_attestation_binding(
     bodies: CaptureObjectStoreProtocol,
     law: ClaimLawEvidenceAny | None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
+    historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
 ) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifactV1, ...]]:
     claim = verify_attestation_referent(
         attestation,
@@ -499,4 +522,5 @@ def verify_attestation_binding(
         bodies=bodies,
         law=law,
         producer_receipt_resolver=producer_receipt_resolver,
+        historical_capture_contract=historical_capture_contract,
     )

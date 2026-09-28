@@ -168,7 +168,18 @@ def parse_static_owners(
         selected_member_history=selected_member_history,
     )
     envelopes = list(parsed.envelopes)
-    pins = {(pin.source_identity, pin.target_identity): pin for pin in parsed.pins}
+    # Keyed exactly as parse_projection_tree keys them: a Claim's capture-contract
+    # provenance pins one entry per contract version.
+    pins = {
+        (
+            pin.source_identity,
+            pin.target_identity,
+            pin.target_digest
+            if pin.role == "capture-contract" and pin.source_identity.startswith("Claim:")
+            else "",
+        ): pin
+        for pin in parsed.pins
+    }
     for path, content in documents.items():
         document = parse_document(content, path=path, codec=codec)
         envelopes.append(
@@ -183,7 +194,7 @@ def parse_static_owners(
             )
         )
         for pin in document.pins:
-            key = (document.identity, pin.target_identity)
+            key = (document.identity, pin.target_identity, "")
             previous = pins.get(key)
             if previous is not None and previous.target_digest != pin.target_digest:
                 raise ProjectionIntegrityError(

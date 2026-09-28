@@ -20,15 +20,20 @@ from cruxible_client.contracts.laws import (
     ATTESTATION_ACCEPTANCE_LAW,
     AUTHORITY_VERBS_UPGRADE_LAW,
     CAPTURE_CONTRACT_ACCEPTANCE_LAW,
+    CAPTURE_CONTRACT_REVISION_3_ACCEPTANCE_LAW,
     CLAIM_EVIDENCE_UPGRADE_LAW,
     CLAIM_LAW_V3_REVISION_8,
+    CLAIM_LAW_V3_REVISION_9,
     CLAIM_TYPE_ACCEPTANCE_LAW,
     CLAIM_TYPE_V3_ACCEPTANCE_LAW,
     CLAIM_TYPE_V4_ACCEPTANCE_LAW,
     CLAIM_TYPE_V5_ACCEPTANCE_LAW,
+    CLAIM_TYPE_V6_ACCEPTANCE_LAW,
     CLAIM_V2_ACCEPTANCE_LAW,
+    CLAIM_V2_REVISION_6_ACCEPTANCE_LAW,
     CLAIM_V3_ACCEPTANCE_LAW,
     CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
+    CLAIM_V3_REVISION_8_ACCEPTANCE_LAW,
     COMPILER_UPGRADE_ACCEPTANCE_LAW,
     DOCUMENT_ACCEPTANCE_LAW,
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
@@ -55,6 +60,7 @@ from cruxible_client.contracts.laws import (
     PROVIDER_V2_ACCEPTANCE_LAW,
     PROVIDER_V3_ACCEPTANCE_LAW,
     QUERY_DEFINITION_ACCEPTANCE_LAW,
+    QUERY_DEFINITION_REVISION_4_ACCEPTANCE_LAW,
     QUERY_DEFINITION_V2_ACCEPTANCE_LAW,
     RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
     RESOURCE_BUDGET_UPGRADE_LAW,
@@ -120,6 +126,13 @@ LAW_COORDINATES: tuple[
         "playbill-claim-type-v5",
         4,
         "sha256:0d9d00e747c3158e11afdfd47deef77a726eed2167be09d924120c705c54f85e",
+    ),
+    (
+        CLAIM_TYPE_V6_ACCEPTANCE_LAW,
+        "playbill.claim-type.v6",
+        "playbill-claim-type-v6",
+        1,
+        "sha256:87fbf2885c5cc365d159df039fff0a01229a17714941ba009430b4c652352d03",
     ),
     (
         PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
@@ -216,22 +229,22 @@ LAW_COORDINATES: tuple[
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
         "playbill.capture-contract.v1",
         "playbill-capture-contract-v1",
-        3,
-        "sha256:89618916c5a6667555e5bea86ad56929248bc4681ebd1f69215731a322cca473",
+        4,
+        "sha256:dafcf7d1104fec1da02c423478d801fe7e4060e78319ebe152d4789a41e2f25e",
     ),
     (
         CLAIM_V2_ACCEPTANCE_LAW,
         "playbill.claim.v2",
         "playbill-claim-v2",
-        6,
-        "sha256:2daba97d8453372b7fee8782a7ac116a9c184fdf4d96287257eb0204285ba887",
+        7,
+        "sha256:874d7b97713a151520759d01eddff19c85b151aafc3d45373d628c3768f13cd6",
     ),
     (
         CLAIM_V3_ACCEPTANCE_LAW,
         "playbill.claim.v3",
         "playbill-claim-v3",
-        8,
-        "sha256:8aae4d764d32c52792d7ef2a81715c92d7c198b69cc74ec2f8882bcda0a16aa9",
+        9,
+        "sha256:31055afbe62a50b7eeca30c9d52b55dd298ae7f18520e516564c4fa7bc092cb2",
     ),
     (
         PROVIDER_ACCEPTANCE_LAW,
@@ -321,8 +334,8 @@ LAW_COORDINATES: tuple[
         QUERY_DEFINITION_ACCEPTANCE_LAW,
         "playbill.query-definition.v1",
         "playbill-query-definition-v1",
-        4,
-        "sha256:451b68d9eb1e1b6c776da06d7b6fd1e96e4f16b0d63d5a43f0580e06d03f9547",
+        5,
+        "sha256:9bd27f8ffacfae8f9c593f74bdb548526f27040a0dc37d41289dfd86f6365c7d",
     ),
     (
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
@@ -415,6 +428,34 @@ HISTORICAL_LAW_COORDINATES: tuple[
         "sha256:77b041b26612382c05b35c2eacdc48dad90d1e3de4783398f2ca268fb36768df",
     ),
     (
+        CLAIM_V2_REVISION_6_ACCEPTANCE_LAW,
+        "playbill.claim.v2",
+        "playbill-claim-v2",
+        6,
+        "sha256:2daba97d8453372b7fee8782a7ac116a9c184fdf4d96287257eb0204285ba887",
+    ),
+    (
+        CLAIM_V3_REVISION_8_ACCEPTANCE_LAW,
+        "playbill.claim.v3",
+        "playbill-claim-v3",
+        8,
+        "sha256:8aae4d764d32c52792d7ef2a81715c92d7c198b69cc74ec2f8882bcda0a16aa9",
+    ),
+    (
+        CAPTURE_CONTRACT_REVISION_3_ACCEPTANCE_LAW,
+        "playbill.capture-contract.v1",
+        "playbill-capture-contract-v1",
+        3,
+        "sha256:89618916c5a6667555e5bea86ad56929248bc4681ebd1f69215731a322cca473",
+    ),
+    (
+        QUERY_DEFINITION_REVISION_4_ACCEPTANCE_LAW,
+        "playbill.query-definition.v1",
+        "playbill-query-definition-v1",
+        4,
+        "sha256:451b68d9eb1e1b6c776da06d7b6fd1e96e4f16b0d63d5a43f0580e06d03f9547",
+    ),
+    (
         CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
         "playbill.claim.v3",
         "playbill-claim-v3",
@@ -442,7 +483,8 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
     assert CLAIM_LAW_V3_REVISION_8.digest == (
         "sha256:8aae4d764d32c52792d7ef2a81715c92d7c198b69cc74ec2f8882bcda0a16aa9"
     )
-    assert CLAIM_LAW_V3_REVISION_8 == CLAIM_V3_ACCEPTANCE_LAW.coordinate
+    assert CLAIM_LAW_V3_REVISION_8 == CLAIM_V3_REVISION_8_ACCEPTANCE_LAW.coordinate
+    assert CLAIM_LAW_V3_REVISION_9 == CLAIM_V3_ACCEPTANCE_LAW.coordinate
     seen_coordinates: set[tuple[str, str]] = set()
     seen_tags: set[str] = set()
     for law, identifier, artifact_tag, revision, expected_digest in (

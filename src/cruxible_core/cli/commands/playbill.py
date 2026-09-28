@@ -2491,6 +2491,38 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
             click.echo(f"  {warning.get('field_path', '$')}: {warning.get('code', 'warning')}")
 
 
+@claim_type_group.command("upgrade-evidence-rules")
+@json_option
+@handle_errors
+def upgrade_evidence_rules(output_json: bool) -> None:
+    """Propose moving every live ClaimType to identity evidence rules (v6).
+
+    Needs compiler revision 31. Each rule converts only when it keeps its meaning;
+    the rest are reported for an explicit decision. Approve the proposal as usual.
+    """
+
+    result = _server_call(
+        lambda client, instance_id: client.upgrade_playbill_evidence_rules(instance_id),
+        command_name="playbill claim-type upgrade-evidence-rules",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Evidence rule upgrade: {result.status}")
+    for item in result.converted:
+        click.echo(f"  converted {item.claim_type}")
+        for version in item.widened_versions:
+            click.echo(f"    now also admits {version}")
+    for refusal in result.refused:
+        click.echo(f"  left as is {refusal.claim_type}: {refusal.reason}")
+    if result.carried_claims:
+        click.echo(f"Claims carried: {result.carried_claims}")
+    if result.detail:
+        click.echo(result.detail)
+    if result.proposal_id:
+        click.echo(f"Next: cruxible playbill proposal approve {result.proposal_id}")
+
+
 @claim_type_group.command("list")
 @json_option
 @handle_errors

@@ -56,6 +56,7 @@ from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
 )
+from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -192,6 +193,7 @@ from cruxible_core.service.claims.claims import (
     service_list_playbill_claims,
     service_playbill_claim_history,
 )
+from cruxible_core.service.claims.evidence_rule_upgrade import service_upgrade_evidence_rules
 from cruxible_core.service.claims.policies import list_playbill_policies_in_force
 from cruxible_core.service.claims.subjects import (
     service_get_playbill_subject,
@@ -655,6 +657,18 @@ def playbill_kit_add(
         lambda: service_add_kit(
             get_playbill_manager().get(instance_id),
             request,
+            actor_id=_actor_id(),
+            timestamp=canonical_candidate_timestamp(utc_now()),
+        ),
+    )
+
+
+def playbill_evidence_rules_upgrade(instance_id: str) -> EvidenceRuleUpgradeResultV1:
+    check_permission("cruxible_playbill_evidence_rules_upgrade", instance_id=instance_id)
+    return _proposal_validation_boundary(
+        "evidence rule upgrade",
+        lambda: service_upgrade_evidence_rules(
+            get_playbill_manager().get(instance_id),
             actor_id=_actor_id(),
             timestamp=canonical_candidate_timestamp(utc_now()),
         ),

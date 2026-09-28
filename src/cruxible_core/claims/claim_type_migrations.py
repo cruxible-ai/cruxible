@@ -46,6 +46,7 @@ from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputV1,
     ClaimTypeLintWarningV1,
     ClaimTypeProposalLintV1,
+    identity_rules_supported,
     lint_claim_type_input,
     lower_claim_type_input,
 )
@@ -415,6 +416,7 @@ def _successor_claim(
         key=lambda item: (
             item.role.encode("utf-8"),
             item.target.qualified.encode("utf-8"),
+            item.artifact_digest.encode("ascii"),
         )
     )
     return claim.model_copy(
@@ -436,6 +438,8 @@ def _successor_claim(
 def resolve_claim_type_succession(
     tree: Mapping[str, bytes],
     value: ClaimTypeInputV1 | ClaimType,
+    *,
+    identity_rules: bool = False,
 ) -> tuple[str, ClaimType, ClaimType]:
     """Resolve one ClaimType succession against the tree it is written onto.
 
@@ -450,7 +454,9 @@ def resolve_claim_type_succession(
     """
 
     successor = (
-        value if isinstance(value, ClaimType) else lower_claim_type_input(value, tree=dict(tree))
+        value
+        if isinstance(value, ClaimType)
+        else lower_claim_type_input(value, tree=dict(tree), identity_rules=identity_rules)
     )
     if any(
         pin.role == "predecessor" and pin.target == successor.identity for pin in successor.pins
@@ -643,8 +649,12 @@ def _canonical_successor_bytes(
                     f"{ClaimTypeMigrationDependentInvalid.code}: claim_effective_until "
                     "produces an invalid Claim effective interval"
                 ) from exc
+            # A capture-contract pin is provenance: the exact version the Claim's
+            # evidence used, which a contract successor never rewrites.
             pins = tuple(
-                pin.model_copy(
+                pin
+                if pin.role == "capture-contract"
+                else pin.model_copy(
                     update={
                         "artifact_digest": replacements.get(
                             pin.artifact_digest, pin.artifact_digest
@@ -1148,7 +1158,9 @@ def _service_migrate_claim_type_v1(
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.immutable_tree_at(current.git_oid)
-    type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
+    type_path, predecessor, successor = resolve_claim_type_succession(
+        tree, request.successor, identity_rules=identity_rules_supported(current.compiler)
+    )
     delta = semantic_field_delta(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
     )
@@ -1235,7 +1247,9 @@ def _service_migrate_claim_type_v2(
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.immutable_tree_at(current.git_oid)
-    type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
+    type_path, predecessor, successor = resolve_claim_type_succession(
+        tree, request.successor, identity_rules=identity_rules_supported(current.compiler)
+    )
     delta = semantic_field_delta(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
     )
@@ -1273,6 +1287,7 @@ def _service_migrate_claim_type_v2(
         query_facts_provider=instance.proposal_service().query_facts_provider,
         principal_registry_provider=instance.accepted_principal_registry,
         accepted_referents_provider=instance.accepted_referent_coordinates,
+        historical_artifact_provider=instance.accepted_artifact_version,
     )
     if evaluation.candidate is None:
         diagnostics = tuple(item.code for item in evaluation.diagnostics)
@@ -1334,7 +1349,9 @@ def _service_migrate_claim_type_v3(
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.immutable_tree_at(current.git_oid)
-    type_path, predecessor, successor = resolve_claim_type_succession(tree, request.successor)
+    type_path, predecessor, successor = resolve_claim_type_succession(
+        tree, request.successor, identity_rules=identity_rules_supported(current.compiler)
+    )
     delta = semantic_field_delta(
         predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
     )
@@ -1372,6 +1389,7 @@ def _service_migrate_claim_type_v3(
         query_facts_provider=instance.proposal_service().query_facts_provider,
         principal_registry_provider=instance.accepted_principal_registry,
         accepted_referents_provider=instance.accepted_referent_coordinates,
+        historical_artifact_provider=instance.accepted_artifact_version,
     )
     if evaluation.candidate is None:
         diagnostics = tuple(item.code for item in evaluation.diagnostics)

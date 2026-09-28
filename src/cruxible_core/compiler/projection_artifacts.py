@@ -962,6 +962,13 @@ def parse_projection_tree(
                         f"registered ClaimType failed strict validation: {path}"
                     ) from exc
                 if (
+                    claim_type.artifact_format == "playbill-claim-type-v6"
+                    and artifact_kinds is not AUTHORITY_VERBS_ARTIFACT_KINDS
+                ):
+                    raise ProjectionFormatError(
+                        "identity evidence rules (ClaimType v6) require compiler revision 31"
+                    )
+                if (
                     claim_type.artifact_format == "playbill-claim-type-v5"
                     and artifact_kinds
                     not in (
@@ -2319,9 +2326,16 @@ def parse_projection_tree(
                 f"registered artifact failed strict validation: {path}"
             ) from exc
 
-    pin_dependencies: dict[tuple[str, str], PinRow] = {}
+    pin_dependencies: dict[tuple[str, str, str], PinRow] = {}
     for pin in pins:
-        key = (pin.source_identity, pin.target_identity)
+        # A Claim's capture-contract pins are provenance: evidence captured under
+        # two versions of one contract pins both versions, so they key by version.
+        version = (
+            pin.target_digest
+            if pin.role == "capture-contract" and pin.source_identity.startswith("Claim:")
+            else ""
+        )
+        key = (pin.source_identity, pin.target_identity, version)
         previous_pin = pin_dependencies.get(key)
         if previous_pin is not None and previous_pin.target_digest != pin.target_digest:
             raise ProjectionFormatError(
@@ -2339,6 +2353,7 @@ def parse_projection_tree(
                 key=lambda item: (
                     item.source_identity.encode("utf-8"),
                     item.target_identity.encode("utf-8"),
+                    item.target_digest.encode("ascii"),
                 ),
             )
         ),

@@ -19,6 +19,7 @@ from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputProposalResultV1,
     ClaimTypeInputV1,
+    identity_rules_supported,
     lint_claim_type_input,
     lower_claim_type_input,
 )
@@ -135,7 +136,9 @@ def service_propose_playbill_claim_type_input(
 
     coordinate = instance.accepted_coordinate()
     tree = instance.immutable_tree_at(coordinate.git_oid)
-    claim_type = lower_claim_type_input(input, tree=tree)
+    claim_type = lower_claim_type_input(
+        input, tree=tree, identity_rules=identity_rules_supported(coordinate.compiler)
+    )
     candidate_tree = tree.fork()
     candidate_tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="claim type input")

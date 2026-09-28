@@ -66,6 +66,9 @@
   "/api/v1/{instance_id}/playbill/claim-types": {
     "GET": "PlaybillClaimTypeList"
   },
+  "/api/v1/{instance_id}/playbill/claim-types/evidence-rules/upgrade": {
+    "POST": "EvidenceRuleUpgradeResultV1"
+  },
   "/api/v1/{instance_id}/playbill/claim-types/migrations": {
     "POST": "PlaybillClaimTypeMigrationResult | PlaybillClaimTypeMigrationPreflight | PlaybillClaimTypeMigrationResultV2 | PlaybillClaimTypeMigrationResultV3"
   },
