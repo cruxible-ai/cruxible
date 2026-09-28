@@ -346,12 +346,15 @@ class PlaybillHostWorkspaceRegistrationV1(BaseModel):
     workspace_path: str | None = None
 
 
-PlaybillHostCompatibilityV1: TypeAlias = Literal["uninitialized", "writable", "reseed_required"]
+PlaybillHostCompatibilityV1: TypeAlias = Literal[
+    "uninitialized", "writable", "reseed_required", "decommissioned"
+]
 PlaybillHostCompatibilityReasonCodeV1: TypeAlias = Literal[
     "legacy_layout_requires_reseed",
     "host_state_incomplete",
     "host_state_malformed",
     "compiler_lineage_not_writable",
+    "instance_decommissioned",
 ]
 
 
@@ -388,8 +391,8 @@ class PlaybillHostInspectionV1(BaseModel):
             or self.reason is not None
         ):
             raise ValueError("uninitialized host cannot carry compiler or reason")
-        if self.compatibility == "reseed_required" and self.reason is None:
-            raise ValueError("reseed_required host must carry a typed reason")
+        if self.compatibility in {"reseed_required", "decommissioned"} and self.reason is None:
+            raise ValueError(f"{self.compatibility} host must carry a typed reason")
         return self
 
 
@@ -484,6 +487,9 @@ class ServerRestartResult(BaseModel):
     scheduled: bool
     version: str
     state_root: str
+    # The process image that acknowledged the restart; a waiting client knows
+    # the new image answers once the probe reports a different boot id.
+    boot_id: str | None = None
 
 
 class ServerStopResult(BaseModel):

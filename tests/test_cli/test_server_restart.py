@@ -46,12 +46,12 @@ def test_server_restart_waits_for_daemon_and_reports_version(monkeypatch, runner
                 scheduled=True, version="0.1.5", state_root="/srv/state"
             )
 
-        def version(self) -> str:
+        def daemon_identity(self) -> tuple[str, str | None]:
             self.version_calls += 1
             # First poll fails (image being replaced), second succeeds.
             if self.version_calls < 2:
                 raise CoreError("connection refused")
-            return "0.1.6"
+            return "0.1.6", "new-image"
 
     client = StubClient()
     _patch_client(monkeypatch, client)
@@ -74,9 +74,9 @@ def test_server_restart_no_wait_skips_polling(monkeypatch, runner: CliRunner):
                 scheduled=True, version="0.1.5", state_root="/srv/state"
             )
 
-        def version(self) -> str:
+        def daemon_identity(self) -> tuple[str, str | None]:
             self.version_calls += 1
-            return "0.1.5"
+            return "0.1.5", "old-image"
 
     client = StubClient()
     _patch_client(monkeypatch, client)
@@ -94,8 +94,8 @@ def test_server_restart_json_output(monkeypatch, runner: CliRunner):
                 scheduled=True, version="0.1.5", state_root="/srv/state"
             )
 
-        def version(self) -> str:
-            return "0.1.6"
+        def daemon_identity(self) -> tuple[str, str | None]:
+            return "0.1.6", "new-image"
 
     _patch_client(monkeypatch, StubClient())
     result = runner.invoke(cli, ["--server-url", "http://server", "server", "restart", "--json"])
@@ -116,7 +116,7 @@ def test_server_restart_times_out_when_daemon_never_returns(monkeypatch, runner:
                 scheduled=True, version="0.1.5", state_root="/srv/state"
             )
 
-        def version(self) -> str:
+        def daemon_identity(self) -> tuple[str, str | None]:
             raise CoreError("connection refused")
 
     _patch_client(monkeypatch, StubClient())
@@ -129,3 +129,56 @@ def test_server_restart_times_out_when_daemon_never_returns(monkeypatch, runner:
 
     assert result.exit_code != 0
     assert "did not come back" in result.output
+
+
+def test_server_restart_does_not_confirm_against_the_old_process_image(
+    monkeypatch, runner: CliRunner
+):
+    """The old image answers before it re-execs; only a new boot id confirms."""
+
+    class StubClient:
+        def __init__(self) -> None:
+            self.polls = 0
+
+        def server_restart(self) -> contracts.ServerRestartResult:
+            return contracts.ServerRestartResult(
+                scheduled=True, version="0.1.5", state_root="/srv/state", boot_id="old-image"
+            )
+
+        def daemon_identity(self) -> tuple[str, str | None]:
+            self.polls += 1
+            if self.polls < 3:
+                return "0.1.5", "old-image"
+            return "0.1.6", "new-image"
+
+    client = StubClient()
+    _patch_client(monkeypatch, client)
+    monkeypatch.setattr("cruxible_core.cli.commands.server.time.sleep", lambda _s: None)
+    result = runner.invoke(cli, ["--server-url", "http://server", "server", "restart"])
+
+    assert result.exit_code == 0, result.output
+    assert client.polls == 3
+    assert "Daemon is back on version 0.1.6." in result.output
+
+
+def test_server_restart_times_out_while_the_old_image_keeps_answering(
+    monkeypatch, runner: CliRunner
+):
+    class StubClient:
+        def server_restart(self) -> contracts.ServerRestartResult:
+            return contracts.ServerRestartResult(
+                scheduled=True, version="0.1.5", state_root="/srv/state", boot_id="old-image"
+            )
+
+        def daemon_identity(self) -> tuple[str, str | None]:
+            return "0.1.5", "old-image"
+
+    _patch_client(monkeypatch, StubClient())
+    monkeypatch.setattr("cruxible_core.cli.commands.server.time.sleep", lambda _s: None)
+    result = runner.invoke(
+        cli,
+        ["--server-url", "http://server", "server", "restart", "--timeout", "0.05"],
+    )
+
+    assert result.exit_code != 0
+    assert "old process image is still answering" in result.output

@@ -145,7 +145,6 @@ def _repair_for_error(exc: CoreError) -> ServedRepairV1:
             operation=CREDENTIAL_REPAIR_OPERATION,
             arguments={
                 "credential_options": [
-                    "--server-bearer-token",
                     "CRUXIBLE_SERVER_BEARER_TOKEN",
                     "bootstrap-secret file",
                 ]

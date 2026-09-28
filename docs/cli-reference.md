@@ -119,7 +119,9 @@ the command, its `flock` must also be free. `--timeout` (default 30s) bounds
 that wait. The command exits NON-ZERO with the typed
 `cruxible.server.stop_not_confirmed` when the root was not released, so
 `cruxible server stop && cruxible server start` cannot walk into the lock
-refusal the stop existed to clear. Against a daemon bound to TCP on another
+refusal the stop existed to clear. A stopped socket daemon removes its socket
+file. `server restart` waits until the probe answers from the NEW process
+image (a different `boot_id` on `/version`), not the image it replaced. Against a daemon bound to TCP on another
 host, the state root is not a path this machine has: the command then prints
 `Stop requested; lock release not observable from this client.` and exits zero
 rather than claiming a release it cannot see. `--json` reports the same two
@@ -140,8 +142,9 @@ no bearer or bootstrap secret, and auth-on installation requires an active
 durable runtime credential first.
 
 `server status` lists the daemon's exact current compiler coordinate and each
-governed host as `uninitialized`, `writable`, or `reseed_required`, retaining a
-typed reason for malformed or retired state. Its `Instances` count is the number
+governed host as `uninitialized`, `writable`, `reseed_required`, or
+`decommissioned`, retaining a typed reason for malformed, retired or
+decommissioned state. Its `Instances` count is the number
 of governed daemon hosts shown, excluding unrelated local registry entries.
 `server status` also lists the daemon's consumers on every instance it holds
 open: each armed Line and each built-in worker, as `running`, `stalled`,
@@ -624,7 +627,9 @@ and names any carried ProviderInterface that no installed Provider implements.
 
 `status` lists installed kits and the kit paths edited locally. `remove`
 proposes retiring what a kit owns (never what it only carries); the dependency
-closure refuses it while live Claims depend on those definitions.
+closure refuses it while live Claims depend on those definitions. Removing a kit
+that is not installed refuses with `playbill.kit.not_installed`, naming the
+installed kits.
 
 MCP: `cruxible_playbill_kit_build`, `cruxible_playbill_kit_status`,
 `cruxible_playbill_kit_add` and `cruxible_playbill_kit_remove`. HTTP:

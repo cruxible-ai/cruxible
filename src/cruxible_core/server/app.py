@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import faulthandler
 import os
+import signal
 import socket
 import sqlite3
 import stat
 import sys
-from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import IO, Any
 
@@ -48,6 +49,7 @@ from cruxible_core.server.errors import (
 )
 from cruxible_core.server.registry import get_registry
 from cruxible_core.server.request_logging import configure_request_logging
+from cruxible_core.server.restart import PROCESS_BOOT_ID
 from cruxible_core.server.routes.hosted_instances import router as hosted_instances_router
 from cruxible_core.server.routes.instances import router as instances_router
 from cruxible_core.server.routes.playbill import router as playbill_router
@@ -242,6 +244,7 @@ def create_app() -> FastAPI:
         return {
             "version": __version__,
             "sdk_contract_snapshot_digest": AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
+            "boot_id": PROCESS_BOOT_ID,
         }
 
     app.include_router(instances_router)
@@ -566,6 +569,31 @@ def _verify_bound_socket(
     )
 
 
+@contextmanager
+def _sigterm_unwinds() -> Iterator[None]:
+    """Let a SIGTERM stop unwind this process instead of killing it outright.
+
+    uvicorn shuts down gracefully on SIGTERM and then re-raises the signal under
+    the handler it found. Under the default handler that re-raise ends the
+    process on the spot, so no ``finally`` below ever runs and the socket file
+    `server stop` promised to release is left behind. A handler that raises
+    SystemExit(0) turns the re-raise into an ordinary unwind.
+    """
+
+    def _exit(_signum: int, _frame: object) -> None:
+        raise SystemExit(0)
+
+    try:
+        previous = signal.signal(signal.SIGTERM, _exit)
+    except ValueError:  # not the main thread: uvicorn installs no handlers either
+        yield
+        return
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def _serve(resolved_socket: str | None) -> None:
     """Start uvicorn under an already-held state-root lock."""
     enable_fatal_fault_handler()
@@ -604,7 +632,8 @@ def _serve(resolved_socket: str | None) -> None:
         socket_file = Path(resolved_socket)
         sock = bind_private_unix_socket(socket_file)
         try:
-            uvicorn.run(app, fd=sock.fileno())
+            with _sigterm_unwinds():
+                uvicorn.run(app, fd=sock.fileno())
         finally:
             sock.close()
             socket_file.unlink(missing_ok=True)

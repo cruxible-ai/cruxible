@@ -68,10 +68,9 @@ _STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _JSON_MEDIA_TYPE = "application/json"
 
 MISSING_BEARER_CREDENTIAL_MESSAGE = (
-    "Daemon reachable; credential missing. Supply a bearer token with "
-    "`--server-bearer-token` or `CRUXIBLE_SERVER_BEARER_TOKEN`. Operators may use "
-    "the bootstrap-secret file created by `cruxible server start "
-    "--bootstrap-secret-file PATH`."
+    "Daemon reachable; credential missing. Supply a bearer token in "
+    "`CRUXIBLE_SERVER_BEARER_TOKEN`. Operators may use the bootstrap-secret file "
+    "created by `cruxible server start --bootstrap-secret-file PATH`."
 )
 
 

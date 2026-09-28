@@ -1531,3 +1531,46 @@ def test_a_host_that_cannot_be_opened_refuses_a_detach_instead_of_reading_as_emp
         workspace_attachment_authorized=True,
     )
     assert detached.status == "detached"
+
+
+def test_a_decommissioned_host_reports_decommissioned_not_writable(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    instance_id = "inst_decommissioned_show"
+    created = host_client.post("/api/v1/runtime/instances", json={"instance_id": instance_id})
+    assert created.status_code == 200, created.text
+    record = get_registry().get(instance_id)
+    assert record is not None
+    owner = generate_client_principal_key(
+        tmp_path / "decommission-owner",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(Path(record.location),),
+    )
+    initialized = host_client.post(
+        f"/api/v1/{instance_id}/playbill/init",
+        json={"principals": [owner.principal.model_dump(mode="json")]},
+    )
+    assert initialized.status_code == 200, initialized.text
+    assert host_client.get(f"/api/v1/{instance_id}/playbill/host").json()["writable"] is True
+
+    ended = host_client.post(
+        f"/api/v1/{instance_id}/playbill/instance/decommission",
+        json={"reason": "superseded by a fresh host"},
+    )
+    assert ended.status_code == 200, ended.text
+
+    shown = host_client.get(f"/api/v1/{instance_id}/playbill/host")
+    assert shown.status_code == 200, shown.text
+    body = shown.json()
+    assert body["compatibility"] == "decommissioned"
+    assert body["writable"] is False
+    assert body["reason"]["code"] == "instance_decommissioned"
+    assert "superseded by a fresh host" in body["reason"]["detail"]
+
+    status = host_client.get("/api/v1/server/info")
+    assert status.status_code == 200, status.text
+    (host,) = [row for row in status.json()["hosts"] if row["instance_id"] == instance_id]
+    assert host["compatibility"] == "decommissioned"
+    assert host["writable"] is False

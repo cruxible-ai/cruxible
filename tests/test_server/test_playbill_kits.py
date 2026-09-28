@@ -447,6 +447,24 @@ def test_removing_a_kit_retires_what_it_installed(worlds: tuple[_World, _World])
     assert playbill_api.playbill_kit_status(consumer.instance_id).kits == ()
 
 
+def test_removing_a_kit_that_is_not_installed_is_refused_naming_the_installed_ones(
+    worlds: tuple[_World, _World],
+) -> None:
+    from cruxible_core.errors import RequestRefusedError
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    consumer.add(publisher.build("1.0.0"))
+
+    with pytest.raises(RequestRefusedError) as refused:
+        playbill_api.playbill_kit_remove(
+            consumer.instance_id, PlaybillKitRemoveRequestV1(kit_id="nokit")
+        )
+
+    assert refused.value.error_code == "playbill.kit.not_installed"
+    assert "installed: acme" in str(refused.value)
+
+
 def test_a_kit_needs_the_approval_the_consumer_policy_requires(
     strict_worlds: tuple[_World, _World],
 ) -> None:

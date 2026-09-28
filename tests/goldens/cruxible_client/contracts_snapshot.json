@@ -45,14 +45,16 @@
         "legacy_layout_requires_reseed",
         "host_state_incomplete",
         "host_state_malformed",
-        "compiler_lineage_not_writable"
+        "compiler_lineage_not_writable",
+        "instance_decommissioned"
       ]
     },
     "PlaybillHostCompatibilityV1": {
       "values": [
         "uninitialized",
         "writable",
-        "reseed_required"
+        "reseed_required",
+        "decommissioned"
       ]
     },
     "PlaybillHostStatus": {
@@ -22375,7 +22377,8 @@
               "legacy_layout_requires_reseed",
               "host_state_incomplete",
               "host_state_malformed",
-              "compiler_lineage_not_writable"
+              "compiler_lineage_not_writable",
+              "instance_decommissioned"
             ],
             "title": "Code",
             "type": "string"
@@ -22413,7 +22416,8 @@
               "legacy_layout_requires_reseed",
               "host_state_incomplete",
               "host_state_malformed",
-              "compiler_lineage_not_writable"
+              "compiler_lineage_not_writable",
+              "instance_decommissioned"
             ],
             "title": "Code",
             "type": "string"
@@ -22455,7 +22459,8 @@
             "enum": [
               "uninitialized",
               "writable",
-              "reseed_required"
+              "reseed_required",
+              "decommissioned"
             ],
             "title": "Compatibility",
             "type": "string"
@@ -22600,7 +22605,8 @@
                   "legacy_layout_requires_reseed",
                   "host_state_incomplete",
                   "host_state_malformed",
-                  "compiler_lineage_not_writable"
+                  "compiler_lineage_not_writable",
+                  "instance_decommissioned"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -22633,7 +22639,8 @@
             "enum": [
               "uninitialized",
               "writable",
-              "reseed_required"
+              "reseed_required",
+              "decommissioned"
             ],
             "title": "Compatibility",
             "type": "string"
@@ -81066,7 +81073,8 @@
                   "legacy_layout_requires_reseed",
                   "host_state_incomplete",
                   "host_state_malformed",
-                  "compiler_lineage_not_writable"
+                  "compiler_lineage_not_writable",
+                  "instance_decommissioned"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -81099,7 +81107,8 @@
                 "enum": [
                   "uninitialized",
                   "writable",
-                  "reseed_required"
+                  "reseed_required",
+                  "decommissioned"
                 ],
                 "title": "Compatibility",
                 "type": "string"
@@ -81347,6 +81356,26 @@
     },
     "ServerRestartResult": {
       "fields": {
+        "boot_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "boot_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Boot Id"
+          }
+        },
         "scheduled": {
           "has_default": false,
           "has_default_factory": false,
@@ -81380,6 +81409,18 @@
       },
       "json_schema": {
         "properties": {
+          "boot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Boot Id"
+          },
           "scheduled": {
             "title": "Scheduled",
             "type": "boolean"

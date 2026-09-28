@@ -75,22 +75,30 @@ def _client_transport_label() -> str:
     return "configured Cruxible server"
 
 
-def _wait_for_daemon(client: CruxibleClient, timeout: float) -> str:
-    """Poll the daemon's /version probe until it answers or the budget expires.
+def _wait_for_daemon(client: CruxibleClient, timeout: float, *, old_boot_id: str | None) -> str:
+    """Poll the daemon's /version probe until the NEW image answers.
 
-    Returns the version reported by the restarted daemon. Raising here surfaces
-    a skew-proof failure: the command only succeeds once the new image responds.
+    The old image keeps answering for a beat after it acknowledges the
+    restart, and the re-exec keeps its pid, so an answer only counts once its
+    boot id differs from the one that acknowledged. Returns the version the new
+    image reports; raising here keeps the command skew-proof.
     """
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            return client.version()
+            version, boot_id = client.daemon_identity()
         except Exception as exc:  # connection refused while the image is replaced
             last_error = exc
-            time.sleep(_RESTART_POLL_INTERVAL_SECONDS)
+        else:
+            if old_boot_id is None or boot_id != old_boot_id:
+                return version
+            last_error = None
+        time.sleep(_RESTART_POLL_INTERVAL_SECONDS)
+    still_old = last_error is None and old_boot_id is not None
     raise click.ClickException(
         f"Daemon did not come back within {timeout:.0f}s after restart"
+        + ("; the old process image is still answering" if still_old else "")
         + (f": {last_error}" if last_error is not None else "")
     )
 
@@ -495,7 +503,7 @@ def server_restart_cmd(output_json: bool, no_wait: bool, timeout: float) -> None
 
     confirmed_version: str | None = None
     if not no_wait:
-        confirmed_version = _wait_for_daemon(client, timeout)
+        confirmed_version = _wait_for_daemon(client, timeout, old_boot_id=result.boot_id)
 
     if output_json:
         payload = result.model_dump(mode="python")

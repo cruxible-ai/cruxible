@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-28:surface-integration-reads",
-    "surface_digest": "sha256:702f9d1f686de321a678cea6769551dbf053ee4ab072000df1c13ca819929181"
+    "register_entry": "2026-09-28:audit-bugs",
+    "surface_digest": "sha256:6417d9df311a4ed811be37e5eb8a52f85918de993901dcca4ac6b3b6676251ec"
   },
   "surface": {
     "cli_leaves": [
@@ -3277,7 +3277,7 @@
         ],
         "input_schema_digest": "sha256:99d0490133578d67317d5885bb4e59121f2c6efce091358dfcb03d3542792925",
         "name": "cruxible_server_info",
-        "output_schema_digest": "sha256:047d9c4f741951e6f5915120d9c61f7804e066ba9937ec1d9c2cb20c44e0f20d",
+        "output_schema_digest": "sha256:179ee1ec6f56f8e7ff5b8ba2201b15b67961e23d2d02a199f5455f91df131e18",
         "permission": "READ_ONLY"
       }
     ]

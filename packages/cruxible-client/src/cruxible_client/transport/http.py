@@ -195,6 +195,17 @@ class CruxibleClient:
         version, _snapshot_digest = self._version_info()
         return version
 
+    def daemon_identity(self) -> tuple[str, str | None]:
+        """Return the daemon's version and the boot id of its process image."""
+
+        response = self._client.get("/version")
+        payload = self._parse_json(response)
+        version = payload.get("version")
+        if not isinstance(version, str):
+            raise CoreError("Server /version response missing version string")
+        boot_id = payload.get("boot_id")
+        return version, boot_id if isinstance(boot_id, str) else None
+
     def _version_info(self) -> tuple[str, str | None]:
         """Return package and served authoring-contract versions from the public probe."""
 

@@ -133,7 +133,8 @@ def test_status_reachable_daemon_missing_credential_names_repair(
     assert result.exit_code == 1
     assert "Error: Daemon reachable; credential missing." in result.output
     assert "AuthenticationError" not in result.output
-    assert "--server-bearer-token" in result.output
+    # The CLI has no bearer-token flag; the refusal must not name one.
+    assert "--server-bearer-token" not in result.output
     assert "CRUXIBLE_SERVER_BEARER_TOKEN" in result.output
     assert "bootstrap-secret file" in result.output
     assert "cruxible server start --bootstrap-secret-file PATH" in result.output
