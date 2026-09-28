@@ -304,6 +304,8 @@ PLAYBILL_POLICY_LIST_DEFAULT_LIMIT = 25
 PLAYBILL_POLICY_LIST_MAX_LIMIT = 200
 PLAYBILL_CURATION_LIST_DEFAULT_LIMIT = 25
 PLAYBILL_CURATION_LIST_MAX_LIMIT = 200
+PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT = 50
+PLAYBILL_SUBJECT_LIST_MAX_LIMIT = 500
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
     "provider_process_lease_invalid",
@@ -980,12 +982,26 @@ class PlaybillSubjectView(BaseModel):
     incoming: list[PlaybillSubjectIncomingGroupV1] = []
 
 
+class PlaybillSubjectListRow(BaseModel):
+    """One Subject on a list page; the full envelope is on the Subject read."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    subject_kind: str
+    subject_id: str
+    lifecycle: Literal["live", "retired"]
+    live_claims: int = Field(ge=0)
+
+
 class PlaybillSubjectList(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-subject-list-v1"] = "playbill-subject-list-v1"
+    tag: Literal["playbill-subject-list-v2"] = "playbill-subject-list-v2"
     coordinate: PlaybillAcceptedCoordinate
-    subjects: list[PlaybillSubjectView]
+    subject_kind_filter: str | None = None
+    subjects: list[PlaybillSubjectListRow]
+    truncated: bool = False
+    next_cursor: str | None = None
 
 
 class PlaybillSubjectIndexEntry(BaseModel):

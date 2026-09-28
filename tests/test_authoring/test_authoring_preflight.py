@@ -471,9 +471,12 @@ def test_the_object_subjects_profile_lists_the_incoming_relation(tmp_path: Path)
     assert edge.claim_identity.startswith("Claim:")
     assert len(package.incoming[0].claims) == 1
     # The asserting end still carries no incoming edge, and the list surface
-    # never resolves them.
+    # carries only compact rows, never envelopes or edges.
     assert vulnerability.incoming == ()
-    assert {subject.incoming for subject in listed.subjects} == {()}
+    assert {(row.subject_kind, row.subject_id) for row in listed.subjects} >= {
+        ("sec.package", "demo"),
+        ("sec.vulnerability", "cve-2026-0001"),
+    }
 
 
 def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) -> None:

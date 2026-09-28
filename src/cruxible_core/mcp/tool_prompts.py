@@ -123,8 +123,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need a governed principal registration, rotation, revocation, or recovery."
     ),
     "cruxible_playbill_list_subjects": (
-        "Use when you need accepted Subjects and their exact coordinate, optionally of one "
-        "subject_kind."
+        "Use when you need which accepted Subjects exist, one page at a time, optionally of "
+        "one subject_kind; read one Subject's envelope and facts with get_subject."
     ),
     "cruxible_playbill_get_subject": (
         "Use when you need one accepted Subject envelope and its structured facts."

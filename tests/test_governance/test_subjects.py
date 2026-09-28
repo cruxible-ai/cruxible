@@ -160,7 +160,9 @@ def test_subject_acceptance_rebuild_history_and_explanation(tmp_path: Path) -> N
         "playbill.subject.provenance",
         "playbill.subject.references",
     }
-    assert service_list_playbill_subjects(instance).subjects == (subject,)
+    (row,) = service_list_playbill_subjects(instance).subjects
+    assert f"Subject:{row.subject_kind}/{row.subject_id}" == subject.envelope["identity"]
+    assert (row.lifecycle, row.live_claims) == ("live", 0)
 
     history = service_playbill_subject_history(instance, identity=SUBJECT_IDENTITY)
     assert len(history.entries) == 1

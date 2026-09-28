@@ -5410,8 +5410,14 @@ list_playbill_subjects(
     instance_id: str,
     *,
     at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    subject_kind: str | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
 ) -> contracts.PlaybillSubjectList
 ```
+
+One page of compact Subject rows (`subject_kind`, `subject_id`, `lifecycle`,
+`live_claims`); follow `next_cursor` while `truncated`.
 
 HTTP: `GET f'/api/v1/{instance_id}/playbill/subjects'`.
 

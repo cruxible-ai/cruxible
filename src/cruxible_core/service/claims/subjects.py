@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterable, Mapping
 from typing import Literal
 
@@ -26,6 +27,13 @@ from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
     PlaybillAcceptedCoordinate,
+)
+from cruxible_core.service.list_pages import (
+    PlaybillListCursorMismatch,
+    decode_list_cursor,
+    encode_list_cursor,
+    list_snapshot,
+    page_after_boundary,
 )
 
 
@@ -62,10 +70,20 @@ class PlaybillSubjectView(_StrictSubjectServiceModel):
     incoming: tuple[PlaybillSubjectIncomingGroupV1, ...] = ()
 
 
+class PlaybillSubjectListRow(_StrictSubjectServiceModel):
+    subject_kind: str
+    subject_id: str
+    lifecycle: Literal["live", "retired"]
+    live_claims: int
+
+
 class PlaybillSubjectList(_StrictSubjectServiceModel):
-    tag: Literal["playbill-subject-list-v1"] = "playbill-subject-list-v1"
+    tag: Literal["playbill-subject-list-v2"] = "playbill-subject-list-v2"
     coordinate: PlaybillAcceptedCoordinate
-    subjects: tuple[PlaybillSubjectView, ...]
+    subject_kind_filter: str | None = None
+    subjects: tuple[PlaybillSubjectListRow, ...]
+    truncated: bool = False
+    next_cursor: str | None = None
 
 
 class PlaybillSubjectIndexEntry(_StrictSubjectServiceModel):
@@ -225,21 +243,103 @@ def service_get_playbill_subject(
     return _public_subject(subject, incoming=incoming)
 
 
+_SUBJECT_LIST = "subjects"
+
+
 def service_list_playbill_subjects(
     instance: PlaybillInstance,
     *,
     at: PlaybillAcceptedCoordinate | None = None,
     subject_kind: str | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
 ) -> PlaybillSubjectList:
-    coordinate = _resolve_coordinate(instance, at)
-    with instance.bind_accepted_projection(coordinate) as projection:
-        subjects = tuple(
-            _public_subject(item) for item in projection.list_subjects(subject_kind=subject_kind)
-        )
-    return PlaybillSubjectList(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-        subjects=subjects,
+    """One page of compact Subject rows, in kind-qualified identity order.
+
+    Rows name the Subject and count its live Claims; the envelope and facts
+    stay on the Subject read. ``limit`` bounds the page (``None`` reads them
+    all). A cursor continues its first page at that page's coordinate.
+    """
+
+    selection = {"subject_kind": subject_kind}
+    continuation = (
+        None
+        if cursor is None
+        else decode_list_cursor(cursor, list_name=_SUBJECT_LIST, selection=selection)
     )
+    if continuation is not None:
+        pinned = PlaybillAcceptedCoordinate.model_validate(continuation.coordinate)
+        if at is not None and at != pinned:
+            raise PlaybillListCursorMismatch(
+                f"{PlaybillListCursorMismatch.error_code}: the cursor continues a different "
+                "coordinate; list the subjects again without a cursor"
+            )
+        at = pinned
+    coordinate = _resolve_coordinate(instance, at)
+    served = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        indexed = tuple(
+            (kind, subject_id, lifecycle)
+            for _identity, kind, subject_id, lifecycle in projection.subject_index()
+            if subject_kind is None or kind == subject_kind
+        )
+        keys = tuple((kind, subject_id) for kind, subject_id, _lifecycle in indexed)
+        snapshot = list_snapshot([list(key) for key in keys])
+        page, truncated = page_after_boundary(
+            indexed,
+            keys=keys,
+            snapshot=snapshot,
+            continuation=continuation,
+            limit=len(indexed) if limit is None else limit,
+            list_name=_SUBJECT_LIST,
+        )
+        counts = _live_claim_counts(
+            projection.typed.connection,
+            tuple(subject_path(kind, subject_id) for kind, subject_id, _ in page),
+        )
+    rows = tuple(
+        PlaybillSubjectListRow(
+            subject_kind=kind,
+            subject_id=subject_id,
+            lifecycle="retired" if lifecycle == "retired" else "live",
+            live_claims=counts.get(subject_path(kind, subject_id), 0),
+        )
+        for kind, subject_id, lifecycle in page
+    )
+    return PlaybillSubjectList(
+        coordinate=served,
+        subject_kind_filter=subject_kind,
+        subjects=rows,
+        truncated=truncated,
+        next_cursor=(
+            encode_list_cursor(
+                list_name=_SUBJECT_LIST,
+                coordinate=served.model_dump(mode="json"),
+                selection=selection,
+                snapshot=snapshot,
+                last_key=(rows[-1].subject_kind, rows[-1].subject_id),
+            )
+            if truncated and rows
+            else None
+        ),
+    )
+
+
+def _live_claim_counts(connection: sqlite3.Connection, paths: tuple[str, ...]) -> dict[str, int]:
+    """Live Claims per Subject path, for just the Subjects on one page."""
+
+    if not paths:
+        return {}
+    placeholders = ",".join("?" for _ in paths)
+    return {
+        str(path): int(count)
+        for path, count in connection.execute(
+            "SELECT subject_path, count(*) FROM claims "
+            f"WHERE lifecycle='live' AND subject_path IN ({placeholders}) "
+            "GROUP BY subject_path",
+            paths,
+        )
+    }
 
 
 def service_list_playbill_subject_index(
@@ -333,6 +433,7 @@ __all__ = [
     "PlaybillSubjectIndex",
     "PlaybillSubjectIndexEntry",
     "PlaybillSubjectList",
+    "PlaybillSubjectListRow",
     "PlaybillSubjectView",
     "service_get_playbill_subject",
     "service_list_playbill_subject_index",

@@ -655,7 +655,7 @@ cruxible playbill document history IDENTITY
 ## playbill subject
 
 ~~~text
-cruxible playbill subject list [--kind KIND]
+cruxible playbill subject list [--kind KIND] [--limit N] [--cursor CURSOR]
 cruxible playbill subject get KIND/ID
 cruxible playbill subject history KIND/ID
 ~~~
@@ -724,6 +724,11 @@ cruxible playbill claim history IDENTITY
 cruxible playbill claim explain IDENTITY [--evaluation-time TS]
 ~~~
 
+`subject list` answers one page (default 50) of compact rows: `subject_kind`,
+`subject_id`, `lifecycle` and the count of live Claims; `subject get` reads one
+Subject's envelope and facts. A cut page carries `truncated` and `next_cursor`,
+which `--cursor` continues at the first page's coordinate; a cursor for another
+list or `--kind` is refused as `playbill.list.cursor_mismatch`.
 `subject list --kind` and `claim list --kind` narrow the listing to one Subject
 kind through the Subject index. `claim values` is the status-table read (the
 CLI form of the SDK's `world.values`): one row per live Claim, with its

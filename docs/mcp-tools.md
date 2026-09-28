@@ -163,7 +163,7 @@ paths and root aliases, not compilation wire.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_list_subjects` | List accepted Subjects and coordinate, optionally of one `subject_kind` | `READ_ONLY` |
+| `cruxible_playbill_list_subjects` | One page (`limit`, default 50; `cursor`) of Subject rows (`subject_kind`, `subject_id`, `lifecycle`, live Claim count), optionally of one `subject_kind`; `get_subject` reads one | `READ_ONLY` |
 | `cruxible_playbill_get_subject` | Read one accepted Subject | `READ_ONLY` |
 | `cruxible_playbill_subject_history` | Read one Subject's accepted lineage | `READ_ONLY` |
 | `cruxible_playbill_propose_claim_type` | Propose a governed predicate interface | `GOVERNED_WRITE` |

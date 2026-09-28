@@ -833,10 +833,17 @@ class CruxibleClient:
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
         subject_kind: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
     ) -> contracts.PlaybillSubjectList:
+        """One page of compact Subject rows; follow ``next_cursor`` while ``truncated``."""
         params: dict[str, Any] = dict(self._playbill_coordinate_params(at))
         if subject_kind is not None:
             params["subject_kind"] = subject_kind
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
         response = self._client.get(
             f"/api/v1/{instance_id}/playbill/subjects",
             params=params,

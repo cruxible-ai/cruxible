@@ -1025,11 +1025,19 @@ def handle_playbill_propose_principal_change(
 
 
 def handle_playbill_list_subjects(
-    instance_id: str, *, subject_kind: str | None = None
+    instance_id: str,
+    *,
+    subject_kind: str | None = None,
+    limit: int = contracts.PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> contracts.PlaybillSubjectList:
     return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_subjects(instance_id, subject_kind=subject_kind),
-        lambda: playbill_api.playbill_list_subjects(instance_id, subject_kind=subject_kind),
+        lambda client: client.list_playbill_subjects(
+            instance_id, subject_kind=subject_kind, limit=limit, cursor=cursor
+        ),
+        lambda: playbill_api.playbill_list_subjects(
+            instance_id, subject_kind=subject_kind, limit=limit, cursor=cursor
+        ),
         operation_name="cruxible_playbill_list_subjects",
     )
 

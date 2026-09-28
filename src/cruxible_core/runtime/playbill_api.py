@@ -1103,10 +1103,16 @@ def playbill_list_subjects(
     *,
     at: AcceptedCoordinate | None = None,
     subject_kind: str | None = None,
+    limit: int = contracts.PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> contracts.PlaybillSubjectList:
     check_permission("cruxible_playbill_read", instance_id=instance_id)
     result = service_list_playbill_subjects(
-        get_playbill_manager().get(instance_id), at=at, subject_kind=subject_kind
+        get_playbill_manager().get(instance_id),
+        at=at,
+        subject_kind=subject_kind,
+        limit=limit,
+        cursor=cursor,
     )
     return contracts.PlaybillSubjectList.model_validate(result.model_dump(mode="json"))
 

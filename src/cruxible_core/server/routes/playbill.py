@@ -661,11 +661,19 @@ async def list_subjects(
     generation_root: str | None = None,
     compiler_digest: str | None = None,
     subject_kind: str | None = None,
+    limit: int = Query(
+        default=contracts.PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT,
+        ge=1,
+        le=contracts.PLAYBILL_SUBJECT_LIST_MAX_LIMIT,
+    ),
+    cursor: str | None = Query(default=None, max_length=4096),
 ) -> contracts.PlaybillSubjectList:
     return playbill_api.playbill_list_subjects(
         resolve_server_instance_id(instance_id),
         at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
         subject_kind=subject_kind,
+        limit=limit,
+        cursor=cursor,
     )
 
 
