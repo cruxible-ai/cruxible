@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import time
 from collections.abc import Mapping, Sequence
@@ -168,7 +169,7 @@ from cruxible_client.contracts.providers import (
     AcceptedProviderV1,
     ProviderV2,
 )
-from cruxible_client.contracts.repairs import served_repair_for_refusal
+from cruxible_client.contracts.repairs import RepairOperationV1, served_repair_for_refusal
 from cruxible_client.contracts.resolution_contracts import (
     InvestigationBindingV1,
     ResolutionContractReferenceV1,
@@ -398,6 +399,34 @@ class LineRunNotAccepted(ProcedureSurfaceError):
     code = "playbill.line.run.line_not_accepted"
     error_code = "line_not_accepted"
     http_status = 404
+
+
+class LineNeverArmed(ProcedureSurfaceError):
+    """A Line status read found no arm, current or past."""
+
+    code = "playbill.line.never_armed"
+    error_code = "playbill.line.never_armed"
+    http_status = 404
+
+    def __init__(self, line: str) -> None:
+        super().__init__(
+            f"{self.code}: Line {line!r} has never been armed; arm it with "
+            f"`cruxible playbill line arm {line}`"
+        )
+        self.repair = RepairOperationV1(operation="playbill.line.arm", arguments={"line": line})
+
+
+class LineNotArmed(ProcedureSurfaceError):
+    """A disarm found no active arm to stop."""
+
+    code = "playbill.line.not_armed"
+    error_code = "playbill.line.not_armed"
+    http_status = 409
+
+    def __init__(self, line: str, *, last_stop: str | None) -> None:
+        detail = f" (its last arm stopped: {last_stop})" if last_stop else ""
+        super().__init__(f"{self.code}: Line {line!r} is not armed{detail}; nothing to disarm")
+        self.repair = RepairOperationV1(operation="playbill.line.status", arguments={"line": line})
 
 
 class LineRunIdentityMismatch(ProcedureSurfaceError):
@@ -757,7 +786,22 @@ def _accepted_line_by_reference(
             (identity_digest,),
         ).fetchall()
         if len(matches) != 1:
-            raise LineRunNotAccepted(f"{LineRunNotAccepted.code}: {identity_digest}")
+            live = sorted(
+                str(row[0]).removeprefix("Line:")
+                for row in projection.typed.connection.execute(
+                    "SELECT identity FROM lines WHERE lifecycle='live'"
+                ).fetchall()
+            )
+            shown = reference.removeprefix("Line:")
+            nearest = difflib.get_close_matches(shown, live, n=3, cutoff=0.6)
+            listed = ", ".join(live[:20]) + (
+                f", and {len(live) - 20} more" if len(live) > 20 else ""
+            )
+            raise LineRunNotAccepted(
+                f"{LineRunNotAccepted.code}: no live accepted Line named {shown!r}"
+                + (f"; nearest: {', '.join(nearest)}" if nearest else "")
+                + (f"; accepted Lines: {listed}" if live else "; no Line is accepted")
+            )
         identity, path, digest = matches[0]
         line = projection.typed.source(identity)
         assert line is not None

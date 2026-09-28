@@ -1227,9 +1227,14 @@ def _selected_activations(
     declared = {item.measurement_name: item for item in basis.activations}
     missing = [name for name in names if name not in declared]
     if missing:
+        named = (
+            f"Declared: {', '.join(sorted(declared))}."
+            if declared
+            else "This Procedure revision declares no measurements."
+        )
         raise _refuse(
             "measurement_not_declared",
-            f"Measurements {missing} are not declared on this accepted Procedure revision.",
+            f"Measurements {missing} are not declared on this accepted Procedure revision. {named}",
             declared=sorted(declared),
             missing=missing,
         )

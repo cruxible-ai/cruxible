@@ -50,7 +50,9 @@ Floor operations always target the containing Git worktree's canonical
 worktree from its working directory. An explicit `CRUXIBLE_MCP_WORKSPACE_ROOT`
 must equal the worktree root for floor export, status, and activation refresh;
 a nested explicit root is refused rather than allowing a write above its
-configured filesystem boundary.
+configured filesystem boundary. When the root is in no Git worktree at all,
+`cruxible_playbill_activate` still activates and reports
+`floor_refresh.status: not_configured` with the reason.
 
 ## Which verb each tool publishes
 
@@ -163,7 +165,7 @@ paths and root aliases, not compilation wire.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_list_subjects` | List accepted Subjects and coordinate, optionally of one `subject_kind` | `READ_ONLY` |
+| `cruxible_playbill_list_subjects` | One page (`limit`, default 50; `cursor`) of Subject rows (`subject_kind`, `subject_id`, `lifecycle`, live Claim count), optionally of one `subject_kind`; `get_subject` reads one | `READ_ONLY` |
 | `cruxible_playbill_get_subject` | Read one accepted Subject | `READ_ONLY` |
 | `cruxible_playbill_subject_history` | Read one Subject's accepted lineage | `READ_ONLY` |
 | `cruxible_playbill_propose_claim_type` | Propose a governed predicate interface | `GOVERNED_WRITE` |
@@ -223,7 +225,7 @@ exactly one may omit it.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_procedure_readiness` | Report exact binding requirements or query-only readiness | `READ_ONLY` |
+| `cruxible_playbill_procedure_readiness` | Report exact binding requirements or run readiness | `READ_ONLY` |
 | `cruxible_playbill_procedure_bind` | Attach accepted input-plane bindings through a same-identity successor | `GOVERNED_WRITE` |
 | `cruxible_playbill_procedure_run` | Execute a ready Procedure -- accepted-state reads, deterministic computation, and graph-v4 `source` reads through an accepted Provider -- at an explicit coordinate and time | `READ_ONLY` |
 | `cruxible_playbill_procedure_run_status` | Read one finalized Procedure run and its receipt | `READ_ONLY` |
@@ -249,8 +251,9 @@ themselves a governed track record; promotion remains a separate governed act.
 | `cruxible_playbill_predict` | Propose a governed resolution contract | `GOVERNED_WRITE` |
 | `cruxible_playbill_settle` | Settle one prediction from accepted observation evidence or its governed terminal | `GOVERNED_WRITE` |
 
-Prediction settlement records the declared score and resolution as governed
-Claims. It does not create a second authority plane beside accepted state.
+Prediction settlement records the activation and resolution in operational
+exhaust; it does not create or mutate Claims, and it does not create a second
+authority plane beside accepted state.
 
 ## Queries, discovery, and the floor
 
@@ -270,7 +273,7 @@ Claims. It does not create a second authority plane beside accepted state.
 | `cruxible_playbill_curation_accept_fixed` | Link an item to an exact related accepted ChangeSet | `GOVERNED_WRITE` |
 | `cruxible_playbill_curation_suppress` | Hide open work by item, pattern, or instance without resolving it | `GOVERNED_WRITE` |
 | `cruxible_playbill_expand` | Expand one address into a context capsule | `READ_ONLY` |
-| `cruxible_playbill_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.playbill/floor` under the MCP workspace; `mode=status` reports whether that floor is current, stale, or absent | `READ_ONLY` |
+| `cruxible_playbill_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.playbill/floor` under the MCP workspace (status `unchanged` when it already holds this floor); `mode=status` reports whether that floor is current, stale, or absent | `READ_ONLY` |
 | `cruxible_playbill_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, `grep_results_path`, or `whole_working_set`) | `READ_ONLY` |
 
 Lists that can outgrow one answer are paged. `proposal_list`,

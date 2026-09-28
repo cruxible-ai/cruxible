@@ -175,7 +175,9 @@ def test_subject_and_claim_lists_filter_by_subject_kind(tmp_path: Path) -> None:
     claims = service_list_playbill_claims(instance, subject_kind="project.work_item")
     all_claims = service_list_playbill_claims(instance)
 
-    assert {subject.envelope["path"] for subject in subjects.subjects} == set(SUBJECTS)
+    assert {
+        f"subjects/{row.subject_kind}/{row.subject_id}.json" for row in subjects.subjects
+    } == set(SUBJECTS)
     assert service_list_playbill_subjects(instance, subject_kind="project.milestone").subjects == ()
     assert claims.claims == all_claims.claims
     assert len(claims.claims) == 2

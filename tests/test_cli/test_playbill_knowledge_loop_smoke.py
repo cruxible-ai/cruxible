@@ -646,9 +646,9 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     # -- reads ------------------------------------------------------------
 
     subjects = cruxible.json("playbill", "subject", "list")
-    assert {item["envelope"]["identity"] for item in subjects["subjects"]} == {
-        f"Subject:{SUBJECT_KIND}/wi-42",
-        f"Subject:{SUBJECT_KIND}/wi-43",
+    assert {(item["subject_kind"], item["subject_id"]) for item in subjects["subjects"]} == {
+        (SUBJECT_KIND, "wi-42"),
+        (SUBJECT_KIND, "wi-43"),
     }
     assert subjects["coordinate"] == coordinate
     assert (

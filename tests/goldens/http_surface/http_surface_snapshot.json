@@ -264,6 +264,9 @@
   "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/review": {
     "POST": "PlaybillProposalReview"
   },
+  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/status": {
+    "GET": "PlaybillProposalListEntry"
+  },
   "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/withdraw": {
     "POST": "PlaybillProposalWithdrawResult"
   },

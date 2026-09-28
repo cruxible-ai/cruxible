@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
-from cruxible_core.service.claims.subjects import service_list_playbill_subjects
+from cruxible_core.service.claims.subjects import (
+    service_get_playbill_subject,
+    service_list_playbill_subjects,
+)
 from tests.core_support._candidate_support import submit_query_definition_candidate
 from tests.core_support._knowledge_loop_support import (
     TIMESTAMP,
@@ -17,9 +20,14 @@ from tests.core_support._knowledge_loop_support import (
 
 
 def _explanations(instance, coordinate) -> dict[str, list[dict[str, object]]]:
-    listing = service_list_playbill_subjects(
-        instance, at=PlaybillAcceptedCoordinate.from_internal(coordinate)
-    )
+    at = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    listing = service_list_playbill_subjects(instance, at=at)
+    views = [
+        service_get_playbill_subject(
+            instance, identity=f"Subject:{row.subject_kind}/{row.subject_id}", at=at
+        )
+        for row in listing.subjects
+    ]
     return {
         str(view.envelope["identity"]): sorted(
             (
@@ -30,7 +38,7 @@ def _explanations(instance, coordinate) -> dict[str, list[dict[str, object]]]:
             ),
             key=lambda fact: json.dumps(fact, sort_keys=True),
         )
-        for view in listing.subjects
+        for view in views
     }
 
 

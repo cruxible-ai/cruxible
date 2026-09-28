@@ -31,7 +31,11 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     canonical_digest,
 )
-from cruxible_client.contracts.errors import ProposalIntegrityError, ProposalWithdrawnError
+from cruxible_client.contracts.errors import (
+    ProposalIntegrityError,
+    ProposalNotFoundError,
+    ProposalWithdrawnError,
+)
 from cruxible_client.contracts.source_catalog import SourceCompilationManifest
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.proposals.candidate_review_summary import (
@@ -253,7 +257,8 @@ class ProposalEvidenceStore:
 
         if self.index is not None:
             if len(proposal_id) == 71:
-                ProposalDigest.from_tagged(proposal_id)
+                # A malformed full-length id is returned unchanged, so the
+                # caller's own typed refusal names it rather than a ValueError.
                 return proposal_id
             ids = tuple(
                 row["proposal_id"]
@@ -273,16 +278,25 @@ class ProposalEvidenceStore:
     def read_admission(self, proposal_id: str) -> ProposalAdmissionRecord:
         """Read one canonical immutable admission by its public proposal ID."""
 
+        selector = proposal_id
         proposal_id = self.resolve_proposal_id(proposal_id)
-        ProposalDigest.from_tagged(proposal_id)
+        try:
+            ProposalDigest.from_tagged(proposal_id)
+        except ValueError as exc:
+            raise ProposalNotFoundError(selector) from exc
         if self.index is not None:
+            rows = self.index.rows(self, "proposal_id=?", (proposal_id,))
+            if not rows:
+                raise ProposalNotFoundError(selector)
             return self._read_located(
-                self.index.locate(self, proposal_id),
+                rows[0],
                 "admission",
                 ProposalAdmissionRecord,
                 render=admission_bytes,
             )
         path = self.proposals / f"{proposal_id.removeprefix('sha256:')}.json"
+        if not path.exists():
+            raise ProposalNotFoundError(selector)
         record = self._read_model(
             path,
             ProposalAdmissionRecord,

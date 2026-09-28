@@ -2291,12 +2291,23 @@ def subject_group() -> None:
 
 @subject_group.command("list")
 @click.option("--kind", "subject_kind", default=None, help="Only Subjects of this kind.")
+@click.option(
+    "--limit",
+    default=contracts.PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT,
+    show_default=True,
+    type=click.IntRange(1, contracts.PLAYBILL_SUBJECT_LIST_MAX_LIMIT),
+    help="Subjects per page.",
+)
+@click.option("--cursor", default=None, help="Continue a previous page of the same listing.")
 @json_option
 @handle_errors
-def list_subjects(subject_kind: str | None, output_json: bool) -> None:
+def list_subjects(
+    subject_kind: str | None, limit: int, cursor: str | None, output_json: bool
+) -> None:
+    """List one page of accepted Subjects with their live Claim counts."""
     result = _server_call(
         lambda client, instance_id: client.list_playbill_subjects(
-            instance_id, subject_kind=subject_kind
+            instance_id, subject_kind=subject_kind, limit=limit, cursor=cursor
         ),
         command_name="playbill subject list",
     )
@@ -2304,8 +2315,13 @@ def list_subjects(subject_kind: str | None, output_json: bool) -> None:
         _emit_json(result.model_dump(mode="json"))
         return
     for subject in result.subjects:
-        click.echo(f"{subject.envelope['identity']}  {subject.envelope['path']}")
+        retired = "  retired" if subject.lifecycle == "retired" else ""
+        click.echo(
+            f"{subject.subject_kind}/{subject.subject_id}  "
+            f"{subject.live_claims} live Claim(s){retired}"
+        )
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
+    _echo_list_continuation(result.next_cursor)
 
 
 @subject_group.command("get")
@@ -3807,7 +3823,7 @@ def run_query(
 
 @playbill_group.group("procedure")
 def procedure_group() -> None:
-    """Inspect, bind, and run accepted query-only Procedures."""
+    """Inspect, bind, run, and measure accepted Procedures."""
 
 
 @procedure_group.command("readiness")
@@ -5144,7 +5160,10 @@ def export_floor(
             payload["git_workspace_note"] = written.git_workspace_note.model_dump(mode="json")
         _emit_json(payload)
         return
-    click.echo(f"Wrote {len(result.files)} floor file(s) to {written.destination}")
+    if written.status == "unchanged":
+        click.echo(f"Floor already current at {written.destination}; nothing written")
+    else:
+        click.echo(f"Wrote {len(result.files)} floor file(s) to {written.destination}")
     click.echo(f"Floor digest: {result.manifest['floor_digest']}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 

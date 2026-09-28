@@ -270,13 +270,17 @@ class ProposalNotFoundError(PlaybillError):
 
     def __init__(self, selector: str, *, message: str | None = None) -> None:
         self.selector = selector
-        self.accepted_forms = ("full proposal digest", "unique digest prefix", "target ref")
+        self.accepted_forms = (
+            "full proposal digest",
+            "unique digest prefix (sha256: plus at least 8 hex characters)",
+            "target ref",
+        )
         self.repair_commands = ("cruxible playbill proposal list",)
         super().__init__(
             message
             or f"{self.error_code}: proposal selector {selector!r} was not found; accepted "
-            "forms are a full proposal digest, unique digest prefix, or target ref; run "
-            "`cruxible playbill proposal list`"
+            "forms are a full proposal digest, a unique digest prefix (sha256: plus at "
+            "least 8 hex characters), or a target ref; run `cruxible playbill proposal list`"
         )
 
 

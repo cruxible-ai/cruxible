@@ -85,6 +85,7 @@ from cruxible_core.mcp.target import configured_instance_id
 from cruxible_core.mcp.workspace import (
     mcp_git_workspace_root,
     mcp_workspace_root,
+    optional_mcp_git_workspace_root,
     resolve_workspace_path,
 )
 from cruxible_core.query.search import (
@@ -715,7 +716,25 @@ def handle_playbill_submit_approval(
 def handle_playbill_activate(
     instance_id: str, proposal_id: str
 ) -> contracts.PlaybillWorkspaceActivationResult:
-    workspace = mcp_git_workspace_root()
+    workspace = optional_mcp_git_workspace_root()
+    if workspace is None:
+        # Activation is a daemon act; the floor refresh and block sync are local
+        # conveniences that need a worktree, so their absence must not refuse it.
+        activation = _dispatch_remote_or_local(
+            lambda client: client.activate_playbill_proposal(instance_id, proposal_id),
+            lambda: playbill_api.playbill_activate(instance_id, proposal_id),
+            operation_name="cruxible_playbill_activate",
+        )
+        return contracts.PlaybillWorkspaceActivationResult(
+            **activation.model_dump(mode="json"),
+            floor_refresh=contracts.PlaybillFloorRefreshResult(
+                status="not_configured",
+                message=(
+                    "floor refresh skipped: the MCP workspace root is not inside a Git "
+                    "worktree (set CRUXIBLE_MCP_WORKSPACE_ROOT to one to refresh the floor)"
+                ),
+            ),
+        )
     return _dispatch_remote_or_local(
         lambda client: activate_with_workspace_refresh(
             client, instance_id, proposal_id, workspace=workspace
@@ -1006,11 +1025,19 @@ def handle_playbill_propose_principal_change(
 
 
 def handle_playbill_list_subjects(
-    instance_id: str, *, subject_kind: str | None = None
+    instance_id: str,
+    *,
+    subject_kind: str | None = None,
+    limit: int = contracts.PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> contracts.PlaybillSubjectList:
     return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_subjects(instance_id, subject_kind=subject_kind),
-        lambda: playbill_api.playbill_list_subjects(instance_id, subject_kind=subject_kind),
+        lambda client: client.list_playbill_subjects(
+            instance_id, subject_kind=subject_kind, limit=limit, cursor=cursor
+        ),
+        lambda: playbill_api.playbill_list_subjects(
+            instance_id, subject_kind=subject_kind, limit=limit, cursor=cursor
+        ),
         operation_name="cruxible_playbill_list_subjects",
     )
 

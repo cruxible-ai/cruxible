@@ -195,6 +195,17 @@ class CruxibleClient:
         version, _snapshot_digest = self._version_info()
         return version
 
+    def daemon_identity(self) -> tuple[str, str | None]:
+        """Return the daemon's version and the boot id of its process image."""
+
+        response = self._client.get("/version")
+        payload = self._parse_json(response)
+        version = payload.get("version")
+        if not isinstance(version, str):
+            raise CoreError("Server /version response missing version string")
+        boot_id = payload.get("boot_id")
+        return version, boot_id if isinstance(boot_id, str) else None
+
     def _version_info(self) -> tuple[str, str | None]:
         """Return package and served authoring-contract versions from the public probe."""
 
@@ -595,6 +606,15 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}")
         return self._parse_model(response, contracts.PlaybillProposalInspection)
 
+    def playbill_proposal_status(
+        self, instance_id: str, proposal_id: str
+    ) -> contracts.PlaybillProposalListEntry:
+        """One proposal's list entry at the current accepted coordinate, read by ID."""
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/status"
+        )
+        return self._parse_model(response, contracts.PlaybillProposalListEntry)
+
     def inspect_playbill_refusal(
         self, instance_id: str, proposal_id: str
     ) -> contracts.PlaybillRefusalInspection:
@@ -813,10 +833,17 @@ class CruxibleClient:
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
         subject_kind: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
     ) -> contracts.PlaybillSubjectList:
+        """One page of compact Subject rows; follow ``next_cursor`` while ``truncated``."""
         params: dict[str, Any] = dict(self._playbill_coordinate_params(at))
         if subject_kind is not None:
             params["subject_kind"] = subject_kind
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
         response = self._client.get(
             f"/api/v1/{instance_id}/playbill/subjects",
             params=params,

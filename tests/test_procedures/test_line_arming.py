@@ -820,3 +820,41 @@ def test_a_retried_lapsed_tick_never_blocks_the_arms_own_ticks(tmp_path):
     (arm,) = armed_work(instance, now=at)
     ticked = dispatch_armed_line(_manager(instance), instance.descriptor.instance_id, arm, now=at)
     assert ticked is not None and [item.status for item in ticked.items] == ["admitted"]
+
+
+def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tmp_path):
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineNeverArmed,
+        LineNotArmed,
+        LineRunNotAccepted,
+    )
+
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    name = line.identity.name
+
+    with pytest.raises(LineNeverArmed) as never:
+        service_line_arm_status(instance, name)
+    assert never.value.error_code == "playbill.line.never_armed"
+    assert repr(name) in str(never.value)
+    assert never.value.repair.operation == "playbill.line.arm"
+
+    with pytest.raises(LineNeverArmed):
+        service_disarm_line(instance, name, actor=_actor(instance), now=READ_TIME)
+
+    start = READ_TIME + timedelta(seconds=10)
+    service_arm_line(
+        instance, name, principal=LOCAL, actor=_actor(instance), now=start, daemon_id="daemon"
+    )
+    service_disarm_line(instance, name, actor=_actor(instance), now=start)
+    with pytest.raises(LineNotArmed) as again:
+        service_disarm_line(instance, name, actor=_actor(instance), now=start)
+    assert again.value.error_code == "playbill.line.not_armed"
+    assert repr(name) in str(again.value)
+    assert "disarmed" in str(again.value)
+
+    typo = name[:-1]
+    with pytest.raises(LineRunNotAccepted) as unknown:
+        service_line_arm_status(instance, typo)
+    assert f"no live accepted Line named {typo!r}" in str(unknown.value)
+    assert f"nearest: {name}" in str(unknown.value)
+    assert "sha256:" not in str(unknown.value)

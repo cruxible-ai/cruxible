@@ -160,6 +160,26 @@ def test_activate_from_nested_cwd_refreshes_the_containing_git_worktree(
     assert not (nested / ".playbill/floor").exists()
 
 
+def test_activate_outside_a_git_worktree_skips_the_floor_refresh_and_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plain = tmp_path / "not-a-worktree"
+    plain.mkdir()
+    monkeypatch.chdir(plain)
+    monkeypatch.delenv("CRUXIBLE_MCP_WORKSPACE_ROOT", raising=False)
+    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+
+    result = handlers.handle_playbill_activate("inst_test", "proposal-1")
+
+    assert result.status == "accepted"
+    assert result.floor_refresh.status == "not_configured"
+    assert result.floor_refresh.message is not None
+    assert "Git worktree" in result.floor_refresh.message
+    assert result.block_sync is None
+    assert not (plain / ".playbill").exists()
+
+
 def test_library_mode_activate_checks_an_attached_workspace(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -287,6 +307,41 @@ def test_workspace_status_compares_the_installed_floor(
 
     assert status.status == "current"
     assert status.installed_coordinate == _coordinate()
+
+
+def test_floor_write_after_an_activation_refresh_is_a_no_op_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+    activated = handlers.handle_playbill_activate("inst_test", "proposal-1")
+    assert activated.floor_refresh.status == "refreshed"
+    card = workspace / ".playbill/floor/cards/fresh.json"
+    before = card.stat().st_mtime_ns
+
+    again = handlers.handle_playbill_floor_export("inst_test", mode="write")
+
+    assert again.status == "unchanged"
+    assert again.floor_digest == activated.floor_refresh.floor_digest
+    assert card.stat().st_mtime_ns == before
+
+
+def test_floor_write_still_refuses_a_directory_holding_something_else(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+    floor = workspace / ".playbill/floor"
+    floor.mkdir(parents=True)
+    (floor / "occupied.txt").write_text("not the floor\n", encoding="utf-8")
+
+    with pytest.raises(Exception, match="non-empty directory"):
+        handlers.handle_playbill_floor_export("inst_test", mode="write")
+    assert (floor / "occupied.txt").is_file()
 
 
 def test_floor_export_from_nested_cwd_uses_the_containing_git_worktree(

@@ -40,7 +40,10 @@ Manage remembered daemon and instance context. `context show` reports the
 resolved target, workspace, and the source selected for each target component.
 It reports workspace-config attachment separately from daemon host registration;
 for local sockets, a mismatch is a typed attachment-disagreement row rather than
-silently treating those two notions as equivalent:
+silently treating those two notions as equivalent. When a remembered instance
+is bound to a different transport than the one resolved, `context show` names
+it under `remembered_instance_ignored`. `context connect` stores the socket's
+realpath:
 
 ~~~text
 cruxible context connect
@@ -116,7 +119,9 @@ the command, its `flock` must also be free. `--timeout` (default 30s) bounds
 that wait. The command exits NON-ZERO with the typed
 `cruxible.server.stop_not_confirmed` when the root was not released, so
 `cruxible server stop && cruxible server start` cannot walk into the lock
-refusal the stop existed to clear. Against a daemon bound to TCP on another
+refusal the stop existed to clear. A stopped socket daemon removes its socket
+file. `server restart` waits until the probe answers from the NEW process
+image (a different `boot_id` on `/version`), not the image it replaced. Against a daemon bound to TCP on another
 host, the state root is not a path this machine has: the command then prints
 `Stop requested; lock release not observable from this client.` and exits zero
 rather than claiming a release it cannot see. `--json` reports the same two
@@ -136,9 +141,13 @@ an explicit `--auth`/`--no-auth` disagreement is refused. Service files contain
 no bearer or bootstrap secret, and auth-on installation requires an active
 durable runtime credential first.
 
-`server status` lists the daemon's exact current compiler coordinate and each
-governed host as `uninitialized`, `writable`, or `reseed_required`, retaining a
-typed reason for malformed or retired state. Its `Instances` count is the number
+`server status` answers an instance-scoped credential with its own host and
+identity (`"scope": "instance"`) instead of refusing; the daemon-wide view below
+needs the bootstrap secret. `server status` lists the daemon's exact current
+compiler coordinate and each
+governed host as `uninitialized`, `writable`, `reseed_required`, or
+`decommissioned`, retaining a typed reason for malformed, retired or
+decommissioned state. Its `Instances` count is the number
 of governed daemon hosts shown, excluding unrelated local registry entries.
 `server status` also lists the daemon's consumers on every instance it holds
 open: each armed Line and each built-in worker, as `running`, `stalled`,
@@ -310,7 +319,8 @@ different registration is a typed refusal and no config is written.
 holds one host per worktree, so moving a worktree to a second host needs the
 first one released; nothing governed changes, the host keeps its ledger and
 every read it has ever served, and it stops being the host of this directory.
-It requires the same local socket for the same reason attaching does. It refuses
+It requires the same local socket for the same reason attaching does. The
+instance's own ADMIN credential or the bootstrap secret may detach it. It refuses
 while the host still registers published blocks in that worktree, because
 detaching under them leaves a page carrying markers no host owns: depublish
 those blocks (`playbill block depublish`) or retire their backing Claims first.
@@ -621,7 +631,9 @@ and names any carried ProviderInterface that no installed Provider implements.
 
 `status` lists installed kits and the kit paths edited locally. `remove`
 proposes retiring what a kit owns (never what it only carries); the dependency
-closure refuses it while live Claims depend on those definitions.
+closure refuses it while live Claims depend on those definitions. Removing a kit
+that is not installed refuses with `playbill.kit.not_installed`, naming the
+installed kits.
 
 MCP: `cruxible_playbill_kit_build`, `cruxible_playbill_kit_status`,
 `cruxible_playbill_kit_add` and `cruxible_playbill_kit_remove`. HTTP:
@@ -643,7 +655,7 @@ cruxible playbill document history IDENTITY
 ## playbill subject
 
 ~~~text
-cruxible playbill subject list [--kind KIND]
+cruxible playbill subject list [--kind KIND] [--limit N] [--cursor CURSOR]
 cruxible playbill subject get KIND/ID
 cruxible playbill subject history KIND/ID
 ~~~
@@ -712,6 +724,11 @@ cruxible playbill claim history IDENTITY
 cruxible playbill claim explain IDENTITY [--evaluation-time TS]
 ~~~
 
+`subject list` answers one page (default 50) of compact rows: `subject_kind`,
+`subject_id`, `lifecycle` and the count of live Claims; `subject get` reads one
+Subject's envelope and facts. A cut page carries `truncated` and `next_cursor`,
+which `--cursor` continues at the first page's coordinate; a cursor for another
+list or `--kind` is refused as `playbill.list.cursor_mismatch`.
 `subject list --kind` and `claim list --kind` narrow the listing to one Subject
 kind through the Subject index. `claim values` is the status-table read (the
 CLI form of the SDK's `world.values`): one row per live Claim, with its
@@ -1686,7 +1703,9 @@ cruxible playbill floor export [--force]
 Writes the deterministic greppable floor of accepted state to the fixed derived
 cache `.playbill/floor/` under the current workspace. The daemon returns bytes
 keyed by floor path and never writes a client path; export refuses a non-empty
-floor unless `--force` is given. The export carries its own coverage boundary
+floor unless `--force` is given, except that a floor already holding exactly
+this export (as it does right after an activation) is a no-op success reported
+as `unchanged`. The export carries its own coverage boundary
 in `coverage-manifest.json`, enumerated in the root manifest like every other
 floor file. `floor_output.path` is obsolete and refused; a v2 coverage config
 enables refresh with only the fixed profile. `floor export` records that profile
@@ -1814,7 +1833,8 @@ evidence so retries do not depend on remembered IDs. It returns one page
 for `--cursor`, which keeps reading the first page's accepted coordinate. A
 proposal admitted or withdrawn between pages changes the listing, and the
 cursor is then refused as `playbill.list.cursor_stale`: list again without it. Proposal actions accept a
-full digest, a unique digest prefix, or a target ref whose current Git target
+full digest, a unique digest prefix (`sha256:` plus at least 8 hex characters),
+or a target ref whose current Git target
 names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
 `proposal readmit` replays a stale proposal's authored content through the current

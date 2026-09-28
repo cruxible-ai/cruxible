@@ -86,6 +86,7 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallResultV1,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.temporal import format_datetime, utc_now
@@ -110,7 +111,12 @@ from cruxible_core.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.coverage.contracts import CoverageCardBudgetV1
 from cruxible_core.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.documents.workspace_file import WorkspaceFileReadRefused
-from cruxible_core.errors import AuthenticationError, ConfigError, DataValidationError
+from cruxible_core.errors import (
+    AuthenticationError,
+    ConfigError,
+    DataValidationError,
+    RequestRefusedError,
+)
 from cruxible_core.exhaust.consumption import (
     ConsumptionContextV1,
     ConsumptionOperation,
@@ -274,6 +280,7 @@ from cruxible_core.service.procedures.provider_installation import (
 from cruxible_core.service.proposals.proposals import (
     ProposalInventoryStatus,
     service_list_playbill_proposals,
+    service_playbill_proposal_status,
     service_playbill_whoami,
     service_readmit_playbill_proposal,
     service_resolve_playbill_proposal_selector,
@@ -785,6 +792,17 @@ def playbill_list_proposals(
     return contracts.PlaybillProposalList.model_validate(result.model_dump(mode="json"))
 
 
+def playbill_proposal_status(
+    instance_id: str,
+    proposal_id: str,
+) -> contracts.PlaybillProposalListEntry:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_playbill_proposal_status(
+        get_playbill_manager().get(instance_id), proposal_id=proposal_id
+    )
+    return contracts.PlaybillProposalListEntry.model_validate(result.model_dump(mode="json"))
+
+
 def playbill_resolve_proposal_selector(
     instance_id: str,
     selector: str,
@@ -1085,10 +1103,16 @@ def playbill_list_subjects(
     *,
     at: AcceptedCoordinate | None = None,
     subject_kind: str | None = None,
+    limit: int = contracts.PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> contracts.PlaybillSubjectList:
     check_permission("cruxible_playbill_read", instance_id=instance_id)
     result = service_list_playbill_subjects(
-        get_playbill_manager().get(instance_id), at=at, subject_kind=subject_kind
+        get_playbill_manager().get(instance_id),
+        at=at,
+        subject_kind=subject_kind,
+        limit=limit,
+        cursor=cursor,
     )
     return contracts.PlaybillSubjectList.model_validate(result.model_dump(mode="json"))
 
@@ -2308,6 +2332,26 @@ def playbill_search(
     budgets: PlaybillSearchBudgetsV1 | None = None,
 ) -> contracts.PlaybillSearchResult:
     check_permission("cruxible_playbill_search", instance_id=instance_id)
+    if mode == "search" and not (query or "").strip():
+        raise RequestRefusedError(
+            "playbill.search.query_required",
+            "search mode needs a nonblank query",
+            repair=hand_edit_repair(
+                "playbill.search.query_required",
+                required_change=(
+                    "Pass a query with mode 'search', or use mode 'list' to page without one."
+                ),
+            ),
+        )
+    if mode != "search" and query is not None:
+        raise RequestRefusedError(
+            "playbill.search.query_forbidden",
+            f"mode {mode!r} takes no query",
+            repair=hand_edit_repair(
+                "playbill.search.query_forbidden",
+                required_change="Drop the query, or use mode 'search' to match it.",
+            ),
+        )
     instance = get_playbill_manager().get(instance_id)
     result = service_search_playbill(
         instance,

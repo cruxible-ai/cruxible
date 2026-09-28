@@ -90,3 +90,48 @@ def test_incomplete_entry_does_not_hide_healthy_rows_or_invent_verdict(tmp_path,
     assert service_list_playbill_proposals(instance, status="settled").entries == ()
     assert service_list_playbill_proposals(instance, status="incomplete").entries == (entry,)
     assert PlaybillProposalList.model_validate(result.model_dump(mode="json")).entries
+
+
+@pytest.mark.parametrize("missing", ("admission", "evaluation", "candidate"))
+def test_one_proposal_status_reports_missing_evidence_as_incomplete(tmp_path, missing):
+    """The by-ID status read keeps the list's incomplete-entry answer, not an error."""
+    from cruxible_client.contracts.errors import ProposalNotFoundError
+    from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
+
+    instance, _ = initialize_local(tmp_path)
+    partial = _submit(instance, "partial")
+    proposal_id = partial.admission.proposal_id
+    evidence = instance.proposal_evidence()
+    if missing == "admission":
+        # A retained withdrawal keeps the row listed once its admission is gone.
+        evidence.write_withdrawal(
+            ProposalWithdrawalRecordV1(
+                proposal_id=proposal_id,
+                actor_id="owner",
+                reason="retain this row",
+                withdrawn_at="2026-08-11T12:31:00.000000Z",
+            )
+        )
+        evidence.index.locate(evidence, proposal_id)
+        path = evidence.proposals / f"{proposal_id.removeprefix('sha256:')}.json"
+    elif missing == "evaluation":
+        path = evidence.root / evidence.index.locate(evidence, proposal_id)["evaluation_path"]
+    else:
+        path = (
+            evidence.candidates
+            / f"{partial.candidate.candidate_digest.removeprefix('sha256:')}.json"
+        )
+    path.unlink()
+
+    (listed,) = [
+        entry
+        for entry in service_list_playbill_proposals(instance).entries
+        if entry.proposal_id == proposal_id
+    ]
+    status = service_playbill_proposal_status(instance, proposal_id=proposal_id)
+
+    assert status == listed
+    assert status.status == "incomplete"
+    assert status.incomplete_reasons == (f"missing_{missing}",)
+    with pytest.raises(ProposalNotFoundError):
+        service_playbill_proposal_status(instance, proposal_id="sha256:" + "0" * 64)

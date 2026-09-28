@@ -60,7 +60,9 @@ def test_current_daemon_serves_the_snapshot_used_by_the_sdk_handshake() -> None:
         response = server.get("/version")
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    assert isinstance(payload.pop("boot_id"), str)
+    assert payload == {
         "version": DAEMON_VERSION,
         "sdk_contract_snapshot_digest": SDK_CONTRACT_SNAPSHOT_DIGEST,
     }
@@ -247,6 +249,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillSubjectIndex",
         "PlaybillSubjectIndexEntry",
         "PlaybillSubjectList",
+        "PlaybillSubjectListRow",
         "PlaybillSubjectView",
         "PlaybillWhoAmI",
         "PlaybillWorkspaceActivationResult",

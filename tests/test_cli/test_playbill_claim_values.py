@@ -159,6 +159,9 @@ def test_subject_and_claim_lists_pass_the_kind_filter(stub: _StubClient) -> None
 
     assert subjects.exit_code == 0, subjects.output
     assert claims.exit_code == 0, claims.output
-    assert stub.calls[0] == ("subjects", {"subject_kind": "project.work_item"})
+    assert stub.calls[0] == (
+        "subjects",
+        {"subject_kind": "project.work_item", "limit": 50, "cursor": None},
+    )
     assert stub.calls[1][0] == "claims"
     assert stub.calls[1][1]["subject_kind"] == "project.work_item"

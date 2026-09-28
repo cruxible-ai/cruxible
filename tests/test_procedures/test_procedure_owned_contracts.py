@@ -479,3 +479,23 @@ def test_procedure_v2_lineage_cannot_drop_its_owned_contract_closure() -> None:
     )
     assert result.verdict == "refused"
     assert result.diagnostics[0].code == "playbill.procedure.wire_downgrade"
+
+
+@pytest.mark.parametrize(
+    ("payload", "field_path"),
+    (
+        ({"x": 1}, "x"),  # an unexpected root field names itself, not the empty root
+        ({"count": 1, "x": 1}, "x"),
+        ({}, "count"),  # a missing required field names itself
+    ),
+)
+def test_a_contract_refusal_names_the_offending_field_even_at_the_root(
+    payload: dict[str, object], field_path: str
+) -> None:
+    from cruxible_client.contracts.procedures.contracts import validate_contract_schema
+
+    schema = ContractSchema(fields={"count": PropertySchema(type="int")})
+    with pytest.raises(ProcedureContractValidationError) as refused:
+        validate_contract_schema(schema, payload)
+    assert refused.value.field_path == field_path
+    assert "count" in str(refused.value)

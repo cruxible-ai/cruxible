@@ -543,3 +543,88 @@ def test_sdk_connect_consumes_the_shared_workspace_resolution(
     # Connecting reads the head once for the resolved instance; it does not orient.
     assert heads_read == ["inst_workspace"]
     assert playbill.coordinate.git_oid == head.git_oid
+
+
+def test_context_connect_through_a_symlinked_socket_dir_keeps_the_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # macOS's system temp directory is a symlink into /private; the remembered
+    # instance must survive resolution comparing realpaths.
+    _clear_target_env(monkeypatch)
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.chdir(cwd)
+
+    connected = CliRunner().invoke(
+        cli,
+        [
+            "context",
+            "connect",
+            "--server-socket",
+            str(alias / "d.sock"),
+            "--instance-id",
+            "inst_alias",
+        ],
+    )
+    assert connected.exit_code == 0, connected.output
+    stored = json.loads((tmp_path / "context.json").read_text())
+    assert stored["server_socket"] == str((real / "d.sock").resolve())
+    assert stored["instance_transport"] == f"unix://{(real / 'd.sock').resolve()}"
+
+    shown = CliRunner().invoke(cli, ["context", "show", "--json"])
+    assert shown.exit_code == 0, shown.output
+    payload = json.loads(shown.stdout)
+    assert payload["instance_id"] == "inst_alias"
+    assert payload["remembered_instance_ignored"] is None
+
+
+def test_an_unresolved_remembered_socket_alias_still_binds_its_instance(
+    tmp_path: Path,
+) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+
+    resolved = resolve_playbill_context(
+        remembered={
+            "server_socket": str(alias / "d.sock"),
+            "instance_id": "inst_alias",
+            "instance_transport": f"unix://{alias / 'd.sock'}",
+        },
+        environ={},
+        cwd=tmp_path,
+    )
+
+    assert resolved.instance_id == "inst_alias"
+    assert resolved.instance_transport_mismatch is None
+
+
+def test_context_show_says_why_a_remembered_instance_was_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_target_env(monkeypatch)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.chdir(tmp_path)
+    save_cli_context(
+        CliContextState(
+            server_url="https://daemon-a.example.test",
+            instance_id="inst_of_daemon_a",
+        )
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_URL", "https://daemon-b.example.test")
+
+    shown = CliRunner().invoke(cli, ["context", "show", "--json"])
+    assert shown.exit_code == 0, shown.output
+    payload = json.loads(shown.stdout)
+    assert payload["instance_id"] is None
+    assert "context_instance_transport_mismatch" in payload["remembered_instance_ignored"]
+
+    text = CliRunner().invoke(cli, ["context", "show"])
+    assert text.exit_code == 0, text.output
+    assert "Remembered instance ignored: context_instance_transport_mismatch" in text.output

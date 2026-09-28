@@ -707,7 +707,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 attr="policy_group",
             ),
             "procedure": _group(
-                "Inspect, bind, and run accepted query-only Procedures.",
+                "Inspect, bind, run, and measure accepted Procedures.",
                 {
                     "readiness": _command(
                         "playbill", "procedure_readiness", "Inspect Procedure readiness."
@@ -715,9 +715,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                     "bind": _command(
                         "playbill", "bind_procedure", "Bind accepted artifacts to slots."
                     ),
-                    "run": _command(
-                        "playbill", "run_procedure", "Run an accepted query-only Procedure."
-                    ),
+                    "run": _command("playbill", "run_procedure", "Run an accepted Procedure."),
                     "status": _command(
                         "playbill", "procedure_run_status", "Read one Procedure run state."
                     ),

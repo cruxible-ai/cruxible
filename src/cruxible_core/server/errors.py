@@ -7,6 +7,7 @@ from typing import Any
 from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
     CanonicalEncodingError,
+    ClaimNotFoundError,
     DocumentFormatError,
     DocumentNotFoundError,
     PlaybillBootstrapError,
@@ -22,8 +23,14 @@ from cruxible_client.contracts.errors import (
     ProposalNotFoundError,
     ProposalSelectorAmbiguousError,
     SettlementIntegrityError,
+    SubjectNotFoundError,
 )
-from cruxible_client.contracts.repairs import RepairOperationV1, ServedRepairV1, hand_edit_repair
+from cruxible_client.contracts.repairs import (
+    HandEditRepairV1,
+    RepairOperationV1,
+    ServedRepairV1,
+    hand_edit_repair,
+)
 from cruxible_client.errors import ErrorResponse, response_to_error
 from cruxible_core.authoring.insertions import InsertionProtocolError
 from cruxible_core.curation.review_operational import (
@@ -46,6 +53,7 @@ from cruxible_core.errors import (
     RuntimeCredentialNotFoundError,
 )
 from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
+from cruxible_core.service.claims.claim_types import ClaimTypeNotFoundError
 from cruxible_core.service.discovery.audit import PlaybillAuditError
 from cruxible_core.service.discovery.curation import PlaybillCurationError
 from cruxible_core.service.discovery.next import PlaybillNextError
@@ -111,7 +119,7 @@ def _message_for_error(exc: CoreError) -> str:
 
 def _repair_for_error(exc: CoreError) -> ServedRepairV1:
     carried = getattr(exc, "repair", None)
-    if isinstance(carried, RepairOperationV1):
+    if isinstance(carried, RepairOperationV1 | HandEditRepairV1):
         return carried
     # Both credential refusals are repaired by minting the credential the
     # operation requires, which is one served CLI leaf; the refused operation
@@ -125,6 +133,8 @@ def _repair_for_error(exc: CoreError) -> ServedRepairV1:
                 "accepted_credentials": ["bootstrap secret", "daemon-scope token"],
             },
         )
+    if isinstance(exc, ProposalNotFoundError):
+        return RepairOperationV1(operation="playbill.proposal.list")
     if isinstance(exc, BootstrapClaimRefusedError):
         return RepairOperationV1(
             operation=_BOOTSTRAP_REPAIR_OPERATIONS[exc.error_code],
@@ -135,7 +145,6 @@ def _repair_for_error(exc: CoreError) -> ServedRepairV1:
             operation=CREDENTIAL_REPAIR_OPERATION,
             arguments={
                 "credential_options": [
-                    "--server-bearer-token",
                     "CRUXIBLE_SERVER_BEARER_TOKEN",
                     "bootstrap-secret file",
                 ]
@@ -201,6 +210,8 @@ def _status_for_error(exc: CoreError) -> int:
             RuntimeCredentialNotFoundError,
             DocumentNotFoundError,
             ProposalNotFoundError,
+            ClaimNotFoundError,
+            SubjectNotFoundError,
         ),
     ):
         return 404
@@ -266,6 +277,9 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["selector"] = exc.selector
         context["accepted_forms"] = list(exc.accepted_forms)
         context["repair_commands"] = list(exc.repair_commands)
+    if isinstance(exc, ClaimTypeNotFoundError):
+        context["predicate"] = exc.predicate
+        context["nearest"] = list(exc.nearest)
     if isinstance(exc, ProposalSelectorAmbiguousError):
         context["selector"] = exc.selector
         context["candidates"] = list(exc.candidates)

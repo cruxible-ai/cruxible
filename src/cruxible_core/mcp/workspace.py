@@ -30,11 +30,20 @@ def mcp_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
 def mcp_git_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
     """Resolve the canonical worktree without escaping an explicit MCP root."""
 
+    git_root = optional_mcp_git_workspace_root(environ)
+    if git_root is None:
+        raise ConfigError("MCP workspace floor export must run inside one Git worktree")
+    return git_root
+
+
+def optional_mcp_git_workspace_root(environ: Mapping[str, str] | None = None) -> Path | None:
+    """Resolve the canonical worktree, or None when the MCP root is in no Git worktree."""
+
     env = os.environ if environ is None else environ
     configured_root = mcp_workspace_root(env)
     git_root = containing_git_workspace_root(configured_root)
     if git_root is None:
-        raise ConfigError("MCP workspace floor export must run inside one Git worktree")
+        return None
     if MCP_WORKSPACE_ROOT_ENV in env and git_root != configured_root:
         raise ConfigError(
             "CRUXIBLE_MCP_WORKSPACE_ROOT must name the Git worktree root for floor operations"
@@ -71,5 +80,6 @@ __all__ = [
     "MCP_WORKSPACE_ROOT_ENV",
     "mcp_git_workspace_root",
     "mcp_workspace_root",
+    "optional_mcp_git_workspace_root",
     "resolve_workspace_path",
 ]

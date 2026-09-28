@@ -49,6 +49,7 @@ from cruxible_client.contracts.kits import (
     kit_artifact_path_allowed,
     kit_receipt_document_id,
 )
+from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_core.claims.artifact_references import move_references, referenced_digests
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
@@ -57,7 +58,7 @@ from cruxible_core.claims.claim_type_migrations import (
     dependent_closure_inventory,
 )
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
-from cruxible_core.errors import DataValidationError
+from cruxible_core.errors import DataValidationError, RequestRefusedError
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
@@ -671,7 +672,15 @@ def service_remove_kit(
     tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
     found = _read_receipt(instance, tree, request.kit_id)
     if found is None or not found[1].artifacts:
-        return PlaybillKitChangeResultV1(kit_id=request.kit_id, version=None, status="unchanged")
+        installed = sorted(
+            receipt.kit_id for receipt in _receipts(instance, tree) if receipt.artifacts
+        )
+        named = ", ".join(installed) if installed else "none"
+        raise RequestRefusedError(
+            "playbill.kit.not_installed",
+            f"kit {request.kit_id!r} is not installed; installed: {named}",
+            repair=RepairOperationV1(operation="playbill.kit.status"),
+        )
     shell, receipt = found
     diff = _Diff()
     _retire_dropped(tree, receipt.digests(), set(), diff)

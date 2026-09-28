@@ -45,14 +45,16 @@
         "legacy_layout_requires_reseed",
         "host_state_incomplete",
         "host_state_malformed",
-        "compiler_lineage_not_writable"
+        "compiler_lineage_not_writable",
+        "instance_decommissioned"
       ]
     },
     "PlaybillHostCompatibilityV1": {
       "values": [
         "uninitialized",
         "writable",
-        "reseed_required"
+        "reseed_required",
+        "decommissioned"
       ]
     },
     "PlaybillHostStatus": {
@@ -22375,7 +22377,8 @@
               "legacy_layout_requires_reseed",
               "host_state_incomplete",
               "host_state_malformed",
-              "compiler_lineage_not_writable"
+              "compiler_lineage_not_writable",
+              "instance_decommissioned"
             ],
             "title": "Code",
             "type": "string"
@@ -22413,7 +22416,8 @@
               "legacy_layout_requires_reseed",
               "host_state_incomplete",
               "host_state_malformed",
-              "compiler_lineage_not_writable"
+              "compiler_lineage_not_writable",
+              "instance_decommissioned"
             ],
             "title": "Code",
             "type": "string"
@@ -22455,7 +22459,8 @@
             "enum": [
               "uninitialized",
               "writable",
-              "reseed_required"
+              "reseed_required",
+              "decommissioned"
             ],
             "title": "Compatibility",
             "type": "string"
@@ -22600,7 +22605,8 @@
                   "legacy_layout_requires_reseed",
                   "host_state_incomplete",
                   "host_state_malformed",
-                  "compiler_lineage_not_writable"
+                  "compiler_lineage_not_writable",
+                  "instance_decommissioned"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -22633,7 +22639,8 @@
             "enum": [
               "uninitialized",
               "writable",
-              "reseed_required"
+              "reseed_required",
+              "decommissioned"
             ],
             "title": "Compatibility",
             "type": "string"
@@ -62504,6 +62511,46 @@
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           }
         },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          }
+        },
+        "subject_kind_filter": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "subject_kind_filter",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subject Kind Filter"
+          }
+        },
         "subjects": {
           "has_default": false,
           "has_default_factory": false,
@@ -62511,24 +62558,37 @@
           "required": true,
           "schema": {
             "items": {
-              "$ref": "#/$defs/PlaybillSubjectView"
+              "$ref": "#/$defs/PlaybillSubjectListRow"
             },
             "title": "Subjects",
             "type": "array"
           }
         },
         "tag": {
-          "default": "playbill-subject-list-v1",
+          "default": "playbill-subject-list-v2",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "tag",
           "required": false,
           "schema": {
-            "const": "playbill-subject-list-v1",
-            "default": "playbill-subject-list-v1",
+            "const": "playbill-subject-list-v2",
+            "default": "playbill-subject-list-v2",
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         }
       },
@@ -62573,107 +62633,39 @@
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
           },
-          "PlaybillSubjectIncomingClaimV1": {
+          "PlaybillSubjectListRow": {
             "additionalProperties": false,
-            "description": "One live Claim whose subject-valued object is the profiled Subject.",
+            "description": "One Subject on a list page; the full envelope is on the Subject read.",
             "properties": {
-              "claim_identity": {
-                "title": "Claim Identity",
+              "lifecycle": {
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "Lifecycle",
                 "type": "string"
               },
-              "subject_identity": {
-                "title": "Subject Identity",
+              "live_claims": {
+                "minimum": 0,
+                "title": "Live Claims",
+                "type": "integer"
+              },
+              "subject_id": {
+                "title": "Subject Id",
                 "type": "string"
               },
-              "tag": {
-                "const": "playbill-subject-incoming-claim-v1",
-                "default": "playbill-subject-incoming-claim-v1",
-                "title": "Tag",
+              "subject_kind": {
+                "title": "Subject Kind",
                 "type": "string"
               }
             },
             "required": [
-              "claim_identity",
-              "subject_identity"
+              "subject_kind",
+              "subject_id",
+              "lifecycle",
+              "live_claims"
             ],
-            "title": "PlaybillSubjectIncomingClaimV1",
-            "type": "object"
-          },
-          "PlaybillSubjectIncomingGroupV1": {
-            "additionalProperties": false,
-            "description": "Every incoming edge that arrives on one governed predicate.",
-            "properties": {
-              "claims": {
-                "items": {
-                  "$ref": "#/$defs/PlaybillSubjectIncomingClaimV1"
-                },
-                "title": "Claims",
-                "type": "array"
-              },
-              "predicate": {
-                "title": "Predicate",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-subject-incoming-group-v1",
-                "default": "playbill-subject-incoming-group-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "predicate",
-              "claims"
-            ],
-            "title": "PlaybillSubjectIncomingGroupV1",
-            "type": "object"
-          },
-          "PlaybillSubjectView": {
-            "additionalProperties": false,
-            "properties": {
-              "coordinate": {
-                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
-              },
-              "coordinate_kind": {
-                "const": "canonical",
-                "default": "canonical",
-                "title": "Coordinate Kind",
-                "type": "string"
-              },
-              "envelope": {
-                "additionalProperties": true,
-                "title": "Envelope",
-                "type": "object"
-              },
-              "facts": {
-                "items": {
-                  "additionalProperties": true,
-                  "type": "object"
-                },
-                "title": "Facts",
-                "type": "array"
-              },
-              "incoming": {
-                "default": [],
-                "items": {
-                  "$ref": "#/$defs/PlaybillSubjectIncomingGroupV1"
-                },
-                "title": "Incoming",
-                "type": "array"
-              },
-              "tag": {
-                "const": "playbill-subject-read-v1",
-                "default": "playbill-subject-read-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "coordinate",
-              "envelope",
-              "facts"
-            ],
-            "title": "PlaybillSubjectView",
+            "title": "PlaybillSubjectListRow",
             "type": "object"
           }
         },
@@ -62682,18 +62674,47 @@
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          },
+          "subject_kind_filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subject Kind Filter"
+          },
           "subjects": {
             "items": {
-              "$ref": "#/$defs/PlaybillSubjectView"
+              "$ref": "#/$defs/PlaybillSubjectListRow"
             },
             "title": "Subjects",
             "type": "array"
           },
           "tag": {
-            "const": "playbill-subject-list-v1",
-            "default": "playbill-subject-list-v1",
+            "const": "playbill-subject-list-v2",
+            "default": "playbill-subject-list-v2",
             "title": "Tag",
             "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -62706,6 +62727,96 @@
       "required_fields": [
         "coordinate",
         "subjects"
+      ]
+    },
+    "PlaybillSubjectListRow": {
+      "fields": {
+        "lifecycle": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "lifecycle",
+          "required": true,
+          "schema": {
+            "enum": [
+              "live",
+              "retired"
+            ],
+            "title": "Lifecycle",
+            "type": "string"
+          }
+        },
+        "live_claims": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "live_claims",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Live Claims",
+            "type": "integer"
+          }
+        },
+        "subject_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_id",
+          "required": true,
+          "schema": {
+            "title": "Subject Id",
+            "type": "string"
+          }
+        },
+        "subject_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_kind",
+          "required": true,
+          "schema": {
+            "title": "Subject Kind",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One Subject on a list page; the full envelope is on the Subject read.",
+        "properties": {
+          "lifecycle": {
+            "enum": [
+              "live",
+              "retired"
+            ],
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "live_claims": {
+            "minimum": 0,
+            "title": "Live Claims",
+            "type": "integer"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_kind": {
+            "title": "Subject Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_kind",
+          "subject_id",
+          "lifecycle",
+          "live_claims"
+        ],
+        "title": "PlaybillSubjectListRow",
+        "type": "object"
+      },
+      "required_fields": [
+        "lifecycle",
+        "live_claims",
+        "subject_id",
+        "subject_kind"
       ]
     },
     "PlaybillSubjectView": {
@@ -64550,8 +64661,11 @@
           "json_name": "status",
           "required": false,
           "schema": {
-            "const": "written",
             "default": "written",
+            "enum": [
+              "written",
+              "unchanged"
+            ],
             "title": "Status",
             "type": "string"
           }
@@ -64674,8 +64788,11 @@
             "type": "string"
           },
           "status": {
-            "const": "written",
             "default": "written",
+            "enum": [
+              "written",
+              "unchanged"
+            ],
             "title": "Status",
             "type": "string"
           },
@@ -81066,7 +81183,8 @@
                   "legacy_layout_requires_reseed",
                   "host_state_incomplete",
                   "host_state_malformed",
-                  "compiler_lineage_not_writable"
+                  "compiler_lineage_not_writable",
+                  "instance_decommissioned"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -81099,7 +81217,8 @@
                 "enum": [
                   "uninitialized",
                   "writable",
-                  "reseed_required"
+                  "reseed_required",
+                  "decommissioned"
                 ],
                 "title": "Compatibility",
                 "type": "string"
@@ -81347,6 +81466,26 @@
     },
     "ServerRestartResult": {
       "fields": {
+        "boot_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "boot_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Boot Id"
+          }
+        },
         "scheduled": {
           "has_default": false,
           "has_default_factory": false,
@@ -81380,6 +81519,18 @@
       },
       "json_schema": {
         "properties": {
+          "boot_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Boot Id"
+          },
           "scheduled": {
             "title": "Scheduled",
             "type": "boolean"

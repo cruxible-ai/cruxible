@@ -342,12 +342,21 @@ def resolve_playbill_context(
                 raise PlaybillContextResolutionError(
                     "remembered instance transport must be a string"
                 )
+            if recorded_transport_coordinate is not None and (
+                recorded_transport_coordinate.startswith("unix://")
+            ):
+                # Compare socket realpaths on both sides; an alias recorded
+                # before normalization must not orphan the remembered instance.
+                recorded_transport_coordinate = _normalized_transport(
+                    None, recorded_transport_coordinate.removeprefix("unix://")
+                )
             if recorded_transport_coordinate != selected_transport_coordinate:
                 instance_transport_mismatch = (
                     "context_instance_transport_mismatch: the remembered instance is bound to "
                     f"{recorded_transport_coordinate or '<local>'}, but the resolved "
                     f"transport is {selected_transport_coordinate or '<local>'}; repair: "
-                    "pass --instance-id <id> or attach the workspace with "
+                    "pass --instance-id <id>, re-run `cruxible context connect` with this "
+                    "transport and --instance-id <id>, or attach the workspace with "
                     ".playbill/coverage.json"
                 )
                 continue

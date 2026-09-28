@@ -51,6 +51,8 @@ from cruxible_core.procedures.line_admission import (
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 from cruxible_core.service.procedures.procedure_runs import (
+    LineNeverArmed,
+    LineNotArmed,
     LineRunRequestV1,
     _accepted_line_by_reference,
     _journal,
@@ -387,7 +389,18 @@ def service_disarm_line(
     with line_arm_boundary(instance.root, identity), store.locked() as conn:
         current = _active_session(conn, identity)
         if current is None:
-            raise PlaybillExecutionError("this Line is not armed")
+            last = conn.execute(
+                "SELECT payload FROM sessions WHERE line_id=? ORDER BY rowid DESC LIMIT 1",
+                (identity,),
+            ).fetchone()
+            name = accepted.line.identity.name
+            if last is None:
+                raise LineNeverArmed(name)
+            session = json.loads(last[0])
+            reason, at = session.get("stop_reason"), session.get("stops_at")
+            raise LineNotArmed(
+                name, last_stop=" at ".join(str(part) for part in (reason, at) if part) or None
+            )
         data = _stop(
             store, conn, current, reason="disarmed", detail="Disarmed.", actor=actor, now=now
         )
@@ -402,7 +415,7 @@ def service_line_arm_status(instance: PlaybillInstance, line: str) -> LineArmV1:
     )
     identity = line_identity_digest(accepted.line.identity)
     if not dispatch_root(instance).exists():
-        raise PlaybillExecutionError("this Line has never been armed")
+        raise LineNeverArmed(accepted.line.identity.name)
     store = LineDispatchStore(instance)
     with store.locked() as conn:
         row = conn.execute(
@@ -410,7 +423,7 @@ def service_line_arm_status(instance: PlaybillInstance, line: str) -> LineArmV1:
             (identity,),
         ).fetchone()
         if row is None:
-            raise PlaybillExecutionError("this Line has never been armed")
+            raise LineNeverArmed(accepted.line.identity.name)
         return _arm_view(store, conn, json.loads(row[0]))
 
 

@@ -112,13 +112,14 @@ rather than merely create an inverse adjacent concept.
 
 ## Procedure
 
-A Procedure is the planned first-class executable semantic family. Its contract
+A Procedure is the first-class executable semantic family. Its contract
 describes required input, promised output, preconditions, capabilities, pins,
 budgets, and deterministic graph. An agent can discover the contract and track
 record before loading implementation detail.
 
-The old Procedure/workflow engine remains a donor oracle until this family is
-implemented under Playbill authority.
+Accepted Procedures run under Playbill authority: state reads, governed source
+reads, contracted Calls, deterministic computation, and, through Lines, capture,
+proposal and settlement terminals.
 
 ## Source bundle
 

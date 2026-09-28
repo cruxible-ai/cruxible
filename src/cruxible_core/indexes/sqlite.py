@@ -671,34 +671,6 @@ class ProjectionHandle:
             envelope, self.typed.facts(identity=identity), coordinate=self.accepted
         )
 
-    def list_subjects(
-        self, *, subject_kind: str | None = None
-    ) -> tuple[SubjectProjectionView, ...]:
-        """List canonical Subjects in stable kind-qualified identity order.
-
-        ``subject_kind`` selects one kind through the Subject index before any
-        Subject's facts are compiled.
-        """
-
-        if self._closed:
-            raise ProjectionIntegrityError("projection handle is closed")
-        if subject_kind is None:
-            rows = self.typed.envelopes(kind="subject")
-        else:
-            rows = tuple(
-                row
-                for (identity,) in self.typed.connection.execute(
-                    "SELECT identity FROM subjects WHERE subject_kind=? ORDER BY identity",
-                    (subject_kind,),
-                )
-                if (row := self.typed.envelope(str(identity))) is not None
-            )
-        facts = self.typed.facts_for(rows)
-        return tuple(
-            subject_projection_view(row, facts[row.identity], coordinate=self.accepted)
-            for row in rows
-        )
-
     def subject_index(self) -> tuple[tuple[str, str, str, str], ...]:
         """Every Subject's identity, kind, ID and lifecycle, straight from the index.
 

@@ -1531,3 +1531,85 @@ def test_a_host_that_cannot_be_opened_refuses_a_detach_instead_of_reading_as_emp
         workspace_attachment_authorized=True,
     )
     assert detached.status == "detached"
+
+
+def test_a_decommissioned_host_reports_decommissioned_not_writable(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    instance_id = "inst_decommissioned_show"
+    created = host_client.post("/api/v1/runtime/instances", json={"instance_id": instance_id})
+    assert created.status_code == 200, created.text
+    record = get_registry().get(instance_id)
+    assert record is not None
+    owner = generate_client_principal_key(
+        tmp_path / "decommission-owner",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(Path(record.location),),
+    )
+    initialized = host_client.post(
+        f"/api/v1/{instance_id}/playbill/init",
+        json={"principals": [owner.principal.model_dump(mode="json")]},
+    )
+    assert initialized.status_code == 200, initialized.text
+    assert host_client.get(f"/api/v1/{instance_id}/playbill/host").json()["writable"] is True
+
+    ended = host_client.post(
+        f"/api/v1/{instance_id}/playbill/instance/decommission",
+        json={"reason": "superseded by a fresh host"},
+    )
+    assert ended.status_code == 200, ended.text
+
+    shown = host_client.get(f"/api/v1/{instance_id}/playbill/host")
+    assert shown.status_code == 200, shown.text
+    body = shown.json()
+    assert body["compatibility"] == "decommissioned"
+    assert body["writable"] is False
+    assert body["reason"]["code"] == "instance_decommissioned"
+    assert "superseded by a fresh host" in body["reason"]["detail"]
+
+    status = host_client.get("/api/v1/server/info")
+    assert status.status_code == 200, status.text
+    (host,) = [row for row in status.json()["hosts"] if row["instance_id"] == instance_id]
+    assert host["compatibility"] == "decommissioned"
+    assert host["writable"] is False
+
+
+def test_detach_accepts_the_instance_admin_and_the_bootstrap_operator(
+    authenticated_host_client: tuple[TestClient, str],
+) -> None:
+    """Both credentials that can own a host reach the detach verb on an auth-on daemon.
+
+    Before, the instance admin was refused as daemon-scope (403) and the
+    bootstrap secret was not accepted on the route at all (401), so nothing
+    could detach. The TestClient is not a local-socket caller, so each accepted
+    credential lands on the socket refusal, past authorization.
+    """
+
+    client, bootstrap_secret = authenticated_host_client
+    bootstrap_headers = {"Authorization": f"Bearer {bootstrap_secret}"}
+    for instance_id in ("inst_detach_own", "inst_detach_other"):
+        created = client.post(
+            "/api/v1/runtime/instances",
+            json={"instance_id": instance_id},
+            headers=bootstrap_headers,
+        )
+        assert created.status_code == 200, created.text
+    claimed = client.post(
+        "/api/v1/inst_detach_own/runtime/bootstrap/claim",
+        json={"bootstrap_secret": bootstrap_secret},
+        headers=bootstrap_headers,
+    )
+    assert claimed.status_code == 200, claimed.text
+    scoped_headers = {"Authorization": f"Bearer {claimed.json()['token']}"}
+
+    for headers in (scoped_headers, bootstrap_headers):
+        detached = client.post("/api/v1/inst_detach_own/playbill/workspace-detach", headers=headers)
+        assert detached.status_code == 400, detached.text
+        assert "local Unix socket" in detached.json()["message"]
+
+    cross_instance = client.post(
+        "/api/v1/inst_detach_other/playbill/workspace-detach", headers=scoped_headers
+    )
+    assert cross_instance.status_code == 403, cross_instance.text

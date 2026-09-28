@@ -101,7 +101,9 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
             ),
         )
     try:
-        compiler = get_playbill_manager().get(instance_id).inspect().compiler
+        instance = get_playbill_manager().get(instance_id)
+        compiler = instance.inspect().compiler
+        terminal = instance.descriptor.decommissioned
     except PlaybillReseedRequired:
         return contracts.PlaybillHostInspectionV1(
             **common,
@@ -122,8 +124,26 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
                 f"The persisted host state is malformed ({type(exc).__name__}): {exc}",
             ),
         )
-    writable = compiler in PC_HR_ARTIFACT_CODEC_COMPILERS
     revision = COMPILER_REVISION_LABELS.get(compiler)
+    if terminal is not None:
+        # Decommissioning is terminal: the host keeps serving reads but no
+        # governed write is ever accepted again, whatever its compiler lineage.
+        return contracts.PlaybillHostInspectionV1(
+            **common,
+            compiler_coordinate=compiler.rule_digest,
+            compiler_revision=revision,
+            compatibility="decommissioned",
+            writable=False,
+            reason=contracts.PlaybillHostCompatibilityReasonV1(
+                code="instance_decommissioned",
+                detail=(
+                    f"Decommissioned at {terminal.decommissioned_at}: {terminal.reason}. "
+                    "Reads keep serving; writes are refused."
+                ),
+                repair_commands=("cruxible playbill host create",),
+            ),
+        )
+    writable = compiler in PC_HR_ARTIFACT_CODEC_COMPILERS
     return contracts.PlaybillHostInspectionV1(
         **common,
         compiler_coordinate=compiler.rule_digest,
@@ -272,7 +292,10 @@ def playbill_host_workspace_detach(
     which is the state that has no repair from inside the workspace.
     """
 
-    require_unscoped_operator("cruxible_playbill_host_workspace_detach")
+    # Detaching acts on this one host's registration, so it is an instance act:
+    # the instance's own ADMIN may take it, and the scope check below refuses a
+    # credential scoped to any other instance. The unscoped operator (bootstrap
+    # secret) may too, as it may for every host.
     check_permission("cruxible_playbill_host_workspace_detach", instance_id=instance_id)
     if not workspace_attachment_authorized:
         raise ConfigError(
@@ -403,13 +426,14 @@ def server_restart() -> contracts.ServerRestartResult:
 
     check_permission("cruxible_server_restart")
     require_unscoped_operator("cruxible_server_restart")
-    from cruxible_core.server.restart import schedule_server_restart
+    from cruxible_core.server.restart import PROCESS_BOOT_ID, schedule_server_restart
 
     schedule_server_restart()
     return contracts.ServerRestartResult(
         scheduled=True,
         version=__version__,
         state_root=str(get_server_state_root()),
+        boot_id=PROCESS_BOOT_ID,
     )
 
 

@@ -884,6 +884,9 @@ def test_undeclared_measurement_and_unsupported_basis_refuse_typed(tmp_path: Pat
     with pytest.raises(ProcedureMeasurementRefused) as undeclared:
         _measure(instance, procedure, names=("nope",))
     assert undeclared.value.error_code == "measurement_not_declared"
+    # The refusal names what IS declared, so the caller can pick one.
+    assert "Declared: " in str(undeclared.value)
+    assert "rows-present" in str(undeclared.value)
     with pytest.raises(ProcedureMeasurementRefused) as basis:
         _measure(instance, procedure, names=("rows-present",))
     assert basis.value.error_code == "measurement_basis_unsupported"

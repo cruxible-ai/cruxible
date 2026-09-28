@@ -393,3 +393,59 @@ def test_the_caller_shaped_refusals_stay_typed_400s(
     )
     assert empty_discover.status_code == 400, empty_discover.text
     assert empty_discover.json()["error_type"] == "PlaybillFormatError"
+
+
+@pytest.mark.parametrize("query", (None, "   "))
+def test_search_mode_without_a_query_is_a_coded_400_with_a_repair(
+    playbill_http: tuple[TestClient, str, Path],
+    query: str | None,
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    payload: dict[str, object] = {"mode": "search"}
+    if query is not None:
+        payload["query"] = query
+
+    response = client.post(f"/api/v1/{instance_id}/playbill/search", json=payload)
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["error_code"] == "playbill.search.query_required"
+    assert "mode 'list'" in body["repair"]["hand_edit"]["required_change"]
+
+
+def test_a_missing_claim_type_is_a_coded_404_naming_the_nearest_predicates(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    declared = client.get(f"/api/v1/{instance_id}/playbill/claim-types")
+    assert declared.status_code == 200, declared.text
+    predicates = [row["predicate"] for row in declared.json()["claim_types"]]
+
+    missing = client.get(f"/api/v1/{instance_id}/playbill/claim-types/no.such.predicate")
+    assert missing.status_code == 404, missing.text
+    body = missing.json()
+    assert body["error_code"] == "playbill.claim_type_not_found"
+    assert body["context"]["predicate"] == "no.such.predicate"
+    assert body["repair"]["operation"] == "playbill.claim-type.list"
+
+    if predicates:
+        typo = predicates[0][:-1]
+        near = client.get(f"/api/v1/{instance_id}/playbill/claim-types/{typo}")
+        assert near.status_code == 404, near.text
+        assert predicates[0] in near.json()["context"]["nearest"]
+        assert predicates[0] in near.json()["message"]
+
+
+def test_nearest_predicates_cover_typos_and_bare_leaf_names() -> None:
+    from cruxible_core.service.claims.claim_types import nearest_names
+
+    declared = (
+        "dev.roadmap_item.adoption_state",
+        "dev.roadmap_item.owner",
+        "dev.task.status",
+    )
+    assert nearest_names("dev.roadmap_item.adoption_stat", declared)[0] == (
+        "dev.roadmap_item.adoption_state"
+    )
+    assert nearest_names("adoption_state", declared) == ("dev.roadmap_item.adoption_state",)
+    assert nearest_names("zzz", declared) == ()

@@ -373,11 +373,12 @@ governed authoring; it does not approve or accept the proposal. Direct readiness
 can report capture/proposal terminals as unsupported because those require the
 Line lane. Use `pb.run_line(...)` for an accepted, authorized Line occurrence.
 
-The [SDK v2 reference proposal](sdk-v2-reference.md) describes retained Python
-source, contract-derived input/output records, typed query/run results, typed
-field reads inside Procedures, branch-value merging, and proposed composition
-forms. Those are proposed APIs, not syntax the current SDK accepts. Follow the
-current SDK reference when executing against the installed package.
+Retained Python source works today: decorate a function with `@procedure` from
+`cruxible_client.authoring.source` to get a `ProcedureBlueprint`, then
+`preview(world=...)` or `build(world=...)` it. The
+[SDK v2 reference proposal](sdk-v2-reference.md) also describes further forms
+(typed field reads inside Procedures, branch-value merging, composition); check
+the current SDK reference before relying on one of those.
 
 A `source` node reads through an accepted Provider under accepted authority,
 not through ambient filesystem access. Before it can run, accepted state must
@@ -432,7 +433,7 @@ complete after the run that they will credit has returned:
 
 ~~~python
 proc = pb.accepted_procedure("release-guard")
-run = proc.run(release="2.4.0")           # execution outcome: run.status
+run = proc.run(input=proc.input(release="2.4.0"))  # execution outcome: run.status
 
 batch = proc.measure(run=run)             # observation instant = pb's clock
 batch["rollout-healthy"].status           # "pending" | "expired" | "resolved"
@@ -505,7 +506,7 @@ The MCP tool set is Playbill-only and mirrors the same service core as CLI and
 HTTP. Use MCP for structured agent calls and CLI for human-readable review or
 local key custody.
 
-The default MCP profile is curated around the write-side loop. Use the expert
+The default MCP profile is curated around the write-side loop. Use the `full`
 profile only when work requires lower-level document, Claim, ClaimType, or other
 diagnostic surfaces that the default catalog intentionally hides.
 

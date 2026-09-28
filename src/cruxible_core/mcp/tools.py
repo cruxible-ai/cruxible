@@ -436,10 +436,14 @@ def register_tools(
     def cruxible_playbill_list_subjects(
         instance_id: InstanceId = None,
         subject_kind: str | None = None,
+        limit: Annotated[
+            int, Field(ge=1, le=contracts.PLAYBILL_SUBJECT_LIST_MAX_LIMIT)
+        ] = contracts.PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT,
+        cursor: str | None = None,
     ) -> contracts.PlaybillSubjectList:
-        """List accepted Subjects at the current coordinate, optionally of one kind."""
+        """One page of Subjects (kind, id, live Claim count); follow next_cursor while truncated."""
         return handlers.handle_playbill_list_subjects(
-            require_instance_id(instance_id), subject_kind=subject_kind
+            require_instance_id(instance_id), subject_kind=subject_kind, limit=limit, cursor=cursor
         )
 
     @_tool
@@ -873,7 +877,7 @@ def register_tools(
         resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
         trigger_event: contracts.TriggerEventReferenceV1 | None = None,
     ) -> contracts.PlaybillProcedureRunState:
-        """Run one accepted query-only Procedure deterministically."""
+        """Run one accepted Procedure deterministically."""
         return handlers.handle_playbill_procedure_run(
             require_instance_id(instance_id),
             name,

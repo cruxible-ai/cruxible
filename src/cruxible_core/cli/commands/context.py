@@ -98,6 +98,7 @@ def context_show(output_json: bool) -> None:
         "workspace_config_attachment": config_attachment,
         "daemon_host_registration": registration,
         "attachment_disagreement": disagreement,
+        "remembered_instance_ignored": obj.get("context_instance_transport_mismatch"),
     }
     if output_json:
         _emit_json(payload)
@@ -111,6 +112,8 @@ def context_show(output_json: bool) -> None:
     else:
         click.echo(f"Server: local ({transport_source})")
     click.echo(f"Instance ID: {payload['instance_id'] or '<none>'} ({instance_source})")
+    if payload["remembered_instance_ignored"]:
+        click.echo(f"Remembered instance ignored: {payload['remembered_instance_ignored']}")
     attachment = "attached" if payload["workspace_attached"] else "not attached"
     click.echo(f"Workspace: {payload['workspace']} ({payload['workspace_source']}, {attachment})")
     click.echo(f"Workspace config: {config_attachment['status']}")
@@ -135,7 +138,11 @@ def context_connect(
     existing = _load_persisted_cli_context()
     if server_url is not None or server_socket is not None:
         resolved_url = server_url
-        resolved_socket = server_socket
+        # Store the realpath: resolution compares realpaths, so an unresolved
+        # alias (macOS /tmp -> /private/tmp) would orphan the remembered instance.
+        resolved_socket = (
+            None if server_socket is None else str(Path(server_socket).expanduser().resolve())
+        )
     else:
         resolved_url = existing.server_url
         resolved_socket = existing.server_socket

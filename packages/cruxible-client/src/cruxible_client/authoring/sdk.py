@@ -1431,10 +1431,10 @@ class Proposal:
         return () if self.lint is None else tuple(self.lint.warnings)
 
     def status(self) -> api.PlaybillProposalListEntry:
-        for entry in _all_proposals(self._playbill._client, self._playbill._instance_id):
-            if entry.proposal_id == self.proposal_id:
-                return entry
-        raise ValueError(f"proposal {self.proposal_id!r} was not listed by the daemon")
+        """This proposal's current status, read by ID."""
+        return self._playbill._client.playbill_proposal_status(
+            self._playbill._instance_id, self.proposal_id
+        )
 
     def wait_for_acceptance(
         self,

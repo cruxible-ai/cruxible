@@ -24,6 +24,7 @@ from typing import Literal, cast
 import click
 
 from cruxible_client import CruxibleClient
+from cruxible_client.errors import CoreError, DaemonOperationScopeError
 from cruxible_core.cli.commands._common import (
     SERVER_MODE_REQUIRED_MESSAGE,
     _emit_json,
@@ -75,22 +76,30 @@ def _client_transport_label() -> str:
     return "configured Cruxible server"
 
 
-def _wait_for_daemon(client: CruxibleClient, timeout: float) -> str:
-    """Poll the daemon's /version probe until it answers or the budget expires.
+def _wait_for_daemon(client: CruxibleClient, timeout: float, *, old_boot_id: str | None) -> str:
+    """Poll the daemon's /version probe until the NEW image answers.
 
-    Returns the version reported by the restarted daemon. Raising here surfaces
-    a skew-proof failure: the command only succeeds once the new image responds.
+    The old image keeps answering for a beat after it acknowledges the
+    restart, and the re-exec keeps its pid, so an answer only counts once its
+    boot id differs from the one that acknowledged. Returns the version the new
+    image reports; raising here keeps the command skew-proof.
     """
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            return client.version()
+            version, boot_id = client.daemon_identity()
         except Exception as exc:  # connection refused while the image is replaced
             last_error = exc
-            time.sleep(_RESTART_POLL_INTERVAL_SECONDS)
+        else:
+            if old_boot_id is None or boot_id != old_boot_id:
+                return version
+            last_error = None
+        time.sleep(_RESTART_POLL_INTERVAL_SECONDS)
+    still_old = last_error is None and old_boot_id is not None
     raise click.ClickException(
         f"Daemon did not come back within {timeout:.0f}s after restart"
+        + ("; the old process image is still answering" if still_old else "")
         + (f": {last_error}" if last_error is not None else "")
     )
 
@@ -414,6 +423,46 @@ def server_install_service_cmd(
     )
 
 
+def _echo_instance_scoped_status(
+    client: CruxibleClient, instance_id: str, transport: str, output_json: bool
+) -> None:
+    version = client.version()
+    host = client.show_playbill_host(instance_id)
+    try:
+        identity = client.playbill_whoami(instance_id)
+    except CoreError:  # an uninitialized host has no identity to read yet
+        identity = None
+    if output_json:
+        _emit_json(
+            {
+                "scope": "instance",
+                "instance_id": instance_id,
+                "version": version,
+                "transport": transport,
+                "host": host.model_dump(mode="python"),
+                "identity": None if identity is None else identity.model_dump(mode="python"),
+            }
+        )
+        return
+    click.echo(f"Daemon: reachable ({transport})")
+    click.echo(f"Version: {version}")
+    click.echo(
+        f"Scope: instance {instance_id} (the credential is instance-scoped; daemon-wide "
+        "status needs the bootstrap secret or a daemon-scope token)"
+    )
+    click.echo(
+        f"Host {host.instance_id}: {host.compatibility} "
+        f"({host.compiler_revision or '-'}, {host.compiler_coordinate or '-'})"
+    )
+    if host.reason is not None:
+        click.echo(f"  Reason: {host.reason.code}: {host.reason.detail}")
+    if identity is not None:
+        click.echo(
+            f"Actor: {identity.actor_id} ({identity.credential_permission_mode}, "
+            f"principal {identity.principal_registration_status})"
+        )
+
+
 @server_group.command("status")
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
@@ -427,10 +476,17 @@ def server_status_cmd(output_json: bool) -> None:
     client = _get_client()
     if client is None:
         raise click.UsageError(f"{SERVER_MODE_REQUIRED_MESSAGE} {_DAEMON_REQUIRED_HINT}")
-    result = client.server_info()
     transport = _client_transport_label()
+    try:
+        result = client.server_info()
+    except DaemonOperationScopeError as exc:
+        # An instance-scoped credential cannot read daemon-wide state, but it
+        # can read its own host and identity; answer with exactly that.
+        _echo_instance_scoped_status(client, exc.credential_scope, transport, output_json)
+        return
     if output_json:
         payload = result.model_dump(mode="python")
+        payload["scope"] = "daemon"
         payload["transport"] = transport
         _emit_json(payload)
         return
@@ -495,7 +551,7 @@ def server_restart_cmd(output_json: bool, no_wait: bool, timeout: float) -> None
 
     confirmed_version: str | None = None
     if not no_wait:
-        confirmed_version = _wait_for_daemon(client, timeout)
+        confirmed_version = _wait_for_daemon(client, timeout, old_boot_id=result.boot_id)
 
     if output_json:
         payload = result.model_dump(mode="python")

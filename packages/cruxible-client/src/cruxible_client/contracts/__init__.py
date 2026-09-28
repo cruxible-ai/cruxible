@@ -304,6 +304,8 @@ PLAYBILL_POLICY_LIST_DEFAULT_LIMIT = 25
 PLAYBILL_POLICY_LIST_MAX_LIMIT = 200
 PLAYBILL_CURATION_LIST_DEFAULT_LIMIT = 25
 PLAYBILL_CURATION_LIST_MAX_LIMIT = 200
+PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT = 50
+PLAYBILL_SUBJECT_LIST_MAX_LIMIT = 500
 
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
     "provider_process_lease_invalid",
@@ -346,12 +348,15 @@ class PlaybillHostWorkspaceRegistrationV1(BaseModel):
     workspace_path: str | None = None
 
 
-PlaybillHostCompatibilityV1: TypeAlias = Literal["uninitialized", "writable", "reseed_required"]
+PlaybillHostCompatibilityV1: TypeAlias = Literal[
+    "uninitialized", "writable", "reseed_required", "decommissioned"
+]
 PlaybillHostCompatibilityReasonCodeV1: TypeAlias = Literal[
     "legacy_layout_requires_reseed",
     "host_state_incomplete",
     "host_state_malformed",
     "compiler_lineage_not_writable",
+    "instance_decommissioned",
 ]
 
 
@@ -388,8 +393,8 @@ class PlaybillHostInspectionV1(BaseModel):
             or self.reason is not None
         ):
             raise ValueError("uninitialized host cannot carry compiler or reason")
-        if self.compatibility == "reseed_required" and self.reason is None:
-            raise ValueError("reseed_required host must carry a typed reason")
+        if self.compatibility in {"reseed_required", "decommissioned"} and self.reason is None:
+            raise ValueError(f"{self.compatibility} host must carry a typed reason")
         return self
 
 
@@ -484,6 +489,9 @@ class ServerRestartResult(BaseModel):
     scheduled: bool
     version: str
     state_root: str
+    # The process image that acknowledged the restart; a waiting client knows
+    # the new image answers once the probe reports a different boot id.
+    boot_id: str | None = None
 
 
 class ServerStopResult(BaseModel):
@@ -974,12 +982,26 @@ class PlaybillSubjectView(BaseModel):
     incoming: list[PlaybillSubjectIncomingGroupV1] = []
 
 
+class PlaybillSubjectListRow(BaseModel):
+    """One Subject on a list page; the full envelope is on the Subject read."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    subject_kind: str
+    subject_id: str
+    lifecycle: Literal["live", "retired"]
+    live_claims: int = Field(ge=0)
+
+
 class PlaybillSubjectList(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-subject-list-v1"] = "playbill-subject-list-v1"
+    tag: Literal["playbill-subject-list-v2"] = "playbill-subject-list-v2"
     coordinate: PlaybillAcceptedCoordinate
-    subjects: list[PlaybillSubjectView]
+    subject_kind_filter: str | None = None
+    subjects: list[PlaybillSubjectListRow]
+    truncated: bool = False
+    next_cursor: str | None = None
 
 
 class PlaybillSubjectIndexEntry(BaseModel):
@@ -2131,7 +2153,8 @@ class PlaybillWorkspaceFloorWriteResult(BaseModel):
     tag: Literal["playbill-workspace-floor-write-result-v1"] = (
         "playbill-workspace-floor-write-result-v1"
     )
-    status: Literal["written"] = "written"
+    # `unchanged`: the directory already held exactly this floor.
+    status: Literal["written", "unchanged"] = "written"
     path: str
     destination: str
     floor_digest: str

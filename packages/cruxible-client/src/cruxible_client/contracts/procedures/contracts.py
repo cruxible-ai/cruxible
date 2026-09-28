@@ -180,9 +180,11 @@ def _normalize_fields(
 ) -> dict[str, object]:
     extras = sorted(set(source) - set(fields), key=lambda item: item.encode("utf-8"))
     if extras and not allow_extra:
+        # Name the first offending field, not its parent: at the root the
+        # parent path is empty and would point the caller nowhere.
         raise ProcedureContractValidationError(
-            f"unexpected fields: {extras}",
-            field_path=path_prefix,
+            f"unexpected fields: {extras}; declared fields: {sorted(fields)}",
+            field_path=f"{path_prefix}.{extras[0]}" if path_prefix else extras[0],
         )
     normalized: dict[str, object] = {}
     if allow_extra:

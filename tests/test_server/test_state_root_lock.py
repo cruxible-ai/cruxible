@@ -220,3 +220,61 @@ def test_a_pre_existing_world_writable_lock_is_narrowed_to_0600(tmp_path: Path) 
 
     with StateRootLock(root, transport="unix socket /run/a.sock"):
         assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_a_sigterm_stop_removes_the_socket_file_it_bound(tmp_path: Path) -> None:
+    """`server stop` signals SIGTERM; the daemon must unwind and unlink its socket.
+
+    uvicorn re-raises the SIGTERM it handled, which under the default handler
+    ended the process before the socket cleanup ran.
+    """
+    import shutil
+    import signal
+    import subprocess
+    import sys
+    import tempfile
+    import time
+
+    repo = Path(__file__).resolve().parents[2]
+    # AF_UNIX paths are short; the pytest tmp_path is not, the default temp dir is.
+    socket_dir = Path(tempfile.mkdtemp(prefix="cxs"))
+    socket_path = socket_dir / "d.sock"
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("CRUXIBLE_") and key != "PYTHONPATH"
+    }
+    env["PYTHONPATH"] = os.pathsep.join(
+        (str(repo / "src"), str(repo / "packages/cruxible-client/src"))
+    )
+    daemon = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "from cruxible_core.cli.main import cli; cli()",
+            "server",
+            "start",
+            "--socket",
+            str(socket_path),
+            "--state-root",
+            str(tmp_path / "state"),
+        ],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while not socket_path.exists():
+            assert daemon.poll() is None, daemon.stderr.read() if daemon.stderr else ""
+            assert time.monotonic() < deadline, "daemon never bound its socket"
+            time.sleep(0.1)
+        time.sleep(0.5)  # let uvicorn install its handlers and start serving
+        daemon.send_signal(signal.SIGTERM)
+        assert daemon.wait(timeout=30) == 0
+        assert not socket_path.exists()
+    finally:
+        if daemon.poll() is None:
+            daemon.kill()
+            daemon.wait()
+        shutil.rmtree(socket_dir, ignore_errors=True)

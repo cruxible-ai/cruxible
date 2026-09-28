@@ -7,6 +7,7 @@ credential errors shared by the daemon, CLI and MCP boundaries.
     CoreError
     ├── ConfigError (invalid configuration or request shape)
     ├── DataValidationError (payload does not match its declared contract)
+    │   └── RequestRefusedError (a coded refusal of caller input, with its repair)
     ├── CustomerCodeExecutionUnsupportedError (hosted profile refuses customer code)
     ├── HostedProfileUnknownError (unknown hosted server profile)
     ├── IsolatedExecutorDiscoveryError (advertised isolated executor failed to load)
@@ -80,6 +81,19 @@ class DataValidationError(CoreError):
             return self.summary
         detail = _format_capped_errors(self.errors)
         return f"{self.summary}: {detail}"
+
+
+class RequestRefusedError(DataValidationError):
+    """A coded refusal of caller input that names the repair.
+
+    ``repair`` is a served repair (a runnable operation or a hand edit); the
+    HTTP boundary renders it as the envelope's repair and answers 400.
+    """
+
+    def __init__(self, error_code: str, message: str, *, repair: object) -> None:
+        self.error_code = error_code
+        self.repair = repair
+        super().__init__(f"{error_code}: {message}")
 
 
 class CustomerCodeExecutionUnsupportedError(CoreError):
