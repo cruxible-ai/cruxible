@@ -40,7 +40,10 @@ Manage remembered daemon and instance context. `context show` reports the
 resolved target, workspace, and the source selected for each target component.
 It reports workspace-config attachment separately from daemon host registration;
 for local sockets, a mismatch is a typed attachment-disagreement row rather than
-silently treating those two notions as equivalent:
+silently treating those two notions as equivalent. When a remembered instance
+is bound to a different transport than the one resolved, `context show` names
+it under `remembered_instance_ignored`. `context connect` stores the socket's
+realpath:
 
 ~~~text
 cruxible context connect
