@@ -189,7 +189,10 @@ class ClaimInput(_StrictInputModel):
     rationale: str
     source: AuthoringSourceInput
     citation_role: Literal["evidence", "copy"] | None = None
-    claim_id: str | None = None
+    revises: str | None = Field(
+        default=None,
+        description="Claim ID this Claim revises; omit to state a new Claim.",
+    )
     dispositions: tuple[ClaimDispositionInput, ...] = ()
 
 
@@ -410,7 +413,7 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
                 capture_digest=value.source.capture_digest,
             ),
             citation_role=value.citation_role,
-            claim_ref=value.claim_id,
+            claim_ref=value.revises,
             existing_claim_dispositions=_dispositions(value.dispositions),
             dependency_drafts=ClaimDependencyDraftsV1(),
         )
@@ -435,7 +438,7 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
         source=SelfSourceBodyV1(
             content_base64=base64.b64encode(value.source.body.encode("utf-8")).decode("ascii")
         ),
-        claim_ref=value.claim_id,
+        claim_ref=value.revises,
         existing_claim_dispositions=_dispositions(value.dispositions),
     )
 
@@ -481,7 +484,7 @@ def lower_bound_claim_input(
         rationale=value.rationale,
         source=observation,
         citation_role=value.citation_role,
-        claim_ref=value.claim_id,
+        claim_ref=value.revises,
         existing_claim_dispositions=_dispositions(value.dispositions),
     )
 

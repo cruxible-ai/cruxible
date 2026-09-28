@@ -62,6 +62,7 @@ AuthoringExampleName = Literal[
     "claim-self-source",
     "claim-subject-relation",
     "claim-exact-content",
+    "claim-revision",
     "procedure",
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
@@ -210,7 +211,7 @@ def claim_type_succession_example() -> ChangeSetInput:
                 role="observation",
                 rationale="Replace with why this owner is right under the new vocabulary.",
                 source=SelfSourceInput(kind="self_source", body="owner: replace-me\n"),
-                claim_id="CLM-" + "1" * 32,
+                revises="CLM-" + "1" * 32,
             ),
         ),
     )
@@ -288,6 +289,25 @@ def claim_self_source_example() -> ClaimInput:
         role="observation",
         rationale="Replace with why this new statement should be governed.",
         source=SelfSourceInput(kind="self_source", body="status: replace-me\n"),
+    )
+
+
+def claim_revision_example() -> ClaimInput:
+    """Revise one accepted Claim: the same statement slot, a new generation of it.
+
+    `revises` names the Claim ID the revision replaces. Omitting it states a new
+    Claim instead, with its own freshly minted ID.
+    """
+
+    return ClaimInput(
+        kind="claim",
+        subject="project.work_item/replace-me",
+        predicate="project.work_item.status",
+        object=LiteralObjectInput(kind="literal", value="replace-me"),
+        role="observation",
+        rationale="Replace with why the accepted Claim needs this revision.",
+        source=SelfSourceInput(kind="self_source", body="status: replace-me\n"),
+        revises="CLM-" + "0" * 32,
     )
 
 
@@ -617,6 +637,7 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "claim-self-source": claim_self_source_example,
     "claim-subject-relation": claim_subject_relation_example,
     "claim-exact-content": claim_exact_content_example,
+    "claim-revision": claim_revision_example,
     "procedure": procedure_example,
     "query-claims-by-type": query_claims_by_type_example,
     "query-ontology": query_ontology_example,
@@ -640,6 +661,7 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "claim-self-source",
     "claim-subject-relation",
     "claim-exact-content",
+    "claim-revision",
     "procedure",
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
@@ -682,7 +704,7 @@ def _door_example(
         rationale=rationale,
         source=ExistingCaptureInput(kind="existing_capture", capture_digest=capture_digest),
         citation_role="evidence",
-        claim_id=claim_id,
+        revises=claim_id,
     )
 
 
@@ -712,6 +734,7 @@ __all__ = [
     "claim_existing_capture_example",
     "claim_flow_a_example",
     "claim_exact_content_example",
+    "claim_revision_example",
     "claim_self_source_example",
     "claim_subject_relation_example",
     "document_example",

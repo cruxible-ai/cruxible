@@ -932,7 +932,7 @@ def _item(
                 (
                     "cruxible playbill authoring create --example",
                     shlex.quote(example),
-                    "--claim-id",
+                    "--attestation-claim-id",
                     shlex.quote(claim_id),
                     "--capture-digest",
                     shlex.quote(capture_digest),

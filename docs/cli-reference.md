@@ -732,7 +732,9 @@ between ambiguous histories.
 
 ~~~text
 cruxible playbill authoring create PAYLOAD
-cruxible playbill authoring create --example claim-flow-a|claim-self-source|claim-subject-relation|procedure|change-set|claim-type-succession
+cruxible playbill authoring create --example claim-flow-a|claim-self-source|claim-subject-relation|claim-revision|procedure|change-set|claim-type-succession
+cruxible playbill authoring create --example claim-cite-supporting-evidence
+  --attestation-claim-id CLAIM_ID --capture-digest DIGEST
 cruxible playbill authoring get INTENT_ID
 cruxible playbill authoring resume INTENT_ID
 cruxible playbill authoring list
@@ -746,6 +748,13 @@ cruxible playbill authoring submit INTENT_ID
 cruxible playbill authoring status INTENT_ID
 cruxible playbill authoring abandon-insertion INTENT_ID [--expectation-id ID]
 ~~~
+
+A Claim input names the Claim it revises with `revises`, a Claim ID; omit it
+to state a new Claim. `--example claim-revision` prints one. The three
+attestation-door examples (`claim-cite-supporting-evidence`,
+`claim-adjudicate-contradicting-evidence`, `claim-adjudicate-unreviewed-evidence`)
+revise the Claim named by `--attestation-claim-id` to cite the Capture named by
+`--capture-digest`, and require both.
 
 **Intent retention.** A local daemon keeps an authoring intent only while it is
 in progress. Only unsubmitted drafts expire, after a day untouched; submitted work

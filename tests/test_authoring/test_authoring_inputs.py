@@ -197,7 +197,7 @@ def test_input_compile_typed_refuses_a_terminal_v3_claim_with_v2_backing(
 
     result = _coordinator(instance).compile_input(
         actor=actor,
-        input=_claim_input().model_copy(update={"claim_id": claim_id}),
+        input=_claim_input().model_copy(update={"revises": claim_id}),
         canonical_timestamp=TIMESTAMP,
     )
 

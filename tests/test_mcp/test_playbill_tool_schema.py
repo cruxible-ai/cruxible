@@ -123,6 +123,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "claim-self-source",
         "claim-subject-relation",
         "claim-exact-content",
+        "claim-revision",
         "procedure",
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",

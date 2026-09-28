@@ -833,7 +833,7 @@ def test_propose_help_names_the_sanctioned_proposal_paths() -> None:
         [
             "--example",
             "claim-cite-supporting-evidence",
-            "--claim-id",
+            "--attestation-claim-id",
             "CLM-" + "a" * 32,
         ],
         [
@@ -842,12 +842,12 @@ def test_propose_help_names_the_sanctioned_proposal_paths() -> None:
             "--capture-digest",
             "sha256:" + "b" * 64,
         ],
-        ["--example", "claim-flow-a", "--claim-id", "CLM-" + "a" * 32],
+        ["--example", "claim-flow-a", "--attestation-claim-id", "CLM-" + "a" * 32],
         ["--example", "claim-flow-a", "--capture-digest", "sha256:" + "b" * 64],
         [
             "--example",
             "claim-flow-a",
-            "--claim-id",
+            "--attestation-claim-id",
             "CLM-" + "a" * 32,
             "--capture-digest",
             "sha256:" + "b" * 64,
@@ -870,7 +870,7 @@ def test_cli_attestation_door_example_accepts_both_hints() -> None:
             "create",
             "--example",
             "claim-cite-supporting-evidence",
-            "--claim-id",
+            "--attestation-claim-id",
             "CLM-" + "a" * 32,
             "--capture-digest",
             "sha256:" + "b" * 64,
@@ -878,18 +878,18 @@ def test_cli_attestation_door_example_accepts_both_hints() -> None:
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["claim_id"] == "CLM-" + "a" * 32
+    assert payload["revises"] == "CLM-" + "a" * 32
     assert payload["source"]["capture_digest"] == "sha256:" + "b" * 64
 
 
-@pytest.mark.parametrize("hint", ["--claim-id", "--capture-digest"])
+@pytest.mark.parametrize("hint", ["--attestation-claim-id", "--capture-digest"])
 def test_cli_payload_file_refuses_attestation_example_hints(
     tmp_path: Path,
     hint: str,
 ) -> None:
     payload = tmp_path / "payload.json"
     payload.write_text("{}\n", encoding="utf-8")
-    value = "CLM-" + "a" * 32 if hint == "--claim-id" else "sha256:" + "b" * 64
+    value = "CLM-" + "a" * 32 if hint == "--attestation-claim-id" else "sha256:" + "b" * 64
 
     result = CliRunner().invoke(
         cli,

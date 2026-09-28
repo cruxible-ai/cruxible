@@ -4447,7 +4447,7 @@ Import: `cruxible_client.contracts.authoring.inputs.ClaimInput`. [Source](src/cr
 | `rationale` | `str` | `Required` |
 | `source` | `AuthoringSourceInput` | `Required` |
 | `citation_role` | `Literal['evidence', 'copy'] \| None` | `None` |
-| `claim_id` | `str \| None` | `None` |
+| `revises` | `str \| None` | `None`; Claim ID this Claim revises; omit to state a new Claim. |
 | `dispositions` | `tuple[ClaimDispositionInput, ...]` | `()` |
 
 <a id="api-procedureinput"></a>
@@ -6707,6 +6707,17 @@ Rulings and method laws are this shape: the statement is the wording, so the
 object carries the body rather than a literal the ClaimType admits. `text`
 is the ordinary spelling; `content_base64` is the same object for bytes that
 are not text.
+
+#### `claim_revision_example`
+
+```text
+claim_revision_example() -> 'ClaimInput'
+```
+
+Revise one accepted Claim: the same statement slot, a new generation of it.
+
+`revises` names the Claim ID the revision replaces. Omitting it states a new
+Claim instead, with its own freshly minted ID.
 
 #### `claim_self_source_example`
 

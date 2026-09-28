@@ -2845,7 +2845,10 @@ _EXPECTATION_ID_HELP = (
     help="Print one model-generated payload template and exit.",
 )
 @json_option
-@click.option("--claim-id")
+@click.option(
+    "--attestation-claim-id",
+    help="Claim ID an attestation-door example revises (with --capture-digest).",
+)
 @click.option("--capture-digest")
 @handle_errors
 @click.pass_context
@@ -2853,7 +2856,7 @@ def create_authoring_intent(
     ctx: click.Context,
     payload: str | None,
     example_name: str | None,
-    claim_id: str | None,
+    attestation_claim_id: str | None,
     capture_digest: str | None,
     output_json: bool,
 ) -> None:
@@ -2887,13 +2890,13 @@ def create_authoring_intent(
 
     if (payload is None) == (example_name is None):
         raise click.UsageError("provide exactly one of PAYLOAD or --example")
-    if payload is not None and (claim_id is not None or capture_digest is not None):
-        raise click.UsageError("--claim-id/--capture-digest require --example")
+    if payload is not None and (attestation_claim_id is not None or capture_digest is not None):
+        raise click.UsageError("--attestation-claim-id/--capture-digest require --example")
     if example_name is not None:
         try:
             example = authoring_example(
                 cast(AuthoringExampleName, example_name),
-                claim_id=claim_id,
+                claim_id=attestation_claim_id,
                 capture_digest=capture_digest,
             )
         except ValueError as exc:

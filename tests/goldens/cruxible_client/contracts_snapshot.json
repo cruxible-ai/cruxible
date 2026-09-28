@@ -24,6 +24,7 @@
         "claim-self-source",
         "claim-subject-relation",
         "claim-exact-content",
+        "claim-revision",
         "procedure",
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
@@ -7126,6 +7127,7 @@
               "claim-self-source",
               "claim-subject-relation",
               "claim-exact-content",
+              "claim-revision",
               "procedure",
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
@@ -7862,18 +7864,6 @@
                 "default": null,
                 "title": "Citation Role"
               },
-              "claim_id": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Claim Id"
-              },
               "dispositions": {
                 "default": [],
                 "items": {
@@ -7954,6 +7944,19 @@
               "rationale": {
                 "title": "Rationale",
                 "type": "string"
+              },
+              "revises": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Claim ID this Claim revises; omit to state a new Claim.",
+                "title": "Revises"
               },
               "role": {
                 "enum": [
@@ -10917,6 +10920,7 @@
               "claim-self-source",
               "claim-subject-relation",
               "claim-exact-content",
+              "claim-revision",
               "procedure",
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",

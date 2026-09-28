@@ -713,7 +713,7 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
     }
     assert rows[0].detail["lineage_status"] == "proven"
     assert rows[0].repair.command.endswith(
-        f"--claim-id {claim_id} --capture-digest {capture.capture_digest}"
+        f"--attestation-claim-id {claim_id} --capture-digest {capture.capture_digest}"
     )
 
 
