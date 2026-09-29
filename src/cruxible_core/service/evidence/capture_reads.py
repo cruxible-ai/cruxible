@@ -9,8 +9,9 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
     verify_capture,
 )
-from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
+from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError, ReadRefusalError
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
     CasSourceReferenceV1,
@@ -20,6 +21,7 @@ from cruxible_client.contracts.source_references import (
 )
 from cruxible_core.errors import PermissionDeniedError
 from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
+from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import service_open_playbill_source
 from cruxible_core.storage.cas import BodyAccessContext
@@ -28,6 +30,69 @@ from cruxible_core.storage.cas import BodyAccessContext
 class CaptureReadInvalid(PlaybillFormatError):
     code = "playbill.capture.invalid"
     http_status = 400
+
+
+_MAX_OWNERS = 10
+
+
+def _not_a_capture(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, digest: str
+) -> ReadRefusalError:
+    """Refuse a digest whose bytes are not a Capture envelope, naming what they are.
+
+    A digest an agent sees is usually a Capture's, but an exact-content Claim's
+    value and a Document's body are digests of stored bytes too. Those bytes are
+    read through ``get`` on their owner, which shows them as text; the Captures
+    that back a Claim are listed by ``get(<claim>, detail="evidence")``.
+    """
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        claims = [
+            str(identity).removeprefix("Claim:")
+            for (identity,) in connection.execute(
+                "SELECT identity FROM claims WHERE object_content_digest=? AND lifecycle='live' "
+                "ORDER BY identity LIMIT ?",
+                (digest, _MAX_OWNERS),
+            )
+        ]
+        documents = [
+            "Document:" + str(identity).removeprefix("document:")
+            for (identity,) in connection.execute(
+                "SELECT identity FROM documents WHERE body_digest=? ORDER BY identity LIMIT ?",
+                (digest, _MAX_OWNERS),
+            )
+        ]
+    owners = [*claims, *documents][:_MAX_OWNERS]
+    if claims:
+        what = f"the exact content of Claim {claims[0]}"
+        repair = RepairOperationV1(operation="playbill.get", arguments={"ref": claims[0]})
+        line = (
+            f"Read it with get on the Claim ({claims[0]}), which shows the value as text; "
+            'detail="evidence" names the Captures behind it'
+        )
+    elif documents:
+        what = f"the body of {documents[0]}"
+        repair = RepairOperationV1(
+            operation="playbill.get", arguments={"ref": documents[0], "detail": "body"}
+        )
+        line = f'Read it with get on {documents[0]} with detail="body"'
+    else:
+        what = "stored bytes that are not a Capture envelope"
+        repair = RepairOperationV1(operation="playbill.orient")
+        line = (
+            'Pass a Capture\'s digest; get on a Claim with detail="proof" carries the full '
+            "digests of the Captures behind it"
+        )
+    return ReadRefusalError(
+        "playbill.capture.not_a_capture",
+        f"{digest} is not a Capture: it is {what}",
+        http_status=404,
+        candidates=owners,
+        repair=repair,
+        repair_line=line,
+        context={"capture_digest": digest},
+    )
 
 
 class _LedgerResolver:
@@ -71,7 +136,16 @@ def service_read_playbill_capture(
             reason="capture_unavailable",
         )
     try:
-        envelope = parse_capture_envelope(store.read(request.capture_digest, access=access))
+        raw = store.read(request.capture_digest, access=access)
+    except PlaybillError as exc:
+        raise CaptureReadInvalid(f"Capture verification failed: {exc}") from exc
+    try:
+        envelope = parse_capture_envelope(raw)
+    except (PlaybillError, ValueError):
+        # The bytes are present and intact but are not a Capture envelope: say
+        # what they are and which read answers them, not "verification failed".
+        raise _not_a_capture(instance, coordinate, request.capture_digest) from None
+    try:
         with instance.bind_accepted_projection(coordinate) as projection:
             path = projection.citations.capture_contract_path(envelope.capture_contract_digest)
             if path is None:

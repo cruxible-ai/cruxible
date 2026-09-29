@@ -1,5 +1,6 @@
 """Capture reads share the daemon's instance and body-access boundary."""
 
+import base64
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,14 @@ def test_capture_read_permission_and_request_validation(
     assert available.json()["status"] == "unavailable"
     assert http.post(route, json={"capture_digest": "/etc/passwd"}).status_code == 422
     assert http.post(route, json={**request, "max_bytes": -1}).status_code == 422
+    stored = http.post(
+        f"/api/v1/{instance_id}/playbill/bodies",
+        json={"content_base64": base64.b64encode(b"not a capture").decode("ascii")},
+    )
+    assert stored.status_code == 200, stored.text
+    refused = http.post(route, json={"capture_digest": stored.json()["digest"]})
+    assert refused.status_code == 404, refused.text
+    assert refused.json()["error_code"] == "playbill.capture.not_a_capture"
     monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
     reset_permissions()
     try:
