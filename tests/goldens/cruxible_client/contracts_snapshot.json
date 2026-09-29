@@ -45,6 +45,8 @@
         "approval-policy",
         "procedure-runtime-policy",
         "procedure-mandate",
+        "line",
+        "acquisition-policy",
         "change-set",
         "claim-type-succession"
       ]
@@ -4083,7 +4085,16 @@
           "json_name": "claim",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/ClaimVersionReferenceV1"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
+              }
+            ],
+            "description": "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. An exact ClaimVersionReferenceV1 object is accepted as the advanced form.",
+            "title": "Claim"
           }
         },
         "tag": {
@@ -4190,7 +4201,16 @@
         "additionalProperties": false,
         "properties": {
           "claim": {
-            "$ref": "#/$defs/ClaimVersionReferenceV1"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
+              }
+            ],
+            "description": "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. An exact ClaimVersionReferenceV1 object is accepted as the advanced form.",
+            "title": "Claim"
           },
           "tag": {
             "const": "playbill-observation-settlement-evidence-v2",
@@ -7198,6 +7218,8 @@
               "approval-policy",
               "procedure-runtime-policy",
               "procedure-mandate",
+              "line",
+              "acquisition-policy",
               "change-set",
               "claim-type-succession"
             ],
@@ -7213,9 +7235,11 @@
           "schema": {
             "discriminator": {
               "mapping": {
+                "acquisition_policy": "#/$defs/AcquisitionPolicyInput",
                 "approval_policy": "#/$defs/ApprovalPolicyInput",
                 "change_set": "#/$defs/ChangeSetInput",
                 "claim": "#/$defs/ClaimInput",
+                "line": "#/$defs/LineInput",
                 "procedure": "#/$defs/ProcedureInput",
                 "procedure_mandate": "#/$defs/ProcedureMandateInputV1",
                 "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
@@ -7247,6 +7271,12 @@
                 "$ref": "#/$defs/ProcedureMandateInputV1"
               },
               {
+                "$ref": "#/$defs/AcquisitionPolicyInput"
+              },
+              {
+                "$ref": "#/$defs/LineInput"
+              },
+              {
                 "$ref": "#/$defs/ChangeSetInput"
               }
             ],
@@ -7270,6 +7300,26 @@
       },
       "json_schema": {
         "$defs": {
+          "AcquisitionPolicyInput": {
+            "additionalProperties": false,
+            "description": "One SourceAcquisitionPolicy: how a Line's Source inputs may be acquired.",
+            "properties": {
+              "acquisition_policy": {
+                "$ref": "#/$defs/SourceAcquisitionPolicyV1"
+              },
+              "kind": {
+                "const": "acquisition_policy",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "acquisition_policy"
+            ],
+            "title": "AcquisitionPolicyInput",
+            "type": "object"
+          },
           "ApprovalPolicyInput": {
             "additionalProperties": false,
             "properties": {
@@ -7403,6 +7453,65 @@
             "title": "ArtifactRef",
             "type": "object"
           },
+          "BoundedWindowCoherenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "bounded_window",
+                "default": "bounded_window",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_cross_source_skew": {
+                "$ref": "#/$defs/CanonicalDurationV1"
+              },
+              "tag": {
+                "const": "playbill-bounded-window-coherence-v1",
+                "default": "playbill-bounded-window-coherence-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "max_cross_source_skew"
+            ],
+            "title": "BoundedWindowCoherenceV1",
+            "type": "object"
+          },
+          "CadenceTriggerPolicyV1": {
+            "additionalProperties": false,
+            "description": "A cadence trigger whose period is part of the accepted Line artifact.\n\n``cadence_policy_digest`` still pins the governing Policy exactly, but the\nPolicy pin target kind has no ledger artifact envelope, so nothing in an\naccepted tree can be read for the period. The period therefore lives here,\non the artifact the registry does produce, and is accepted, digested, and\nsucceeded with the Line itself.",
+            "properties": {
+              "cadence_policy_digest": {
+                "title": "Cadence Policy Digest",
+                "type": "string"
+              },
+              "interval_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Interval Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "cadence",
+                "default": "cadence",
+                "title": "Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-cadence-trigger-v1",
+                "default": "playbill-cadence-trigger-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "cadence_policy_digest",
+              "interval_seconds"
+            ],
+            "title": "CadenceTriggerPolicyV1",
+            "type": "object"
+          },
           "CanonicalDurationV1": {
             "additionalProperties": false,
             "properties": {
@@ -7422,6 +7531,76 @@
               "microseconds"
             ],
             "title": "CanonicalDurationV1",
+            "type": "object"
+          },
+          "CaptureEventSelectorV1": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelectorV1",
+            "type": "object"
+          },
+          "CaptureEventWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_event",
+                "default": "capture_event",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "duration_seconds"
+            ],
+            "title": "CaptureEventWindowV1",
+            "type": "object"
+          },
+          "CaptureLandingTriggerPolicyV2": {
+            "additionalProperties": false,
+            "properties": {
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_landing",
+                "default": "capture_landing",
+                "title": "Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-capture-landing-trigger-v2",
+                "default": "playbill-capture-landing-trigger-v2",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "title": "CaptureLandingTriggerPolicyV2",
             "type": "object"
           },
           "CarriedContractInput": {
@@ -7475,11 +7654,13 @@
                 "items": {
                   "discriminator": {
                     "mapping": {
+                      "acquisition_policy": "#/$defs/AcquisitionPolicyInput",
                       "approval_policy": "#/$defs/ApprovalPolicyInput",
                       "claim": "#/$defs/ClaimInput",
                       "claim_retirement": "#/$defs/ClaimRetirementInput",
                       "claim_type": "#/$defs/ClaimTypeInput",
                       "claim_type_succession": "#/$defs/ClaimTypeSuccessionInput",
+                      "line": "#/$defs/LineInput",
                       "procedure": "#/$defs/ProcedureInput",
                       "procedure_mandate": "#/$defs/ProcedureMandateInputV1",
                       "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
@@ -7515,6 +7696,12 @@
                     },
                     {
                       "$ref": "#/$defs/ProcedureMandateInputV1"
+                    },
+                    {
+                      "$ref": "#/$defs/AcquisitionPolicyInput"
+                    },
+                    {
+                      "$ref": "#/$defs/LineInput"
                     },
                     {
                       "$ref": "#/$defs/ProcedureInput"
@@ -8688,6 +8875,37 @@
             "title": "CorroborationRequirementV1",
             "type": "object"
           },
+          "DeclaredSnapshotGroupCoherenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "coordinate_grammar_digest": {
+                "title": "Coordinate Grammar Digest",
+                "type": "string"
+              },
+              "kind": {
+                "const": "declared_snapshot_group",
+                "default": "declared_snapshot_group",
+                "title": "Kind",
+                "type": "string"
+              },
+              "proof_adapter_digest": {
+                "title": "Proof Adapter Digest",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-declared-snapshot-group-coherence-v1",
+                "default": "playbill-declared-snapshot-group-coherence-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "coordinate_grammar_digest",
+              "proof_adapter_digest"
+            ],
+            "title": "DeclaredSnapshotGroupCoherenceV1",
+            "type": "object"
+          },
           "ExactContentObjectInput": {
             "additionalProperties": false,
             "description": "The exact bytes a Claim's object IS, spelled as text or as base64.\n\n`text` is the ordinary spelling and stays the ordinary spelling: rulings and\nmethod laws are prose, and prose typed into JSON should not have to be\nencoded first. `content_base64` is for the bytes text cannot carry -- a body\nthat is not valid UTF-8, or one whose exact bytes matter more than its\nreading -- and is the same spelling the SDK's own `ExactContent` lowers to,\nso the two doors put identical bytes in the ledger.\n\nExactly one of them, because two spellings of one body are two bodies the\nmoment they disagree, and the digest is over the bytes.",
@@ -8748,6 +8966,35 @@
             "title": "ExistingCaptureInput",
             "type": "object"
           },
+          "FixedWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fixed",
+                "default": "fixed",
+                "title": "Kind",
+                "type": "string"
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "duration_seconds"
+            ],
+            "title": "FixedWindowV1",
+            "type": "object"
+          },
           "FreezeRequirementV1": {
             "additionalProperties": false,
             "properties": {
@@ -8793,6 +9040,276 @@
               "frozen_predicates"
             ],
             "title": "FreezeRequirementV1",
+            "type": "object"
+          },
+          "IndependentCoherenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "independent",
+                "default": "independent",
+                "title": "Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-independent-coherence-v1",
+                "default": "playbill-independent-coherence-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "IndependentCoherenceV1",
+            "type": "object"
+          },
+          "InputAcquisitionRuleV1": {
+            "additionalProperties": false,
+            "properties": {
+              "conservative_default": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Conservative Default"
+              },
+              "correlation_keys": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Correlation Keys",
+                "type": "array"
+              },
+              "input_name": {
+                "title": "Input Name",
+                "type": "string"
+              },
+              "join_semantics_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Join Semantics Digest"
+              },
+              "max_age": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDurationV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "on_conflict": {
+                "enum": [
+                  "preserve",
+                  "refuse"
+                ],
+                "title": "On Conflict",
+                "type": "string"
+              },
+              "on_oversized": {
+                "enum": [
+                  "refuse",
+                  "omit_optional",
+                  "declared_conservative_default"
+                ],
+                "title": "On Oversized",
+                "type": "string"
+              },
+              "on_stale": {
+                "enum": [
+                  "refuse",
+                  "omit_optional",
+                  "declared_conservative_default"
+                ],
+                "title": "On Stale",
+                "type": "string"
+              },
+              "on_unavailable": {
+                "enum": [
+                  "refuse",
+                  "omit_optional",
+                  "declared_conservative_default"
+                ],
+                "title": "On Unavailable",
+                "type": "string"
+              },
+              "permitted_replayability": {
+                "items": {
+                  "enum": [
+                    "exact",
+                    "attested_only"
+                  ],
+                  "type": "string"
+                },
+                "title": "Permitted Replayability",
+                "type": "array"
+              },
+              "requirement": {
+                "enum": [
+                  "required",
+                  "optional",
+                  "conservative_default"
+                ],
+                "title": "Requirement",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-input-acquisition-rule-v1",
+                "default": "playbill-input-acquisition-rule-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "input_name",
+              "requirement",
+              "permitted_replayability",
+              "on_unavailable",
+              "on_stale",
+              "on_oversized",
+              "on_conflict"
+            ],
+            "title": "InputAcquisitionRuleV1",
+            "type": "object"
+          },
+          "LineInput": {
+            "additionalProperties": false,
+            "description": "One Line: a trigger that runs an accepted or same-set Procedure.\n\nLowering resolves the named Procedure and acquisition policy into exact\npins. A Line that proposes or settles also needs a live ProcedureMandate\ncovering its Procedure before it can run; an observe-only Line needs none.",
+            "properties": {
+              "acquisition_policy_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "SourceAcquisitionPolicy name; required only when the Procedure has Source nodes.",
+                "title": "Acquisition Policy Name"
+              },
+              "budgets": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Per-run budgets; omit to use the Procedure's hard caps.",
+                "title": "Budgets"
+              },
+              "kind": {
+                "const": "line",
+                "title": "Kind",
+                "type": "string"
+              },
+              "max_authority": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "observe",
+                      "propose",
+                      "settle"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Caps this Line below its Procedure's own capability; omit to inherit it.",
+                "title": "Max Authority"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "occurrence_epoch": {
+                "default": 1,
+                "minimum": 1,
+                "title": "Occurrence Epoch",
+                "type": "integer"
+              },
+              "parameters": {
+                "additionalProperties": true,
+                "description": "The Procedure's input record, checked against its input contract at authoring.",
+                "title": "Parameters",
+                "type": "object"
+              },
+              "procedure_name": {
+                "title": "Procedure Name",
+                "type": "string"
+              },
+              "retire": {
+                "default": false,
+                "title": "Retire",
+                "type": "boolean"
+              },
+              "trigger_input": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Trigger Input"
+              },
+              "trigger_policy": {
+                "description": "When the Line runs; manual (run or dispatch explicitly) by default.",
+                "discriminator": {
+                  "mapping": {
+                    "cadence": "#/$defs/CadenceTriggerPolicyV1",
+                    "capture_landing": "#/$defs/CaptureLandingTriggerPolicyV2",
+                    "manual": "#/$defs/ManualTriggerPolicyV1",
+                    "window_close": "#/$defs/WindowCloseTriggerPolicyV2"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/CadenceTriggerPolicyV1"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureLandingTriggerPolicyV2"
+                  },
+                  {
+                    "$ref": "#/$defs/WindowCloseTriggerPolicyV2"
+                  },
+                  {
+                    "$ref": "#/$defs/ManualTriggerPolicyV1"
+                  }
+                ],
+                "title": "Trigger Policy"
+              }
+            },
+            "required": [
+              "kind",
+              "name",
+              "procedure_name"
+            ],
+            "title": "LineInput",
             "type": "object"
           },
           "LiteralObjectInput": {
@@ -8905,6 +9422,25 @@
               "change_kinds"
             ],
             "title": "MandateScopeAuthoringV1",
+            "type": "object"
+          },
+          "ManualTriggerPolicyV1": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "manual",
+                "default": "manual",
+                "title": "Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-manual-trigger-v1",
+                "default": "playbill-manual-trigger-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "ManualTriggerPolicyV1",
             "type": "object"
           },
           "ProcedureHardCapsV3": {
@@ -10989,6 +11525,71 @@
             "title": "SemanticSelector",
             "type": "object"
           },
+          "SourceAcquisitionPolicyV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_format": {
+                "const": "playbill-source-acquisition-policy-v1",
+                "default": "playbill-source-acquisition-policy-v1",
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "coherence": {
+                "discriminator": {
+                  "mapping": {
+                    "bounded_window": "#/$defs/BoundedWindowCoherenceV1",
+                    "declared_snapshot_group": "#/$defs/DeclaredSnapshotGroupCoherenceV1",
+                    "independent": "#/$defs/IndependentCoherenceV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/IndependentCoherenceV1"
+                  },
+                  {
+                    "$ref": "#/$defs/BoundedWindowCoherenceV1"
+                  },
+                  {
+                    "$ref": "#/$defs/DeclaredSnapshotGroupCoherenceV1"
+                  }
+                ],
+                "title": "Coherence"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "inputs": {
+                "items": {
+                  "$ref": "#/$defs/InputAcquisitionRuleV1"
+                },
+                "title": "Inputs",
+                "type": "array"
+              },
+              "lifecycle": {
+                "$ref": "#/$defs/ArtifactLifecycle",
+                "default": {
+                  "predecessor_digest": null,
+                  "state": "live"
+                }
+              },
+              "pins": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Pins",
+                "type": "array"
+              }
+            },
+            "required": [
+              "identity",
+              "inputs",
+              "coherence"
+            ],
+            "title": "SourceAcquisitionPolicyV1",
+            "type": "object"
+          },
           "SubjectInput": {
             "additionalProperties": false,
             "properties": {
@@ -11073,6 +11674,46 @@
             "title": "SubjectShell",
             "type": "object"
           },
+          "WindowCloseTriggerPolicyV2": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "window_close",
+                "default": "window_close",
+                "title": "Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-window-close-trigger-v2",
+                "default": "playbill-window-close-trigger-v2",
+                "title": "Tag",
+                "type": "string"
+              },
+              "window": {
+                "discriminator": {
+                  "mapping": {
+                    "capture_event": "#/$defs/CaptureEventWindowV1",
+                    "fixed": "#/$defs/FixedWindowV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/FixedWindowV1"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureEventWindowV1"
+                  }
+                ],
+                "title": "Window"
+              }
+            },
+            "required": [
+              "window"
+            ],
+            "title": "WindowCloseTriggerPolicyV2",
+            "type": "object"
+          },
           "WorkingSelectionInput": {
             "additionalProperties": false,
             "properties": {
@@ -11116,6 +11757,8 @@
               "approval-policy",
               "procedure-runtime-policy",
               "procedure-mandate",
+              "line",
+              "acquisition-policy",
               "change-set",
               "claim-type-succession"
             ],
@@ -11125,9 +11768,11 @@
           "payload": {
             "discriminator": {
               "mapping": {
+                "acquisition_policy": "#/$defs/AcquisitionPolicyInput",
                 "approval_policy": "#/$defs/ApprovalPolicyInput",
                 "change_set": "#/$defs/ChangeSetInput",
                 "claim": "#/$defs/ClaimInput",
+                "line": "#/$defs/LineInput",
                 "procedure": "#/$defs/ProcedureInput",
                 "procedure_mandate": "#/$defs/ProcedureMandateInputV1",
                 "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
@@ -11157,6 +11802,12 @@
               },
               {
                 "$ref": "#/$defs/ProcedureMandateInputV1"
+              },
+              {
+                "$ref": "#/$defs/AcquisitionPolicyInput"
+              },
+              {
+                "$ref": "#/$defs/LineInput"
               },
               {
                 "$ref": "#/$defs/ChangeSetInput"
@@ -25850,6 +26501,12 @@
                 "title": "Held",
                 "type": "integer"
               },
+              "hidden": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Hidden",
+                "type": "integer"
+              },
               "instance": {
                 "$ref": "#/$defs/PlaybillNextHealth"
               },
@@ -26071,6 +26728,20 @@
             "type": "integer"
           }
         },
+        "hidden": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "hidden",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Hidden",
+            "type": "integer"
+          }
+        },
         "instance": {
           "has_default": false,
           "has_default_factory": false,
@@ -26245,6 +26916,12 @@
             "default": 0,
             "minimum": 0,
             "title": "Held",
+            "type": "integer"
+          },
+          "hidden": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Hidden",
             "type": "integer"
           },
           "instance": {
@@ -26743,7 +27420,15 @@
           "json_name": "contract",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/ResolutionContractV1"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolutionContractV1"
+              },
+              {
+                "$ref": "#/$defs/ResolutionContractInputV1"
+              }
+            ],
+            "title": "Contract"
           }
         },
         "tag": {
@@ -27064,6 +27749,97 @@
             "title": "PredictionThresholdRuleV1",
             "type": "object"
           },
+          "ResolutionContractInputV1": {
+            "additionalProperties": false,
+            "description": "A ResolutionContract whose hypothesis may be named by Claim ID.\n\nThe daemon resolves a Claim ID to the exact accepted version -- artifact and\nstatement digests and the coordinate that accepted it -- before the\ncontract is authored, so the accepted artifact always pins one version.",
+            "properties": {
+              "artifact_format": {
+                "const": "playbill-resolution-contract-v1",
+                "default": "playbill-resolution-contract-v1",
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "hypothesis": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimVersionReferenceV1"
+                  }
+                ],
+                "description": "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. An exact ClaimVersionReferenceV1 object is accepted as the advanced form.",
+                "title": "Hypothesis"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "lifecycle": {
+                "$ref": "#/$defs/ArtifactLifecycle",
+                "default": {
+                  "predecessor_digest": null,
+                  "state": "live"
+                }
+              },
+              "observation": {
+                "$ref": "#/$defs/PredictionObservationSelectorV1"
+              },
+              "outcome_class": {
+                "default": "prediction-correctness",
+                "title": "Outcome Class",
+                "type": "string"
+              },
+              "rule": {
+                "discriminator": {
+                  "mapping": {
+                    "playbill-prediction-equality-rule-v1": "#/$defs/PredictionEqualityRuleV1",
+                    "playbill-prediction-presence-rule-v1": "#/$defs/PredictionPresenceRuleV1",
+                    "playbill-prediction-threshold-rule-v1": "#/$defs/PredictionThresholdRuleV1"
+                  },
+                  "propertyName": "tag"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/PredictionEqualityRuleV1"
+                  },
+                  {
+                    "$ref": "#/$defs/PredictionThresholdRuleV1"
+                  },
+                  {
+                    "$ref": "#/$defs/PredictionPresenceRuleV1"
+                  }
+                ],
+                "title": "Rule"
+              },
+              "window": {
+                "discriminator": {
+                  "mapping": {
+                    "capture_event": "#/$defs/CaptureEventWindowV1",
+                    "fixed": "#/$defs/FixedWindowV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/FixedWindowV1"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureEventWindowV1"
+                  }
+                ],
+                "title": "Window"
+              }
+            },
+            "required": [
+              "identity",
+              "hypothesis",
+              "observation",
+              "rule",
+              "window"
+            ],
+            "title": "ResolutionContractInputV1",
+            "type": "object"
+          },
           "ResolutionContractV1": {
             "additionalProperties": false,
             "properties": {
@@ -27193,7 +27969,15 @@
         "additionalProperties": false,
         "properties": {
           "contract": {
-            "$ref": "#/$defs/ResolutionContractV1"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolutionContractV1"
+              },
+              {
+                "$ref": "#/$defs/ResolutionContractInputV1"
+              }
+            ],
+            "title": "Contract"
           },
           "tag": {
             "const": "playbill-predict-request-v2",
@@ -60502,109 +61286,82 @@
         "value"
       ]
     },
-    "PlaybillSettleExampleV1": {
-      "fields": {
-        "bound_contract_id": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "bound_contract_id",
-          "required": true,
-          "schema": {
-            "title": "Bound Contract Id",
-            "type": "string"
-          }
-        },
-        "request": {
-          "has_default": false,
-          "has_default_factory": false,
-          "json_name": "request",
-          "required": true,
-          "schema": {
-            "additionalProperties": true,
-            "title": "Request",
-            "type": "object"
-          }
-        },
-        "tag": {
-          "default": "playbill-settle-example-v1",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "tag",
-          "required": false,
-          "schema": {
-            "const": "playbill-settle-example-v1",
-            "default": "playbill-settle-example-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        }
-      },
-      "json_schema": {
-        "additionalProperties": false,
-        "description": "A settle request for one bound prediction window, evidence left to fill in.\n\nServed as a view that carries the request as a JSON object, so the request\nmodel is never both a request body and a response schema.",
-        "properties": {
-          "bound_contract_id": {
-            "title": "Bound Contract Id",
-            "type": "string"
-          },
-          "request": {
-            "additionalProperties": true,
-            "title": "Request",
-            "type": "object"
-          },
-          "tag": {
-            "const": "playbill-settle-example-v1",
-            "default": "playbill-settle-example-v1",
-            "title": "Tag",
-            "type": "string"
-          }
-        },
-        "required": [
-          "bound_contract_id",
-          "request"
-        ],
-        "title": "PlaybillSettleExampleV1",
-        "type": "object"
-      },
-      "required_fields": [
-        "bound_contract_id",
-        "request"
-      ]
-    },
     "PlaybillSettleRequestV2": {
       "fields": {
         "contract": {
-          "has_default": false,
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
           "has_default_factory": false,
           "json_name": "contract",
-          "required": true,
+          "required": false,
           "schema": {
-            "$ref": "#/$defs/ResolutionContractReferenceV1"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolutionContractReferenceV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Advanced: the exact contract reference; omit to resolve it from the route."
           }
         },
         "evidence": {
-          "has_default": false,
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
           "has_default_factory": false,
           "json_name": "evidence",
-          "required": true,
+          "required": false,
           "schema": {
-            "discriminator": {
-              "mapping": {
-                "playbill-observation-settlement-evidence-v2": "#/$defs/ObservationSettlementEvidenceV2",
-                "playbill-terminal-settlement-evidence-v2": "#/$defs/TerminalSettlementEvidenceV2"
-              },
-              "propertyName": "tag"
-            },
-            "oneOf": [
+            "anyOf": [
               {
-                "$ref": "#/$defs/ObservationSettlementEvidenceV2"
+                "discriminator": {
+                  "mapping": {
+                    "playbill-observation-settlement-evidence-v2": "#/$defs/ObservationSettlementEvidenceV2",
+                    "playbill-terminal-settlement-evidence-v2": "#/$defs/TerminalSettlementEvidenceV2"
+                  },
+                  "propertyName": "tag"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ObservationSettlementEvidenceV2"
+                  },
+                  {
+                    "$ref": "#/$defs/TerminalSettlementEvidenceV2"
+                  }
+                ]
               },
               {
-                "$ref": "#/$defs/TerminalSettlementEvidenceV2"
+                "type": "null"
               }
             ],
+            "default": null,
+            "description": "Advanced: explicit observation or terminal evidence instead of observation.",
             "title": "Evidence"
+          }
+        },
+        "observation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "observation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Claim ID of the accepted observation that settles the prediction.",
+            "title": "Observation"
           }
         },
         "tag": {
@@ -60730,7 +61487,16 @@
             "additionalProperties": false,
             "properties": {
               "claim": {
-                "$ref": "#/$defs/ClaimVersionReferenceV1"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimVersionReferenceV1"
+                  }
+                ],
+                "description": "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. An exact ClaimVersionReferenceV1 object is accepted as the advanced form.",
+                "title": "Claim"
               },
               "tag": {
                 "const": "playbill-observation-settlement-evidence-v2",
@@ -60771,7 +61537,16 @@
             "additionalProperties": false,
             "properties": {
               "claim": {
-                "$ref": "#/$defs/ClaimVersionReferenceV1"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/ClaimVersionReferenceV1"
+                  }
+                ],
+                "description": "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. An exact ClaimVersionReferenceV1 object is accepted as the advanced form.",
+                "title": "Claim"
               },
               "run_id": {
                 "title": "Run Id",
@@ -60831,27 +61606,59 @@
           }
         },
         "additionalProperties": false,
+        "description": "Settle one prediction; usually just the observation's Claim ID.\n\nThe route names the prediction (its contract name or a bound window's\nRSC-... id), so the daemon resolves the exact contract reference and, for a\nbound window, its anchor event. ``contract``, ``trigger_event`` and\n``evidence`` are the advanced forms: an exact reference, an explicit anchor,\nor terminal evidence from a mandated settle run.",
         "properties": {
           "contract": {
-            "$ref": "#/$defs/ResolutionContractReferenceV1"
-          },
-          "evidence": {
-            "discriminator": {
-              "mapping": {
-                "playbill-observation-settlement-evidence-v2": "#/$defs/ObservationSettlementEvidenceV2",
-                "playbill-terminal-settlement-evidence-v2": "#/$defs/TerminalSettlementEvidenceV2"
-              },
-              "propertyName": "tag"
-            },
-            "oneOf": [
+            "anyOf": [
               {
-                "$ref": "#/$defs/ObservationSettlementEvidenceV2"
+                "$ref": "#/$defs/ResolutionContractReferenceV1"
               },
               {
-                "$ref": "#/$defs/TerminalSettlementEvidenceV2"
+                "type": "null"
               }
             ],
+            "default": null,
+            "description": "Advanced: the exact contract reference; omit to resolve it from the route."
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "playbill-observation-settlement-evidence-v2": "#/$defs/ObservationSettlementEvidenceV2",
+                    "playbill-terminal-settlement-evidence-v2": "#/$defs/TerminalSettlementEvidenceV2"
+                  },
+                  "propertyName": "tag"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ObservationSettlementEvidenceV2"
+                  },
+                  {
+                    "$ref": "#/$defs/TerminalSettlementEvidenceV2"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Advanced: explicit observation or terminal evidence instead of observation.",
             "title": "Evidence"
+          },
+          "observation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Claim ID of the accepted observation that settles the prediction.",
+            "title": "Observation"
           },
           "tag": {
             "const": "playbill-settle-request-v2",
@@ -60871,17 +61678,10 @@
             "default": null
           }
         },
-        "required": [
-          "contract",
-          "evidence"
-        ],
         "title": "PlaybillSettleRequestV2",
         "type": "object"
       },
-      "required_fields": [
-        "contract",
-        "evidence"
-      ]
+      "required_fields": []
     },
     "PlaybillSettleResultV2": {
       "fields": {
@@ -79478,6 +80278,584 @@
         "filename"
       ]
     },
+    "ResolutionContractInputV1": {
+      "fields": {
+        "artifact_format": {
+          "default": "playbill-resolution-contract-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_format",
+          "required": false,
+          "schema": {
+            "const": "playbill-resolution-contract-v1",
+            "default": "playbill-resolution-contract-v1",
+            "title": "Artifact Format",
+            "type": "string"
+          }
+        },
+        "hypothesis": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "hypothesis",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
+              }
+            ],
+            "description": "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. An exact ClaimVersionReferenceV1 object is accepted as the advanced form.",
+            "title": "Hypothesis"
+          }
+        },
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          }
+        },
+        "lifecycle": {
+          "default_json_serializable": false,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lifecycle",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/ArtifactLifecycle",
+            "default": {
+              "predecessor_digest": null,
+              "state": "live"
+            }
+          }
+        },
+        "observation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observation",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PredictionObservationSelectorV1"
+          }
+        },
+        "outcome_class": {
+          "default": "prediction-correctness",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "outcome_class",
+          "required": false,
+          "schema": {
+            "default": "prediction-correctness",
+            "title": "Outcome Class",
+            "type": "string"
+          }
+        },
+        "rule": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "rule",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "playbill-prediction-equality-rule-v1": "#/$defs/PredictionEqualityRuleV1",
+                "playbill-prediction-presence-rule-v1": "#/$defs/PredictionPresenceRuleV1",
+                "playbill-prediction-threshold-rule-v1": "#/$defs/PredictionThresholdRuleV1"
+              },
+              "propertyName": "tag"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/PredictionEqualityRuleV1"
+              },
+              {
+                "$ref": "#/$defs/PredictionThresholdRuleV1"
+              },
+              {
+                "$ref": "#/$defs/PredictionPresenceRuleV1"
+              }
+            ],
+            "title": "Rule"
+          }
+        },
+        "window": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "window",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "capture_event": "#/$defs/CaptureEventWindowV1",
+                "fixed": "#/$defs/FixedWindowV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/FixedWindowV1"
+              },
+              {
+                "$ref": "#/$defs/CaptureEventWindowV1"
+              }
+            ],
+            "title": "Window"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactLifecycle": {
+            "additionalProperties": false,
+            "properties": {
+              "predecessor_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Predecessor Digest"
+              },
+              "state": {
+                "default": "live",
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "title": "ArtifactLifecycle",
+            "type": "object"
+          },
+          "CaptureEventSelectorV1": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelectorV1",
+            "type": "object"
+          },
+          "CaptureEventWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_event",
+                "default": "capture_event",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "duration_seconds"
+            ],
+            "title": "CaptureEventWindowV1",
+            "type": "object"
+          },
+          "ClaimVersionReferenceV1": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "statement_digest": {
+                "title": "Statement Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "artifact_digest",
+              "statement_digest",
+              "coordinate"
+            ],
+            "title": "ClaimVersionReferenceV1",
+            "type": "object"
+          },
+          "FixedWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fixed",
+                "default": "fixed",
+                "title": "Kind",
+                "type": "string"
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "duration_seconds"
+            ],
+            "title": "FixedWindowV1",
+            "type": "object"
+          },
+          "PredictionEqualityRuleV1": {
+            "additionalProperties": false,
+            "properties": {
+              "operator": {
+                "const": "equality",
+                "default": "equality",
+                "title": "Operator",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-prediction-equality-rule-v1",
+                "default": "playbill-prediction-equality-rule-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "PredictionEqualityRuleV1",
+            "type": "object"
+          },
+          "PredictionObservationSelectorV1": {
+            "additionalProperties": false,
+            "properties": {
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "role": {
+                "const": "observation",
+                "default": "observation",
+                "title": "Role",
+                "type": "string"
+              },
+              "subject": {
+                "$ref": "#/$defs/SemanticAddress"
+              },
+              "tag": {
+                "const": "playbill-prediction-observation-selector-v1",
+                "default": "playbill-prediction-observation-selector-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "predicate"
+            ],
+            "title": "PredictionObservationSelectorV1",
+            "type": "object"
+          },
+          "PredictionPresenceRuleV1": {
+            "additionalProperties": false,
+            "properties": {
+              "operator": {
+                "const": "presence",
+                "default": "presence",
+                "title": "Operator",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-prediction-presence-rule-v1",
+                "default": "playbill-prediction-presence-rule-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "PredictionPresenceRuleV1",
+            "type": "object"
+          },
+          "PredictionThresholdRuleV1": {
+            "additionalProperties": false,
+            "properties": {
+              "comparison": {
+                "enum": [
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte"
+                ],
+                "title": "Comparison",
+                "type": "string"
+              },
+              "operator": {
+                "const": "threshold",
+                "default": "threshold",
+                "title": "Operator",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-prediction-threshold-rule-v1",
+                "default": "playbill-prediction-threshold-rule-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "threshold": {
+                "title": "Threshold"
+              }
+            },
+            "required": [
+              "comparison",
+              "threshold"
+            ],
+            "title": "PredictionThresholdRuleV1",
+            "type": "object"
+          },
+          "SemanticAddress": {
+            "additionalProperties": false,
+            "description": "Stable meaning identity, independent of source-line presentation.",
+            "properties": {
+              "artifact_path": {
+                "title": "Artifact Path",
+                "type": "string"
+              },
+              "selector": {
+                "$ref": "#/$defs/SemanticSelector"
+              },
+              "tag": {
+                "const": "playbill-semantic-address-v1",
+                "default": "playbill-semantic-address-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "artifact_path",
+              "selector"
+            ],
+            "title": "SemanticAddress",
+            "type": "object"
+          },
+          "SemanticSelector": {
+            "additionalProperties": false,
+            "properties": {
+              "scheme": {
+                "title": "Scheme",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "scheme",
+              "value"
+            ],
+            "title": "SemanticSelector",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "A ResolutionContract whose hypothesis may be named by Claim ID.\n\nThe daemon resolves a Claim ID to the exact accepted version -- artifact and\nstatement digests and the coordinate that accepted it -- before the\ncontract is authored, so the accepted artifact always pins one version.",
+        "properties": {
+          "artifact_format": {
+            "const": "playbill-resolution-contract-v1",
+            "default": "playbill-resolution-contract-v1",
+            "title": "Artifact Format",
+            "type": "string"
+          },
+          "hypothesis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
+              }
+            ],
+            "description": "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. An exact ClaimVersionReferenceV1 object is accepted as the advanced form.",
+            "title": "Hypothesis"
+          },
+          "identity": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          },
+          "lifecycle": {
+            "$ref": "#/$defs/ArtifactLifecycle",
+            "default": {
+              "predecessor_digest": null,
+              "state": "live"
+            }
+          },
+          "observation": {
+            "$ref": "#/$defs/PredictionObservationSelectorV1"
+          },
+          "outcome_class": {
+            "default": "prediction-correctness",
+            "title": "Outcome Class",
+            "type": "string"
+          },
+          "rule": {
+            "discriminator": {
+              "mapping": {
+                "playbill-prediction-equality-rule-v1": "#/$defs/PredictionEqualityRuleV1",
+                "playbill-prediction-presence-rule-v1": "#/$defs/PredictionPresenceRuleV1",
+                "playbill-prediction-threshold-rule-v1": "#/$defs/PredictionThresholdRuleV1"
+              },
+              "propertyName": "tag"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/PredictionEqualityRuleV1"
+              },
+              {
+                "$ref": "#/$defs/PredictionThresholdRuleV1"
+              },
+              {
+                "$ref": "#/$defs/PredictionPresenceRuleV1"
+              }
+            ],
+            "title": "Rule"
+          },
+          "window": {
+            "discriminator": {
+              "mapping": {
+                "capture_event": "#/$defs/CaptureEventWindowV1",
+                "fixed": "#/$defs/FixedWindowV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/FixedWindowV1"
+              },
+              {
+                "$ref": "#/$defs/CaptureEventWindowV1"
+              }
+            ],
+            "title": "Window"
+          }
+        },
+        "required": [
+          "identity",
+          "hypothesis",
+          "observation",
+          "rule",
+          "window"
+        ],
+        "title": "ResolutionContractInputV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "hypothesis",
+        "identity",
+        "observation",
+        "rule",
+        "window"
+      ]
+    },
     "ResolutionContractReferenceV1": {
       "fields": {
         "artifact_digest": {
@@ -80181,7 +81559,16 @@
           "json_name": "hypothesis",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/ClaimVersionReferenceV1"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
+              }
+            ],
+            "description": "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. An exact ClaimVersionReferenceV1 object is accepted as the advanced form.",
+            "title": "Hypothesis"
           }
         }
       },
@@ -80285,7 +81672,16 @@
             "default": null
           },
           "hypothesis": {
-            "$ref": "#/$defs/ClaimVersionReferenceV1"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
+              }
+            ],
+            "description": "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. An exact ClaimVersionReferenceV1 object is accepted as the advanced form.",
+            "title": "Hypothesis"
           }
         },
         "required": [
@@ -82276,7 +83672,16 @@
           "json_name": "claim",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/ClaimVersionReferenceV1"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
+              }
+            ],
+            "description": "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. An exact ClaimVersionReferenceV1 object is accepted as the advanced form.",
+            "title": "Claim"
           }
         },
         "run_id": {
@@ -82403,7 +83808,16 @@
         "additionalProperties": false,
         "properties": {
           "claim": {
-            "$ref": "#/$defs/ClaimVersionReferenceV1"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ClaimVersionReferenceV1"
+              }
+            ],
+            "description": "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. An exact ClaimVersionReferenceV1 object is accepted as the advanced form.",
+            "title": "Claim"
           },
           "run_id": {
             "title": "Run Id",
