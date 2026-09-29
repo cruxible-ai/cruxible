@@ -513,36 +513,23 @@ def unsure_held_claims(
     coordinate: AcceptedProjectionCoordinate,
     claims: Iterable[ClaimArtifactAny],
     *,
-    contested: frozenset[str] = frozenset(),
+    statuses: Mapping[str, str],
     evaluation_time: datetime,
 ) -> frozenset[str]:
     """Claims an ``unsure`` examined attestation holds right now, as ``next`` decides.
 
-    The holds are ``next``'s own: accepted and door attestations, the latest
-    examined stance per principal on the Claim's current version. A contested
-    Claim stays held until its basis changes; a standing one until the hold
-    lapses.
+    ``statuses`` are the slot resolution statuses by bare Claim id. The decision
+    is ``next``'s own: its Claim rows for these Claims and its hold coverage.
     """
 
-    from cruxible_core.service.discovery.next import _Holds
+    from cruxible_core.service.discovery.next import claim_unsure_holds
 
-    selected = tuple(claim for claim in claims if claim.lifecycle.state == "live")
-    if not selected:
-        return frozenset()
-    store = instance.claim_attestation_evidence_store()
-    head = store.head()
-    holds = _Holds(
+    return claim_unsure_holds(
         instance,
         coordinate=coordinate,
-        claims=selected,
-        door_events=store.fold_events(at_head=head),
-        door_history=None if head is None else (lambda: store.events(at_head=head)),
+        claims=tuple(claims),
         evaluation_time=evaluation_time,
-    )
-    return frozenset(
-        claim.identity.qualified
-        for claim in selected
-        if holds.in_force(claim.identity.qualified, contested=claim.identity.qualified in contested)
+        resolution_statuses=statuses,
     )
 
 
@@ -679,11 +666,17 @@ def _claim_card(
     own = next((item for item in slot if item.claim_id == claim.identity.name), None)
     verdict = own.verdict if own is not None else "retired"
     status = own.status if own is not None else "retired"
+    with instance.bind_accepted_projection(coordinate) as projection:
+        contenders = tuple(
+            cast(ClaimArtifactAny, projection.typed.source(f"Claim:{item.claim_id}"))
+            for item in slot
+            if item.claim_id != claim.identity.name
+        )
     held = unsure_held_claims(
         instance,
         coordinate,
-        (claim,),
-        contested=frozenset({claim.identity.qualified} if status == "conflicted" else ()),
+        (claim, *contenders),
+        statuses={item.claim_id: item.status for item in slot},
         evaluation_time=evaluation_time,
     )
     with instance.accepted_history_reader(at=AcceptedCoordinate.from_internal(coordinate)) as h:
@@ -750,9 +743,7 @@ def _subject_card(
         instance,
         coordinate,
         claims,
-        contested=frozenset(
-            f"Claim:{item.claim_id}" for item in rows if item.status == "conflicted"
-        ),
+        statuses={item.claim_id: item.status for item in rows},
         evaluation_time=evaluation_time,
     )
     slots: dict[tuple[str, str | None], list[ClaimValueV1]] = defaultdict(list)

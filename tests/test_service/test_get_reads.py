@@ -401,30 +401,26 @@ def test_a_digest_rule_resolves_to_the_contract_it_names(tmp_path: Path) -> None
     assert card is not None and card.model_dump()["evidence"] == (IDENTITY.qualified,)
 
 
-def test_an_unsure_examined_attestation_shows_as_an_unsure_hold(tmp_path: Path) -> None:
+def test_an_unsure_attestation_with_nothing_to_hold_shows_no_hold(tmp_path: Path) -> None:
     from datetime import timedelta
 
     from tests.test_integration.test_next_closed_loop import EVALUATION_TIME as LATER
     from tests.test_integration.test_next_closed_loop import _current_claim
-    from tests.test_integration.test_next_holds import _attest
+    from tests.test_integration.test_next_holds import _attest, _next
 
     instance, owner = seed_claims(tmp_path)
     claim = _current_claim(instance)
     _attest(instance, owner, claim, tmp_path, at=LATER - timedelta(minutes=1))
 
-    def flags(when: datetime) -> tuple[str, ...]:
-        card = service_playbill_get(
-            instance,
-            request=PlaybillGetRequestV1(ref=claim.identity.name, evaluation_time=when),
-            access=_ACCESS,
-        ).card
-        assert isinstance(card, PlaybillGetClaimCardV1)
-        return card.flags
+    card = service_playbill_get(
+        instance,
+        request=PlaybillGetRequestV1(ref=claim.identity.name, evaluation_time=LATER),
+        access=_ACCESS,
+    ).card
 
-    assert "unsure_hold" in flags(LATER)
-    # Before the attestation there is no hold; a standing hold lapses after its default.
-    assert "unsure_hold" not in flags(LATER - timedelta(minutes=2))
-    assert "unsure_hold" not in flags(LATER + timedelta(days=31))
+    # next parks no row for a supported Claim, so there is no hold to show.
+    assert _next(instance).status.held == 0
+    assert isinstance(card, PlaybillGetClaimCardV1) and card.flags == ()
 
 
 def test_a_contested_slot_shows_every_live_value_with_the_contested_flag(tmp_path: Path) -> None:
@@ -474,3 +470,65 @@ def test_a_contested_slot_shows_every_live_value_with_the_contested_flag(tmp_pat
     assert isinstance(claim, PlaybillGetClaimCardV1)
     assert "contested" in claim.flags
     assert [item.value for item in claim.contenders] == ["blocked"]
+
+
+def _contend(instance: PlaybillInstance, owner: Any, against: Any, value: str, name: str) -> None:
+    from cruxible_client.contracts.claims import claim_statement_digest
+    from tests.core_support._claim_authoring_support import (
+        ExistingStatementHandoffV1,
+        service_propose_playbill_claim,
+    )
+    from tests.core_support._knowledge_loop_support import activate, authoring
+
+    activate(
+        instance,
+        owner,
+        service_propose_playbill_claim(
+            instance,
+            authoring=authoring("wi-42", value, with_claim_type=False).model_copy(
+                update={
+                    "existing_statement_handoffs": (
+                        ExistingStatementHandoffV1(
+                            statement_digest=claim_statement_digest(against.statement).tagged,
+                            disposition="contradict",
+                        ),
+                    )
+                }
+            ),
+            actor_id="owner",
+            proposal_name=name,
+            timestamp="2026-08-24T17:00:03.000000Z",
+        ),
+    )
+
+
+def test_a_new_contender_ends_the_unsure_hold_exactly_as_next_decides(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from tests.test_integration.test_next_closed_loop import EVALUATION_TIME as LATER
+    from tests.test_integration.test_next_closed_loop import _current_claim
+    from tests.test_integration.test_next_holds import _all_claims, _attest, _next, _rows
+
+    instance, owner = seed_claims(tmp_path)
+    first = _current_claim(instance)
+    _contend(instance, owner, first, "blocked", "hold-conflict")
+    contenders = [
+        claim
+        for claim in _all_claims(instance)
+        if claim.statement.subject.artifact_path.endswith("wi-42.json")
+    ]
+    for offset, claim in enumerate(contenders):
+        _attest(instance, owner, claim, tmp_path, at=LATER - timedelta(minutes=2 - offset))
+
+    def flags() -> tuple[str, ...]:
+        card = _get(instance, first.identity.name, evaluation_time=LATER).card
+        assert isinstance(card, PlaybillGetClaimCardV1)
+        return card.flags
+
+    assert not _rows(_next(instance), "claim_conflicted")
+    assert "unsure_hold" in flags()
+
+    # A contender nobody examined brings the conflict back; the flag follows next.
+    _contend(instance, owner, contenders[-1], "done", "hold-conflict-new")
+    assert _rows(_next(instance), "claim_conflicted")
+    assert "unsure_hold" not in flags()
