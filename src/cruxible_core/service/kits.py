@@ -123,7 +123,7 @@ def _dependency_order(
         (state.identity.kind, state.identity.name): path for path, state in states.items()
     }
 
-    def dependencies(path: str) -> tuple[str, ...]:
+    def exact(path: str) -> set[str]:
         found = set()
         for pin in states[path].pins:
             target = by_digest.get(pin.artifact_digest) or by_identity.get(
@@ -134,13 +134,19 @@ def _dependency_order(
         for text in _references(path, payloads[path]):
             if text in by_digest:
                 found.add(by_digest[text])
-        # A definition naming another by identity carries its live version.
-        for identity in referenced_identities(path, payloads[path]):
-            target = by_identity.get(identity)
-            if target is not None:
-                found.add(target)
         found.discard(path)
-        return tuple(sorted(found))
+        return found
+
+    def named(path: str) -> set[str]:
+        # Identity references decide what travels with a definition, never the
+        # order: nothing re-pins them, so they cannot form a remapping cycle.
+        found = {
+            target
+            for identity in referenced_identities(path, payloads[path])
+            if (target := by_identity.get(identity)) is not None
+        }
+        found.discard(path)
+        return found
 
     done: set[str] = set()
     visiting: set[str] = set()
@@ -151,12 +157,15 @@ def _dependency_order(
         if path in visiting:
             raise DataValidationError(f"definitions pin each other in a cycle through {path}")
         visiting.add(path)
-        pinned = dependencies(path)
-        for dependency in pinned:
+        ordered = exact(path)
+        for dependency in sorted(ordered):
             yield from visit(dependency)
         visiting.discard(path)
         done.add(path)
-        yield path, pinned
+        carried = named(path)
+        yield path, tuple(sorted(ordered | carried))
+        for dependency in sorted(carried):
+            yield from visit(dependency)
 
     for path in sorted(within if within is not None else states):
         yield from visit(path)

@@ -813,3 +813,43 @@ def test_a_kit_carries_the_contracts_its_identity_rules_name() -> None:
         claim_type_path(identity_type.predicate),
         CONTRACT_PATH,
     }
+
+
+def test_an_identity_reference_never_makes_a_kit_cycle() -> None:
+    from cruxible_client.contracts.kits import PlaybillKitBuildRequestV1
+    from cruxible_core.service.kits import build_kit
+
+    identity_type = _v6_type().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name="acme.work_item.status"),
+            "predicate": "acme.work_item.status",
+            "allowed_subject_kinds": ("acme.work_item",),
+        }
+    )
+    # The contract pins the ClaimType exactly while the ClaimType names the
+    # contract by identity: exporting the type first and re-pinning is valid.
+    pinning = ORIGINAL.model_copy(
+        update={
+            "pins": tuple(
+                sorted(
+                    (
+                        *ORIGINAL.pins,
+                        ArtifactPin(
+                            role="claim-type",
+                            target=identity_type.identity,
+                            artifact_digest=claim_type_digest(identity_type).tagged,
+                        ),
+                    ),
+                    key=lambda pin: (pin.role, pin.target.qualified),
+                )
+            )
+        }
+    )
+    tree = {
+        claim_type_path(identity_type.predicate): render_claim_type(identity_type),
+        CONTRACT_PATH: render_capture_contract(pinning),
+    }
+    bundle = build_kit(
+        tree, PlaybillKitBuildRequestV1(kit_id="acme", version="1.0.0", owns=("acme.",))
+    )
+    assert {item.path for item in bundle.manifest.artifacts} == set(tree)
