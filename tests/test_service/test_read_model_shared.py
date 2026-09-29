@@ -175,3 +175,153 @@ def test_governed_query_flags_are_derived_over_the_whole_slot(
 
     assert seen == [slot]
     assert flags == {claim_path(first.identity.name): ("unsure_hold",)}
+
+
+def _accept_tree(instance: Any, tree: dict[str, bytes], name: str) -> None:
+    """Accept a hand-built tree as one generation (no authoring reuse review)."""
+
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from cruxible_core.proposals.settlement import ChangeActorBinding
+    from tests.core_support._support import client_material
+    from tests.test_ledger.test_activation import _sign
+
+    base = instance.accepted_coordinate()
+    proposed = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/{name}", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree=tree,
+        timestamp="2026-08-24T16:00:00.000000Z",
+    )
+    assert proposed.candidate is not None, proposed.evaluation
+    assert proposed.evaluation.evaluated_tree_oid is not None
+    bundle = instance.prepare_generation(
+        base=base,
+        candidate_tree=instance.proposal_tree(proposed.evaluation.evaluated_tree_oid),
+        candidate=proposed.candidate,
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                proposed.candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
+        actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
+        sequence=len(instance.accepted_history()),
+    )
+    publisher = instance.activation_publisher()
+    projection = publisher.prebuild(bundle, base=base)
+    assert publisher.activate(bundle, projection, base=base).status == "accepted"
+    instance.refresh()
+
+
+def test_get_cards_name_predicates_by_the_shared_rule_as_orient_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Addendum 2 on get: no last-segment names, and the same names orient shows."""
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.claim_types import (
+        ClaimType,
+        claim_type_digest,
+        claim_type_path,
+        render_claim_type,
+    )
+    from cruxible_client.contracts.get_reads import (
+        PlaybillGetClaimCardV1,
+        PlaybillGetSubjectCardV1,
+    )
+    from cruxible_core.proposals import proposals as proposals_module
+    from cruxible_core.service.discovery.field_names import resolve_field
+    from tests.core_support._claim_authoring_support import service_propose_playbill_claim
+    from tests.core_support._knowledge_loop_support import activate, authoring
+
+    instance, owner = seed_claims(tmp_path)
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        template = projection.typed.source(f"ClaimType:{PREDICATE}")
+    assert isinstance(template, ClaimType)
+    collisions = {
+        predicate: template.model_copy(
+            update={
+                "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
+                "predicate": predicate,
+            }
+        )
+        for predicate in (
+            "other.status",
+            "third.status",
+            f"{SUBJECT_KIND}.other.status",
+            f"{SUBJECT_KIND}.subject_id",
+        )
+    }
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    for predicate, claim_type in collisions.items():
+        tree[claim_type_path(predicate)] = render_claim_type(claim_type)
+    # The collision fixture is deliberately near-duplicate vocabulary (every leaf
+    # is ``status``); the reuse law's distinction review is not under test here.
+    reuse = proposals_module.evaluate_vocabulary_reuse
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            proposals_module,
+            "evaluate_vocabulary_reuse",
+            lambda request, **kw: reuse(request, **{**kw, "accepted_interfaces": ()}),
+        )
+        _accept_tree(instance, tree, "collision-claim-types")
+    for index, (predicate, claim_type) in enumerate(collisions.items()):
+        request = authoring("wi-42", "ready", with_claim_type=False)
+        request = request.model_copy(
+            update={
+                "statement": request.statement.model_copy(
+                    update={
+                        "claim_type": claim_type.identity,
+                        "claim_type_digest": claim_type_digest(claim_type).tagged,
+                        "predicate": predicate,
+                    }
+                )
+            }
+        )
+        activate(
+            instance,
+            owner,
+            service_propose_playbill_claim(
+                instance,
+                authoring=request,
+                actor_id="owner",
+                proposal_name=f"collision-{index}",
+                timestamp=f"2026-08-24T17:00:0{index}.000000Z",
+            ),
+        )
+
+    subject = service_playbill_get(
+        instance,
+        request=PlaybillGetRequestV1(ref=f"{SUBJECT_KIND}/wi-42", evaluation_time=_WHEN),
+        access=_ACCESS,
+    ).card
+    assert isinstance(subject, PlaybillGetSubjectCardV1)
+    orient_kind = next(
+        item for item in service_playbill_orient(instance).kinds if item.kind == SUBJECT_KIND
+    )
+    advertised = {item.predicate: item.name for item in orient_kind.predicates}
+
+    assert advertised == {
+        PREDICATE: "status",
+        "other.status": "other.status",
+        "third.status": "third.status",
+        f"{SUBJECT_KIND}.other.status": f"{SUBJECT_KIND}.other.status",
+        f"{SUBJECT_KIND}.subject_id": f"{SUBJECT_KIND}.subject_id",
+    }
+    assert sorted(row.predicate for row in subject.claims) == sorted(advertised.values())
+    for predicate, name in advertised.items():
+        assert resolve_field(name, SUBJECT_KIND, frozenset(advertised)) == predicate
+
+    for row in subject.claims:
+        assert isinstance(row.claim, str)
+        claim = service_playbill_get(
+            instance,
+            request=PlaybillGetRequestV1(ref=row.claim, evaluation_time=_WHEN),
+            access=_ACCESS,
+        ).card
+        assert isinstance(claim, PlaybillGetClaimCardV1)
+        assert claim.predicate == advertised[claim.predicate_full] == row.predicate

@@ -79,6 +79,7 @@ from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.read_flags import (
     answer_flags,
     ordered_flags,
@@ -195,10 +196,15 @@ def _short_digest(digest: str, *, length: int = 12) -> str:
     return f"{algorithm}:{value[:length]}" if value else digest[:length]
 
 
-def _short_predicate(predicate: str, subject_kind: str | None) -> str:
-    if subject_kind is not None and predicate.startswith(subject_kind + "."):
-        return predicate[len(subject_kind) + 1 :]
-    return predicate.rpartition(".")[2]
+def _live_predicates(projection: Any) -> frozenset[str]:
+    """Every live accepted predicate: the vocabulary field names are shortened against."""
+
+    return frozenset(
+        str(identity).removeprefix("ClaimType:")
+        for (identity,) in projection.typed.connection.execute(
+            "SELECT identity FROM claim_types WHERE lifecycle='live'"
+        )
+    )
 
 
 # -- reference resolution ------------------------------------------------------
@@ -581,6 +587,7 @@ def _claim_card(
     verdict = own.verdict if own is not None else "retired"
     status = own.status if own is not None else "retired"
     with instance.bind_accepted_projection(coordinate) as projection:
+        accepted_predicates = _live_predicates(projection)
         contenders = tuple(
             cast(ClaimArtifactAny, projection.typed.source(f"Claim:{item.claim_id}"))
             for item in slot
@@ -600,7 +607,7 @@ def _claim_card(
     return PlaybillGetClaimCardV1(
         claim=name,
         subject=_subject_ref(subject_path),
-        predicate=_short_predicate(statement.predicate, subject_kind),
+        predicate=short_field_name(statement.predicate, subject_kind, accepted_predicates),
         predicate_full=statement.predicate,
         qualifier=statement.qualifier,
         value=summary_value(_artifact_value(claim)),
@@ -640,6 +647,7 @@ def _subject_card(
     rows = _slot_values(instance, coordinate, subject_path=path, evaluation_time=evaluation_time)
     with instance.bind_accepted_projection(coordinate) as projection:
         shell = cast(SubjectShell, projection.typed.source(resolved.identity))
+        accepted_predicates = _live_predicates(projection)
         claim_types: dict[str, ClaimType] = {}
         claims: list[ClaimArtifactAny] = []
         for item in rows:
@@ -686,7 +694,7 @@ def _subject_card(
         claims_shown = tuple(item.claim_id for item in shown)
         entries.append(
             PlaybillGetSubjectClaimV1(
-                predicate=_short_predicate(predicate, kind),
+                predicate=short_field_name(predicate, kind, accepted_predicates),
                 qualifier=qualifier,
                 claim=claims_shown if listed else claims_shown[0],
                 value=summary_value(values if listed else values[0]),
