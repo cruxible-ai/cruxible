@@ -281,7 +281,8 @@ authority plane beside accepted state.
 `contains` (case-insensitive text); filters combine as all-of. A field is a
 predicate's full name, its name after the `KIND.` prefix (`adoption_state`),
 `subject_id`, or `alias.field` after `follow: [{field, as}]`; columns show that
-short name unless it is itself another predicate's full name. Values are checked against the
+short name unless it is itself another predicate's full name or a reserved name
+(`subject_id`, `subject`, `kind`, `predicate`, `claim`, `flags`, `value.*`). Values are checked against the
 ClaimType first: an unknown kind, field or enum member, or an operator that does
 not apply, refuses with a code, the nearest valid names and a repair. `ne` means
 no value equals, so a Subject without the value matches. `contains` alone

@@ -567,6 +567,9 @@ def test_every_shown_field_name_resolves_back_to_its_predicate() -> None:
         _predicate_info(f"{kind}.other.status", kind),
         _predicate_info("third.status", "third"),
         _predicate_info("sec.vuln.severity", kind),
+        _predicate_info(f"{kind}.subject_id", kind),
+        _predicate_info(f"{kind}.flags", kind),
+        _predicate_info("value.flags", kind),
     ]
     vocabulary = QueryVocabulary(
         predicates={info.predicate: info for info in infos},
@@ -584,6 +587,16 @@ def test_every_shown_field_name_resolves_back_to_its_predicate() -> None:
     # The short form of project.work_item.other.status is another predicate's full name.
     collided = vocabulary.predicates[f"{kind}.other.status"]
     assert vocabulary.field_name(collided, (kind,)) == f"{kind}.other.status"
+    # Shortening never produces a reserved name, and a reserved name keeps its
+    # reserved meaning while no accepted predicate is fully named it.
+    for reserved in (f"{kind}.subject_id", f"{kind}.flags"):
+        assert vocabulary.field_name(vocabulary.predicates[reserved], (kind,)) == reserved
+    assert vocabulary.resolve_field((kind,), "subject_id", field_path="select[0]") == "subject_id"
+    named_so = QueryVocabulary(
+        predicates={"subject_id": _predicate_info("subject_id", kind)}, kinds=(kind,)
+    )
+    resolved = named_so.resolve_field((kind,), "subject_id", field_path="select[0]")
+    assert not isinstance(resolved, str) and resolved.predicate == "subject_id"
     # No last-segment form: `severity` is not project.work_item.severity.
     with pytest.raises(PlaybillQueryRefused) as refused:
         vocabulary.resolve_field((kind,), "severity", field_path="where[0].field")

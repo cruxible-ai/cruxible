@@ -29,7 +29,11 @@ from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.discovery.field_names import resolve_field, short_field_name
+from cruxible_core.service.discovery.field_names import (
+    reserved_meaning,
+    resolve_field,
+    short_field_name,
+)
 
 ValueType = Literal[
     "string",
@@ -247,7 +251,7 @@ class QueryVocabulary:
     ) -> PredicateInfo | Literal["subject_id"]:
         """Resolve a field by the shared read-verb naming rule, or refuse with the nearest."""
 
-        if name == SUBJECT_ID_FIELD:
+        if name == SUBJECT_ID_FIELD and reserved_meaning(name, self.predicates):
             return "subject_id"
         found = self._resolved(kinds, name)
         if len(found) == 1:
