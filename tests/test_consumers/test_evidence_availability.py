@@ -13,9 +13,12 @@ from cruxible_client.contracts.captures import parse_capture_envelope
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_core.consumers import evidence
 from cruxible_core.consumers.evidence import EVIDENCE_AVAILABILITY as WORKER
-from cruxible_core.consumers.evidence import SWEEP_INTERVAL, evidence_findings
+from cruxible_core.consumers.evidence import evidence_findings
+from cruxible_core.triggers.config import TriggerOperationalConfigV1
+from cruxible_core.triggers.journal import evaluate_triggers
 from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
 
+SWEEP_INTERVAL = timedelta(days=1)
 READ = BodyAccessContext(principal_id="test", can_read_body=True)
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
 
@@ -33,6 +36,7 @@ def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
 
 
 def _drain(instance, *, now: datetime) -> None:  # type: ignore[no-untyped-def]
+    evaluate_triggers(instance, now=now, config=TriggerOperationalConfigV1())
     WORKER.match(instance, now=now, daemon_id="daemon")
     manager = SimpleNamespace(get=lambda _id: instance)
     for work in WORKER.due(instance, now=now):
@@ -219,8 +223,8 @@ def test_health_costs_the_same_whatever_the_pending_backlog(
             assert connection is not None
             connection.execute("INSERT INTO progress(singleton,generation) VALUES (1,0)")
             connection.executemany(
-                "INSERT INTO pending VALUES (?)",
-                ((f"sha256:{index:064x}",) for index in range(count)),
+                "INSERT INTO pending VALUES (?,?)",
+                ((f"sha256:{index:064x}", "2026-09-01T00:00:00.000000Z") for index in range(count)),
             )
         (health,) = WORKER.health(instance, now=NOW)
         assert health.detail["pending_checks"] == count
@@ -241,7 +245,8 @@ def test_state_an_earlier_version_wrote_is_rebuilt_with_exact_counts(tmp_path: P
             connection.execute(f"DROP TRIGGER {trigger}")
         connection.execute("DROP TABLE tally")
         connection.executemany(
-            "INSERT INTO pending VALUES (?)", ((f"sha256:{index:064x}",) for index in range(3))
+            "INSERT INTO pending VALUES (?,?)",
+            ((f"sha256:{index:064x}", "2026-09-01T00:00:00.000000Z") for index in range(3)),
         )
 
     # Rebuilt: nothing survives, so the worker starts over as on a new instance.
@@ -253,3 +258,47 @@ def test_state_an_earlier_version_wrote_is_rebuilt_with_exact_counts(tmp_path: P
     _drain(instance, now=NOW)
     (health,) = WORKER.health(instance, now=NOW)
     assert health.detail["pending_checks"] == 0 and _findings(instance) == set()
+
+
+def test_no_sweep_or_clock_lag_without_a_fired_event(tmp_path: Path) -> None:
+    instance, _capture = _world(tmp_path)
+    WORKER.match(instance, now=NOW, daemon_id="daemon")
+    assert tuple(WORKER.due(instance, now=NOW + timedelta(days=100))) == ()
+    (health,) = WORKER.health(instance, now=NOW + timedelta(days=100))
+    assert health.state == "running" and health.detail["sweep_completed_at"] is None
+    evaluate_triggers(instance, now=NOW, config=TriggerOperationalConfigV1())
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "lagging" and health.detail["sweep_in_progress"]
+    _drain(instance, now=NOW)
+    (health,) = WORKER.health(instance, now=NOW + timedelta(days=100))
+    assert health.state == "running"
+
+
+def test_sweep_resumes_a_fired_event_at_its_logged_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, capture = _world(tmp_path)
+    evaluate_triggers(instance, now=NOW, config=TriggerOperationalConfigV1())
+    WORKER.match(instance, now=NOW, daemon_id="daemon")
+    monkeypatch.setattr(evidence, "CHECK_BATCH", 1)
+    manager = SimpleNamespace(get=lambda _id: instance)
+    seen = []
+    check = WORKER._check
+
+    def checked(instance, digests, *, now):  # type: ignore[no-untyped-def]
+        seen.append(now)
+        return check(instance, digests, now=now)
+
+    monkeypatch.setattr(WORKER, "_check", checked)
+    (work,) = WORKER.due(instance, now=NOW)
+    WORKER.run(manager, "instance", work, now=NOW + timedelta(days=100))
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "lagging" and health.detail["sweep_position"] == 0
+    # A restart continues this event, even if another one has fired meanwhile.
+    evaluate_triggers(instance, now=NOW + SWEEP_INTERVAL, config=TriggerOperationalConfigV1())
+    for _ in range(4):
+        for work in WORKER.due(instance, now=NOW):
+            WORKER.run(manager, "instance", work, now=NOW + timedelta(days=100))
+    assert NOW in seen and NOW + SWEEP_INTERVAL in seen
+    assert NOW + timedelta(days=100) not in seen
+    assert capture and not tuple(WORKER.due(instance, now=NOW))
