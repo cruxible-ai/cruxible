@@ -719,3 +719,73 @@ def test_a_stricter_or_ambiguous_successor_rule_does_not_cover_an_exact_rule() -
 
     twin = successor.model_copy(update={"rule_id": "newer"})
     assert _dependents(_v5_type(successor, twin, previous)) == (f"ClaimType:{PREDICATE}",)
+
+
+def test_the_upgrade_moves_original_v1_claim_types_and_their_verdicts_still_read(
+    world: _World,
+) -> None:
+    from datetime import datetime, timezone
+
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicyV1,
+        ClaimEvidenceAdmissionRuleV1,
+    )
+    from cruxible_core.service.evidence.evidence import service_evaluate_playbill_claim_verdict
+
+    rule = ClaimEvidenceAdmissionRuleV1(
+        rule_id="source",
+        claim_roles=("normative", "observation"),
+        capture_contract_digests=(_digest(ORIGINAL),),
+        evidence_kinds=("self_asserted",),
+        admission="direct",
+        subject_binding="exact_claim_subject",
+    )
+    original = _claim_type().model_copy(
+        update={"evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(rules=(rule,))}
+    )
+    assert original.artifact_format == "playbill-claim-type-v1"
+    world.seed(original)
+    claim_id = world.observe(b"status: ready")
+
+    result = service_upgrade_evidence_rules(
+        world.instance, actor_id="owner", timestamp=world.timestamp()
+    )
+    assert result.status == "proposed", result
+    assert result.proposal_id is not None
+    world.activate_proposal(result.proposal_id)
+
+    type_path = claim_type_path(PREDICATE)
+    assert parse_claim_type(world.tree()[type_path], path=type_path).artifact_format == (
+        "playbill-claim-type-v6"
+    )
+    service_evaluate_playbill_claim_verdict(
+        world.instance,
+        claim_identity=f"Claim:{claim_id}",
+        evaluation_time=datetime(2026, 8, 22, tzinfo=timezone.utc),
+    )
+
+
+def test_the_upgrade_leaves_producer_reducer_allowlists_for_a_decision() -> None:
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicyV1,
+        ClaimEvidenceAdmissionRuleV1,
+    )
+    from cruxible_core.service.claims.evidence_rule_upgrade import _convert, _Refused
+
+    rule = ClaimEvidenceAdmissionRuleV1(
+        rule_id="derived",
+        claim_roles=("derivation",),
+        capture_contract_digests=(_digest(ORIGINAL),),
+        evidence_kinds=("self_asserted",),
+        admission="derivational",
+        subject_binding="exact_claim_subject",
+        allowed_reducer_digests=("sha256:" + "5" * 64,),
+    )
+    derived = _claim_type().model_copy(
+        update={
+            "permitted_roles": ("derivation",),
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(rules=(rule,)),
+        }
+    )
+    with pytest.raises(_Refused, match="producer reducers"):
+        _convert(derived, None)  # type: ignore[arg-type]

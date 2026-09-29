@@ -2,7 +2,8 @@
 
 Compiler revision 31 admits ClaimType v6, whose evidence rules name
 CaptureContracts by identity. This builds the ordinary change set that moves
-every live v5 ClaimType to v6 and carries its Claims, and proposes it; nothing
+every live ClaimType whose evidence rules name contracts by exact digest (the
+v1 through v5 formats) to v6 and carries its Claims, and proposes it; nothing
 is activated here.
 
 A converted rule admits evidence captured under every accepted version of the
@@ -40,6 +41,7 @@ from cruxible_client.contracts.evidence_rule_upgrade import (
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimEvidenceAdmissionPolicyV3,
+    ClaimEvidenceAdmissionRuleV1,
     ClaimEvidenceAdmissionRuleV2,
     ClaimEvidenceAdmissionRuleV3,
 )
@@ -128,11 +130,16 @@ def _convert(
     if any(pin.target.kind == "CaptureContract" for pin in claim_type.pins):
         raise _Refused("pins a CaptureContract exactly; remove the pin first")
     rules: list[ClaimEvidenceAdmissionRuleV3] = []
-    before: list[ClaimEvidenceAdmissionRuleV2] = []
+    before: list[ClaimEvidenceAdmissionRuleV1 | ClaimEvidenceAdmissionRuleV2] = []
     widened: set[str] = set()
     for rule in claim_type.evidence_admission_policy.rules:
-        if not isinstance(rule, ClaimEvidenceAdmissionRuleV2):
-            raise _Refused("uses a historical evidence policy")
+        if not isinstance(rule, ClaimEvidenceAdmissionRuleV1 | ClaimEvidenceAdmissionRuleV2):
+            raise _Refused("already names contracts by identity")
+        if getattr(rule, "allowed_reducer_digests", ()):
+            raise _Refused(
+                f"rule {rule.rule_id!r} authorizes producer reducers, which identity rules "
+                "cannot express; producer authorization belongs to Procedure mandates"
+            )
         before.append(rule)
         named: dict[str, set[str]] = {}
         for digest in rule.capture_contract_digests:
@@ -201,7 +208,7 @@ def service_upgrade_evidence_rules(
     actor_id: str,
     timestamp: str,
 ) -> EvidenceRuleUpgradeResultV1:
-    """Propose the change set moving every convertible live v5 ClaimType to v6."""
+    """Propose the change set moving every convertible live exact-rule ClaimType to v6."""
 
     base = instance.accepted_coordinate()
     if base.compiler != AUTHORITY_VERBS_COMPILER:
@@ -215,7 +222,7 @@ def service_upgrade_evidence_rules(
     refused: list[EvidenceRuleRefusalV1] = []
     for path in sorted(item for item in tree if item.startswith("claim-types/")):
         claim_type = parse_claim_type(tree[path], path=path)
-        if claim_type.artifact_format != "playbill-claim-type-v5":
+        if claim_type.artifact_format == "playbill-claim-type-v6":
             continue
         if claim_type.lifecycle.state != "live":
             continue
