@@ -332,16 +332,16 @@ def _column_keys(wanted: Sequence[_Wanted]) -> list[str]:
         keys[index] = key
         taken.add(key)
     for index in flexible:
-        key = next((name for name in candidates[index][1:] if name not in taken), None)
-        if key is None:
+        fallback = next((name for name in candidates[index][1:] if name not in taken), None)
+        if fallback is None:
             raise PlaybillQueryRefused(
                 "playbill.query.column_collision",
                 f"two columns would both be served as {candidates[index][0]!r}",
                 repair="rename the follow alias, or select one of the two fields",
                 field_path="select",
             )
-        keys[index] = key
-        taken.add(key)
+        keys[index] = fallback
+        taken.add(fallback)
     return [key for key in keys if key is not None]
 
 
