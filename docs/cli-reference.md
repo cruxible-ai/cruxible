@@ -945,7 +945,8 @@ all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
 `--follow ^field:alias` hops backwards along another kind's predicate whose values
 name KIND's Subjects (for example `query dev.roadmap_item --follow
 ^dev.batch.delivers:batch` lists which batches deliver each item). A reverse field
-is the predicate's full name, or its name after the pointing kind's prefix. Either
+is the predicate's full name, or its name after the pointing kind's prefix;
+`orient --kind KIND` lists the predicates that point at KIND as `incoming`. Either
 way there is one row per (Subject, followed Subject) pair.
 Names and values are checked first: a wrong kind, field or enum member, or an
 operator that does not apply, refuses with its code, the nearest valid names and
@@ -1775,7 +1776,9 @@ CaptureContracts by digest, attention says so and suggests
 `cruxible playbill claim-type upgrade-evidence-rules`.
 
 `--kind` reads one kind in full: every predicate with its roles, freshness
-horizon and live Claim count, plus up to five sample Subject IDs. A kind that
+horizon and live Claim count, the predicates of other kinds that point at it
+(`incoming`, full names: follow one backwards with `query KIND --follow
+^PREDICATE:alias`), plus up to five sample Subject IDs. A kind that
 does not exist is refused as `playbill.orient.kind_not_found` with the nearest
 kinds. `--section` pages one artifact family as compact rows; follow
 `next_cursor` with `--cursor` while `truncated` is true. Kinds page the same way

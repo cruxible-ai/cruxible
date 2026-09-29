@@ -240,3 +240,53 @@ def test_every_surface_pages_reverse_rows_and_refuses_a_wrong_predicate(
     assert refused.value.error_code == "playbill.query.follow_not_incoming"
     assert DELIVERS in refused.value.candidates
     assert refused.value.field_path == "follow[0].field"
+
+
+@pytest.mark.parametrize("surface", SURFACES)
+def test_every_surface_orients_with_the_incoming_predicates(
+    served: tuple[CruxibleClient, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    surface: str,
+) -> None:
+    import shlex
+
+    from cruxible_core.mcp import handlers
+    from tests.core_support._relation_query_support import GOVERNS, PARENT
+
+    client, instance_id = served
+    if surface == "transport":
+        result = client.orient_playbill(instance_id, kind=SUBJECT_KIND, surface="mcp")
+        marker = f'follow=[{{"field": "{DELIVERS}", "as": "batch", "direction": "reverse"}}]'
+    elif surface == "cli":
+        from cruxible_core.cli.commands import playbill as commands
+
+        monkeypatch.setattr(commands, "_server_call", lambda op, **_: op(client, instance_id))
+        invoked = CliRunner().invoke(cli, ["playbill", "orient", "--kind", SUBJECT_KIND, "--json"])
+        assert invoked.exit_code == 0, invoked.output
+        result = contracts.PlaybillOrientResultV1.model_validate(json.loads(invoked.output))
+        marker = f"--follow '^{DELIVERS}:batch'"
+        text = CliRunner().invoke(cli, ["playbill", "orient", "--kind", SUBJECT_KIND]).output
+        assert f"Incoming (follow with ^): {DELIVERS}, {GOVERNS}, {PARENT}" in text
+    elif surface == "sdk":
+        result = _playbill(client, instance_id, tmp_path).orient(kind=SUBJECT_KIND)
+        marker = f'pb.query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}"'
+    else:
+        monkeypatch.setattr(
+            handlers, "_get_client", lambda: None if surface == "mcp-local" else client
+        )
+        result = handlers.handle_playbill_orient(instance_id, kind=SUBJECT_KIND)
+        marker = f'cruxible_playbill_query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}"'
+
+    assert result.kind_detail is not None
+    assert result.kind_detail.incoming == (DELIVERS, GOVERNS, PARENT)
+    (suggestion,) = [line for line in result.next if marker in line]
+    if surface == "cli":
+        # The suggested command runs as written and answers the reverse follow.
+        argv = shlex.split(suggestion)[1:] + ["--evaluation-time", EVALUATION_TIME, "--json"]
+        ran = CliRunner().invoke(cli, argv)
+        assert ran.exit_code == 0, ran.output
+        rows = json.loads(ran.output)["rows"]
+        assert sorted((row["subject_id"], row["batch"]) for row in rows) == [
+            (item[0], item[1]) for item in EXPECTED
+        ]

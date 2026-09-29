@@ -3446,7 +3446,9 @@ class Playbill:
         With no arguments: each Subject kind with its count and predicates,
         artifact counts, named queries, whether this caller can author, what
         needs attention, and ``next`` suggestions written as SDK calls.
-        ``kind`` reads one kind in full with sample Subject IDs; ``section``
+        ``kind`` reads one kind in full with sample Subject IDs and the
+        predicates that point at it (``incoming``: follow one with
+        ``query(kind, follow=[(predicate, alias, "reverse")])``); ``section``
         pages documents, procedures, claim_types, queries or interfaces (the
         provider interfaces a Procedure can call). Follow
         ``next_cursor`` while ``truncated``.

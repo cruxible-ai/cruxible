@@ -426,6 +426,11 @@ def _cli_where(item: Mapping[str, object]) -> str:
     return field
 
 
+def _cli_follow(item: Mapping[str, object]) -> str:
+    marker = "^" if item.get("direction") == "reverse" else ""
+    return f"{marker}{item['field']}:{item['as']}"
+
+
 def render_orient_call(call: _Call, surface: PlaybillOrientSurface) -> str:
     """One runnable call in the caller's own syntax."""
 
@@ -460,6 +465,8 @@ def render_orient_call(call: _Call, surface: PlaybillOrientSurface) -> str:
             parts.extend(f"--where {_cli_value(_cli_where(item))}" for item in value)
         elif key == "select" and isinstance(value, list):
             parts.append(f"--select {_cli_value(','.join(str(item) for item in value))}")
+        elif key == "follow" and isinstance(value, list):
+            parts.extend(f"--follow {_cli_value(_cli_follow(item))}" for item in value)
         else:
             parts.append(f"--{key.replace('_', '-')} {_cli_value(value)}")
     return " ".join(parts)
@@ -726,6 +733,19 @@ def service_playbill_orient(
         enum_filter = _enum_filter(detail)
         if enum_filter is not None:
             calls.append(_Call("query", (("kind", kind), ("where", [enum_filter]))))
+        reverse = _reverse_follow(state, kind)
+        if reverse is not None:
+            calls.append(
+                _Call(
+                    "query",
+                    (
+                        ("kind", kind),
+                        ("follow", [reverse]),
+                        ("select", [reverse["as"]]),
+                        ("limit", 10),
+                    ),
+                )
+            )
         if detail.sample_subject_ids:
             calls.append(_Call("get", (("ref", f"{kind}/{detail.sample_subject_ids[0]}"),)))
         return PlaybillOrientResultV1(
@@ -868,8 +888,45 @@ def _kind_detail(
         subjects=state.subjects_by_kind.get(kind, 0),
         evidence=evidence,
         predicates=hoisted,
+        incoming=tuple(item.predicate for item in _incoming(state, kind)),
         sample_subject_ids=samples,
     )
+
+
+def _incoming(state: _State, kind: str) -> tuple[ClaimType, ...]:
+    """The live Subject-valued ClaimTypes whose values may name ``kind`` Subjects.
+
+    The same set ``query`` resolves a reverse follow against: a predicate points
+    at a kind only when it admits that kind as its object.
+    """
+
+    return tuple(
+        sorted(
+            (
+                item
+                for item in state.claim_types
+                if item.object_kind == "subject" and kind in item.allowed_object_subject_kinds
+            ),
+            key=lambda item: item.predicate.encode("utf-8"),
+        )
+    )
+
+
+def _reverse_follow(state: _State, kind: str) -> dict[str, str] | None:
+    """One runnable reverse follow into ``kind``, aliased by its source kind."""
+
+    incoming = _incoming(state, kind)
+    if not incoming:
+        return None
+    first = incoming[0]
+    reserved = {"subject", "subject_id", "value"}
+    reserved.update(item.predicate.split(".", 1)[0] for item in state.claim_types)
+    reserved.update(name.split(".", 1)[0] for name in _kind_names(state))
+    source = sorted(first.allowed_subject_kinds)[0] if first.allowed_subject_kinds else ""
+    for alias in (source.rsplit(".", 1)[-1], "source"):
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", alias) and alias not in reserved:
+            return {"field": first.predicate, "as": alias, "direction": "reverse"}
+    return None
 
 
 def _section_rows(

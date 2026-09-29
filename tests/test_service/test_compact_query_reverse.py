@@ -13,6 +13,7 @@ from cruxible_core.service.discovery.compact_query import (
     _selection,
     service_playbill_query,
 )
+from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.service.discovery.query_vocabulary import PredicateInfo, QueryVocabulary
 from cruxible_core.service.list_pages import PlaybillListCursorMismatch
 from cruxible_core.service.read_refusals import ReadRefusalError
@@ -230,6 +231,47 @@ def test_contains_and_where_filter_reverse_rows(instance: Any) -> None:
             where=[{"field": "batch.subject_id", "eq": "b-9"}],
         )
     assert refused.value.error_code == "playbill.query.unknown_ref"
+
+
+def test_orient_lists_the_reverse_follows_query_resolves(instance: Any) -> None:
+    detail = service_playbill_orient(instance, kind=SUBJECT_KIND, surface="mcp").kind_detail
+    assert detail is not None
+
+    assert detail.incoming == (DELIVERS, GOVERNS, PARENT)
+    for predicate in detail.incoming:
+        result = _query(
+            instance,
+            follow=[{"field": predicate, "as": "other", "direction": "reverse"}],
+            select=["other"],
+        )
+        assert result.columns[0].predicate == predicate
+    # A kind nothing points at has no incoming list on the wire.
+    batch = service_playbill_orient(instance, kind=BATCH_KIND).kind_detail
+    assert batch is not None and batch.incoming == ()
+    assert "incoming" not in batch.model_dump(mode="json")
+
+
+def test_orient_suggests_a_runnable_reverse_follow_on_every_surface(instance: Any) -> None:
+    rendered = {
+        surface: service_playbill_orient(instance, kind=SUBJECT_KIND, surface=surface).next
+        for surface in ("mcp", "cli", "sdk")
+    }
+
+    assert (
+        f'cruxible_playbill_query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}", '
+        '"as": "batch", "direction": "reverse"}], select=["batch"], limit=10)'
+    ) in rendered["mcp"]
+    assert (
+        f"cruxible playbill query {SUBJECT_KIND} --follow '^{DELIVERS}:batch' "
+        "--select batch --limit 10"
+    ) in rendered["cli"]
+    assert (
+        f'pb.query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}", "as": "batch", '
+        '"direction": "reverse"}], select=["batch"], limit=10)'
+    ) in rendered["sdk"]
+    # The suggestion runs as written.
+    ran = _query(instance, follow=[BATCH], select=["batch"], limit=10)
+    assert len(ran.rows) == 3
 
 
 def _info(predicate: str, *kinds: str, objects: tuple[str, ...] = ()) -> PredicateInfo:

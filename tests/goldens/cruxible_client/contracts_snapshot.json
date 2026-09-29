@@ -27602,7 +27602,7 @@
           },
           "PlaybillOrientKindDetailV1": {
             "additionalProperties": false,
-            "description": "One kind in full, with a few Subject IDs to read next.",
+            "description": "One kind in full, with a few Subject IDs to read next.\n\n``incoming`` names, in full, the Subject-valued predicates of other kinds\nwhose values may name this kind's Subjects: the reverse follows a ``query``\non this kind can take (``follow`` with ``direction: \"reverse\"``). It is\nomitted when nothing points at the kind.",
             "properties": {
               "evidence": {
                 "default": [],
@@ -27610,6 +27610,14 @@
                   "type": "string"
                 },
                 "title": "Evidence",
+                "type": "array"
+              },
+              "incoming": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Incoming",
                 "type": "array"
               },
               "kind": {

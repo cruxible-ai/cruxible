@@ -5544,6 +5544,8 @@ def _render_orient(result: Mapping[str, Any]) -> str:
             + (f"  evidence={','.join(shared)}" if shared else "")
         )
         lines.extend(f"  {_orient_predicate_line(item)}" for item in detail["predicates"])
+        if detail.get("incoming"):
+            lines.append("Incoming (follow with ^): " + ", ".join(detail["incoming"]))
         if detail["sample_subject_ids"]:
             lines.append("Sample subjects: " + ", ".join(detail["sample_subject_ids"]))
     section = result.get("section")
