@@ -687,7 +687,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 attr="compiler_group",
             ),
             "query": _group(
-                "Read and execute governed named entrypoints.",
+                "Query accepted state; read and execute named entrypoints.",
                 {
                     "list": _command(
                         "playbill", "list_query_definitions", "List accepted entrypoints."

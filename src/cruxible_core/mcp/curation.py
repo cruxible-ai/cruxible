@@ -32,6 +32,8 @@ _DEFAULT_TOOLS = frozenset(
         "cruxible_playbill_list_subjects",
         "cruxible_playbill_get_subject",
         "cruxible_playbill_run_query",
+        # the query read verb
+        "cruxible_playbill_query",
         # the authoring write loop
         "cruxible_playbill_authoring_example",
         "cruxible_playbill_authoring_create",

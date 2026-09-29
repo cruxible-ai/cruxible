@@ -757,6 +757,56 @@ Runs a named accepted query in the live/pinned/reference context with explicit e
 | `parameters` | `None` | Invocation/query parameters in the declared canonical contract. |
 | `budgets` | `None` | Operation-specific bounds; the signature distinguishes QueryBudgetsV1 from Line budget mappings. |
 
+<a id="api-playbill-query"></a>
+
+### `Playbill.query`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+query(
+    kind: str | None = None,
+    *,
+    where: Sequence[QueryFilterV1 | Mapping[str, object]] | None = None,
+    contains: str | None = None,
+    select: Sequence[str] | None = None,
+    follow: Sequence[QueryFollowV1 | Mapping[str, str] | tuple[str, str]] | None = None,
+    order_by: Sequence[str] | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+    spec: QueryDefinitionSpecV1 | None = None,
+    name: str | QueryRef | None = None,
+    params: Mapping[str, object] | None = None,
+    at: AcceptedCoordinate | str | None = None,
+    evaluation_time: datetime | str | None = None,
+) -> QueryResult
+```
+
+Answers any question over accepted state in one call, exactly as the MCP tool
+`cruxible_playbill_query` and `cruxible playbill query` do. Exactly one mode:
+compact (`kind` and/or `contains`, with `where`, `select`, `follow`,
+`order_by`), a full `spec`, or a query `name` with `params`.
+
+**Conditions and effects:** A `where` filter is `{"field": ..., "<op>": value}`
+with one of `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `in`, `exists`, `contains`;
+filters combine as all-of and `ne` also matches a Subject without the value.
+Wrong kinds, fields, enum members and operators refuse with the nearest valid
+names. `QueryResult` has `.rows` (dicts of values plus `flags`), `.columns`,
+`.truncated`, `.next_page()`, `.pages()`, `.table()` and iterates its rows. `subject`, `subject_id` and `flags` are row metadata; a column with one of those names is served as `value.<name>`. A
+live connection reads the current head; a pinned one reads its coordinate.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `kind` | `None` | A Subject kind, or `ClaimType` / `Procedure` for definitions. |
+| `where` | `None` | Typed filters or plain mappings, all-of. |
+| `contains` | `None` | Case-insensitive text in any live Claim value; alone, across kinds. |
+| `select` | `None` | Column fields; without it a kind shows up to 12 predicates. |
+| `follow` | `None` | One-hop relations as `(field, alias)`; later fields read `alias.field`. |
+| `order_by` | `None` | Fields, `-` prefixed for descending. |
+| `spec` / `name` / `params` | `None` | The spec and named modes. |
+| `at` | `None` | A coordinate or git oid; the connection's otherwise. |
+| `evaluation_time` | `None` | The instant flags are evaluated at; the connection's clock otherwise. |
+
 <a id="api-playbill-since"></a>
 
 ### `Playbill.since`
@@ -2254,6 +2304,7 @@ Python keyword and member collisions.
 | `claim_type("active")` or `claim_type.active` | Predicate-bound LiteralValue, validated locally |
 | `claim_type.as_kind` | KindNamespace when a predicate name is also a Subject kind |
 | `kind.define("new-id")` | SubjectDraft; does not accept or publish it |
+| `kind.where(state="open", count__gt=3)` | CompactQuery; `.select(...)`, `.order_by(...)`, `.limit(n)`, `.run()` or iterate every page |
 | `world.stub()` | Generated type-stub source for this vocabulary |
 
 `prefetch` installs only complete bounded selections. An exhausted budget,
@@ -2570,6 +2621,30 @@ define(subject_id: str) -> SubjectDraft
 ```
 
 Draft one new Subject of this kind for a changeset to define.
+
+<a id="api-kindnamespace-where"></a>
+
+### `KindNamespace.where` and `KindNamespace.select`
+
+[Source](src/cruxible_client/authoring/world.py)
+
+```text
+where(**filters: object) -> CompactQuery
+select(*fields: str) -> CompactQuery
+```
+
+Start a compact query over this kind at the World's coordinate, for example
+`w.dev.roadmap_item.where(adoption_state="adopted", implementation_state__ne="completed").select("task_title")`.
+A keyword is a predicate's short or full name, or `subject_id`; the suffixes
+`__ne`, `__lt`, `__lte`, `__gt`, `__gte`, `__in`, `__exists` and `__contains`
+pick the operator. A leaf that is `self`, a Python keyword, contains `__` or
+ends in `_` is spelled with one trailing underscore before any suffix
+(`self_`, `class___ne`, `status__ne_`). Names, operators and enum members are
+checked against the World before the wire and raise `QueryNameError` with the
+nearest names.
+`run()` returns a `QueryResult`; iterating the query walks every page. The
+generated stub types `where(...)` per kind, with enum members as `Literal`s, so
+a type checker rejects a wrong predicate or member.
 
 <a id="api-kindnamespace-getitem"></a>
 

@@ -1343,6 +1343,14 @@ async def run_query(
     )
 
 
+@router.post("/{instance_id}/playbill/query", response_model=contracts.PlaybillQueryResult)
+async def query_playbill(
+    instance_id: str,
+    req: contracts.PlaybillQueryRequestV1,
+) -> contracts.PlaybillQueryResult:
+    return playbill_api.playbill_query(resolve_server_instance_id(instance_id), request=req)
+
+
 @router.post(
     "/{instance_id}/playbill/procedures/source/preview", response_model=ProcedureSourcePreviewV1
 )

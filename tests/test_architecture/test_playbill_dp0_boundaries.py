@@ -416,6 +416,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "list_playbill_policies_in_force",
         "get_playbill_query_definition",
         "run_playbill_query",
+        "query_playbill",
         "playbill_procedure_readiness",
         "preview_playbill_procedure_source",
         "bind_playbill_procedure",

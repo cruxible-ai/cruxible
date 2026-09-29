@@ -9,6 +9,7 @@ everyday agent loop:
 - orient and pick work: `cruxible_playbill_orient` (the map of accepted state),
   `cruxible_playbill_search`, `cruxible_playbill_next`, and
   `cruxible_playbill_expand`;
+- any question over state, values first: `cruxible_playbill_query`;
 - one thing by any reference, values first: `cruxible_playbill_get` (`detail`
   picks summary, evidence, why, history, proof, or a Document body range);
 - Claim, ClaimType, and Subject reads: `cruxible_playbill_claim_values` (a status
@@ -277,11 +278,32 @@ authority plane beside accepted state.
 
 ## Queries, discovery, and the floor
 
+`cruxible_playbill_query` takes exactly one mode. Compact mode names a Subject
+`kind` (or `ClaimType` / `Procedure` for definitions) and/or free text
+`contains`. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
+`ne`, `lt`, `lte`, `gt`, `gte`, `in` (a list), `exists` (a boolean) or
+`contains` (case-insensitive text); filters combine as all-of. A field is a
+predicate's full name, its name after the `KIND.` prefix (`adoption_state`),
+`subject_id`, or `alias.field` after `follow: [{field, as}]`; columns show that
+short name unless it is itself another predicate's full name or a reserved name
+(`subject_id`, `subject`, `kind`, `predicate`, `claim`, `flags`, `value.*`). Values are checked against the
+ClaimType first: an unknown kind, field or enum member, or an operator that does
+not apply, refuses with a code, the nearest valid names and a repair. `ne` means
+no value equals, so a Subject without the value matches. `contains` alone
+searches every live Claim value across kinds. Rows lead with values (an array
+for a many-valued predicate or a contested slot) and carry `flags` (`stale`,
+`contested`, `contradicted`, `unsure_hold`); without `select` a kind shows up to
+12 predicates and names the rest in `notes`. `subject`, `subject_id` and `flags` are row metadata; a column with one of those names is served as `value.<name>`. ClaimType rows name the
+CaptureContracts their evidence rules admit, never digests. `receipt` records the
+mode, the definition digest, the coordinate and the evaluation time (default
+now).
+
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_playbill_list_query_definitions` | List accepted entrypoints | `READ_ONLY` |
 | `cruxible_playbill_get_query_definition` | Read one entrypoint's contract | `READ_ONLY` |
 | `cruxible_playbill_run_query` | Execute an entrypoint with a replay receipt | `READ_ONLY` |
+| `cruxible_playbill_query` | Answer any question over accepted state in one call: compact (`kind` and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`), a full `spec`, or a query `name` with `params`; rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
 | `cruxible_playbill_discover` | Find interfaces and Subjects by name | `READ_ONLY` |
 | `cruxible_playbill_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue, and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types` or `queries` (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_playbill_search` | Search, list, or orient over accepted state | `READ_ONLY` |

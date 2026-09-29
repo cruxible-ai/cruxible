@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -37,6 +38,7 @@ from cruxible_client.authoring.attestations import (
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
+from cruxible_client.authoring.compact_query import WHERE_SYNTAX, parse_where, render_query_table
 from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
     AUTHORING_EXAMPLE_NAMES,
@@ -3942,9 +3944,185 @@ def propose_compiler_upgrade(target_digest: str, proposal_name: str, output_json
     _emit_json(result.model_dump(mode="json"))
 
 
-@playbill_group.group("query")
-def query_group() -> None:
-    """Read and execute governed named entrypoints."""
+class _QueryGroup(click.Group):
+    """``playbill query`` answers a query itself; ``list``, ``get`` and ``run`` stay."""
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        if not args:
+            click.echo(ctx.get_help(), color=ctx.color)
+            ctx.exit()
+        ctx.meta["playbill_query_args"] = list(args)
+        if not args[0].startswith("-") and args[0] not in self.commands:
+            ctx.meta["playbill_query_kind"] = args[0]
+            args = args[1:]
+        return super().parse_args(ctx, args)
+
+    def resolve_command(
+        self, ctx: click.Context, args: list[str]
+    ) -> tuple[str | None, click.Command | None, list[str]]:
+        if args and args[0] not in self.commands:
+            raise click.UsageError(
+                f"{args[0]!r} is not a query subcommand; put KIND first: "
+                "cruxible playbill query KIND [--where ...]",
+                ctx=ctx,
+            )
+        return super().resolve_command(ctx, args)
+
+
+def _split_fields(values: Sequence[str]) -> list[str]:
+    return [part.strip() for value in values for part in value.split(",") if part.strip()]
+
+
+def _query_param_value(raw: str) -> object:
+    try:
+        decoded = json.loads(raw)
+    except ValueError:
+        return raw
+    return decoded if isinstance(decoded, str | int | bool) else raw
+
+
+def _without_cursor(args: Sequence[str]) -> list[str]:
+    kept: list[str] = []
+    skip = False
+    for item in args:
+        if skip:
+            skip = False
+            continue
+        if item == "--cursor":
+            skip = True
+            continue
+        if item.startswith("--cursor="):
+            continue
+        kept.append(item)
+    return kept
+
+
+def _validation_problems(exc: ValidationError) -> str:
+    return "; ".join(
+        f"{'.'.join(str(part) for part in error['loc']) or 'request'}: {error['msg']}"
+        for error in exc.errors()
+    )
+
+
+@playbill_group.group("query", cls=_QueryGroup, invoke_without_command=True, no_args_is_help=False)
+@click.option(
+    "--where",
+    "where_expressions",
+    multiple=True,
+    help=f"Filter, repeatable (all-of): {WHERE_SYNTAX}.",
+)
+@click.option("--contains", default=None, help="Case-insensitive text in any live Claim value.")
+@click.option("--select", "select_fields", multiple=True, help="Columns: a,b (repeatable).")
+@click.option("--follow", "follow_specs", multiple=True, help="Follow a relation: field:alias.")
+@click.option("--order-by", "order_fields", multiple=True, help="Order: f or -f (repeatable).")
+@click.option("--limit", type=click.IntRange(1, contracts.PLAYBILL_QUERY_MAX_LIMIT), default=None)
+@click.option("--cursor", default=None, help="Continue a truncated page.")
+@click.option(
+    "--spec",
+    "spec_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="A QueryDefinitionSpecV1 file (JSON or YAML).",
+)
+@click.option("--name", "query_name", default=None, help="Run an accepted named query.")
+@click.option("--param", "param_pairs", multiple=True, help="Named query parameter k=v.")
+@click.option("--at", "at_oid", default=None, help="Read at this accepted git oid.")
+@click.option("--evaluation-time", default=None, help="ISO-8601 instant; default now.")
+@json_option
+@click.pass_context
+@handle_errors
+def query_group(
+    ctx: click.Context,
+    where_expressions: tuple[str, ...],
+    contains: str | None,
+    select_fields: tuple[str, ...],
+    follow_specs: tuple[str, ...],
+    order_fields: tuple[str, ...],
+    limit: int | None,
+    cursor: str | None,
+    spec_path: str | None,
+    query_name: str | None,
+    param_pairs: tuple[str, ...],
+    at_oid: str | None,
+    evaluation_time: str | None,
+    output_json: bool,
+) -> None:
+    """Query accepted state: cruxible playbill query [KIND] [--where 'f=v']...
+
+    Without a subcommand this answers one query and prints its values as a
+    table with flags, then the next command when the page is truncated. KIND
+    is a Subject kind, or ClaimType / Procedure for definitions. list, get and
+    run read and execute governed named entrypoints.
+    """
+
+    if ctx.invoked_subcommand is not None:
+        return
+    try:
+        where = [parse_where(expression) for expression in where_expressions]
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--where") from exc
+    follow: list[dict[str, str]] = []
+    for item in follow_specs:
+        field, _, alias = item.partition(":")
+        if not field or not alias:
+            raise click.BadParameter(
+                f"{item!r} is not field:alias, for example closed_by:batch",
+                param_hint="--follow",
+            )
+        follow.append({"field": field, "as": alias})
+    params: dict[str, object] | None = None
+    if param_pairs:
+        params = {}
+        for pair in param_pairs:
+            key, sep, raw = pair.partition("=")
+            if not sep or not key:
+                raise click.BadParameter(f"{pair!r} is not k=v", param_hint="--param")
+            params[key] = _query_param_value(raw)
+    spec: object = None
+    if spec_path is not None:
+        from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
+
+        try:
+            spec = QueryDefinitionSpecV1.model_validate(_read_mapping(spec_path))
+        except ValidationError as exc:
+            raise click.ClickException(
+                f"{spec_path} is not a QueryDefinitionSpecV1: {_validation_problems(exc)}"
+            ) from exc
+    fields: dict[str, object] = {
+        "kind": ctx.meta.get("playbill_query_kind"),
+        "where": [item.model_dump(mode="json", by_alias=True) for item in where],
+        "contains": contains,
+        "select": _split_fields(select_fields),
+        "follow": follow,
+        "order_by": _split_fields(order_fields),
+        "cursor": cursor,
+        "spec": spec,
+        "name": query_name,
+        "params": params,
+        "at": at_oid,
+        "evaluation_time": None if evaluation_time is None else parse_datetime(evaluation_time),
+    }
+    if limit is not None:
+        fields["limit"] = limit
+    try:
+        request = contracts.PlaybillQueryRequestV1.model_validate(fields)
+    except ValidationError as exc:
+        raise click.ClickException(f"invalid query: {_validation_problems(exc)}") from exc
+    result = _server_call(
+        lambda client, instance_id: client.query_playbill(instance_id, request=request),
+        command_name="playbill query",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(render_query_table(result))
+    if result.truncated and result.next_cursor is not None:
+        again = _without_cursor(ctx.meta.get("playbill_query_args", []))
+        click.echo(
+            "next: cruxible playbill query "
+            + " ".join(shlex.quote(item) for item in again)
+            + f" --cursor {result.next_cursor}"
+        )
 
 
 @query_group.command("list")

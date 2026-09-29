@@ -33,6 +33,26 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
+from cruxible_client.contracts.compact_query import (
+    PLAYBILL_QUERY_DEFAULT_LIMIT as PLAYBILL_QUERY_DEFAULT_LIMIT,
+)
+from cruxible_client.contracts.compact_query import (
+    PLAYBILL_QUERY_MAX_LIMIT as PLAYBILL_QUERY_MAX_LIMIT,
+)
+from cruxible_client.contracts.compact_query import PlaybillQueryColumnV1 as PlaybillQueryColumnV1
+from cruxible_client.contracts.compact_query import PlaybillQueryReceiptV1 as PlaybillQueryReceiptV1
+from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1 as PlaybillQueryRequestV1
+from cruxible_client.contracts.compact_query import PlaybillQueryResult as PlaybillQueryResult
+from cruxible_client.contracts.compact_query import QueryFilterContainsV1 as QueryFilterContainsV1
+from cruxible_client.contracts.compact_query import QueryFilterEqV1 as QueryFilterEqV1
+from cruxible_client.contracts.compact_query import QueryFilterExistsV1 as QueryFilterExistsV1
+from cruxible_client.contracts.compact_query import QueryFilterGteV1 as QueryFilterGteV1
+from cruxible_client.contracts.compact_query import QueryFilterGtV1 as QueryFilterGtV1
+from cruxible_client.contracts.compact_query import QueryFilterInV1 as QueryFilterInV1
+from cruxible_client.contracts.compact_query import QueryFilterLteV1 as QueryFilterLteV1
+from cruxible_client.contracts.compact_query import QueryFilterLtV1 as QueryFilterLtV1
+from cruxible_client.contracts.compact_query import QueryFilterNeV1 as QueryFilterNeV1
+from cruxible_client.contracts.compact_query import QueryFollowV1 as QueryFollowV1
 from cruxible_client.contracts.line_dispatch import (
     LineArmOutcomeV1 as LineArmOutcomeV1,
 )
