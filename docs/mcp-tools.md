@@ -314,7 +314,8 @@ that performs it (for example `cruxible_playbill_settle(prediction_id="RSC-...")
 adding the observation's Claim ID), or none when its operands are local files.
 A row or nested finding whose repair the session cannot perform -- its profile
 does not advertise the tool that performs it, or its tier is too low -- is left
-out and counted in `status.hidden`. The `default` profile advertises neither
+out and counted in `status.hidden`. A status facet keeps its state either way,
+but drops a repair the session cannot perform and says `repair_hidden: true`. The `default` profile advertises neither
 `cruxible_playbill_settle` nor the Line tools, for example.
 
 Lists that can outgrow one answer are paged. `proposal_list`,

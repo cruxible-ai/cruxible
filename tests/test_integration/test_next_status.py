@@ -289,6 +289,37 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
     assert upgraded.compiler.state == "current" and _attention(upgraded) == ()
 
 
+def test_a_status_repair_the_caller_cannot_perform_keeps_the_facet_but_not_the_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R07 for the status header: a compiler upgrade is an ADMIN act."""
+
+    from cruxible_core.compiler.compiler import TRIGGER_CAPTURE_COMPILER
+    from tests.test_ledger.test_compiler_upgrade import old_instance
+
+    instance, _owner, _reviewer = old_instance(tmp_path, monkeypatch, TRIGGER_CAPTURE_COMPILER)
+    request = _request(instance)
+
+    admin = _status(instance, request, caller_rung=3)
+    assert admin.compiler.repair is not None
+    assert "repair_hidden" not in admin.compiler.model_dump(mode="json")
+
+    for rung in (0, 1, 2):  # READ_ONLY, GOVERNED_WRITE, GRAPH_WRITE
+        lower = _status(instance, request, caller_rung=rung)
+        assert lower.compiler.state == "upgrade_available"
+        assert lower.compiler.detail == admin.compiler.detail
+        assert lower.compiler.repair is None
+        assert lower.compiler.repair_hidden is True
+        # Facets are not rows: the row count stays about rows.
+        assert lower.hidden == 0
+
+    mcp = request.model_copy(
+        update={"caller_surface": "mcp", "caller_tools": ("cruxible_playbill_next",)}
+    )
+    profiled = _status(instance, mcp, caller_rung=3)
+    assert profiled.compiler.repair is None and profiled.compiler.repair_hidden is True
+
+
 def test_a_compiler_with_no_forward_edge_is_reported_without_a_repair(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

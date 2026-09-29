@@ -635,11 +635,21 @@ class PlaybillNextHealthV1(_StrictNextModel):
     state: str
     detail: object = Field(default_factory=dict)
     repair: PlaybillNextRepairV1 | None = None
+    #: The facet needs a repair this caller's surface, tool profile or
+    #: permission tier cannot perform, so its repair was dropped. The facet
+    #: itself is not left out, so it is not counted in ``status.hidden``.
+    repair_hidden: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @field_validator("detail", mode="before")
     @classmethod
     def _detail(cls, value: object) -> CanonicalValue:
         return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _hidden_repair(self) -> "PlaybillNextHealthV1":
+        if self.repair_hidden and self.repair is not None:
+            raise ValueError("a next status facet hides its repair or carries it, not both")
+        return self
 
 
 class PlaybillNextStatusV1(_StrictNextModel):
@@ -665,10 +675,11 @@ class PlaybillNextStatusV1(_StrictNextModel):
     consumers: PlaybillNextHealthV1
     #: Rows parked by a current ``unsure`` attestation whose basis is unchanged.
     held: int = Field(default=0, ge=0)
-    #: Rows whose repair (a settle, Line dispatch or Line arm) this caller's
-    #: surface, tool profile or permission tier cannot perform, so they were left
-    #: out of ``items``. Another caller -- the CLI, or a governed-write
-    #: credential -- sees them.
+    #: Rows and nested findings whose repair this caller's surface, tool
+    #: profile or permission tier cannot perform, so they were left out of
+    #: ``items``. Another caller -- the CLI, or a higher-tier credential -- sees
+    #: them. A status facet whose repair is withheld says so itself
+    #: (``repair_hidden``) and is not counted here.
     hidden: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
 
     @model_validator(mode="after")
@@ -4194,7 +4205,7 @@ class _CallerView:
         if repair is None or repair.operation == "hand_edit":
             return health
         if not self.can_run(repair):
-            return health.model_copy(update={"repair": None})
+            return health.model_copy(update={"repair": None, "repair_hidden": True})
         if self.surface in {None, "cli"}:
             return health
         command = _repair_command(
@@ -4408,10 +4419,12 @@ def service_playbill_next(
                 ),
             )
         ),
-        floor=_floor_health(
-            instance, coordinate=public_coordinate, observation=request.workspace_observation
+        floor=caller.health(
+            _floor_health(
+                instance, coordinate=public_coordinate, observation=request.workspace_observation
+            )
         ),
-        ledger_mirror=_ledger_mirror_health(instance),
+        ledger_mirror=caller.health(_ledger_mirror_health(instance)),
         provider_lane=(
             PlaybillNextHealthV1(state="not_reported")
             if provider_lane is None
@@ -4430,13 +4443,15 @@ def service_playbill_next(
                 ),
             )
         ),
-        procedure_catalog=_procedure_catalog_health(
-            instance,
-            coordinate=coordinate,
-            access_profile=request.access_profile,
-            observation=request.workspace_observation,
+        procedure_catalog=caller.health(
+            _procedure_catalog_health(
+                instance,
+                coordinate=coordinate,
+                access_profile=request.access_profile,
+                observation=request.workspace_observation,
+            )
         ),
-        compiler=_compiler_health(instance),
+        compiler=caller.health(_compiler_health(instance)),
         line_dispatch=caller.health(
             _line_dispatch_health(
                 instance,

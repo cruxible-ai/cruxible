@@ -4585,13 +4585,12 @@ def _echo_next_status(status: contracts.PlaybillNextStatus) -> None:
             continue
         repair = health.repair
         hint = None if repair is None else repair.command or repair.required_change
+        if health.repair_hidden:
+            hint = "(repair needs a higher permission tier)"
         label = facet.replace("_", " ")
         click.echo(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
     if status.hidden:
-        click.echo(
-            f"Hidden: {status.hidden} rows whose repair (settle, Line dispatch or arm) "
-            "needs governed write"
-        )
+        click.echo(f"Hidden: {status.hidden} rows whose repair needs a higher permission tier")
 
 
 @playbill_group.group("curation")

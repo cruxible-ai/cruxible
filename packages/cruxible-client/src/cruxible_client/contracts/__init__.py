@@ -1658,6 +1658,8 @@ class PlaybillNextHealth(BaseModel):
     state: str
     detail: Any = Field(default_factory=dict)
     repair: PlaybillNextRepair | None = None
+    # The facet needs a repair this caller cannot perform, so it was dropped.
+    repair_hidden: bool = False
 
 
 class PlaybillNextStatus(BaseModel):

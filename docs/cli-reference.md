@@ -1578,7 +1578,9 @@ the permission tier of the tool that performs it (approval needs graph write;
 settle, arm and authoring need governed write; a Line dispatch needs what the
 Line's runs need). A read-only credential sees only the rows it can repair.
 `status.hidden` counts the rows and nested findings left out, and the text
-output says so. Each repair's `command`
+output says so. A status facet (the compiler, floor, ledger mirror and so on)
+always reports its state; when its repair is one the caller cannot perform,
+the repair is dropped and the facet carries `repair_hidden: true` instead. Each repair's `command`
 renders for the caller's surface: a CLI command here, an MCP tool call on
 `cruxible_playbill_next`.
 Empty `items` means only that no work exists in the explicitly observed domains.

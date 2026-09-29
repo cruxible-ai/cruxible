@@ -25366,6 +25366,19 @@
             "default": null
           }
         },
+        "repair_hidden": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "repair_hidden",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Repair Hidden",
+            "type": "boolean"
+          }
+        },
         "state": {
           "has_default": false,
           "has_default_factory": false,
@@ -25466,6 +25479,11 @@
               }
             ],
             "default": null
+          },
+          "repair_hidden": {
+            "default": false,
+            "title": "Repair Hidden",
+            "type": "boolean"
           },
           "state": {
             "title": "State",
@@ -26318,6 +26336,11 @@
                 ],
                 "default": null
               },
+              "repair_hidden": {
+                "default": false,
+                "title": "Repair Hidden",
+                "type": "boolean"
+              },
               "state": {
                 "title": "State",
                 "type": "string"
@@ -26821,6 +26844,11 @@
                   }
                 ],
                 "default": null
+              },
+              "repair_hidden": {
+                "default": false,
+                "title": "Repair Hidden",
+                "type": "boolean"
               },
               "state": {
                 "title": "State",
