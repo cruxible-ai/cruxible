@@ -10,11 +10,15 @@ A Unix socket avoids exposing a TCP port:
 ~~~bash
 uv run cruxible server start \
   --socket /run/user/$UID/cruxible.sock \
-  --state-root /srv/cruxible/playbill \
-  --bootstrap-secret-file /secure/cruxible-bootstrap
+  --state-root /srv/cruxible/playbill
 ~~~
 
 Clients select it with --server-socket or CRUXIBLE_SERVER_SOCKET.
+
+A socket daemon defaults to auth off and says so when it starts: every process
+of your OS user is equally trusted, and a principal ID is a claim, not
+authentication. Add `--auth` when processes of the same user must be told
+apart by bearer credential.
 
 The daemon binds the socket with mode 0600. It creates a missing socket
 directory with mode 0700. It refuses to start unless that directory is a real
@@ -38,8 +42,12 @@ uv run cruxible server start \
   --port 8100 \
   --state-root /srv/cruxible/playbill \
   --capability-ceiling admin \
+  --auth \
   --bootstrap-secret-file /secure/cruxible-bootstrap
 ~~~
+
+A TCP daemon, loopback included, refuses to start without `--auth`
+(or `CRUXIBLE_SERVER_AUTH=true`).
 
 Use TLS at the proxy for any non-loopback deployment. Never send bearer tokens
 over plaintext untrusted networks. TCP-created hosts are intentionally

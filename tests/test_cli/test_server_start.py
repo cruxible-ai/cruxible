@@ -89,6 +89,7 @@ def test_start_passes_flags_to_run_server(
         "state_root": "/var/lib/cruxible/server",
         "socket_path": None,
         "capability_ceiling": "governed_write",
+        "auth": False,
     }
 
 
@@ -111,6 +112,7 @@ def test_start_defaults_are_none_so_env_wins(
         "state_root": None,
         "socket_path": None,
         "capability_ceiling": None,
+        "auth": False,
     }
 
 
@@ -134,3 +136,42 @@ def test_start_rejects_unknown_capability_ceiling_before_serving(
     assert "governed_write" in result.output
     assert "graph_write" in result.output
     assert "admin" in result.output
+
+
+def test_start_auth_flag_opts_in_and_keeps_the_env_form(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    import os
+
+    captured: dict[str, object] = {}
+    # Recorded so the teardown removes what the command writes into os.environ.
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "false")
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "already-configured")
+    monkeypatch.setattr(
+        "cruxible_core.server.app.run_server", lambda **kwargs: captured.update(kwargs)
+    )
+
+    result = runner.invoke(cli, ["server", "start", "--auth", "--socket", "/tmp/x/d.sock"])
+
+    assert result.exit_code == 0, result.output
+    assert captured["auth"] is True
+    assert os.environ["CRUXIBLE_SERVER_AUTH"] == "true"
+
+
+def test_start_refuses_a_bootstrap_secret_file_without_auth(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.setattr(
+        "cruxible_core.server.app.run_server",
+        lambda **_kwargs: pytest.fail("an auth-off secret file must not reach run_server"),
+    )
+
+    result = runner.invoke(
+        cli,
+        ["server", "start", "--bootstrap-secret-file", str(tmp_path / "secret")],
+    )
+
+    assert result.exit_code == 2
+    assert "add --auth" in result.output
+    assert not (tmp_path / "secret").exists()

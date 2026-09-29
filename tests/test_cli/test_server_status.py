@@ -145,7 +145,7 @@ def test_status_reachable_daemon_missing_credential_names_repair(
     assert "--server-bearer-token" not in result.output
     assert "CRUXIBLE_SERVER_BEARER_TOKEN" in result.output
     assert "bootstrap-secret file" in result.output
-    assert "cruxible server start --bootstrap-secret-file PATH" in result.output
+    assert "cruxible server start --auth --bootstrap-secret-file PATH" in result.output
     assert "could not reach Cruxible server" not in result.output
 
 

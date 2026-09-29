@@ -85,7 +85,7 @@ permission refusal names the tier it needs and what that tier allows.
 ## server
 
 ~~~text
-cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port PORT]
+cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port PORT] [--auth]
 cruxible server install-service [SERVER-START FLAGS] [--print] [--replace]
 cruxible server status
 cruxible server restart
@@ -93,7 +93,19 @@ cruxible server stop [--timeout SECONDS] [--json]
 ~~~
 
 server start is the long-running daemon process and does not connect to an
-existing server. With `--socket`, the socket is bound with mode 0600;
+existing server.
+
+Auth depends on the transport. A Unix-socket daemon defaults to auth off and
+prints one line saying so when it starts: every process that can reach its
+owner-only socket directory already runs as your OS user, and bearer tokens
+would protect nothing from a process that can read the token files anyway. A
+TCP daemon, loopback included, refuses to start without auth
+(`cruxible.server.tcp_requires_auth`), because any local user or network peer
+that can reach the port could otherwise act as any principal. `--auth` is the
+explicit opt-in on either transport; `CRUXIBLE_SERVER_AUTH=true` is its
+environment form. Once a state root has run with auth it refuses to start
+without it (`cruxible.server.auth_latched`). `--bootstrap-secret-file` needs
+auth and is refused on an auth-off start. With `--socket`, the socket is bound with mode 0600;
 a missing socket directory is created 0700; a socket directory that is not
 yours and owner-only, or an ancestor another user could use to replace it, is
 refused at startup. State defaults to `~/.cruxible`; `--state-root` overrides
@@ -137,7 +149,8 @@ record without writing. Installation refuses an existing unit unless
 with `launchctl start ai.cruxible.daemon` on macOS,
 `systemctl --user start cruxible.service` on Linux, or run
 `cruxible server start`. Auth defaults to the state root's durable auth latch;
-an explicit `--auth`/`--no-auth` disagreement is refused. Service files contain
+an explicit `--auth`/`--no-auth` disagreement is refused, and a TCP service
+without auth is refused (`service_install.tcp_requires_auth`). Service files contain
 no bearer or bootstrap secret, and auth-on installation requires an active
 durable runtime credential first.
 

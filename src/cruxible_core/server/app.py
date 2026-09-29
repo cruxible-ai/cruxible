@@ -35,6 +35,7 @@ from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.auth import token_auth_middleware
 from cruxible_core.server.config import (
+    auth_off_startup_notice,
     get_server_fatal_log_path,
     get_server_state_root,
     is_server_auth_enabled,
@@ -261,6 +262,7 @@ def run_server(
     state_root: str | None = None,
     socket_path: str | None = None,
     capability_ceiling: str | None = None,
+    auth: bool = False,
 ) -> None:
     """Launch the Cruxible daemon over UDS or host/port transport.
 
@@ -273,7 +275,13 @@ def run_server(
     and startup validation all observe the same effective settings, and so an
     in-place re-exec (``cruxible server restart``) reproduces them via
     ``sys.argv``.
+
+    ``auth=True`` is the explicit local opt-in (``server start --auth``); it sets
+    ``CRUXIBLE_SERVER_AUTH=true``, which stays the env form of the same switch.
+    A Unix-socket daemon defaults to auth off; a TCP daemon refuses without it.
     """
+    if auth:
+        os.environ["CRUXIBLE_SERVER_AUTH"] = "true"
     if host is not None:
         os.environ["CRUXIBLE_HOST"] = host
     if port is not None:
@@ -615,6 +623,10 @@ def _serve(resolved_socket: str | None) -> None:
     )
     if is_server_auth_enabled():
         credential_store.mark_auth_required("server_startup_auth_enabled")
+    else:
+        # Only a Unix-socket daemon gets here without auth (validation above
+        # refuses TCP), so this one line is the whole local trust model.
+        print(auth_off_startup_notice(), file=sys.stderr)
     for warning in volatile_state_path_warnings(
         instance_locations=[
             (record.instance_id, record.location) for record in registry.list_instances()

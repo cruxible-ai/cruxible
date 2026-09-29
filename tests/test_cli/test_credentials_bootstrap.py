@@ -290,6 +290,7 @@ def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
         "state_root": None,
         "socket_path": None,
         "capability_ceiling": None,
+        "auth": False,
     }
 
 

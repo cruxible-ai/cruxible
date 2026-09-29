@@ -17,11 +17,12 @@ In shell one:
 ~~~bash
 uv run cruxible server start \
   --socket /tmp/cruxible-playbill-run/daemon.sock \
-  --state-root /tmp/cruxible-playbill-dev \
-  --bootstrap-secret-file /tmp/cruxible-playbill-bootstrap
+  --state-root /tmp/cruxible-playbill-dev
 ~~~
 
-The daemon creates a one-time bootstrap secret with mode 0600. It binds the
+A Unix-socket daemon runs with auth off and says so in one line when it starts:
+every process of your OS user is equally trusted, so no bearer token is needed
+locally. A TCP daemon refuses to start without `--auth`. The daemon binds the
 socket with mode 0600 in a directory it creates with mode 0700. It refuses to
 start unless the socket's directory is yours and owner-only, and no ancestor
 lets another user replace it (a sticky root-owned `/tmp` is fine; a socket
@@ -31,7 +32,6 @@ In shell two:
 
 ~~~bash
 export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-playbill-run/daemon.sock
-export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat /tmp/cruxible-playbill-bootstrap)"
 ~~~
 
 Allocate an empty daemon-owned host. The CLI remembers it as the active

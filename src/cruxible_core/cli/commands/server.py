@@ -251,6 +251,16 @@ def server_group() -> None:
     ),
 )
 @click.option(
+    "--auth",
+    "auth",
+    is_flag=True,
+    default=False,
+    help=(
+        "Require bearer credentials (also CRUXIBLE_SERVER_AUTH=true). A Unix-socket "
+        "daemon defaults to auth off; a TCP daemon refuses to start without it."
+    ),
+)
+@click.option(
     "--bootstrap-secret-file",
     default=None,
     type=click.Path(dir_okay=False),
@@ -264,6 +274,7 @@ def server_start_cmd(
     state_root: str | None,
     socket_path: str | None,
     capability_ceiling: str | None,
+    auth: bool,
     bootstrap_secret_file: str | None,
 ) -> None:
     """Launch the Cruxible daemon in the foreground.
@@ -276,7 +287,19 @@ def server_start_cmd(
     capability ceiling is fixed for the daemon process lifetime. Use a durable
     `--state-root` (e.g. `~/.cruxible`), not a volatile temp path. Stop
     with Ctrl-C.
+
+    Auth: a Unix-socket daemon defaults to auth off and says so on start, since
+    every process that can reach its 0700 socket directory already runs as this
+    OS user. A TCP daemon refuses to start without auth. `--auth` (or
+    `CRUXIBLE_SERVER_AUTH=true`) opts in.
     """
+    if auth:
+        os.environ["CRUXIBLE_SERVER_AUTH"] = "true"
+    if bootstrap_secret_file is not None and not is_server_auth_enabled():
+        raise click.UsageError(
+            "--bootstrap-secret-file needs auth, and this daemon would start with auth "
+            "off; repair: add --auth (or set CRUXIBLE_SERVER_AUTH=true)"
+        )
     _prepare_generated_bootstrap_secret(bootstrap_secret_file)
     # Imported lazily so `cruxible server start --help` (and the rest of the CLI)
     # never pays the uvicorn/server import cost, and so the optional `server`
@@ -289,6 +312,7 @@ def server_start_cmd(
         state_root=state_root,
         socket_path=socket_path,
         capability_ceiling=capability_ceiling,
+        auth=auth,
     )
 
 
@@ -404,8 +428,8 @@ def server_install_service_cmd(
         if config.auth_enabled and not durable_credentials_available(root):
             raise click.UsageError(
                 "recorded auth-on service no longer has an active durable runtime credential; "
-                "repair: run `cruxible server start --bootstrap-secret-file PATH`, claim the "
-                "bootstrap credential, then rerun install-service"
+                "repair: run `cruxible server start --auth --bootstrap-secret-file PATH`, "
+                "claim the bootstrap credential, then rerun install-service"
             )
         click.echo(render_service(config).decode("utf-8"), nl=False)
         return
@@ -414,7 +438,7 @@ def server_install_service_cmd(
     if auth_enabled and not durable_credentials_available(root):
         raise click.UsageError(
             "auth-on unattended startup requires an active durable runtime credential; "
-            "repair: run `cruxible server start --bootstrap-secret-file PATH`, claim the "
+            "repair: run `cruxible server start --auth --bootstrap-secret-file PATH`, claim the "
             "bootstrap credential, then rerun install-service"
         )
     config = build_service_config(
@@ -432,6 +456,12 @@ def server_install_service_cmd(
         ),
         auth_enabled=auth_enabled,
     )
+    if config.socket_path is None and not config.auth_enabled:
+        raise click.UsageError(
+            "service_install.tcp_requires_auth: a TCP daemon refuses to start without auth, "
+            "so this service would never come up; repair: rerun install-service with "
+            "--socket PATH, or with --auth"
+        )
     if print_only:
         click.echo(render_service(config).decode("utf-8"), nl=False)
         return
