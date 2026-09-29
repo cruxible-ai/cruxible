@@ -6,8 +6,15 @@ from collections.abc import Mapping
 from datetime import datetime
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.claims import ClaimArtifactAny, claim_path, parse_claim
+from cruxible_client.contracts.claims import (
+    ClaimArtifactAny,
+    claim_artifact_digest,
+    claim_path,
+    claim_statement_digest,
+    parse_claim,
+)
 from cruxible_client.contracts.errors import (
+    ClaimNotFoundError,
     PlaybillExecutionError,
     PlaybillFormatError,
     PlaybillJournalIntegrityError,
@@ -38,6 +45,7 @@ from cruxible_client.contracts.resolution_contracts import (
 )
 from cruxible_core.compiler.compiler import artifact_codec_for_compiler
 from cruxible_core.exhaust.records import ProcedureJournalRecordV1, parse_journal_payload
+from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
 
@@ -70,6 +78,52 @@ def read_claim_reference(
     claim = parse_claim(raw, path=path, codec=artifact_codec_for_compiler(coordinate.compiler))
     reference.verify(claim)
     return claim
+
+
+def resolve_claim_version(
+    instance: PlaybillInstance,
+    value: str | ClaimVersionReferenceV1,
+    *,
+    at: AcceptedProjectionCoordinate | None = None,
+) -> ClaimVersionReferenceV1:
+    """Turn a Claim ID into the exact reference of its version accepted at ``at``.
+
+    The reference names the generation that first accepted that version, not
+    the lookup coordinate, so the same Claim version always yields the same
+    reference. An exact reference passes through untouched.
+    """
+
+    if isinstance(value, ClaimVersionReferenceV1):
+        return value
+    claim_id = value.removeprefix("Claim:")
+    coordinate = instance.accepted_coordinate() if at is None else at
+    path = claim_path(claim_id)
+    raw = instance.blob_at(coordinate.git_oid, path)
+    if raw is None:
+        raise ClaimNotFoundError(
+            f"Claim {claim_id} is not accepted at the requested coordinate; "
+            "find it with `cruxible playbill claim list`"
+        )
+    claim = parse_claim(raw, path=path, codec=artifact_codec_for_compiler(coordinate.compiler))
+    artifact_digest = claim_artifact_digest(claim).tagged
+    with instance.accepted_history_reader(
+        at=AcceptedCoordinate.from_internal(coordinate)
+    ) as history:
+        occurrence = history.artifact(artifact_digest, identity=claim.identity.qualified)
+        if occurrence is None:
+            raise PlaybillExecutionError("Claim version has no accepted occurrence")
+        generation = history.generation(occurrence.occurrence_sequence)
+    return ClaimVersionReferenceV1(
+        identity=claim.identity,
+        artifact_digest=artifact_digest,
+        statement_digest=claim_statement_digest(claim.statement).tagged,
+        coordinate=AcceptedCoordinate(
+            git_oid=generation.git_oid,
+            semantic_root=generation.semantic_root,
+            generation_root=generation.generation_root,
+            compiler_digest=generation.compiler_digest,
+        ),
+    )
 
 
 def read_resolution_contract(
@@ -277,15 +331,16 @@ def service_resolution_contracts(
         else instance.resolve_accepted_coordinate(**request.at.model_dump(exclude={"tag"}))
     )
     coordinate = AcceptedCoordinate.from_internal(at)
+    hypothesis = resolve_claim_version(instance, request.hypothesis, at=at)
     with instance.accepted_history_reader(at=coordinate) as history:
-        if history.generation_for_oid(request.hypothesis.coordinate.git_oid) is None:
+        if history.generation_for_oid(hypothesis.coordinate.git_oid) is None:
             raise PlaybillExecutionError("hypothesis is outside the requested accepted history")
-    read_claim_reference(instance, request.hypothesis)
+    read_claim_reference(instance, hypothesis)
     with instance.bind_accepted_projection(at) as projection:
         rows = projection.typed.connection.execute(
             "SELECT identity,artifact_digest,path FROM resolution_contracts WHERE "
             "hypothesis_identity=? AND hypothesis_artifact_digest=? ORDER BY identity",
-            (request.hypothesis.identity.qualified, request.hypothesis.artifact_digest),
+            (hypothesis.identity.qualified, hypothesis.artifact_digest),
         ).fetchall()
         projection.typed.prefetch_members(tuple(row[2] for row in rows))
         views = []
@@ -303,7 +358,7 @@ def service_resolution_contracts(
             )
             if (
                 resolution_contract_digest(contract).tagged != digest
-                or contract.hypothesis.statement_digest != request.hypothesis.statement_digest
+                or contract.hypothesis.statement_digest != hypothesis.statement_digest
             ):
                 raise PlaybillExecutionError("indexed contract differs from its exact hypothesis")
             views.append(

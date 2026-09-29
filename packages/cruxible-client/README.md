@@ -778,16 +778,16 @@ Reads accepted history changes with row/byte bounds and snapshot-bearing continu
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-resolution_contracts(hypothesis: ClaimVersionReferenceV1) -> api.ResolutionContractsResultV1
+resolution_contracts(hypothesis: str | ClaimVersionReferenceV1) -> api.ResolutionContractsResultV1
 ```
 
-Reads accepted tests of this exact hypothesis version, including retired contracts, at pb.coordinate.
+Reads accepted tests of a Claim, including retired contracts, at pb.coordinate. `hypothesis` is a Claim ID; the daemon resolves its accepted version.
 
 **Conditions and effects:** A history/snapshot read does not establish current execution authority.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `hypothesis` | Required | Exact accepted Claim version whose independent resolution contracts are requested. |
+| `hypothesis` | Required | Claim ID (`CLM-...`) whose resolution contracts are requested; an exact `ClaimVersionReferenceV1` is the advanced form. |
 
 <a id="api-playbill-predict"></a>
 
@@ -796,10 +796,10 @@ Reads accepted tests of this exact hypothesis version, including retired contrac
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-predict(contract: ResolutionContractV1) -> Prediction
+predict(contract: ResolutionContractV1 | ResolutionContractInputV1) -> Prediction
 ```
 
-Creates a governed proposal for an independent resolution contract over an already accepted hypothesis. Returns proposal/intent identities.
+Creates a governed proposal for an independent resolution contract over an already accepted hypothesis. The hypothesis may be a Claim ID (`ResolutionContractInputV1`); the daemon pins the exact version it resolves to. Returns proposal/intent identities.
 
 **Conditions and effects:** Does not approve or accept the proposal.
 
@@ -815,23 +815,23 @@ Creates a governed proposal for an independent resolution contract over an alrea
 
 ```text
 settle(
-    contract: ResolutionContractReferenceV1,
+    prediction: str | ResolutionContractReferenceV1,
     *,
-    observation: ClaimVersionReferenceV1,
+    observation: str | ClaimVersionReferenceV1,
     trigger_event: TriggerEventReferenceV1 | None = None,
     terminal_run_id: str | None = None,
     terminal_record_digest: str | None = None,
 ) -> PredictionSettlement
 ```
 
-Evaluates and records settlement using the exact contract and accepted observation version. Returns the mechanical Boolean outcome and relation.
+Evaluates and records settlement for a prediction named by contract name or bound window id (`RSC-...`) from an observation named by Claim ID; the daemon resolves the exact contract, window and Claim version. Returns the mechanical Boolean outcome and relation.
 
 **Conditions and effects:** terminal_run_id and terminal_record_digest must be supplied together. Missing/non-Boolean outcome refuses; procedure success alone is not settlement.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `contract` | Required | Typed contract or exact contract reference named by the signature. |
-| `observation` | Required | Exact accepted observation Claim version used as settlement evidence. |
+| `prediction` | Required | Contract name or bound window id (`RSC-...`); an exact contract reference is the advanced form. |
+| `observation` | Required | Claim ID of the accepted observation; an exact Claim version reference is the advanced form. |
 | `trigger_event` | `None` | Retained trigger-event reference, when the contract/run requires event binding. |
 | `terminal_run_id` | `None` | Run whose terminal evidence supports settlement; supplied together with terminal_record_digest. |
 | `terminal_record_digest` | `None` | Exact retained terminal record; supplied together with terminal_run_id. |

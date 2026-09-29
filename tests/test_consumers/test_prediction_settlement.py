@@ -385,28 +385,30 @@ def test_retiring_a_contract_withdraws_what_it_owed(tmp_path: Path) -> None:
     assert settleable_windows(instance) == () and _windows(instance) == {}
 
 
-def test_the_settle_example_refuses_a_window_retired_before_the_worker_saw_it(
+def test_settling_by_window_id_refuses_a_window_retired_before_the_worker_saw_it(
     tmp_path: Path,
 ) -> None:
-    from cruxible_core.service.procedures.predictions import (
-        PredictionRefused,
-        service_prediction_settle_example,
-    )
+    from cruxible_client.contracts.predictions import PlaybillSettleRequestV2
+    from cruxible_core.service.procedures.predictions import PredictionRefused
 
-    instance, owner, _capture, contract = fixed_world(tmp_path)
+    instance, owner, capture, contract = fixed_world(tmp_path)
     drain(instance, now=FIXED_CLOSES)
     (window,) = settleable_windows(instance)
-    template = service_prediction_settle_example(
-        instance, bound_contract_id=window.bound_contract_id
-    )
-    assert template.contract.artifact_digest == contract.artifact_digest
+    assert window.contract.artifact_digest == contract.artifact_digest
+    observation = observe(instance, owner, capture, at="2026-09-02T12:02:00.000000Z")
 
     # The worker has not seen the retirement yet and still holds the window.
     retire(instance, owner, contract, at="2026-09-02T13:30:00.000000Z")
     assert settleable_windows(instance) == (window,)
 
     with pytest.raises(PredictionRefused, match="no longer live") as refused:
-        service_prediction_settle_example(instance, bound_contract_id=window.bound_contract_id)
+        served.service_settle_playbill_prediction(
+            instance,
+            prediction_id=window.bound_contract_id,
+            request=PlaybillSettleRequestV2(observation=observation.identity.name),
+            actor_context=served._actor(),
+            recorded_at=FIXED_CLOSES + timedelta(hours=1),
+        )
     assert refused.value.code == "prediction_window_unknown"
 
 

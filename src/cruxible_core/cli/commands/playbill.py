@@ -59,7 +59,7 @@ from cruxible_client.authoring.workspace import (
     write_playbill_workspace_config,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for
-from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
+from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestations import (
@@ -2557,18 +2557,37 @@ def claim_group() -> None:
 
 
 @playbill_group.command("resolution-contracts")
-@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("claim_id", required=False)
+@click.option(
+    "--request",
+    "request_file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Advanced: a ResolutionContractsRequestV1 file with an exact hypothesis reference.",
+)
 @json_option
 @handle_errors
-def resolution_contracts(request_file: str, output_json: bool) -> None:
-    """Find accepted tests of an exact Claim version."""
-    request = _read_model(request_file, contracts.ResolutionContractsRequestV1)
+def resolution_contracts(claim_id: str | None, request_file: str | None, output_json: bool) -> None:
+    """Find accepted tests of a Claim, by Claim ID (CLM-... or Claim:CLM-...).
+
+    The daemon resolves the Claim's accepted version; `--request FILE` takes an
+    exact ClaimVersionReferenceV1 hypothesis instead.
+    """
+    if (claim_id is None) == (request_file is None):
+        raise click.UsageError("provide exactly one of CLAIM_ID or --request FILE")
+    request = (
+        _read_model(request_file, contracts.ResolutionContractsRequestV1)
+        if request_file is not None
+        else contracts.ResolutionContractsRequestV1(hypothesis=cast(str, claim_id))
+    )
     result = _server_call(
         lambda client, instance_id: client.resolution_contracts(instance_id, request=request),
         command_name="playbill resolution-contracts",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+        return
+    if not result.contracts:
+        click.echo("No resolution contracts test this Claim version.")
         return
     for view in result.contracts:
         click.echo(
@@ -2599,82 +2618,48 @@ def predict(request_file: str, output_json: bool) -> None:
     click.echo(f"Proposal: {result.proposal_id}")
 
 
-def _settle_example(prediction_id: str) -> contracts.PlaybillSettleRequestV2:
-    """A settlement request for one prediction contract, contract and evidence to fill in."""
-
-    placeholder = AcceptedCoordinate(
-        git_oid="0" * 40,
-        semantic_root="sha256:" + "0" * 64,
-        generation_root="sha256:" + "0" * 64,
-        compiler_digest="sha256:" + "0" * 64,
-    )
-    return contracts.PlaybillSettleRequestV2(
-        contract=ResolutionContractReferenceV1(
-            identity=ArtifactIdentity(
-                kind="ResolutionContract",
-                name=prediction_id.removeprefix("ResolutionContract:"),
-            ),
-            artifact_digest="sha256:" + "0" * 64,
-            coordinate=placeholder,
-        ),
-        trigger_event=None,
-        evidence=contracts.ObservationSettlementEvidenceV2(
-            claim=contracts.ClaimVersionReferenceV1(
-                identity=ArtifactIdentity(kind="Claim", name="CLM-" + "0" * 32),
-                artifact_digest="sha256:" + "0" * 64,
-                statement_digest="sha256:" + "0" * 64,
-                coordinate=placeholder,
-            )
-        ),
-    )
-
-
 @playbill_group.command("settle")
 @click.argument("prediction_id")
-@click.argument("request_file", required=False, type=click.Path(exists=True, dir_okay=False))
 @click.option(
-    "--example",
-    is_flag=True,
+    "--observation",
+    "observation",
+    help="Claim ID (CLM-...) of the accepted observation that settles the prediction.",
+)
+@click.option(
+    "--request",
+    "request_file",
+    type=click.Path(exists=True, dir_okay=False),
     help=(
-        "Print a settlement request whose evidence is left to fill in. For a bound "
-        "window id (RSC-...) the daemon fills in its exact contract and anchor event."
+        "Advanced: a PlaybillSettleRequestV2 file (exact contract reference, anchor event, "
+        "or terminal evidence)."
     ),
 )
 @json_option
 @handle_errors
 def settle(
     prediction_id: str,
+    observation: str | None,
     request_file: str | None,
-    example: bool,
     output_json: bool,
 ) -> None:
-    """Settle one prediction from a later observation or retained terminal.
+    """Settle one prediction from a later accepted observation.
 
-    `playbill next` names each settleable prediction window by its bound
-    contract id with a `--example RSC-...` command; the daemon fills in the exact
-    contract and bound window, you replace the evidence Claim reference with the
-    accepted observation, then pass the file here under the same RSC-... id.
+    PREDICTION_ID is the contract name or the bound window id (RSC-...) that
+    `playbill next` names; the daemon resolves the exact contract, window and
+    observation version from it and `--observation CLM-...`.
     """
 
-    if example:
-        if request_file is not None:
-            raise click.UsageError("--example does not accept REQUEST_FILE")
-        example_request = (
-            _server_call(
-                lambda client, instance_id: client.example_playbill_settlement(
-                    instance_id, prediction_id
-                ),
-                command_name="playbill settle --example",
-            )
-            if prediction_id.startswith("RSC-")
-            else _settle_example(prediction_id)
+    if (observation is None) == (request_file is None):
+        raise click.UsageError(
+            "provide --observation CLAIM_ID (the accepted observation that settles it) "
+            "or --request FILE"
         )
-        _emit_json(example_request.model_dump(mode="json"))
-        return
-    if request_file is None:
-        raise click.UsageError("provide PREDICTION_ID REQUEST_FILE or --example")
     try:
-        request = contracts.PlaybillSettleRequestV2.model_validate(_read_mapping(request_file))
+        request = (
+            contracts.PlaybillSettleRequestV2.model_validate(_read_mapping(request_file))
+            if request_file is not None
+            else contracts.PlaybillSettleRequestV2(observation=observation)
+        )
     except ValidationError as exc:
         raise click.ClickException(f"Invalid settlement request: {exc}") from exc
     result = _server_call(

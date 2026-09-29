@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import ValidationError
 
@@ -31,11 +31,13 @@ from cruxible_client.contracts.predictions import (
     PredictionRefusalCodeV1,
     TerminalSettlementEvidenceV2,
 )
+from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
 from cruxible_client.contracts.projection import AcceptedCoordinate as PublicAcceptedCoordinate
 from cruxible_client.contracts.repairs import ServedRepairV1, served_repair_for_refusal
 from cruxible_client.contracts.resolution_contracts import (
     ClaimVersionReferenceV1,
     InvestigationBindingV1,
+    ResolutionContractReferenceV1,
     ResolutionContractV1,
     resolution_contract_digest,
 )
@@ -76,6 +78,7 @@ from cruxible_core.service.procedures.resolution_contracts import (
     canonical_contract_reference,
     read_claim_reference,
     read_resolution_contract,
+    resolve_claim_version,
 )
 from cruxible_core.storage.cas import BodyAccessContext
 from cruxible_core.storage.material_reservations import ProcedureMaterialReservationStore
@@ -115,12 +118,24 @@ def service_predict_playbill(
     actor: AuthenticatedActor,
     evaluation_time: datetime,
 ) -> PlaybillPredictResultV2:
-    """Submit a governed test of an already accepted exact hypothesis."""
+    """Submit a governed test of an already accepted exact hypothesis.
+
+    A hypothesis named by Claim ID is resolved here to the exact version
+    accepted at the head, so the authored contract pins one Claim version.
+    """
     instance.require_writable()
+    contract = ResolutionContractV1.model_validate(
+        {
+            **request.contract.model_dump(mode="json"),
+            "hypothesis": resolve_claim_version(instance, request.contract.hypothesis).model_dump(
+                mode="json"
+            ),
+        }
+    )
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     created = coordinator.create(
         actor=actor,
-        payload=ResolutionContractAuthoringPayloadV1(resolution_contract=request.contract),
+        payload=ResolutionContractAuthoringPayloadV1(resolution_contract=contract),
         canonical_timestamp=canonical_candidate_timestamp(ensure_utc(evaluation_time)),
     )
     submitted = coordinator.submit(created.intent.intent_id, actor=actor)
@@ -131,8 +146,8 @@ def service_predict_playbill(
             "diagnostics.",
         )
     return PlaybillPredictResultV2(
-        contract_identity=request.contract.identity.qualified,
-        contract_digest=resolution_contract_digest(request.contract).tagged,
+        contract_identity=contract.identity.qualified,
+        contract_digest=resolution_contract_digest(contract).tagged,
         proposal_id=submitted.status.proposal_id,
         intent=AuthoringIntentViewV1(intent=submitted.intent).model_dump(mode="json"),
     )
@@ -343,72 +358,67 @@ def _append_settlement(
     return resolution
 
 
-def service_prediction_settle_example(
-    instance: PlaybillInstance, *, bound_contract_id: str
-) -> PlaybillSettleRequestV2:
-    """A settlement request for one bound window, with everything but its evidence filled in.
-
-    The prediction worker holds each bound window by its contract id (RSC-...),
-    so the id alone names the exact contract reference and the anchor event;
-    the evidence Claim is the settler's to choose and stays a placeholder.
-    The worker's findings may trail accepted state, so the held contract version
-    must still be the live one at the accepted head, and the held window must
-    rebuild the same bound contract id settle will journal under.
-    """
-
-    from cruxible_core.consumers.predictions import bound_window
-
-    held = bound_window(instance, bound_contract_id)
-    if held is None:
-        raise _refuse(
-            "prediction_window_unknown",
-            f"No bound prediction window {bound_contract_id} is held by the prediction worker.",
-        )
-    reference = held.contract
+def _live_contract_digest(instance: PlaybillInstance, name: str) -> str | None:
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        live = projection.typed.connection.execute(
+        row = projection.typed.connection.execute(
             "SELECT artifact_digest FROM resolution_contracts "
             "WHERE identity=? AND lifecycle='live'",
-            (reference.identity.qualified,),
+            (f"ResolutionContract:{name}",),
         ).fetchone()
-    if live is None or live[0] != reference.artifact_digest:
-        raise _refuse(
-            "prediction_window_unknown",
-            f"Bound prediction window {bound_contract_id} belongs to a contract version "
-            "that is no longer live at the accepted head.",
-        )
-    contract = read_resolution_contract(instance, reference)
-    activation = build_independent_activation(
-        contract,
-        InvestigationBindingV1(
-            contract=canonical_contract_reference(instance, reference),
-            hypothesis=contract.hypothesis,
-            window=held.window,
-        ),
-        activated_at=artifact_accepted_time(instance, reference),
-    )
-    if activation.contract_id != bound_contract_id:
-        raise _refuse(
-            "prediction_window_unknown",
-            f"Bound prediction window {bound_contract_id} does not rebuild from its contract.",
-        )
-    placeholder = PublicAcceptedCoordinate(
-        git_oid="0" * 40,
-        semantic_root="sha256:" + "0" * 64,
-        generation_root="sha256:" + "0" * 64,
-        compiler_digest="sha256:" + "0" * 64,
-    )
-    return PlaybillSettleRequestV2(
-        contract=held.contract,
-        trigger_event=held.window.event,
-        evidence=ObservationSettlementEvidenceV2(
-            claim=ClaimVersionReferenceV1(
-                identity=ArtifactIdentity(kind="Claim", name="CLM-" + "0" * 32),
-                artifact_digest="sha256:" + "0" * 64,
-                statement_digest="sha256:" + "0" * 64,
-                coordinate=placeholder,
+    return None if row is None else str(row[0])
+
+
+def _settlement_route(
+    instance: PlaybillInstance,
+    *,
+    prediction_id: str,
+    request: PlaybillSettleRequestV2,
+) -> tuple[ResolutionContractReferenceV1, TriggerEventReferenceV1 | None]:
+    """The exact contract (and anchor) a settle route names, unless given outright.
+
+    A bound window id (RSC-...) is held by the prediction worker with its exact
+    contract reference and anchor event; a contract name resolves to the live
+    accepted version at the head.
+    """
+
+    if request.contract is not None:
+        return request.contract, request.trigger_event
+    if prediction_id.startswith("RSC-"):
+        from cruxible_core.consumers.predictions import bound_window
+
+        held = bound_window(instance, prediction_id)
+        if held is None:
+            raise _refuse(
+                "prediction_window_unknown",
+                f"No bound prediction window {prediction_id} is held by the prediction worker; "
+                "`cruxible playbill next` lists settleable windows.",
             )
+        # The worker's findings may trail accepted state: the held version must
+        # still be the live one at the head.
+        if _live_contract_digest(instance, held.contract.identity.name) != (
+            held.contract.artifact_digest
+        ):
+            raise _refuse(
+                "prediction_window_unknown",
+                f"Bound prediction window {prediction_id} belongs to a contract version "
+                "that is no longer live at the accepted head.",
+            )
+        return held.contract, request.trigger_event or held.window.event
+    name = prediction_id.removeprefix("ResolutionContract:")
+    digest = _live_contract_digest(instance, name)
+    if digest is None:
+        raise _refuse(
+            "prediction_window_unknown",
+            f"No live accepted ResolutionContract is named {name!r}; name the prediction by "
+            "its contract name or by the RSC-... window id `cruxible playbill next` shows.",
+        )
+    return (
+        ResolutionContractReferenceV1(
+            identity=ArtifactIdentity(kind="ResolutionContract", name=name),
+            artifact_digest=digest,
+            coordinate=PublicAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         ),
+        request.trigger_event,
     )
 
 
@@ -423,12 +433,21 @@ def service_settle_playbill_prediction(
     """Settle one accepted predicted Claim from a later accepted outcome.
 
     The route names the contract (its name or qualified identity) or one bound
-    window of it (the RSC-... id `next` and `settle --example` name); a bound
-    window id must be the one this request's contract and window rebuild.
+    window of it (the RSC-... id `next` names); a bound window id must be the
+    one this request's contract and window rebuild. The observation is a Claim
+    ID the daemon resolves to its accepted version.
     """
 
     instance.require_writable()
-    reference = request.contract
+    reference, trigger_event = _settlement_route(
+        instance, prediction_id=prediction_id, request=request
+    )
+    evidence = request.evidence or ObservationSettlementEvidenceV2(
+        claim=cast(str, request.observation)
+    )
+    evidence = evidence.model_copy(
+        update={"claim": resolve_claim_version(instance, evidence.claim)}
+    )
     names_bound_window = prediction_id not in {
         reference.identity.name,
         reference.identity.qualified,
@@ -443,9 +462,7 @@ def service_settle_playbill_prediction(
     investigation = InvestigationBindingV1(
         contract=reference,
         hypothesis=contract.hypothesis,
-        window=bind_window(
-            instance, contract.window, request.trigger_event, now=ensure_utc(recorded_at)
-        ),
+        window=bind_window(instance, contract.window, trigger_event, now=ensure_utc(recorded_at)),
     )
     activation = build_independent_activation(
         contract,
@@ -458,14 +475,15 @@ def service_settle_playbill_prediction(
             "Settlement route differs from its exact contract reference and bound window.",
         )
     prediction_claim = read_claim_reference(instance, contract.hypothesis)
-    observation = read_claim_reference(instance, request.evidence.claim)
-    observation_coordinate = request.evidence.claim.coordinate
+    observation_reference = cast(ClaimVersionReferenceV1, evidence.claim)
+    observation = read_claim_reference(instance, observation_reference)
+    observation_coordinate = observation_reference.coordinate
     if not _observation_matches(contract, observation):
         raise _refuse(
             "settlement_evidence_mismatch",
             "Observation does not match the accepted contract selector.",
         )
-    observed_at = artifact_accepted_time(instance, request.evidence.claim)
+    observed_at = artifact_accepted_time(instance, observation_reference)
     if (
         observed_at <= activation.activated_at
         or not activation.check_at <= observed_at <= activation.expires_at
@@ -513,10 +531,10 @@ def service_settle_playbill_prediction(
         "tag": "playbill-prediction-settlement-authorization-v1",
         "kind": "observation_admission",
     }
-    if isinstance(request.evidence, TerminalSettlementEvidenceV2):
+    if isinstance(evidence, TerminalSettlementEvidenceV2):
         terminal = _terminal_record(
             instance,
-            evidence=request.evidence,
+            evidence=evidence,
             investigation=investigation,
         )
         # The terminal's mandate is the AUTHORITY; the caller is the ACTOR. A
@@ -540,7 +558,7 @@ def service_settle_playbill_prediction(
             "terminal_record_digest": terminal.record_digest,
             "mandate_actor_id": mandate_actor.actor_id,
         }
-    elif not isinstance(request.evidence, ObservationSettlementEvidenceV2):
+    elif not isinstance(evidence, ObservationSettlementEvidenceV2):
         raise _refuse(
             "settlement_evidence_mismatch",
             "Settlement evidence kind is unsupported.",

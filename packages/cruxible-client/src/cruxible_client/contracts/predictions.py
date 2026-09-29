@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical
 from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
 from cruxible_client.contracts.resolution_contracts import (
-    ClaimVersionReferenceV1,
+    ClaimIdInput,
+    ClaimVersionInput,
     ResolutionContractReferenceV1,
     ResolutionContractV1,
 )
@@ -41,9 +42,20 @@ class _StrictPredictionModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class ResolutionContractInputV1(ResolutionContractV1):
+    """A ResolutionContract whose hypothesis may be named by Claim ID.
+
+    The daemon resolves a Claim ID to the exact accepted version -- artifact and
+    statement digests and the coordinate that accepted it -- before the
+    contract is authored, so the accepted artifact always pins one version.
+    """
+
+    hypothesis: ClaimVersionInput  # type: ignore[assignment]
+
+
 class PlaybillPredictRequestV2(_StrictPredictionModel):
     tag: Literal["playbill-predict-request-v2"] = "playbill-predict-request-v2"
-    contract: ResolutionContractV1
+    contract: ResolutionContractV1 | ResolutionContractInputV1
 
 
 class PlaybillPredictResultV2(_StrictPredictionModel):
@@ -58,14 +70,14 @@ class ObservationSettlementEvidenceV2(_StrictPredictionModel):
     tag: Literal["playbill-observation-settlement-evidence-v2"] = (
         "playbill-observation-settlement-evidence-v2"
     )
-    claim: ClaimVersionReferenceV1
+    claim: ClaimVersionInput
 
 
 class TerminalSettlementEvidenceV2(_StrictPredictionModel):
     tag: Literal["playbill-terminal-settlement-evidence-v2"] = (
         "playbill-terminal-settlement-evidence-v2"
     )
-    claim: ClaimVersionReferenceV1
+    claim: ClaimVersionInput
     run_id: str
     terminal_record_digest: str
 
@@ -83,22 +95,35 @@ PredictionSettlementEvidenceV2: TypeAlias = Annotated[
 
 
 class PlaybillSettleRequestV2(_StrictPredictionModel):
-    tag: Literal["playbill-settle-request-v2"] = "playbill-settle-request-v2"
-    contract: ResolutionContractReferenceV1
-    trigger_event: TriggerEventReferenceV1 | None = None
-    evidence: PredictionSettlementEvidenceV2
+    """Settle one prediction; usually just the observation's Claim ID.
 
-
-class PlaybillSettleExampleV1(_StrictPredictionModel):
-    """A settle request for one bound prediction window, evidence left to fill in.
-
-    Served as a view that carries the request as a JSON object, so the request
-    model is never both a request body and a response schema.
+    The route names the prediction (its contract name or a bound window's
+    RSC-... id), so the daemon resolves the exact contract reference and, for a
+    bound window, its anchor event. ``contract``, ``trigger_event`` and
+    ``evidence`` are the advanced forms: an exact reference, an explicit anchor,
+    or terminal evidence from a mandated settle run.
     """
 
-    tag: Literal["playbill-settle-example-v1"] = "playbill-settle-example-v1"
-    bound_contract_id: str
-    request: dict[str, Any]
+    tag: Literal["playbill-settle-request-v2"] = "playbill-settle-request-v2"
+    observation: ClaimIdInput | None = Field(
+        default=None,
+        description="Claim ID of the accepted observation that settles the prediction.",
+    )
+    contract: ResolutionContractReferenceV1 | None = Field(
+        default=None,
+        description="Advanced: the exact contract reference; omit to resolve it from the route.",
+    )
+    trigger_event: TriggerEventReferenceV1 | None = None
+    evidence: PredictionSettlementEvidenceV2 | None = Field(
+        default=None,
+        description="Advanced: explicit observation or terminal evidence instead of observation.",
+    )
+
+    @model_validator(mode="after")
+    def _one_evidence(self) -> PlaybillSettleRequestV2:
+        if (self.observation is None) == (self.evidence is None):
+            raise ValueError("settle takes exactly one of observation (a Claim ID) or evidence")
+        return self
 
 
 class PlaybillSettleResultV2(_StrictPredictionModel):

@@ -428,7 +428,6 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "dispatch_playbill_line",
         "run_playbill_line",
         "predict_playbill",
-        "example_playbill_settlement",
         "settle_playbill_prediction",
         "discover_playbill",
         "expand_playbill",

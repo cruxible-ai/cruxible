@@ -1298,39 +1298,42 @@ under a new operation key.
 ## playbill predictions
 
 ~~~text
-cruxible playbill resolution-contracts REQUEST_FILE [--json]
+cruxible playbill resolution-contracts CLAIM_ID [--json]
+cruxible playbill resolution-contracts --request REQUEST_FILE [--json]
 cruxible playbill predict REQUEST_FILE [--json]
-cruxible playbill settle PREDICTION_ID REQUEST_FILE [--json]
-cruxible playbill settle --example PREDICTION_ID
+cruxible playbill settle PREDICTION_ID --observation CLAIM_ID [--json]
+cruxible playbill settle PREDICTION_ID --request REQUEST_FILE [--json]
 ~~~
 
-`predict` submits a governed ResolutionContract for an already accepted, exact
-hypothesis Claim version and returns the proposal ID and authoring intent. The
-contract must be accepted before it can bind an investigation or settlement.
-`resolution-contracts` finds accepted contracts for an exact hypothesis version.
+Every Claim version these commands need is named by Claim ID (`CLM-...` or
+`Claim:CLM-...`); the daemon resolves its artifact and statement digests and the
+coordinate that accepted it. The exact `ClaimVersionReferenceV1` object is still
+accepted, as the advanced form, anywhere a Claim ID is.
 
-`settle` names that contract by ID, or one of its bound windows by its bound
-contract ID (`RSC-...`), and gives its exact accepted reference; a bound window
-ID must be the one the request's contract and window rebuild. It checks later
-accepted observation evidence against the contract's selector, mechanical rule,
-and bound window. Terminal-backed settlement additionally requires one delivered
+`predict` submits a governed ResolutionContract whose `hypothesis` is an already
+accepted Claim (by ID) and returns the proposal ID and authoring intent. The
+contract pins the exact version the ID resolved to, and must be accepted before
+it can bind an investigation or settlement. `resolution-contracts CLAIM_ID`
+finds accepted contracts testing that Claim's current version and says so when
+there are none; `--request` takes an exact hypothesis reference.
+
+`settle` names the prediction by its contract name, or one of its bound windows
+by its bound contract ID (`RSC-...`), and the settling observation by Claim ID.
+The daemon resolves the exact live contract reference and, for a bound window,
+its anchor event; a window the worker does not hold, or whose contract version
+is no longer live at the accepted head, is refused with
+`prediction_window_unknown`. It checks the observation against the contract's
+selector, mechanical rule, and bound window. `--request` takes the advanced
+request: an exact contract reference, an explicit anchor event, or terminal
+evidence. Terminal-backed settlement additionally requires one delivered
 `settle_change_set` receipt from the same investigation whose outcome is
 `settled`; one that fell back to a proposal does not qualify. It records
 the activation and resolution in operational exhaust; it does not create or
 mutate Claims. A failed attempt or an unevaluable
 observation does not settle the hypothesis as false. Effectful terminal nodes
-remain disabled in the public Procedure runner.
-
-`settle --example` prints a settlement request. Given a bound window ID
-(`RSC-...`), it asks the daemon for the prediction worker's window and fills in
-the exact accepted contract reference and, for an event window, the anchor event
-the window is bound to, so only the evidence Claim reference is left to replace.
-A window the worker does not hold, or whose contract version is no longer live
-at the accepted head, is refused with `prediction_window_unknown`. Submit the
-filled request with `cruxible playbill settle RSC-... REQUEST_FILE`.
-Given any other ID it prints a placeholder template without contacting the
-daemon. The `prediction_settleable` row in `playbill next` renders this command
-with its bound window ID.
+remain disabled in the public Procedure runner. The `prediction_settleable` row
+in `playbill next` renders `cruxible playbill settle RSC-...`; add
+`--observation CLAIM_ID`.
 
 A window that closed with no accepted observation inside it cannot settle:
 `settle` refuses with `prediction_deadline_passed`, and the
@@ -1536,9 +1539,8 @@ last check:
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the
   `bound_contract_id`, and `evaluated_at`. An event window has one row per
-  anchor. The repair is `cruxible playbill settle --example RSC-...`, which
-  fills in the contract and window; settle from an accepted observation inside
-  the window. The worker does not check that such an observation exists; if
+  anchor. The repair is `cruxible playbill settle RSC-...`; add
+  `--observation CLAIM_ID` naming an accepted observation inside the window. The worker does not check that such an observation exists; if
   none does, see the note under `playbill settle`.
   The worker clears the row when the settlement lands, and restores it if that
   answer is overturned.

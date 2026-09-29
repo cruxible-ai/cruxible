@@ -1540,11 +1540,8 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
-    from cruxible_client.contracts.predictions import ObservationSettlementEvidenceV2
-    from cruxible_core.service.procedures.predictions import (
-        PredictionRefused,
-        service_prediction_settle_example,
-    )
+    from cruxible_client.contracts.predictions import PlaybillSettleRequestV2
+    from cruxible_core.service.procedures.predictions import PredictionRefused
     from tests.test_consumers import test_prediction_settlement as worker
 
     instance, owner, capture, contract = worker.fixed_world(root)
@@ -1567,21 +1564,15 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
         for item in service_playbill_next(instance, request=hidden).items
     )
 
-    # The named repair: a short command naming the bound window, whose template
-    # the daemon fills with the exact contract and window; the settler supplies
-    # only the observation.
+    # The named repair: a short command naming the bound window; the daemon
+    # resolves its exact contract and window, and the settler adds only the
+    # observation's Claim ID.
     bound = row.detail["bound_contract_id"]
-    assert row.repair.command == f"cruxible playbill settle --example {bound}"
-    template = service_prediction_settle_example(instance, bound_contract_id=bound)
-    assert template.contract.identity.qualified == contract.identity.qualified
-    assert template.trigger_event is None  # a fixed window has no anchor
+    assert row.repair.command == f"cruxible playbill settle {bound}"
     observation = worker.observe(instance, owner, capture, at="2026-09-02T12:02:00.000000Z")
-    filled = template.model_copy(
-        update={"evidence": ObservationSettlementEvidenceV2(claim=observation)}
-    )
-    # The id the row and the example name also submits the filled request, and
-    # only for the window this contract and window rebuild.
-    with pytest.raises(PredictionRefused, match="bound window") as refused:
+    filled = PlaybillSettleRequestV2(observation=observation.identity.name)
+    # A window id the worker does not hold names no prediction.
+    with pytest.raises(PredictionRefused, match="No bound prediction window") as refused:
         worker.served.service_settle_playbill_prediction(
             instance,
             prediction_id="RSC-" + "0" * 32,
@@ -1589,7 +1580,7 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
             actor_context=worker.served._actor(),
             recorded_at=worker.FIXED_CLOSES + timedelta(minutes=1),
         )
-    assert refused.value.code == "settlement_evidence_mismatch"
+    assert refused.value.code == "prediction_window_unknown"
     worker.served.service_settle_playbill_prediction(
         instance,
         prediction_id=bound,

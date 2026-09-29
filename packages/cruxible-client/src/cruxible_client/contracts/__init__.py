@@ -73,7 +73,6 @@ from cruxible_client.contracts.predictions import (
     PlaybillPredictRequestV2 as PlaybillPredictRequestV2,
 )
 from cruxible_client.contracts.predictions import PlaybillPredictResultV2 as PlaybillPredictResultV2
-from cruxible_client.contracts.predictions import PlaybillSettleExampleV1 as PlaybillSettleExampleV1
 from cruxible_client.contracts.predictions import PlaybillSettleRequestV2 as PlaybillSettleRequestV2
 from cruxible_client.contracts.predictions import PlaybillSettleResultV2 as PlaybillSettleResultV2
 from cruxible_client.contracts.predictions import (
@@ -87,6 +86,9 @@ from cruxible_client.contracts.predictions import (
 )
 from cruxible_client.contracts.predictions import (
     PredictionThresholdRuleV1 as PredictionThresholdRuleV1,
+)
+from cruxible_client.contracts.predictions import (
+    ResolutionContractInputV1 as ResolutionContractInputV1,
 )
 from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidenceV2 as TerminalSettlementEvidenceV2,

@@ -96,7 +96,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
     assert set(current["models"]) == {
         "ClaimVersionReferenceV1",
         "ConsumerStatusV1",
-        "PlaybillSettleExampleV1",
+        "ResolutionContractInputV1",
         "InvestigationBindingV1",
         "LineTriggerBindingV1",
         "LineDispatchItemV1",

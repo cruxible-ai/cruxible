@@ -295,16 +295,16 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "idempotency assertion; the daemon derives occurrence identity."
     ),
     "cruxible_playbill_resolution_contracts": (
-        "Find accepted resolution contracts for an exact Claim version. Returns their "
+        "Find accepted resolution contracts testing a Claim, by Claim ID. Returns their "
         "definitions and version references, including retired contracts."
     ),
     "cruxible_playbill_predict": (
-        "Propose a governed test of an already accepted exact Claim version. Supply its "
+        "Propose a governed test of an accepted Claim: its hypothesis is a Claim ID, plus an "
         "observation selector, mechanical rule, and fixed or retained-event observation window."
     ),
     "cruxible_playbill_settle": (
-        "Use when a predicted Claim and its matching later observation are accepted, optionally "
-        "binding the exact retained mandate-settlement terminal record."
+        "Use when a predicted Claim and its matching later observation are accepted: pass the "
+        "prediction id and the observation's Claim ID."
     ),
     "cruxible_playbill_discover": (
         "Use when you do not yet know which interface or Subject names the state you want. "

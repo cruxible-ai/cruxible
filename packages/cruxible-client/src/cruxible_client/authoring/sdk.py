@@ -191,6 +191,7 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.predictions import (
     ObservationSettlementEvidenceV2,
     PlaybillPredictRequestV2,
+    ResolutionContractInputV1,
     TerminalSettlementEvidenceV2,
 )
 from cruxible_client.contracts.procedures.artifacts import (
@@ -1853,16 +1854,24 @@ class Playbill:
         return tuple(self._typed_claim_view(view) for view in result.claims)
 
     def resolution_contracts(
-        self, hypothesis: ClaimVersionReferenceV1
+        self, hypothesis: str | ClaimVersionReferenceV1
     ) -> api.ResolutionContractsResultV1:
-        """Find accepted tests of this exact Claim version, including retired tests."""
+        """Find accepted tests of a Claim, including retired tests.
+
+        ``hypothesis`` is a Claim ID (``CLM-...``); the daemon resolves its
+        accepted version. An exact ``ClaimVersionReferenceV1`` is the advanced form.
+        """
         return self._client.resolution_contracts(
             self._instance_id,
             request=api.ResolutionContractsRequestV1(hypothesis=hypothesis, at=self.coordinate),
         )
 
-    def predict(self, contract: ResolutionContractV1) -> Prediction:
-        """Propose a governed test of an exact, already accepted Claim version."""
+    def predict(self, contract: ResolutionContractV1 | ResolutionContractInputV1) -> Prediction:
+        """Propose a governed test of an accepted Claim.
+
+        The contract's ``hypothesis`` may be a Claim ID (``ResolutionContractInputV1``);
+        the daemon pins the exact accepted version it resolves to.
+        """
         result = self._client.predict_playbill(
             self._instance_id, request=PlaybillPredictRequestV2(contract=contract)
         )
@@ -1877,32 +1886,42 @@ class Playbill:
 
     def settle(
         self,
-        contract: ResolutionContractReferenceV1,
+        prediction: str | ResolutionContractReferenceV1,
         *,
-        observation: ClaimVersionReferenceV1,
+        observation: str | ClaimVersionReferenceV1,
         trigger_event: TriggerEventReferenceV1 | None = None,
         terminal_run_id: str | None = None,
         terminal_record_digest: str | None = None,
     ) -> PredictionSettlement:
-        """Settle a retained contract using an exact accepted observation version."""
+        """Settle a prediction from an accepted observation, both named by ID.
+
+        ``prediction`` is the contract name or a bound window's ``RSC-...`` id
+        (as ``next`` names it); ``observation`` is the settling Claim's ID. The
+        daemon resolves the exact contract, window and Claim version. Exact
+        references are accepted as the advanced form.
+        """
         if (terminal_run_id is None) != (terminal_record_digest is None):
             raise ValueError("terminal settlement requires its run and record digest")
-        evidence = (
-            ObservationSettlementEvidenceV2(claim=observation)
-            if terminal_run_id is None
-            else TerminalSettlementEvidenceV2(
-                claim=observation,
-                run_id=terminal_run_id,
-                terminal_record_digest=cast(str, terminal_record_digest),
+        contract = None if isinstance(prediction, str) else prediction
+        route = prediction if isinstance(prediction, str) else prediction.identity.name
+        if terminal_run_id is None and isinstance(observation, str):
+            request = api.PlaybillSettleRequestV2(
+                observation=observation, contract=contract, trigger_event=trigger_event
             )
-        )
-        result = self._client.settle_playbill_prediction(
-            self._instance_id,
-            contract.identity.name,
-            request=api.PlaybillSettleRequestV2(
+        else:
+            evidence = (
+                ObservationSettlementEvidenceV2(claim=observation)
+                if terminal_run_id is None
+                else TerminalSettlementEvidenceV2(
+                    claim=observation,
+                    run_id=terminal_run_id,
+                    terminal_record_digest=cast(str, terminal_record_digest),
+                )
+            )
+            request = api.PlaybillSettleRequestV2(
                 contract=contract, trigger_event=trigger_event, evidence=evidence
-            ),
-        )
+            )
+        result = self._client.settle_playbill_prediction(self._instance_id, route, request=request)
         outcome = result.resolution.get("settlement_outcome")
         if not isinstance(outcome, bool):
             raise ValueError("settlement response omitted its mechanical outcome")

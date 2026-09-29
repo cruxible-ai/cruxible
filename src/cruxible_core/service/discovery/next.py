@@ -875,12 +875,13 @@ def _repair_command(
         if operation == "playbill.line.dispatch" and isinstance(limit, int) and limit > 1:
             parts.extend(["--limit", str(limit)])
     elif operation == "playbill.settle":
-        # The request's evidence is the settler's to choose, so the runnable
-        # step is the template with the exact contract and window filled in.
+        # The daemon resolves the exact contract and window from the bound
+        # window id; the observation is the settler's to choose, so its Claim
+        # ID is the one operand left to add (`--observation CLM-...`).
         prediction_id = values.get("prediction_id")
         if not isinstance(prediction_id, str) or not prediction_id:
             return None
-        parts.extend(["--example", shlex.quote(prediction_id)])
+        parts.append(shlex.quote(prediction_id))
     elif operation == "playbill.proposal.readmit":
         proposal_id = values.get("proposal_id")
         if not isinstance(proposal_id, str):
@@ -2952,10 +2953,10 @@ def _prediction_items(
                     operation="playbill.settle",
                     target=subject,
                     required_change=(
-                        "settle_the_prediction_from_an_accepted_observation_in_its_window"
+                        "settle_with_the_claim_id_of_an_accepted_observation_in_its_window"
                     ),
                     # The bound contract id names the exact window; the daemon
-                    # fills in its contract and anchor for the template.
+                    # resolves its contract and anchor from it.
                     arguments={"prediction_id": owed.bound_contract_id},
                 ),
             )

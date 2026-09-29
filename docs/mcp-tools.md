@@ -275,9 +275,14 @@ themselves a governed track record; promotion remains a separate governed act.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_resolution_contracts` | Find governed tests of an exact Claim version | `READ_ONLY` |
-| `cruxible_playbill_predict` | Propose a governed resolution contract | `GOVERNED_WRITE` |
-| `cruxible_playbill_settle` | Settle one prediction from accepted observation evidence or its governed terminal | `GOVERNED_WRITE` |
+| `cruxible_playbill_resolution_contracts` | Find governed tests of a Claim, by `claim_id` | `READ_ONLY` |
+| `cruxible_playbill_predict` | Propose a governed resolution contract whose hypothesis is a Claim ID | `GOVERNED_WRITE` |
+| `cruxible_playbill_settle` | Settle one prediction (`prediction_id`) from the Claim ID of an accepted observation (`observation`) | `GOVERNED_WRITE` |
+
+Every Claim version these tools need can be a plain Claim ID (`CLM-...` or
+`Claim:CLM-...`); the daemon resolves its digests and accepting coordinate. The
+exact reference, and settle's full `request` (exact contract reference, anchor
+event, or terminal evidence), remain as the advanced form.
 
 Prediction settlement records the activation and resolution in operational
 exhaust; it does not create or mutate Claims, and it does not create a second

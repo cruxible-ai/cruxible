@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from functools import wraps
-from typing import Annotated, Any, Callable, Literal
+from typing import Annotated, Any, Callable, Literal, cast
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
@@ -1007,11 +1007,21 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_resolution_contracts(
-        instance_id: InstanceId = None, *, request: contracts.ResolutionContractsRequestV1
+        instance_id: InstanceId = None,
+        *,
+        claim_id: str | None = None,
+        request: contracts.ResolutionContractsRequestV1 | None = None,
     ) -> contracts.ResolutionContractsResultV1:
-        """Find accepted resolution contracts for an exact hypothesis version."""
+        """Find accepted resolution contracts testing a Claim, by Claim ID.
+
+        The daemon resolves the Claim's accepted version. ``request`` is the
+        advanced form carrying an exact hypothesis reference; pass one or the other.
+        """
+        if (claim_id is None) == (request is None):
+            raise ValueError("pass exactly one of claim_id or request")
         return handlers.handle_playbill_resolution_contracts(
-            require_instance_id(instance_id), request
+            require_instance_id(instance_id),
+            request or contracts.ResolutionContractsRequestV1(hypothesis=cast(str, claim_id)),
         )
 
     @_tool
@@ -1020,7 +1030,7 @@ def register_tools(
         *,
         request: contracts.PlaybillPredictRequestV2,
     ) -> contracts.PlaybillPredictResultV2:
-        """Propose a predicted Claim with an exact settlement rule and deadline."""
+        """Propose a governed test of an accepted Claim, named by Claim ID in the hypothesis."""
         return handlers.handle_playbill_predict(require_instance_id(instance_id), request)
 
     @_tool
@@ -1028,11 +1038,21 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         prediction_id: str,
-        request: contracts.PlaybillSettleRequestV2,
+        observation: str | None = None,
+        request: contracts.PlaybillSettleRequestV2 | None = None,
     ) -> contracts.PlaybillSettleResultV2:
-        """Settle one prediction from an accepted observation or mandated terminal."""
+        """Settle one prediction from the Claim ID of an accepted observation.
+
+        ``prediction_id`` is the contract name or the RSC-... window id ``next``
+        names; ``observation`` is the settling Claim's ID. ``request`` is the
+        advanced form (exact references or mandated terminal evidence).
+        """
+        if (observation is None) == (request is None):
+            raise ValueError("pass exactly one of observation or request")
         return handlers.handle_playbill_settle_prediction(
-            require_instance_id(instance_id), prediction_id, request
+            require_instance_id(instance_id),
+            prediction_id,
+            request or contracts.PlaybillSettleRequestV2(observation=observation),
         )
 
     @_tool
