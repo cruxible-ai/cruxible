@@ -92,6 +92,11 @@ class NextQueueConsumers:
         door = instance.claim_attestation_evidence_store().head()
         with _STATE.open(instance) as connection:
             assert connection is not None
+            targets = connection.execute(
+                "SELECT target_coordinate,target_door FROM progress"
+            ).fetchone()
+            if targets == (coordinate, door):
+                return
             connection.execute(
                 "INSERT INTO progress(singleton,target_coordinate,target_door) VALUES (1,?,?) "
                 "ON CONFLICT(singleton) DO UPDATE SET "

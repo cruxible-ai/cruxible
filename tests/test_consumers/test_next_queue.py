@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -466,3 +467,26 @@ def test_a_queue_behind_head_is_never_used_by_a_read(tmp_path: Path) -> None:
     with patch.object(next_module, "_claim_rows", wraps=next_module._claim_rows) as live:
         service_playbill_next(instance, request=request)
         assert live.called
+
+
+def test_unchanged_targets_match_without_a_write_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
+    statements: list[str] = []
+    original = consumer._STATE.open
+
+    @contextmanager
+    def traced(*args, **kwargs):  # type: ignore[no-untyped-def]
+        with original(*args, **kwargs) as connection:
+            assert connection is not None
+            connection.set_trace_callback(statements.append)
+            yield connection
+
+    monkeypatch.setattr(consumer._STATE, "open", traced)
+    for tick in range(3):
+        WORKER.match(instance, now=EVALUATION_TIME + timedelta(seconds=tick), daemon_id="restart")
+    assert statements
+    assert all(statement.lstrip().split()[0] == "SELECT" for statement in statements)
