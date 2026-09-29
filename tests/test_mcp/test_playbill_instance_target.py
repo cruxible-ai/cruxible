@@ -35,6 +35,8 @@ def _whoami() -> contracts.PlaybillWhoAmI:
         principal_registration_status="active",
         active_principal_ids=["agent-a"],
         coordinate=_COORDINATE,
+        can_author=True,
+        authoring_refusal=None,
     )
 
 

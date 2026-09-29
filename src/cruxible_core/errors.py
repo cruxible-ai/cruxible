@@ -243,6 +243,7 @@ PrincipalRefusalCode = Literal[
     "playbill.identity.principal_unconfigured",
     "playbill.identity.init_owner_mismatch",
     "playbill.identity.credential_unbound",
+    "playbill.identity.permission_insufficient",
     "runtime_credential.principal_authority_required",
     "runtime_credential.principal_proof_invalid",
     "runtime_credential.principal_proof_replayed",

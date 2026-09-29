@@ -8,12 +8,17 @@ served repair.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.principals import (
+    AuthoringRefusalCodeV1,
+    PlaybillAuthoringRefusalV1,
+)
+from cruxible_client.contracts.repairs import RepairOperationV1, hand_edit_repair
 from cruxible_core.actor_vocabulary import LOCAL_OPERATOR_ACTOR_ID
 from cruxible_core.errors import PrincipalRefusedError
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.permissions import PermissionMode
 
 PrincipalStanding = Literal["active", "revoked", "absent"]
 
@@ -106,13 +111,88 @@ def credential_unbound_refusal(
         "governed_write`, then revoke this one",
         repair=RepairOperationV1(
             operation="credential.mint",
-            arguments={"unbound_credential_id": credential_id},
+            arguments=({} if credential_id is None else {"unbound_credential_id": credential_id}),
         ),
     )
 
 
+def require_authoring_principal(instance: PlaybillInstance, actor_id: str) -> None:
+    """Refuse an authoring draft whose actor is not an active principal, before any work.
+
+    Proposal evaluation refuses the same actor later
+    (``playbill.proposal.creator_principal_invalid``); refusing at create saves
+    the caller from building and preflighting a payload that can never land.
+    """
+
+    refusal = principal_refusal(instance, actor_id, configured=actor_id != LOCAL_OPERATOR_ACTOR_ID)
+    if refusal is not None:
+        raise refusal
+
+
+def authoring_refusal(
+    instance: PlaybillInstance,
+    *,
+    actor_id: str | None,
+    configured: bool,
+    credential_id: str | None,
+    credential_label: str | None,
+    permission_mode: PermissionMode,
+) -> PlaybillAuthoringRefusalV1 | None:
+    """Why this actor cannot author here, or None when it can.
+
+    The first applicable reason wins, in the order a write meets them: a
+    terminal instance, an actor with no principal, a principal that is not
+    active, then a tier below ``governed_write``.
+    """
+
+    refusal: PrincipalRefusedError | None
+    terminal = instance.descriptor.decommissioned
+    if terminal is not None:
+        return PlaybillAuthoringRefusalV1(
+            code="playbill.instance.decommissioned",
+            detail=(
+                f"the instance was decommissioned at {terminal.decommissioned_at} "
+                f"({terminal.reason}); every write is refused"
+            ),
+            repair=hand_edit_repair(
+                "playbill.instance.decommissioned",
+                required_change=(
+                    "author on another instance; a decommissioned one accepts no writes"
+                ),
+            ),
+        )
+    if actor_id is None:
+        refusal = credential_unbound_refusal(
+            credential_id=credential_id, credential_label=credential_label
+        )
+    else:
+        refusal = principal_refusal(instance, actor_id, configured=configured)
+    if refusal is None and permission_mode < PermissionMode.GOVERNED_WRITE:
+        refusal = PrincipalRefusedError(
+            "playbill.identity.permission_insufficient",
+            f"this request runs at {permission_mode.name.lower()}, and authoring needs "
+            "governed_write; repair: mint a governed_write credential for your principal: "
+            f"`cruxible credential mint --principal-id {actor_id} --key-dir DIR --mode "
+            "governed_write`",
+            repair=RepairOperationV1(
+                operation="credential.mint",
+                arguments={"principal_id": actor_id, "permission_mode": "governed_write"},
+            ),
+        )
+    if refusal is None:
+        return None
+    assert refusal.repair is not None
+    return PlaybillAuthoringRefusalV1(
+        code=cast(AuthoringRefusalCodeV1, refusal.error_code),
+        detail=str(refusal).removeprefix(f"{refusal.error_code}: "),
+        repair=refusal.repair,
+    )
+
+
 __all__ = [
+    "authoring_refusal",
     "credential_unbound_refusal",
+    "require_authoring_principal",
     "PrincipalStanding",
     "active_principal_ids",
     "principal_refusal",

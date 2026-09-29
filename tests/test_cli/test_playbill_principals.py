@@ -171,6 +171,8 @@ def test_the_global_principal_id_reaches_the_client_and_whoami_says_it_is_a_clai
                 principal_registration_status="active",
                 active_principal_ids=["alice"],
                 coordinate=COORDINATE,
+                can_author=True,
+                authoring_refusal=None,
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common.CruxibleClient", StubClient)
@@ -197,3 +199,4 @@ def test_the_global_principal_id_reaches_the_client_and_whoami_says_it_is_a_clai
     assert constructed[0]["principal_id"] == "alice"
     assert "configured principal ID (CRUXIBLE_PRINCIPAL_ID)" in result.output
     assert "Identity is a claim, not authentication" in result.output
+    assert "Can author: yes" in result.output

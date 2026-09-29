@@ -78,6 +78,7 @@ from cruxible_core.proposals.proposals import (
     ProposalAdmissionRequest,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.identity import require_authoring_principal
 
 AUTHORING_REBASE_DOMAIN = "playbill-authoring-rebase-v1"
 
@@ -212,6 +213,9 @@ class AuthoringIntentCoordinator:
         """
 
         self.instance.require_writable()
+        # Refuse an actor that can never land a proposal here before any
+        # payload is resolved, compiled or preflighted.
+        require_authoring_principal(self.instance, actor.actor_id)
         at = base_coordinate or AcceptedCoordinate.from_internal(
             self.instance.accepted_coordinate()
         )
@@ -320,6 +324,7 @@ class AuthoringIntentCoordinator:
         """Atomically bind friendly IDs to one accepted base, then persist the intent."""
 
         self.instance.require_writable()
+        require_authoring_principal(self.instance, actor.actor_id)
         base = self.instance.accepted_coordinate()
         coordinate = AcceptedCoordinate.from_internal(base)
         payload = lower_authoring_input(input)

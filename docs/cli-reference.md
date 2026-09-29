@@ -2011,8 +2011,18 @@ cruxible playbill proposal activate PROPOSAL_ID [--workspace-root DIR]
   [--no-sync]
 ~~~
 
-`cruxible playbill whoami` names the credential-derived actor, its effective
-permission mode, accepted principal-registration status, and current coordinate.
+`cruxible playbill whoami` names the actor and where its ID came from (the
+credential's principal, the configured principal ID, or the local operator),
+whether a credential authenticates it (with auth off the ID is a claim, not
+authentication), its effective permission mode, accepted principal-registration
+status, and current coordinate. It also says whether this actor can author and,
+if not, why: `can_author` and `authoring_refusal` carry exactly the code, detail
+and repair authoring would return (`playbill.identity.principal_unconfigured`,
+`principal_absent`, `principal_revoked`, `credential_unbound`,
+`permission_insufficient`, or `playbill.instance.decommissioned`). Authoring
+refuses such an actor at `authoring create`, before any payload is compiled or
+preflighted, rather than at proposal evaluation
+(`playbill.proposal.creator_principal_invalid`).
 `proposal list` prints a labeled `COORDINATE_TIME` column and deterministically
 separates current open candidates from accepted, refused, and stale terminal
 evidence so retries do not depend on remembered IDs. It returns one page

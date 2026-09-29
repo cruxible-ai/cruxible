@@ -12111,6 +12111,156 @@
         "verdict"
       ]
     },
+    "PlaybillAuthoringRefusalV1": {
+      "fields": {
+        "code": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "code",
+          "required": true,
+          "schema": {
+            "enum": [
+              "playbill.identity.credential_unbound",
+              "playbill.identity.principal_unconfigured",
+              "playbill.identity.principal_absent",
+              "playbill.identity.principal_revoked",
+              "playbill.identity.permission_insufficient",
+              "playbill.instance.decommissioned"
+            ],
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "detail": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": true,
+          "schema": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "repair": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "repair",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RepairOperationV1"
+              },
+              {
+                "$ref": "#/$defs/HandEditRepairV1"
+              }
+            ],
+            "title": "Repair"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Why this actor cannot author, and the runnable repair.",
+        "properties": {
+          "code": {
+            "enum": [
+              "playbill.identity.credential_unbound",
+              "playbill.identity.principal_unconfigured",
+              "playbill.identity.principal_absent",
+              "playbill.identity.principal_revoked",
+              "playbill.identity.permission_insufficient",
+              "playbill.instance.decommissioned"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "repair": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RepairOperationV1"
+              },
+              {
+                "$ref": "#/$defs/HandEditRepairV1"
+              }
+            ],
+            "title": "Repair"
+          }
+        },
+        "required": [
+          "code",
+          "detail",
+          "repair"
+        ],
+        "title": "PlaybillAuthoringRefusalV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "code",
+        "detail",
+        "repair"
+      ]
+    },
     "PlaybillAuthoringSubmitResult": {
       "fields": {
         "claim_revision": {
@@ -68410,6 +68560,32 @@
             "type": "boolean"
           }
         },
+        "authoring_refusal": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "authoring_refusal",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "can_author": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "can_author",
+          "required": true,
+          "schema": {
+            "title": "Can Author",
+            "type": "boolean"
+          }
+        },
         "coordinate": {
           "has_default": false,
           "has_default_factory": false,
@@ -68491,6 +68667,40 @@
       },
       "json_schema": {
         "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -68529,6 +68739,66 @@
             ],
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
+          },
+          "PlaybillAuthoringRefusalV1": {
+            "additionalProperties": false,
+            "description": "Why this actor cannot author, and the runnable repair.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "playbill.identity.credential_unbound",
+                  "playbill.identity.principal_unconfigured",
+                  "playbill.identity.principal_absent",
+                  "playbill.identity.principal_revoked",
+                  "playbill.identity.permission_insufficient",
+                  "playbill.instance.decommissioned"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "repair"
+            ],
+            "title": "PlaybillAuthoringRefusalV1",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -68563,6 +68833,20 @@
           },
           "authenticated": {
             "title": "Authenticated",
+            "type": "boolean"
+          },
+          "authoring_refusal": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "can_author": {
+            "title": "Can Author",
             "type": "boolean"
           },
           "coordinate": {
@@ -68620,7 +68904,9 @@
           "credential_permission_mode",
           "principal_registration_status",
           "active_principal_ids",
-          "coordinate"
+          "coordinate",
+          "can_author",
+          "authoring_refusal"
         ],
         "title": "PlaybillWhoAmI",
         "type": "object"
@@ -68630,6 +68916,8 @@
         "actor_id",
         "actor_id_source",
         "authenticated",
+        "authoring_refusal",
+        "can_author",
         "coordinate",
         "credential_label",
         "credential_permission_mode",

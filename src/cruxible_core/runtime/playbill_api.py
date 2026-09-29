@@ -945,6 +945,7 @@ def playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
         actor_id_source=actor_id_source,
         authenticated=auth_context is not None and auth_context.authenticated,
         permission_mode=get_current_mode(),
+        credential_id=None if auth_context is None else auth_context.credential_id,
     )
     return contracts.PlaybillWhoAmI.model_validate(result.model_dump(mode="json"))
 

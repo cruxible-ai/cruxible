@@ -155,3 +155,100 @@ def test_the_client_sends_its_configured_principal_and_refuses_a_malformed_one()
         client.close()
     with pytest.raises(ClientConfigError, match="CRUXIBLE_PRINCIPAL_ID"):
         CruxibleClient(socket_path="/tmp/unused.sock", principal_id="Not An ID")
+
+
+def _create(client: TestClient, headers: dict[str, str]) -> object:
+    from tests.test_authoring.test_authoring_preflight import _self_source_payload
+
+    return client.post(
+        f"/api/v1/{INSTANCE}/playbill/authoring/intents",
+        json={
+            "tag": "playbill-authoring-intent-create-request-v1",
+            "payload": _self_source_payload().model_dump(mode="json"),
+        },
+        headers=headers,
+    )
+
+
+def test_whoami_says_whether_the_actor_can_author_and_create_refuses_with_the_same_repair(
+    daemon: tuple[TestClient, Path], tmp_path: Path
+) -> None:
+    client, managed = daemon
+    assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
+
+    anonymous = client.get(f"/api/v1/{INSTANCE}/playbill/whoami").json()
+    refused = _create(client, {})
+    alice = client.get(
+        f"/api/v1/{INSTANCE}/playbill/whoami", headers={PRINCIPAL_ID_HEADER: "alice"}
+    ).json()
+    created = _create(client, {PRINCIPAL_ID_HEADER: "alice"})
+
+    assert anonymous["can_author"] is False
+    refusal = anonymous["authoring_refusal"]
+    assert refusal["code"] == "playbill.identity.principal_unconfigured"
+    assert "CRUXIBLE_PRINCIPAL_ID" in refusal["detail"]
+    assert "active principals: alice" in refusal["detail"]
+    assert refused.status_code == 403  # type: ignore[attr-defined]
+    body = refused.json()  # type: ignore[attr-defined]
+    assert body["error_code"] == refusal["code"]
+    assert body["repair"] == refusal["repair"]
+    assert alice["can_author"] is True
+    assert alice["authoring_refusal"] is None
+    assert created.status_code == 200, created.text  # type: ignore[attr-defined]
+
+
+def test_a_read_only_credential_is_told_it_cannot_author_and_how_to_get_the_tier(
+    daemon: tuple[TestClient, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, managed = daemon
+    assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
+    reader = get_runtime_credential_store().create_credential(
+        instance_id=INSTANCE,
+        label="alice-reader",
+        permission_mode=PermissionMode.READ_ONLY,
+        principal_id="alice",
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+
+    who = client.get(
+        f"/api/v1/{INSTANCE}/playbill/whoami",
+        headers={"Authorization": f"Bearer {reader.token}"},
+    ).json()
+
+    assert who["can_author"] is False
+    assert who["authoring_refusal"]["code"] == "playbill.identity.permission_insufficient"
+    assert who["authoring_refusal"]["repair"] == {
+        "operation": "credential.mint",
+        "arguments": {"principal_id": "alice", "permission_mode": "governed_write"},
+    }
+
+
+def test_authoring_create_refuses_a_non_principal_before_any_work(
+    daemon: tuple[TestClient, Path], tmp_path: Path
+) -> None:
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.errors import PrincipalRefusedError
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.test_authoring.test_authoring_preflight import _self_source_payload
+
+    client, managed = daemon
+    assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
+    instance = get_playbill_manager().get(INSTANCE)
+
+    class _UntouchedStore:
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError(f"a refused actor reached the intent store ({name})")
+
+    coordinator = AuthoringIntentCoordinator(instance=instance, store=_UntouchedStore())  # type: ignore[arg-type]
+
+    with pytest.raises(PrincipalRefusedError) as refused:
+        coordinator.create(
+            actor=AuthenticatedActor(actor_id="mallory"),
+            payload=_self_source_payload(),
+            canonical_timestamp="2026-09-29T00:00:00.000000Z",
+        )
+
+    assert refused.value.error_code == "playbill.identity.principal_absent"
+    assert "cruxible playbill principal add mallory --key-dir DIR" in str(refused.value)

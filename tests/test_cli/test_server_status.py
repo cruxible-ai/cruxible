@@ -334,6 +334,8 @@ def test_status_answers_an_instance_scoped_token_with_its_own_host(
                 principal_registration_status="active",
                 active_principal_ids=["agent"],
                 coordinate=coordinate,
+                can_author=True,
+                authoring_refusal=None,
             )
 
     _patch_client(monkeypatch, ScopedClient())

@@ -129,6 +129,7 @@ from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidenceV2 as TerminalSettlementEvidenceV2,
 )
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny as _ProcedureArtifactAny,
 )
@@ -692,6 +693,10 @@ class PlaybillWhoAmI(BaseModel):
     principal_registration_status: Literal["active", "revoked", "absent"] | None
     active_principal_ids: list[str]
     coordinate: PlaybillAcceptedCoordinate
+    # Whether authoring create would accept this actor, and the refusal it
+    # would return otherwise: the same code, detail and repair.
+    can_author: bool
+    authoring_refusal: PlaybillAuthoringRefusalV1 | None
 
 
 class PlaybillRefusalInspection(BaseModel):

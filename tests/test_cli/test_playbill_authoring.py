@@ -574,6 +574,8 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
                 principal_registration_status="active",
                 active_principal_ids=["daemon", "owner"],
                 coordinate=COORDINATE,
+                can_author=True,
+                authoring_refusal=None,
             )
 
         def list_playbill_proposals(

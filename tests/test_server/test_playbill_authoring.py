@@ -691,6 +691,8 @@ def test_http_whoami_and_proposal_inventory_are_typed_reads(
         principal_registration_status="active",
         active_principal_ids=["daemon", "operator"],
         coordinate=COORDINATE,
+        can_author=True,
+        authoring_refusal=None,
     )
     proposals = contracts.PlaybillProposalList(
         coordinate=COORDINATE,

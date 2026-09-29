@@ -50,7 +50,9 @@ with the caller's identity there.
 server acts as; it is sent with every request, and the daemon checks it is a
 registered, active principal before attributing work to it. With daemon auth off
 it is a claim of identity, not authentication (`authenticated: false` in
-`whoami`): every process of the same OS user is equally trusted.
+`whoami`): every process of the same OS user is equally trusted. `whoami` also
+reports `can_author` and, when false, the `authoring_refusal` (code, detail and
+repair) that authoring would return.
 
 `CRUXIBLE_MCP_WORKSPACE_ROOT` selects the client-owned workspace for tools that
 read or write local files. The stdio MCP process is the client-side adapter; the

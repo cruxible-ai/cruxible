@@ -2065,6 +2065,12 @@ def whoami(output_json: bool) -> None:
     click.echo(f"Credential permission mode: {result.credential_permission_mode}")
     click.echo(f"Principal registration: {result.principal_registration_status or 'none'}")
     click.echo(f"Active principals: {', '.join(result.active_principal_ids) or 'none'}")
+    if result.authoring_refusal is None:
+        click.echo("Can author: yes")
+    else:
+        refusal = result.authoring_refusal
+        click.echo(f"Can author: no ({refusal.code})")
+        click.echo(f"  Why: {refusal.detail}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
 
