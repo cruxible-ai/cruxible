@@ -1905,22 +1905,20 @@ def playbill_procedure_bind(
     return contracts.PlaybillProcedureBindResult.model_validate(result.model_dump(mode="json"))
 
 
-def _check_run_permission(tool_name: str, instance_id: str, target_rung: Callable[[], int]) -> None:
-    """Gate a run by what its target can do, after the static read-tier pre-gate.
+def _check_run_target_permission(
+    tool_name: str, instance_id: str, target_rung: Callable[[], int]
+) -> None:
+    """Gate a run by what its target can do, after the read-tier and hosted gates.
 
+    The verb itself runs the static read-tier pre-gate and the hosted-execution
+    gate first, so a shared hosted profile refuses before any instance is read.
     Running an observe-only Line or Procedure is a read. One whose terminals
     can propose or settle writes governed state, so it needs governed write.
-    A shared hosted profile refuses before any instance is read. A target with
-    no live accepted artifact has nothing to gate: the service refuses it after
-    its own request checks, and re-checks the caller's tier for any target it
-    finds.
+    A target with no live accepted artifact has nothing to gate: the service
+    refuses it after its own request checks, and re-checks the caller's tier
+    for any target it finds.
     """
 
-    check_permission(tool_name, instance_id=instance_id, audit_success=False)
-    # A shared hosted profile with no isolated execution backend cannot run
-    # customer code at all; refuse at the served boundary so the operator gets
-    # the mapped error instead of a node refusal buried in a run journal.
-    enforce_customer_code_execution_supported()
     try:
         rung = target_rung()
     except (ProcedureNotFound, ProcedureRetired, LineRunNotAccepted):
@@ -1936,7 +1934,14 @@ def playbill_procedure_run(
     *,
     request: ProcedureRunRequestV2,
 ) -> contracts.PlaybillProcedureRunState:
-    _check_run_permission(
+    check_permission(
+        "cruxible_playbill_procedure_run", instance_id=instance_id, audit_success=False
+    )
+    # A shared hosted profile with no isolated execution backend cannot run
+    # customer code at all; refuse at the served boundary so the operator gets
+    # the mapped error instead of a node refusal buried in a run journal.
+    enforce_customer_code_execution_supported()
+    _check_run_target_permission(
         "cruxible_playbill_procedure_run",
         instance_id,
         lambda: procedure_run_target_rung(
@@ -2106,7 +2111,14 @@ def playbill_line_evaluate(
 def playbill_line_dispatch(
     instance_id: str, line: str, *, request: contracts.LineDispatchRequestV1
 ) -> contracts.LineDispatchResultV1:
-    _check_run_permission(
+    check_permission(
+        "cruxible_playbill_line_dispatch", instance_id=instance_id, audit_success=False
+    )
+    # A shared hosted profile with no isolated execution backend cannot run
+    # customer code at all; refuse at the served boundary so the operator gets
+    # the mapped error instead of a node refusal buried in a run journal.
+    enforce_customer_code_execution_supported()
+    _check_run_target_permission(
         "cruxible_playbill_line_dispatch",
         instance_id,
         lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line),
@@ -2150,7 +2162,12 @@ def playbill_line_run(
     *,
     request: LineRunRequestV1,
 ) -> contracts.PlaybillProcedureRunState:
-    _check_run_permission(
+    check_permission("cruxible_playbill_line_run", instance_id=instance_id, audit_success=False)
+    # A shared hosted profile with no isolated execution backend cannot run
+    # customer code at all; refuse at the served boundary so the operator gets
+    # the mapped error instead of a node refusal buried in a run journal.
+    enforce_customer_code_execution_supported()
+    _check_run_target_permission(
         "cruxible_playbill_line_run",
         instance_id,
         lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line_identity_digest),
