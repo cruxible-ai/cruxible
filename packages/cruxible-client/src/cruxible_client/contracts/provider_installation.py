@@ -33,6 +33,9 @@ class ProviderWheelObjectV1(_Strict):
 
 class PlaybillProviderInstallRequestV1(_Strict):
     package: str | None = None
+    # An exact release of a package installed by name from the provider index;
+    # omitted, the newest final release. A configured repository has one version.
+    version: str | None = None
     wheel: ProviderWheelObjectV1 | None = None
     lock_digest: str | None = None
     dependencies: tuple[ProviderWheelObjectV1, ...] = ()
@@ -56,6 +59,13 @@ class PlaybillProviderInstallRequestV1(_Strict):
                 c not in "abcdefghijklmnopqrstuvwxyz0123456789-_." for c in self.package
             ):
                 raise ValueError("package must be a distribution name, not a path")
+            if self.version is not None and (
+                not self.version
+                or any(c not in "0123456789abcdefghijklmnopqrstuvwxyz.!+-_" for c in self.version)
+            ):
+                raise ValueError("version must be a release version")
+        elif self.version is not None:
+            raise ValueError("a version applies only to a package installed by name")
         elif self.wheel is None or self.lock_digest is None:
             raise ValueError("transferred installation requires wheel and lock digests")
         names = [item.filename for item in self.dependencies]

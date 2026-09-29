@@ -1266,7 +1266,11 @@ def install_provider(
     reverify: bool,
     output_json: bool,
 ) -> None:
-    """Install a catalog package or transfer a local wheel with its lock."""
+    """Install a package by name (NAME or NAME==VERSION) or transfer a local wheel.
+
+    By name, the package comes from the configured provider repository, or else
+    from the provider index (PyPI unless the operator configured indexes).
+    """
     if package_or_wheel.endswith(".whl"):
         if lock_path is None:
             raise click.UsageError("a local wheel requires --lock")
@@ -1285,8 +1289,12 @@ def install_provider(
     else:
         if lock_path is not None or dependencies:
             raise click.UsageError("--lock and --dependency apply to a local wheel")
+        package, pinned, version = package_or_wheel.partition("==")
         request = PlaybillProviderInstallRequestV1(
-            package=package_or_wheel, extras=tuple(sorted(set(extras))), reverify=reverify
+            package=package,
+            version=version if pinned else None,
+            extras=tuple(sorted(set(extras))),
+            reverify=reverify,
         )
         result = _server_call(
             lambda client, instance_id: client.install_playbill_provider(instance_id, request),
@@ -1319,12 +1327,6 @@ def _echo_kit_change(result: PlaybillKitChangeResultV1) -> None:
             click.echo(f"  {item.action}: {item.path}{detail}")
     if result.detail:
         click.echo(printable(result.detail))
-    if result.missing_interfaces:
-        click.echo(
-            "No installed provider implements: "
-            + ", ".join(result.missing_interfaces)
-            + " (see `cruxible playbill provider install`)"
-        )
     if result.proposal_id:
         click.echo(f"Proposal: {result.proposal_id}")
         if result.approval_required:

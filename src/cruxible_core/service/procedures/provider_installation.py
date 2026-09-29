@@ -13,6 +13,7 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.canonical import canonical_bytes, canonical_digest
@@ -54,7 +55,15 @@ from cruxible_core.derived.derived_state import fork_tree
 from cruxible_core.errors import ConfigError
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.providers.package_classifier import PackageBucketClassifier, run_package_probe
+from cruxible_core.providers.package_index import (
+    DEFAULT_PROVIDER_INDEX_URLS,
+    IndexRelease,
+    embedded_lock,
+    fetch_release,
+    find_release,
+)
 from cruxible_core.providers.package_materialization import (
+    ArtifactTransport,
     package_preparation_errors,
     prepare_provider_package,
     toolchain,
@@ -121,7 +130,8 @@ def service_provider_catalog(operator: ProviderRuntimeOperator) -> PlaybillProvi
         packages=tuple(sorted(packages, key=lambda item: item.name)),
         detail=None
         if operator.config.provider_repository
-        else "No provider repository configured; built wheels can still be transferred.",
+        else "No provider repository configured; packages install by name from the provider "
+        "index, and built wheels can still be transferred.",
     )
 
 
@@ -143,13 +153,48 @@ def _write(path: Path, content: bytes) -> None:
             os.unlink(temporary)
 
 
+def _index_urls(operator: ProviderRuntimeOperator) -> tuple[str, ...]:
+    return operator.config.provider_index_urls or DEFAULT_PROVIDER_INDEX_URLS
+
+
+def _index_transport(index_urls: tuple[str, ...]) -> ArtifactTransport:
+    return ArtifactTransport(
+        *(Path(unquote(urlsplit(url).path)) for url in index_urls if url.startswith("file:"))
+    )
+
+
+def _index_source_files(
+    release: IndexRelease, index_urls: tuple[str, ...], custody: Path
+) -> tuple[Path, Path, tuple[Path, ...]]:
+    transport = _index_transport(index_urls)
+    wheel = custody / release.filename
+    _write(wheel, fetch_release(release, index_urls, transport))
+    lock = custody / "uv.lock"
+    _write(lock, embedded_lock(wheel))
+    locked = toolchain("resolution").load_uv_lock(lock)
+    # The lock names the provider's first-party siblings (its runtime) by path.
+    # Each comes from the index that listed the provider, at its locked version.
+    dependencies = []
+    for row in sorted(locked.packages, key=lambda item: item["name"]):
+        if row["name"] == release.name or "registry" in row.get("source", {}):
+            continue
+        sibling = find_release((release.index_url,), row["name"], str(row["version"]), transport)
+        path = custody / sibling.filename
+        _write(path, fetch_release(sibling, index_urls, transport))
+        dependencies.append(path)
+    return wheel, lock, tuple(dependencies)
+
+
 def _source_files(
     instance: PlaybillInstance,
     operator: ProviderRuntimeOperator,
     request: PlaybillProviderInstallRequestV1,
     custody: Path,
+    release: IndexRelease | None,
 ) -> tuple[Path, Path, tuple[Path, ...]]:
     enforce_customer_code_execution_supported()
+    if release is not None:
+        return _index_source_files(release, _index_urls(operator), custody)
     if request.package is None:
         assert request.wheel is not None and request.lock_digest is not None
         access = BodyAccessContext(principal_id="provider-installation", can_read_body=True)
@@ -340,10 +385,22 @@ def service_install_provider(
         raise ConfigError(
             "provider installation requires an explicit upgrade to the package compiler"
         )
-    source = None
-    if request.package:
+    source: str | dict[str, str] | None = None
+    release = None
+    if request.package and operator.config.provider_repository is not None:
+        if request.version is not None:
+            raise ConfigError("a configured provider repository installs its checkout version")
         with package_preparation_errors():
             source = _repository_fingerprint(operator, request.package)
+    elif request.package:
+        with package_preparation_errors():
+            release = find_release(
+                _index_urls(operator),
+                request.package,
+                request.version,
+                _index_transport(_index_urls(operator)),
+            )
+        source = {"index": release.index_url, "wheel": release.filename, "sha256": release.sha256}
     identifier = "sha256:" + canonical_digest(
         "playbill-provider-installation-request-v1",
         {"request": request.model_dump(mode="json", exclude={"reverify"}), "source": source},
@@ -356,7 +413,15 @@ def service_install_provider(
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         try:
             return _install_locked(
-                instance, operator, request, identifier, directory, actor_id, timestamp, source
+                instance,
+                operator,
+                request,
+                identifier,
+                directory,
+                actor_id,
+                timestamp,
+                source,
+                release,
             )
         finally:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
@@ -370,7 +435,8 @@ def _install_locked(
     directory: Path,
     actor_id: str,
     timestamp: str,
-    source: str | None,
+    source: str | dict[str, str] | None,
+    release: IndexRelease | None,
 ) -> PlaybillProviderInstallResultV1:
     prepared_path = directory / "prepared.json"
     rewrite_prepared = False
@@ -412,8 +478,14 @@ def _install_locked(
         custody = directory / "wheels"
         custody.mkdir(exist_ok=True, mode=0o700)
         with package_preparation_errors():
-            wheel, lock_path, dependencies = _source_files(instance, operator, request, custody)
-            if request.package and _repository_fingerprint(operator, request.package) != source:
+            wheel, lock_path, dependencies = _source_files(
+                instance, operator, request, custody, release
+            )
+            if (
+                release is None
+                and request.package
+                and _repository_fingerprint(operator, request.package) != source
+            ):
                 raise ConfigError("provider checkout changed during build; retry installation")
             prepared = prepare_provider_package(
                 wheel=wheel,
@@ -422,7 +494,9 @@ def _install_locked(
                 cache_root=operator.state_root / "provider-environments",
                 extras=request.extras,
                 control_domain=request.control_domain,
-                index_urls=operator.config.provider_index_urls,
+                index_urls=_index_urls(operator)
+                if release is not None
+                else operator.config.provider_index_urls,
             )
         document, provider, deployment = prepared.document, prepared.provider, prepared.deployment
         if document.governed_definitions:

@@ -70,16 +70,20 @@ class PreparedProviderPackage:
     deployment: LocalProviderDeploymentV1
 
 
-class _ArtifactTransport:
-    def __init__(self, local_root: Path) -> None:
-        self.local_root = local_root.resolve()
+class ArtifactTransport:
+    """Fetch without following redirects; local files only inside named roots."""
+
+    def __init__(self, *local_roots: Path) -> None:
+        self.local_roots = tuple(root.resolve() for root in local_roots)
 
     def get(self, url: str) -> Any:
         parsed = urlsplit(url)
         if parsed.scheme == "file":
             path = Path(unquote(parsed.path)).resolve(strict=True)
-            if parsed.netloc not in {"", "localhost"} or not path.is_relative_to(self.local_root):
-                raise ValueError("package lock points outside transferred wheel custody")
+            if parsed.netloc not in {"", "localhost"} or not any(
+                path.is_relative_to(root) for root in self.local_roots
+            ):
+                raise ValueError("package file lies outside its permitted custody")
             return toolchain("index").TransportResponse(200, url, path.read_bytes())
         with httpx.stream("GET", url, follow_redirects=False, timeout=60) as response:
             chunks = []
@@ -161,7 +165,7 @@ def prepare_provider_package(
     custody = wheel.parent.resolve()
     fetcher = toolchain("index").ArtifactFetcher(
         toolchain("index").IndexConfig(index_urls=(custody.as_uri(), *index_urls)),
-        _ArtifactTransport(custody),
+        ArtifactTransport(custody),
     )
     root_pin = toolchain("artifact").DistributionPin(
         name=pin.name,

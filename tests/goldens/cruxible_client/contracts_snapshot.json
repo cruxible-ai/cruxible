@@ -52268,6 +52268,26 @@
             "type": "boolean"
           }
         },
+        "version": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "version",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        },
         "wheel": {
           "default": null,
           "default_json_serializable": true,
@@ -52361,6 +52381,18 @@
             "default": false,
             "title": "Reverify",
             "type": "boolean"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
           },
           "wheel": {
             "anyOf": [

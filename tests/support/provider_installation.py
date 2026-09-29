@@ -132,7 +132,6 @@ class Increment:
                 }
             ],
             "runtime_requirements": [],
-            "governed_definitions": [],
         },
     )
     lock = project / "uv.lock"

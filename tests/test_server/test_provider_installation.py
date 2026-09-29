@@ -561,6 +561,70 @@ def test_repository_catalog_install_and_retry(installer_http, monkeypatch):
     assert again.status == "ready" and again.installation_id == result.installation_id
 
 
+@pytest.fixture
+def index_installer_http(tmp_path, monkeypatch):
+    """No repository: names install from a file index built from the test wheels."""
+    wheels = os.environ.get("CRUXIBLE_TEST_PROVIDER_WHEELS")
+    if not wheels:
+        pytest.skip("requires built provider wheels via CRUXIBLE_TEST_PROVIDER_WHEELS")
+    pytest.importorskip("cruxible_provider_runtime")
+    import hashlib
+
+    from packaging.utils import parse_wheel_filename
+
+    simple = tmp_path / "simple"
+    for wheel in sorted(Path(wheels).glob("*.whl")):
+        page = simple / str(parse_wheel_filename(wheel.name)[0])
+        page.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        (page / "index.html").write_text(
+            f'<a href="{wheel.resolve().as_uri()}#sha256={digest}">{wheel.name}</a>'
+        )
+    state = tmp_path / "server-state"
+    config = state / PROVIDER_RUNTIME_CONFIG_PATH
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        json.dumps(
+            {
+                "provider_index_urls": [
+                    simple.as_uri() + "/",
+                    Path(wheels).resolve().as_uri() + "/",
+                    "https://pypi.org/simple",
+                    "https://files.pythonhosted.org/",
+                ],
+            }
+        )
+    )
+    from tests.test_server.conftest import _playbill_http
+
+    yield from _playbill_http(tmp_path, monkeypatch, require_independent_approval=False)
+
+
+def test_install_by_name_from_an_index_uses_the_embedded_lock(index_installer_http, monkeypatch):
+    from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequestV1
+    from cruxible_client.errors import ConfigError
+    from cruxible_core.service.procedures import provider_installation as service
+
+    http, instance_id, _ = index_installer_http
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = http
+    assert "install by name" in (client.list_playbill_provider_packages(instance_id).detail or "")
+    request = PlaybillProviderInstallRequestV1(package="cruxible-provider-workspace")
+    result = client.install_playbill_provider(instance_id, request)
+    assert result.status == "ready" and result.registered, result
+    deployment = get_playbill_manager().provider_runtime_operator().config.deployments[0]
+    wheels = Path(os.environ["CRUXIBLE_TEST_PROVIDER_WHEELS"])
+    workspace = next(wheels.glob("cruxible_provider_workspace-*.whl"))
+    assert deployment.distribution_path.endswith(workspace.name)
+    monkeypatch.setattr(service, "_source_files", lambda *a: pytest.fail("retry refetched"))
+    again = client.install_playbill_provider(instance_id, request)
+    assert again.status == "ready" and again.installation_id == result.installation_id
+    with pytest.raises(ConfigError, match="no installable wheel"):
+        client.install_playbill_provider(
+            instance_id, request.model_copy(update={"version": "99.0"})
+        )
+
+
 def test_malformed_wheel_is_a_typed_refusal_before_registration(installer_http, tmp_path):
     from cruxible_client.errors import ConfigError
 

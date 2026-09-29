@@ -9,8 +9,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need to discover available provider packages and their node types."
     ),
     "cruxible_playbill_provider_install": (
-        "Use when you want to install a provider package and register its definitions. "
-        "Requires admin permission; installation grants no execution permissions."
+        "Use when you want to install a provider package by name (from the configured "
+        "repository or the provider index) and register its definitions. Requires admin "
+        "permission; installation grants no execution permissions."
     ),
     "cruxible_playbill_kit_build": (
         "Use when you want to export the definitions under owned identity prefixes as a "

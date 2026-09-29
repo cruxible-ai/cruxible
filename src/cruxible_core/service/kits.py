@@ -485,21 +485,6 @@ def _ownership_conflicts(
     return conflicts
 
 
-def _missing_interfaces(
-    tree: Mapping[str, bytes], contents: Mapping[str, bytes], installed: Mapping[str, str]
-) -> tuple[str, ...]:
-    providers = [tree[path] for path in tree if path.startswith("providers/")]
-    missing = []
-    for path, content in sorted(contents.items()):
-        if not path.startswith("provider-interfaces/"):
-            continue
-        state = _artifact_state(path, content)
-        digest = installed.get(state.artifact_digest, state.artifact_digest)
-        if not any(digest.encode("ascii") in provider for provider in providers):
-            missing.append(state.identity.name)
-    return tuple(missing)
-
-
 def _submit(
     instance: PlaybillInstance,
     *,
@@ -511,7 +496,6 @@ def _submit(
     plan: tuple[KitPathPlanV1, ...],
     actor_id: str,
     timestamp: str,
-    missing_interfaces: tuple[str, ...] = (),
 ) -> PlaybillKitChangeResultV1:
     base = instance.accepted_coordinate()
     body = instance.store_document_body(pretty_canonical_bytes(receipt.model_dump(mode="json")))
@@ -568,7 +552,6 @@ def _submit(
                 status="blocked",
                 proposal_id=submitted.admission.proposal_id,
                 plan=plan,
-                missing_interfaces=missing_interfaces,
                 detail="Refused: "
                 + "; ".join(item.code for item in submitted.evaluation.diagnostics),
             )
@@ -585,7 +568,6 @@ def _submit(
         proposal_id=proposal_id,
         approval_required=bool(evidence.approval_requirements),
         plan=plan,
-        missing_interfaces=missing_interfaces,
     )
 
 
@@ -633,14 +615,12 @@ def service_add_kit(
     if conflicts:
         blocked.append(f"{len(conflicts)} path(s) conflict")
     plan = tuple(sorted(diff.plan, key=lambda item: item.path))
-    missing = _missing_interfaces(tree, contents, diff.installed)
     if blocked:
         return PlaybillKitChangeResultV1(
             kit_id=manifest.kit_id,
             version=manifest.version,
             status="blocked",
             plan=plan,
-            missing_interfaces=missing,
             detail="; ".join(blocked),
         )
     if not writes and receipt is not None and receipt.content_digest == manifest.content_digest:
@@ -649,7 +629,6 @@ def service_add_kit(
             version=manifest.version,
             status="unchanged",
             plan=plan,
-            missing_interfaces=missing,
         )
 
     def entries(paths: set[str]) -> tuple[KitInstalledArtifactV1, ...]:
@@ -682,7 +661,6 @@ def service_add_kit(
         plan=plan,
         actor_id=actor_id,
         timestamp=timestamp,
-        missing_interfaces=missing,
     )
 
 
