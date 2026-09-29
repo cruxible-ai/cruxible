@@ -838,13 +838,13 @@ class _RowRenderer:
                     continue
                 info = column.field.info
                 slot = [] if path is None else self.values.slot(path, info.predicate)
-                values = distinct(item.value for item in slot)
+                values = distinct(_value_identity(item) for item in slot)
                 for item in slot:
                     row_flags.update(flags.get(item.identity, ()))
                 row_flags.update(answer_flags(info.cardinality, len(values)))
                 listed = info.cardinality == "many" or len(values) > 1
                 if info.value_type == "exact_content":
-                    values = _exact_values(self.content, slot, values)
+                    values = _exact_values(self.content, values)
                 if listed:
                     out[column.name] = values
                 else:
@@ -854,13 +854,35 @@ class _RowRenderer:
         return rendered
 
 
-def _exact_values(
-    content: ExactContentReader, slot: Sequence[LiveValue], digests: Sequence[object]
-) -> list[object]:
-    """Exact-content values (distinct digests) as their text, or the marker in its place."""
+def _value_identity(item: LiveValue) -> object:
+    """What makes two live values one value.
 
-    spans = {item.value: item.span for item in slot}
-    return [content.value(str(digest), spans.get(digest)) for digest in digests]
+    A literal or Subject value is itself. An exact-content value is its digest
+    AND the span it states: two Claims selecting different spans of one body are
+    two values, through deduplication, cardinality, contest and rendering.
+    """
+
+    if item.exact:
+        return {
+            "content_digest": str(item.value),
+            "span": None if item.span is None else list(item.span),
+        }
+    return item.value
+
+
+def _exact_values(content: ExactContentReader, identities: Sequence[object]) -> list[object]:
+    """Distinct exact-content identities as their text, or the marker in its place."""
+
+    shown: list[object] = []
+    for identity in identities:
+        assert isinstance(identity, Mapping)
+        span = identity["span"]
+        shown.append(
+            content.value(
+                str(identity["content_digest"]), None if span is None else (span[0], span[1])
+            )
+        )
+    return shown
 
 
 def _searchable(item: LiveValue, content: ExactContentReader) -> str | None:
@@ -1135,7 +1157,15 @@ def _apply_inline(
                     if path is None
                     else [value.value for value in values.slot(path, item.field.info.predicate)]
                 )
-                if _contested(item.field.info.cardinality, cell):
+                identities = (
+                    []
+                    if path is None
+                    else [
+                        _value_identity(value)
+                        for value in values.slot(path, item.field.info.predicate)
+                    ]
+                )
+                if _contested(item.field.info.cardinality, identities):
                     matched = False
                     break
             if not _inline_matches(item, cell):
@@ -1148,7 +1178,7 @@ def _apply_inline(
                 and needle in text.casefold()
                 and not _contested(
                     cardinality_of.get(value.predicate, "many"),
-                    [mate.value for mate in values.slot(root, value.predicate)],
+                    [_value_identity(mate) for mate in values.slot(root, value.predicate)],
                 )
                 for value in values.subject(root)
             )
@@ -1206,7 +1236,9 @@ def _contains_everywhere(
             slot = slot_values.slot(item.subject_path, item.predicate)
             if info is not None:
                 marks.update(
-                    answer_flags(info.cardinality, len(distinct(value.value for value in slot)))
+                    answer_flags(
+                        info.cardinality, len(distinct(_value_identity(value) for value in slot))
+                    )
                 )
             row: dict[str, Any] = {
                 "subject": label,
@@ -1758,11 +1790,14 @@ def _engine_answer(
                     for item in renderer.values.slot(path, ref.predicate)
                     if item.identity in selected
                 ]
-                shown = distinct(item.value for item in slot)
+                shown = distinct(_value_identity(item) for item in slot)
                 info = vocabulary.predicates[ref.predicate]
                 listed = info.cardinality == "many" or len(shown) > 1
-                values = _exact_values(content, slot, shown)
+                values = _exact_values(content, shown)
                 out[key] = values if listed else (values[0] if values else None)
+                # The engine reads every exact value as one (it has no literal),
+                # so a contest between spans or bodies is judged here.
+                flags = ordered_flags({*flags, *answer_flags(info.cardinality, len(shown))})
             out["flags"] = flags
         return rendered
 

@@ -522,6 +522,14 @@ def _claim_value(row: ClaimValueV1) -> object:
     return row.value
 
 
+def _value_key(row: ClaimValueV1) -> str:
+    """What makes two slot values one value; an exact-content value keeps its span."""
+
+    if isinstance(row.object, ExactContentClaimObject):
+        return repr(("exact_content", row.object.content_digest, row.object.span))
+    return repr(_claim_value(row))
+
+
 def _artifact_value(claim: ClaimArtifactAny) -> object:
     obj = claim.statement.object
     if isinstance(obj, SubjectClaimObject):
@@ -703,12 +711,11 @@ def _subject_card(
         # The slot's answer: what resolution selected, or every live contender
         # while it is contested. Overturned and refused contenders are not values.
         shown = [item for item in members if item.status in {"accepted", "conflicted"}] or members
-        # Distinctness is judged on the accepted values (an exact-content value's
-        # digest), before any is shown as text.
+        # Distinctness is judged on the accepted values before any is shown as
+        # text: an exact-content value is its digest AND its span, so two spans
+        # of one body are two values.
         marks: set[PlaybillReadFlag] = set(
-            answer_flags(
-                "many" if many else "one", len({repr(_claim_value(item)) for item in shown})
-            )
+            answer_flags("many" if many else "one", len({_value_key(item) for item in shown}))
         )
         pairs = [
             _shown(item.object, functools.partial(_claim_value, item), content) for item in shown

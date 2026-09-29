@@ -563,3 +563,78 @@ def test_projected_exact_content_follows_the_engines_visibility_policy(
     assert {row["item_id"]: row["status"] for row in rows} == {
         claim.subject.split("/", 1)[1]: None for claim in seeded.values()
     }
+
+
+def test_two_spans_of_one_body_are_two_values_on_query_and_get(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (Codex F-002): exact-content values are keyed by digest AND span.
+
+    Two Claims in one slot that select different spans of the same body are two
+    values: both are shown, and a one-cardinality slot holding them is contested.
+    Accepted authoring always states a whole-body span, so the second Claim's
+    live value is re-pointed at the first Claim's body to stand the case up.
+    """
+
+    from cruxible_client.contracts.claims import ExactContentClaimObject
+    from cruxible_client.contracts.semantic import ContentSpan
+    from cruxible_core.service.discovery import get as get_module
+    from cruxible_core.service.discovery import query_values
+
+    instance, seeded = seed_exact_content(tmp_path, {"wi-42": b"first second", "wi-43": b"x"})
+    first, second = seeded["wi-42"], seeded["wi-43"]
+    home = f"subjects/{first.subject}.json"
+    spans = {first.claim_id: (0, 5), second.claim_id: (6, 12)}
+
+    real_values = query_values.read_live_values
+
+    def live_values(*args: Any, **kwargs: Any) -> list[Any]:
+        from dataclasses import replace
+
+        values = []
+        for item in real_values(*args, **kwargs):
+            claim_id = item.identity.removeprefix("Claim:")
+            if claim_id in spans:
+                item = replace(item, subject_path=home, value=first.digest, span=spans[claim_id])
+            values.append(item)
+        return values
+
+    monkeypatch.setattr(query_values, "read_live_values", live_values)
+    wanted = {home, f"subjects/{second.subject}.json"}
+    real_slot = get_module._slot_values
+
+    def slot_values(instance: Any, coordinate: Any, *, subject_path: str, **kw: Any) -> Any:
+        rows = []
+        for path in sorted(wanted) if subject_path == home else [subject_path]:
+            for row in real_slot(instance, coordinate, subject_path=path, **kw):
+                start, end = spans[row.claim_id]
+                rows.append(
+                    row.model_copy(
+                        update={
+                            "subject_path": home,
+                            "value": first.digest,
+                            "object": ExactContentClaimObject(
+                                content_digest=first.digest,
+                                span=ContentSpan(
+                                    content_digest=first.digest, start_byte=start, end_byte=end
+                                ),
+                            ),
+                        }
+                    )
+                )
+        return tuple(rows)
+
+    monkeypatch.setattr(get_module, "_slot_values", slot_values)
+
+    rows = {
+        row["subject_id"]: row
+        for row in _exact_query(instance, kind=EXACT_KIND, select=["status"]).rows
+    }
+    assert sorted(rows["wi-42"]["status"]) == ["first", "second"]
+    assert "contested" in rows["wi-42"]["flags"]
+
+    card = _exact_get(instance, first.subject).card
+    assert isinstance(card, PlaybillGetSubjectCardV1)
+    (row,) = card.claims
+    assert sorted(row.value) == ["first", "second"]
+    assert "contested" in row.flags
