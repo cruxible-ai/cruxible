@@ -50,6 +50,31 @@ uv run mypy src
   known failures, and review context. Reviewers should put requested changes and
   approval notes in `ReviewRequest.review_notes`.
 
+## Strict project-state adherence
+
+Project state is the record of what was agreed and what is done. Conversation
+history, transcripts and agent memory are not: they drift, compact and get
+misread. Treat state as authoritative and keep it ahead of the work.
+
+- **Plan from state.** Before planning, starting, resuming or reporting on work,
+  read the relevant project-state items. Answer "what's left", "did we do X"
+  and "are we done" from accepted state, naming the items, never from memory.
+- **Record agreements when they are made.** When the maintainer agrees a plan,
+  batch, scope or acceptance criterion, record it as (or revise it into) a
+  project-state item in the same working session, before implementation starts.
+  A plan that exists only in a conversation is not agreed.
+- **No silent re-scoping.** Narrowing, splitting, redefining, deferring or
+  dropping an agreed item requires telling the maintainer explicitly, getting a
+  ruling, and recording that ruling in state. Never keep an item's name while
+  changing what it delivers; new scope is a new item, and the original stays
+  open until it is closed by a recorded ruling.
+- **Done means the recorded criteria are met.** Report an item or program as
+  done only when every acceptance criterion recorded for it is met at an
+  accepted coordinate. Otherwise list what remains, by item.
+- **Disagreement is a finding.** When code, memory or a conversation disagrees
+  with state, stop and reconcile: surface the discrepancy to the maintainer and
+  correct whichever side is wrong. Do not proceed on the unrecorded version.
+
 ## Project-state completion requirement
 
 A meaningful implementation, merge, deployment, review outcome, or maintainer scope
