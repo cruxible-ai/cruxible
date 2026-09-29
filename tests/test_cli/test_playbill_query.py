@@ -173,6 +173,33 @@ def test_malformed_input_refuses_with_the_syntax(stub: _StubClient) -> None:
     assert stub.requests == []
 
 
+def test_a_caret_follows_a_relation_backwards(stub: _StubClient) -> None:
+    result = _run(
+        "dev.roadmap_item",
+        "--follow",
+        "^dev.batch.delivers:batch",
+        "--follow",
+        "refines:parent",
+        "--select",
+        "batch,batch.state",
+    )
+
+    assert result.exit_code == 0, result.output
+    follow = stub.requests[0].follow
+    assert [(item.field, item.as_, item.direction) for item in follow] == [
+        ("dev.batch.delivers", "batch", "reverse"),
+        ("refines", "parent", "forward"),
+    ]
+    # The next-page command repeats the reverse follow, quoted for the shell.
+    assert "--follow '^dev.batch.delivers:batch'" in result.output.splitlines()[-1]
+
+    for bad in ("^dev.batch.delivers", "^:batch"):
+        refused = _run("dev.roadmap_item", "--follow", bad)
+        assert refused.exit_code != 0
+        assert "^field:alias" in refused.output and "^dev.batch.delivers:batch" in refused.output
+    assert len(stub.requests) == 1
+
+
 def test_the_named_entrypoint_leaves_still_answer(stub: _StubClient) -> None:
     listed = _run("list")
     assert listed.exit_code == 0, listed.output

@@ -927,7 +927,7 @@ the same coordinate.
 
 ~~~text
 cruxible playbill query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'|'f exists'|'f !exists'|'f~text']...
-    [--contains TEXT] [--select a,b] [--follow field:alias] [--order-by f|-f]
+    [--contains TEXT] [--select a,b] [--follow field:alias|^field:alias]... [--order-by f|-f]
     [--limit N] [--cursor C] [--spec FILE | --name N --param k=v ...]
     [--at GIT_OID] [--evaluation-time TS] [--json]
 cruxible playbill query list
@@ -941,6 +941,12 @@ a Subject kind, or `ClaimType` / `Procedure` for definitions; `--contains` alone
 searches every live Claim value across kinds. `--where` filters combine as
 all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
 `subject_id`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
+`--follow field:alias` hops forward along one of KIND's Subject-valued predicates;
+`--follow ^field:alias` hops backwards along another kind's predicate whose values
+name KIND's Subjects (for example `query dev.roadmap_item --follow
+^dev.batch.delivers:batch` lists which batches deliver each item). A reverse field
+is the predicate's full name, or its name after the pointing kind's prefix. Either
+way there is one row per (Subject, followed Subject) pair.
 Names and values are checked first: a wrong kind, field or enum member, or an
 operator that does not apply, refuses with its code, the nearest valid names and
 a repair. Text output is an aligned table of values and flags (`stale`,

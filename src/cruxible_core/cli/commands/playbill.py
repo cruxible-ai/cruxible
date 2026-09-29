@@ -4044,7 +4044,16 @@ def _validation_problems(exc: ValidationError) -> str:
 )
 @click.option("--contains", default=None, help="Case-insensitive text in any live Claim value.")
 @click.option("--select", "select_fields", multiple=True, help="Columns: a,b (repeatable).")
-@click.option("--follow", "follow_specs", multiple=True, help="Follow a relation: field:alias.")
+@click.option(
+    "--follow",
+    "follow_specs",
+    multiple=True,
+    help=(
+        "Follow a relation (repeatable): field:alias forward along the kind's predicate, "
+        "or ^field:alias backwards along another kind's predicate that points here "
+        "(e.g. ^dev.batch.delivers:batch)."
+    ),
+)
 @click.option("--order-by", "order_fields", multiple=True, help="Order: f or -f (repeatable).")
 @click.option("--limit", type=click.IntRange(1, contracts.PLAYBILL_QUERY_MAX_LIMIT), default=None)
 @click.option("--cursor", default=None, help="Continue a truncated page.")
@@ -4099,13 +4108,18 @@ def query_group(
         raise click.BadParameter(str(exc), param_hint="--where") from exc
     follow: list[dict[str, str]] = []
     for item in follow_specs:
-        field, _, alias = item.partition(":")
+        reverse = item.startswith("^")
+        field, _, alias = item.removeprefix("^").partition(":")
         if not field or not alias:
             raise click.BadParameter(
-                f"{item!r} is not field:alias, for example closed_by:batch",
+                f"{item!r} is not field:alias or ^field:alias, for example closed_by:batch "
+                "(forward) or ^dev.batch.delivers:batch (reverse)",
                 param_hint="--follow",
             )
-        follow.append({"field": field, "as": alias})
+        entry = {"field": field, "as": alias}
+        if reverse:
+            entry["direction"] = "reverse"
+        follow.append(entry)
     params: dict[str, object] | None = None
     if param_pairs:
         params = {}

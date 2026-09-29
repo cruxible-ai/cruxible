@@ -175,7 +175,11 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     SubjectClaimObject,
 )
-from cruxible_client.contracts.compact_query import QueryFilterV1, QueryFollowV1
+from cruxible_client.contracts.compact_query import (
+    QueryFilterV1,
+    QueryFollowDirection,
+    QueryFollowV1,
+)
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV2,
     ProjectionCurrencyPolicy,
@@ -3083,7 +3087,13 @@ class Playbill:
         where: Sequence[QueryFilterV1 | Mapping[str, object]] | None = None,
         contains: str | None = None,
         select: Sequence[str] | None = None,
-        follow: Sequence[QueryFollowV1 | Mapping[str, str] | tuple[str, str]] | None = None,
+        follow: Sequence[
+            QueryFollowV1
+            | Mapping[str, str]
+            | tuple[str, str]
+            | tuple[str, str, QueryFollowDirection]
+        ]
+        | None = None,
         order_by: Sequence[str] | None = None,
         limit: int = api.PLAYBILL_QUERY_DEFAULT_LIMIT,
         cursor: str | None = None,
@@ -3099,10 +3109,18 @@ class Playbill:
         filters such as ``{"field": "adoption_state", "eq": "adopted"}``,
         ``select``, ``follow`` and ``order_by``), a ``spec``, or a query ``name``
         with ``params``. ``next_page()`` continues a truncated answer.
+
+        A follow is ``(field, alias)`` forward along the kind's own predicate, or
+        ``(field, alias, "reverse")`` backwards along another kind's predicate
+        that points at this kind, e.g. ``("dev.batch.delivers", "batch",
+        "reverse")`` from ``dev.roadmap_item``; a mapping or ``QueryFollowV1``
+        with ``direction`` works too.
         """
 
         follows = [
-            {"field": item[0], "as": item[1]} if isinstance(item, tuple) else item
+            dict(zip(("field", "as", "direction"), item, strict=False))
+            if isinstance(item, tuple)
+            else item
             for item in follow or ()
         ]
         request = api.PlaybillQueryRequestV1.model_validate(

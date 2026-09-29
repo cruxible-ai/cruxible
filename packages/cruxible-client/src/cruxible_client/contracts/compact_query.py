@@ -3,9 +3,11 @@
 ``query`` answers any question over accepted state in one of three modes:
 
 - **compact**: a Subject ``kind`` and/or free-text ``contains``, with optional
-  ``where`` filters, ``select`` columns, one-hop ``follow`` relations and
-  ``order_by`` keys. It lowers to a ``QueryDefinitionSpecV1`` and runs through
-  the same evaluator as a governed QueryDefinition.
+  ``where`` filters, ``select`` columns, one-hop ``follow`` relations (forward
+  along the kind's own Subject-valued predicate, or reverse along another
+  kind's predicate that points at it) and ``order_by`` keys. It lowers to a
+  ``QueryDefinitionSpecV1`` and runs through the same evaluator as a governed
+  QueryDefinition.
 - **spec**: a full ``QueryDefinitionSpecV1`` evaluated inline.
 - **name**: an accepted named QueryDefinition with its ``params``.
 
@@ -53,6 +55,7 @@ QUERY_FILTER_OPERATORS: tuple[QueryFilterOperator, ...] = (
     "contains",
 )
 QueryFlag = Literal["stale", "contested", "contradicted", "unsure_hold"]
+QueryFollowDirection = Literal["forward", "reverse"]
 QueryMode = Literal["inline", "named", "spec"]
 
 _FIELD_DESCRIPTION = (
@@ -189,8 +192,18 @@ def query_filter(field: str, operator: str, value: object) -> QueryFilterV1:
     return model.model_validate({"field": field, key: value})  # type: ignore[return-value]
 
 
+def _is_forward(value: object) -> bool:
+    return value == "forward"
+
+
 class QueryFollowV1(BaseModel):
-    """One hop along a Subject-valued relation Claim, bound under an alias."""
+    """One hop along a Subject-valued relation Claim, bound under an alias; one row per pair."""
+
+    # ``reverse`` follows ANOTHER kind's predicate backwards: ``field`` names it
+    # (in full, or short against the kind that carries it), its values must name
+    # Subjects of the queried kind, and the alias binds the Subjects pointing
+    # here. From ``dev.roadmap_item``: ``{"field": "dev.batch.delivers", "as":
+    # "batch", "direction": "reverse"}``. ``alias.field`` then reads them.
 
     model_config = ConfigDict(
         extra="forbid",
@@ -202,13 +215,21 @@ class QueryFollowV1(BaseModel):
     field: str = Field(
         min_length=1,
         max_length=256,
-        description="A Subject-valued predicate of the kind, short or fully qualified.",
+        description=(
+            "A Subject-valued predicate of the kind (forward), or of another kind whose "
+            "values name this kind (reverse; orient kind=K lists them as incoming)."
+        ),
     )
     as_: str = Field(
         alias="as",
         min_length=1,
         max_length=64,
         description="The alias later fields use as alias.field.",
+    )
+    direction: QueryFollowDirection = Field(
+        default="forward",
+        exclude_if=_is_forward,
+        description="reverse follows another kind's predicate back to this kind.",
     )
 
 
@@ -321,6 +342,7 @@ __all__ = [
     "QueryFilterOperator",
     "QueryFilterV1",
     "QueryFlag",
+    "QueryFollowDirection",
     "QueryFollowV1",
     "QueryMode",
     "QueryScalar",

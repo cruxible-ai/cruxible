@@ -55317,7 +55317,7 @@
           },
           "QueryFollowV1": {
             "additionalProperties": false,
-            "description": "One hop along a Subject-valued relation Claim, bound under an alias.",
+            "description": "One hop along a Subject-valued relation Claim, bound under an alias; one row per pair.",
             "properties": {
               "as": {
                 "description": "The alias later fields use as alias.field.",
@@ -55326,8 +55326,18 @@
                 "title": "As",
                 "type": "string"
               },
+              "direction": {
+                "default": "forward",
+                "description": "reverse follows another kind's predicate back to this kind.",
+                "enum": [
+                  "forward",
+                  "reverse"
+                ],
+                "title": "Direction",
+                "type": "string"
+              },
               "field": {
-                "description": "A Subject-valued predicate of the kind, short or fully qualified.",
+                "description": "A Subject-valued predicate of the kind (forward), or of another kind whose values name this kind (reverse; orient kind=K lists them as incoming).",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -85121,13 +85131,31 @@
             "type": "string"
           }
         },
+        "direction": {
+          "default": "forward",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "direction",
+          "required": false,
+          "schema": {
+            "default": "forward",
+            "description": "reverse follows another kind's predicate back to this kind.",
+            "enum": [
+              "forward",
+              "reverse"
+            ],
+            "title": "Direction",
+            "type": "string"
+          }
+        },
         "field": {
           "has_default": false,
           "has_default_factory": false,
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "A Subject-valued predicate of the kind, short or fully qualified.",
+            "description": "A Subject-valued predicate of the kind (forward), or of another kind whose values name this kind (reverse; orient kind=K lists them as incoming).",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -85137,7 +85165,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "One hop along a Subject-valued relation Claim, bound under an alias.",
+        "description": "One hop along a Subject-valued relation Claim, bound under an alias; one row per pair.",
         "properties": {
           "as": {
             "description": "The alias later fields use as alias.field.",
@@ -85146,8 +85174,18 @@
             "title": "As",
             "type": "string"
           },
+          "direction": {
+            "default": "forward",
+            "description": "reverse follows another kind's predicate back to this kind.",
+            "enum": [
+              "forward",
+              "reverse"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
           "field": {
-            "description": "A Subject-valued predicate of the kind, short or fully qualified.",
+            "description": "A Subject-valued predicate of the kind (forward), or of another kind whose values name this kind (reverse; orient kind=K lists them as incoming).",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
