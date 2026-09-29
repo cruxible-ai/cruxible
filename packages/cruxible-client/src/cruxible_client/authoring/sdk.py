@@ -3045,7 +3045,13 @@ class Playbill:
         evaluation_time: datetime | str | None = None,
     ) -> QueryResult:
         expected = None if isinstance(at, str) else self._read_at(at)
-        when = evaluation_time if evaluation_time is not None else self._evaluation_time()
+        # A continuation keeps the instant its first page pinned; only a new
+        # query takes the connection clock.
+        when = (
+            evaluation_time
+            if evaluation_time is not None or request.cursor is not None
+            else self._evaluation_time()
+        )
         prepared = request.model_copy(
             update={
                 "at": (

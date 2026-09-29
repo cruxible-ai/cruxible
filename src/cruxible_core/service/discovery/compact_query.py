@@ -118,6 +118,7 @@ from cruxible_core.service.discovery.query_vocabulary import (
 )
 from cruxible_core.service.list_pages import (
     PlaybillListCursorMismatch,
+    PlaybillListCursorStale,
     decode_list_cursor,
     encode_list_cursor,
     list_snapshot,
@@ -1760,10 +1761,14 @@ def service_playbill_query(
                     "coordinate; query again without a cursor"
                 )
         at = pinned
-        if evaluation_time is None:
-            evaluation_time = datetime.fromisoformat(
-                str(continuation.coordinate["evaluation_time"])
+        pinned_time = datetime.fromisoformat(str(continuation.coordinate["evaluation_time"]))
+        if evaluation_time is not None and evaluation_time != pinned_time:
+            raise PlaybillListCursorStale(
+                f"{PlaybillListCursorStale.error_code}: the cursor continues an answer "
+                f"evaluated at {pinned_time.isoformat()}, not {evaluation_time.isoformat()}; "
+                "omit evaluation_time to continue it, or query again without a cursor"
             )
+        evaluation_time = pinned_time
     if evaluation_time is None:
         evaluation_time = utc_now()
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:

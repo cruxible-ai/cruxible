@@ -465,3 +465,19 @@ def test_parallel_relation_paths_page_once_per_bound_pair() -> None:
         continuation = SimpleNamespace(snapshot=snapshot, last_key=seen[-1])
         assert len(seen) <= 2, "paging must advance"
     assert seen == keys
+
+
+def test_a_continuation_refuses_a_different_evaluation_time(instance: Any) -> None:
+    from cruxible_core.service.list_pages import PlaybillListCursorStale
+
+    first = _query(instance, kind=SUBJECT_KIND, limit=1)
+    same = _query(instance, kind=SUBJECT_KIND, limit=1, cursor=first.next_cursor)
+    assert _ids(same) == ["wi-43"]
+    with pytest.raises(PlaybillListCursorStale, match="evaluation"):
+        _query(
+            instance,
+            kind=SUBJECT_KIND,
+            limit=1,
+            cursor=first.next_cursor,
+            evaluation_time=WHEN + timedelta(days=1),
+        )
