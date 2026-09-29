@@ -221,7 +221,27 @@ exact stale JSON record under `<state-root>/daemon/provider-process-leases/`.
 Removing a record while its process may still be live abandons the recovery
 identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 
-`<state-root>/daemon/proposal-receive.json` is a second daemon-local operational
+### Trigger operational configuration
+
+The local operator may write `<state-root>/daemon/triggers.json` while the daemon
+is stopped. This daemon-local, non-governed file has a closed shape with tag
+`cruxible-trigger-operational-config-v1`:
+
+| Entry | Default | Purpose |
+|---|---:|---|
+| `evidence_sweep_interval_seconds` | `86400` | Interval between `evidence.sweep` fires. |
+| `prediction_anchor_retry_interval_seconds` | `3600` | Interval between `prediction.anchor_retry` fires. |
+
+An absent file uses the defaults. Unknown entries, non-positive or non-integer
+intervals, malformed JSON, and an unreadable file refuse consumer-loop startup.
+Cadences fire once on the first tick and once after downtime, without backfill.
+Fires and pending one-shot deadlines are retained under each instance's
+`exhaust/triggers.sqlite3`; this append-only event log is not disposable worker
+state. Workers resume from its sequences. Library mode fires no triggers.
+
+### Proposal receive operational configuration
+
+`<state-root>/daemon/proposal-receive.json` is another daemon-local operational
 file, tag `cruxible-proposal-receive-operational-config-v1`, with one entry:
 
 | Entry | Default | Purpose |

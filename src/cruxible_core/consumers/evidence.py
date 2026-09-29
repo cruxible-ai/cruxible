@@ -38,7 +38,6 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
-from cruxible_core.consumers.clock import cadence_due
 from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerRepair,
@@ -48,6 +47,7 @@ from cruxible_core.consumers.protocol import (
 )
 from cruxible_core.consumers.state import DisposableState
 from cruxible_core.server.config import get_disabled_consumers
+from cruxible_core.triggers.cadence import cadence_due
 
 #: How often every cited Capture is re-hashed.
 SWEEP_INTERVAL = timedelta(days=1)

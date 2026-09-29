@@ -196,7 +196,6 @@ from cruxible_core.compiler.compiler import (
     SOURCE_CHECKED_COMPILER,
     TRIGGER_CAPTURE_COMPILER,
 )
-from cruxible_core.consumers.clock import cadence_due
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.errors import PermissionDeniedError
 from cruxible_core.exhaust import (
@@ -301,6 +300,7 @@ from cruxible_core.storage.material_reservations import (
     ReservedCaptureStore,
     reserve_admission_material_body,
 )
+from cruxible_core.triggers.cadence import cadence_due
 
 PROCEDURE_RUN_STREAM_ID = "procedures"
 PROCEDURE_RUN_FENCING_TOKEN = "playbill-procedure-direct-run-v1"

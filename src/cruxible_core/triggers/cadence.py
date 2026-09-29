@@ -1,4 +1,4 @@
-"""The daemon clock every consumer kind shares: when a cadence is next due.
+"""Cadence arithmetic shared by internal triggers and Line admission.
 
 A cadence is due one interval after its last completion, never before a
 floor. The floor is how a forward-only consumer resumes: an armed Line that
