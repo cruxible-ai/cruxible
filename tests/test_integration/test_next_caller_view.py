@@ -16,8 +16,10 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.next import (
     PlaybillNextItemV1,
     PlaybillNextRepairV1,
+    _caller_queue,
     _CallerView,
     _item,
+    _row_of,
     _with_findings,
 )
 
@@ -73,7 +75,7 @@ def _view(
 def test_mcp_rendering_keeps_a_rows_nested_findings() -> None:
     row = _conflict_with_uncovered_member()
 
-    (rendered,), hidden = _view(surface="mcp").items([row])
+    (rendered,), hidden, _held = _caller_queue([row], _view(surface="mcp"), None)
 
     assert hidden == 0
     assert [finding.reason for finding in rendered.findings] == ["claim_uncovered"]
@@ -128,7 +130,7 @@ def test_an_mcp_profile_without_the_approval_tool_hides_the_approval_row() -> No
     with_tool = _view(
         surface="mcp", tools=("cruxible_playbill_next", "cruxible_playbill_approve"), caller_rung=3
     )
-    (kept,), hidden = with_tool.items([row])
+    (kept,), hidden, _held = _caller_queue([row], with_tool, None)
     assert hidden == 0 and kept.repair.command is not None
 
 
@@ -169,7 +171,7 @@ def _line_arm_row() -> PlaybillNextItemV1:
 def test_sdk_rows_render_sdk_calls_not_cli_commands() -> None:
     rows = [_line_arm_row(), _approval_row()]
 
-    kept, hidden = _view(surface="sdk").items(rows)
+    kept, hidden, _held = _caller_queue(rows, _view(surface="sdk"), None)
 
     assert hidden == 0
     commands = {item.repair.operation: item.repair.command for item in kept}
@@ -247,3 +249,99 @@ def test_the_sdk_page_carries_the_hidden_count_and_status(
     assert page.hidden == 2  # type: ignore[attr-defined]
     assert page.status.hidden == 2  # type: ignore[attr-defined]
     assert page.status.line_dispatch.state == "idle"  # type: ignore[attr-defined]
+
+
+class _StubHolds:
+    """Holds that park exactly the named reasons, standing in for `_Holds`."""
+
+    def __init__(self, *reasons: str) -> None:
+        self.reasons = frozenset(reasons)
+
+    def __bool__(self) -> bool:
+        return True
+
+    def covers(self, row: object) -> bool:
+        return getattr(row, "reason", None) in self.reasons
+
+
+def _unreviewed_capture_row(subject: str) -> PlaybillNextItemV1:
+    return _item(
+        severity="warning",
+        reason="claim_new_evidence_unreviewed",
+        subject_identity=subject,
+        detail={"claim_id": "CLM-0001", "capture_digest": "sha256:" + "c" * 64},
+        repair=PlaybillNextRepairV1(
+            operation="playbill.authoring.create",
+            target=subject,
+            required_change="adjudicate_unreviewed_evidence",
+            arguments={"claim_id": "CLM-0001", "capture_digest": "sha256:" + "c" * 64},
+        ),
+    )
+
+
+def _supporting_capture_row(subject: str) -> PlaybillNextItemV1:
+    return _item(
+        severity="warning",
+        reason="claim_new_evidence_supporting",
+        subject_identity=subject,
+        detail={"claim_id": "CLM-0001", "capture_digest": "sha256:" + "d" * 64},
+        repair=PlaybillNextRepairV1(
+            operation="playbill.authoring.create",
+            target=subject,
+            required_change="cite_supporting_evidence",
+            arguments={"claim_id": "CLM-0001", "capture_digest": "sha256:" + "d" * 64},
+        ),
+    )
+
+
+def _commands(items: tuple[PlaybillNextItemV1, ...]) -> list[str | None]:
+    return [
+        repair.command
+        for item in items
+        for repair in (item.repair, *(finding.repair for finding in item.findings))
+    ]
+
+
+def _assert_rendered_for(surface: str, items: tuple[PlaybillNextItemV1, ...]) -> None:
+    commands = _commands(items)
+    assert any(command is not None for command in commands), commands
+    for command in commands:
+        assert command is None or not command.startswith("cruxible "), (surface, command)
+
+
+@pytest.mark.parametrize("surface", ["mcp", "sdk"])
+def test_a_finding_promoted_past_a_hold_is_rendered_for_the_caller(surface: str) -> None:
+
+    conflict = _conflict_with_uncovered_member()
+    carrier = _with_findings(
+        conflict.model_copy(update={"findings": ()}),
+        [*map(_row_of, conflict.findings), _unreviewed_capture_row(_CLAIM)],
+    )
+    holds = _StubHolds("claim_conflicted")
+
+    items, hidden, held = _caller_queue([carrier], _view(surface=surface), holds)  # type: ignore[arg-type]
+
+    assert (hidden, held) == (0, 1)
+    assert {item.reason for item in items} == {
+        "claim_uncovered",
+        "claim_new_evidence_unreviewed",
+    }
+    _assert_rendered_for(surface, items)
+
+
+@pytest.mark.parametrize("surface", ["mcp", "sdk"])
+def test_supporting_evidence_folded_into_a_conflict_is_rendered_for_the_caller(
+    surface: str,
+) -> None:
+
+    rows = [_conflict_with_uncovered_member(), _supporting_capture_row(_CLAIM)]
+
+    items, hidden, held = _caller_queue(rows, _view(surface=surface), None)
+
+    (conflict,) = items
+    assert (hidden, held) == (0, 0)
+    assert [finding.reason for finding in conflict.findings] == [
+        "claim_uncovered",
+        "claim_new_evidence_supporting",
+    ]
+    _assert_rendered_for(surface, items)

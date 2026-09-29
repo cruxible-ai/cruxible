@@ -4171,15 +4171,16 @@ class _CallerView:
     def items(
         self, found: Iterable[PlaybillNextItemV1]
     ) -> tuple[tuple[PlaybillNextItemV1, ...], int]:
-        """Drop rows and findings this caller cannot repair, counting each; render the rest.
+        """Drop rows and findings this caller cannot repair, counting each.
 
         A row's nested findings are work in their own right, so each is judged
-        and rendered on its own. A finding the caller cannot repair is counted
-        in ``hidden``; one it can repair stays inside its row, or stands as its
-        own row when the row that carried it is hidden.
+        on its own. A finding the caller cannot repair is counted in
+        ``hidden``; one it can repair stays inside its row, or stands as its
+        own row when the row that carried it is hidden. Rows keep their CLI
+        rendering here: holds and grouping rebuild rows, so `render` runs once,
+        after them.
         """
 
-        rerender = self.surface not in {None, "cli"}
         kept: list[PlaybillNextItemV1] = []
         hidden = 0
         for item in found:
@@ -4187,18 +4188,31 @@ class _CallerView:
             hidden += len(item.findings) - len(runnable)
             if not self.can_run(item.repair):
                 hidden += 1
-                kept.extend(
-                    self._render(finding) if rerender else _row_of(finding) for finding in runnable
-                )
-                continue
-            if not rerender and len(runnable) == len(item.findings):
+                kept.extend(_row_of(finding) for finding in runnable)
+            elif len(runnable) == len(item.findings):
                 kept.append(item)
-                continue
-            # Rebuilt, never copied: the item id digests the findings it carries.
-            head = self._render(item) if rerender else item.model_copy(update={"findings": ()})
-            rest = [self._render(finding) if rerender else _row_of(finding) for finding in runnable]
-            kept.append(_with_findings(head, rest))
+            else:
+                # Rebuilt, never copied: the item id digests the findings it carries.
+                kept.append(
+                    _with_findings(item.model_copy(update={"findings": ()}), map(_row_of, runnable))
+                )
         return tuple(kept), hidden
+
+    def render(self, items: Iterable[PlaybillNextItemV1]) -> tuple[PlaybillNextItemV1, ...]:
+        """Render each row's repair, and each nested finding's, for this caller's surface.
+
+        The one render point: it runs after holds and grouping, which rebuild
+        rows from their findings in the default (CLI) rendering.
+        """
+
+        if self.surface in {None, "cli"}:
+            return tuple(items)
+        return tuple(
+            _with_findings(self._render(item), map(self._render, item.findings))
+            if item.findings
+            else self._render(item)
+            for item in items
+        )
 
     def health(self, health: PlaybillNextHealthV1) -> PlaybillNextHealthV1:
         repair = health.repair
@@ -4212,6 +4226,21 @@ class _CallerView:
             repair.operation, arguments=repair.arguments, surface=self.surface
         )
         return health.model_copy(update={"repair": repair.model_copy(update={"command": command})})
+
+
+def _caller_queue(
+    found: Iterable[PlaybillNextItemV1], caller: _CallerView, holds: _Holds | None
+) -> tuple[tuple[PlaybillNextItemV1, ...], int, int]:
+    """The caller's queue from every row found: filtered, held, grouped and rendered.
+
+    Returns the sorted rows with the hidden and held counts.
+    """
+
+    kept, hidden = caller.items(found)
+    held = 0
+    if holds is not None:
+        kept, held = _apply_holds(kept, holds)
+    return tuple(sorted(caller.render(_group_items(kept)), key=_item_sort_key)), hidden, held
 
 
 def service_playbill_next(
@@ -4373,27 +4402,25 @@ def service_playbill_next(
         tools=request.caller_tools,
         caller_rung=caller_rung,
     )
-    found, hidden = caller.items(found)
-    held = 0
-    if parsed_claims is not None and request.access_profile.permits("instance"):
-        found, held = _apply_holds(
-            found,
-            _Holds(
-                instance,
-                coordinate=coordinate,
-                claims=parsed_claims,
-                door_events=door_events,
-                door_history=(
-                    None
-                    if attestation_head is None
-                    else lambda: instance.claim_attestation_evidence_store().events(
-                        at_head=attestation_head
-                    )
-                ),
-                evaluation_time=request.evaluation_time,
+    holds = (
+        _Holds(
+            instance,
+            coordinate=coordinate,
+            claims=parsed_claims,
+            door_events=door_events,
+            door_history=(
+                None
+                if attestation_head is None
+                else lambda: instance.claim_attestation_evidence_store().events(
+                    at_head=attestation_head
+                )
             ),
+            evaluation_time=request.evaluation_time,
         )
-    items = tuple(sorted(_group_items(found), key=_item_sort_key))
+        if parsed_claims is not None and request.access_profile.permits("instance")
+        else None
+    )
+    items, hidden, held = _caller_queue(found, caller, holds)
     terminal = instance.descriptor.decommissioned
     status = PlaybillNextStatusV1(
         blocking=terminal is not None,
