@@ -73,7 +73,8 @@ def _run(*args: str) -> Any:
 def test_set_prints_before_and_after_then_revises_on_the_next_set(served: _ServiceClient) -> None:
     first = _run("set", WI1, "status", "ready", "--because", "Checked.")
     assert first.exit_code == 0, first.output
-    assert first.output.startswith("accepted (generation")
+    assert first.stdout.startswith("accepted (generation")
+    assert "target: inst_write" in first.stderr
     assert "set project.work_item/wi-1 status: ready" in first.output
     assert "verdict supported" in first.output
     assert "next: cruxible playbill get project.work_item/wi-1" in first.output
@@ -83,7 +84,7 @@ def test_set_prints_before_and_after_then_revises_on_the_next_set(served: _Servi
 
     second = _run("set", WI1, "status", "done", "--because", "Shipped.", "--json")
     assert second.exit_code == 0, second.output
-    payload = json.loads(second.output)
+    payload = json.loads(second.stdout)
     assert payload["changes"][0]["before"] == "ready" and payload["changes"][0]["after"] == "done"
     assert payload["changes"][0]["revises"] == payload["changes"][0]["claim"]
 
@@ -91,7 +92,7 @@ def test_set_prints_before_and_after_then_revises_on_the_next_set(served: _Servi
 def test_a_number_given_as_text_is_read_by_the_field_type(served: _ServiceClient) -> None:
     result = _run("set", WI1, "measured", "3", "--because", "Counted.", "--json")
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["changes"][0]["after"] == 3
     # The field admits only captured evidence: the write lands uncovered and says so.
     assert payload["changes"][0]["verdict"] == "uncovered"
@@ -113,8 +114,8 @@ def test_a_refused_set_prints_its_code_nearest_names_and_repair_and_exits_1(
 def test_dry_run_no_accept_and_at_reach_the_request(served: _ServiceClient) -> None:
     preview = _run("set", WI1, "status", "ready", "--because", "x", "--dry-run", "--json")
     assert preview.exit_code == 0, preview.output
-    at = json.loads(preview.output)["coordinate"]["git_oid"]
-    assert json.loads(preview.output)["status"] == "would_accept"
+    at = json.loads(preview.stdout)["coordinate"]["git_oid"]
+    assert json.loads(preview.stdout)["status"] == "would_accept"
     proposed = _run("set", WI1, "status", "ready", "--because", "x", "--no-accept", "--at", at)
     assert proposed.exit_code == 0, proposed.output
     assert "awaiting approval" in proposed.output
@@ -124,8 +125,8 @@ def test_dry_run_no_accept_and_at_reach_the_request(served: _ServiceClient) -> N
 
 
 def test_retire_takes_a_claim_id_or_a_subject_and_field(served: _ServiceClient) -> None:
-    status = json.loads(_run("set", WI1, "status", "ready", "--because", "x", "--json").output)
-    title = json.loads(_run("set", WI1, "title", "Old", "--because", "x", "--json").output)
+    status = json.loads(_run("set", WI1, "status", "ready", "--because", "x", "--json").stdout)
+    title = json.loads(_run("set", WI1, "title", "Old", "--because", "x", "--json").stdout)
     by_id = _run("retire", status["changes"][0]["claim"], "--because", "Withdrawn.")
     assert by_id.exit_code == 0, by_id.output
     assert "retire project.work_item/wi-1 status: ready" in by_id.output
@@ -141,7 +142,7 @@ def test_write_applies_a_file_of_changes_and_prints_its_schema(
 ) -> None:
     schema = _run("write", "--schema")
     assert schema.exit_code == 0, schema.output
-    printed = json.loads(schema.output)
+    printed = json.loads(schema.stdout)
     assert set(printed["properties"]) == {"because", "changes"}
 
     changes = tmp_path / "changes.yaml"

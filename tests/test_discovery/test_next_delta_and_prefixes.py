@@ -329,6 +329,24 @@ def test_a_repair_command_never_carries_an_unfilled_file_placeholder(
     assert command.startswith("cruxible ")
 
 
+def test_a_retire_repair_names_the_retire_verb_on_every_surface() -> None:
+    """The dedicated retire route is gone; a retire repair names the write verb."""
+    from cruxible_core.service.discovery.next import _REPAIR_TOOLS, _repair_command
+
+    claim = "CLM-" + "1" * 32
+    arguments = {"claim_id": claim}
+    assert _REPAIR_TOOLS["playbill.claim.retire"] == "cruxible_playbill_retire"
+    assert _repair_command("playbill.claim.retire", arguments=arguments) == (
+        f"cruxible playbill retire {claim}"
+    )
+    assert _repair_command("playbill.claim.retire", arguments=arguments, surface="mcp") == (
+        f'cruxible_playbill_retire(target="{claim}")'
+    )
+    assert _repair_command("playbill.claim.retire", arguments=arguments, surface="sdk") == (
+        f'playbill.retire("{claim}")'
+    )
+
+
 def test_a_repair_command_fills_the_placeholder_when_the_row_names_the_file() -> None:
     from cruxible_core.service.discovery.next import _repair_command
 

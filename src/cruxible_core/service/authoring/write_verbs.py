@@ -929,7 +929,7 @@ class _Planner:
                 "retired": tuple(item.artifact_identity.name for item in dependents),
             },
             member=ClaimRetirementMemberV1(
-                claim_ref=claim_id, reason=change.reason, dependents=dependents
+                retires=claim_id, reason=change.reason, dependents=dependents
             ),
             retires=claim_id,
         )

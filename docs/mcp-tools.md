@@ -190,7 +190,6 @@ paths and root aliases, not compilation wire.
 | `cruxible_playbill_list_claim_types` | List the accepted predicate vocabulary | `READ_ONLY` |
 | `cruxible_playbill_get_claim_type` | Read one accepted ClaimType | `READ_ONLY` |
 | `cruxible_playbill_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
-| `cruxible_playbill_claim_retire` | Preflight or submit one attributed, dependency-closed Claim retirement | `GOVERNED_WRITE` |
 | `cruxible_playbill_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
 | `cruxible_playbill_list_claims` | List accepted Claims by Subject, `subject_kind` or predicate | `READ_ONLY` |
 | `cruxible_playbill_claim_values` | Status table: each live Claim's `subject_id`, value and verdict for every Subject of one kind (or named `subject_ids`) and the given predicates | `READ_ONLY` |

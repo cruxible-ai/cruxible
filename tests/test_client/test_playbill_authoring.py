@@ -423,18 +423,17 @@ def _retirement_playbill(workspace: Path) -> tuple[Playbill, list[httpx.Request]
 
 
 @pytest.mark.parametrize("spelling", ["bare", "prefixed", "ref"])
-def test_change_set_retire_takes_every_spelling_the_standalone_route_takes(
+def test_change_set_retire_takes_every_spelling_the_sdk_hands_out(
     tmp_path: Path,
     spelling: str,
 ) -> None:
-    """`pb.changes().retire(...)` accepts exactly what `pb.retire_claim(...)` does.
+    """`pb.changes().retire(...)` accepts every spelling the SDK hands a Claim back in.
 
     The SDK hands a Claim identity back as `Claim:CLM-...` -- off a search row,
-    off a `KnowledgeCard`, on a `ClaimRef` -- and the standalone retirement
-    route takes that spelling. The builder used to raise `ClaimFormatError` on
-    it, so one string worked on one route and not the other. It is normalized
-    at the boundary now, and the member on the wire is the one canonical bare
-    Claim ID whichever spelling the caller had to hand.
+    off a `KnowledgeCard`, on a `ClaimRef`. The builder used to raise
+    `ClaimFormatError` on it. It is normalized at the boundary, and the member
+    on the wire names the one canonical bare Claim ID in `retires`, whichever
+    spelling the caller had to hand.
     """
 
     pb, captured = _retirement_playbill(tmp_path / "workspace")
@@ -452,7 +451,7 @@ def test_change_set_retire_takes_every_spelling_the_standalone_route_takes(
     assert draft.prepare().intent_id == INTENT_ID
     payload = _authored_change_set(captured)
     assert payload["tag"] == "playbill-change-set-authoring-payload-v1"
-    assert [member["claim_ref"] for member in payload["members"]] == [RETIRED_CLAIM_ID]
+    assert [member["retires"] for member in payload["members"]] == [RETIRED_CLAIM_ID]
     assert [member["tag"] for member in payload["members"]] == [
         "playbill-claim-retirement-authoring-payload-v1"
     ]

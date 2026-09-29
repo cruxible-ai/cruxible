@@ -733,7 +733,6 @@ version; the refusal names them.
 ## playbill claim
 
 ~~~text
-cruxible playbill claim retire IDENTITY REQUEST_FILE
 cruxible playbill claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
   [--valid-until TS]
 cruxible playbill claim list [--subject PATH] [--kind KIND] [--predicate P] [--include-retired]
@@ -756,11 +755,10 @@ CLI form of the SDK's `world.values`): one row per live Claim, with its
 of `--kind` (or only the named `--subject` IDs) and the given predicates,
 without full Claim views. It refuses rather than truncates past 8192 Claims.
 
-Claims are authored through `playbill authoring create`/`compile`; the retired
-direct v1 proposal commands are not a second writer. `retire` preflights or submits one
-attributed retirement over the complete dependent Claim closure; the request
-must name every dependent reason and never receives a daemon-synthesized end
-time. explain returns the verdict together with the law evidence and source
+Claims are written through `playbill set`, `retire` and `write`, or authored
+through `playbill authoring create`/`compile`; the retired direct v1 proposal
+commands are not a second writer. `playbill retire` retires a Claim with its
+complete dependent Claim closure in one change set. explain returns the verdict together with the law evidence and source
 handles it was computed from. When the Claim shares anything with a retired
 Claim, explain also carries a `retirement_context` section, which the CLI prints
 beneath the verdict. It is review context, not queue work, so `next` does not

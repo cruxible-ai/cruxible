@@ -784,7 +784,7 @@ class PlaybillNextResultV2(PlaybillNextResultV1):
 _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.authoring.create": "playbill authoring create",
     "playbill.authoring.bind": "playbill authoring bind",
-    "playbill.claim.retire": "playbill claim retire",
+    "playbill.claim.retire": "playbill retire",
     "playbill.floor.export": "playbill floor export",
     "playbill.block.depublish": "playbill block depublish",
     "playbill.block.repin": "playbill block repin",
@@ -801,17 +801,15 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
 # Each of these needs a local file. The queue knows the path only if the row
 # carried it, so the placeholder is filled from the arguments when they name it
 # and dropped -- with the flag that introduces it -- when they do not. A bare
-# `REQUEST_FILE` left in the line is not a hint, it is an unrunnable command
+# `PAYLOAD_FILE` left in the line is not a hint, it is an unrunnable command
 # presented as a runnable one, which is the one thing `command` must never be.
 _REPAIR_COMMAND_OPERANDS: Mapping[str, tuple[str, ...]] = {
     "playbill.authoring.create": ("PAYLOAD_FILE",),
     "playbill.authoring.bind": ("--payload-file", "PAYLOAD_FILE"),
-    "playbill.claim.retire": ("REQUEST_FILE",),
     "playbill.document.propose": ("--envelope", "ENVELOPE_FILE"),
 }
 _REPAIR_COMMAND_PLACEHOLDERS: Mapping[str, str] = {
     "PAYLOAD_FILE": "payload_file",
-    "REQUEST_FILE": "request_file",
     "ENVELOPE_FILE": "envelope_file",
 }
 _ATTESTATION_REPAIR_EXAMPLES: Mapping[str, str] = {
@@ -852,7 +850,7 @@ NextCallerSurface: TypeAlias = Literal["cli", "mcp", "sdk"]
 _REPAIR_TOOLS: Mapping[str, str | None] = {
     "playbill.authoring.create": "cruxible_playbill_authoring_create",
     "playbill.authoring.bind": "cruxible_playbill_authoring_bind",
-    "playbill.claim.retire": "cruxible_playbill_claim_retire",
+    "playbill.claim.retire": "cruxible_playbill_retire",
     "playbill.floor.export": "cruxible_playbill_floor_export",
     "playbill.block.depublish": "cruxible_playbill_block_depublish",
     "playbill.block.repin": None,
@@ -923,6 +921,9 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         )
     if operation == "playbill.floor.export":
         return _mcp_call("cruxible_playbill_floor_export", mode="write")
+    if operation == "playbill.claim.retire" and text("claim_id"):
+        # Why it ends is the retirer's to say: `because` is the argument left to add.
+        return _mcp_call("cruxible_playbill_retire", target=text("claim_id"))
     return None
 
 
@@ -990,7 +991,7 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         handle = _sdk_call("playbill.proposal", proposal)
         return f"{handle}.approve(reviewed={handle}.review())"
     if operation == "playbill.claim.retire" and (claim := text("claim_id")):
-        return _sdk_call("playbill.retire_claim", claim)
+        return _sdk_call("playbill.retire", claim)
     if operation == "playbill.block.repin" and (source := text("source_id")):
         block = text("block_id")
         if block is None:
@@ -1093,10 +1094,11 @@ def _repair_command(
             return None
         parts.extend([shlex.quote(proposal_id), "--signer-id", shlex.quote(signer_id)])
     elif operation == "playbill.claim.retire":
+        # Why it ends is the retirer's to say: `--because` is the operand left to add.
         claim_id = values.get("claim_id")
-        if isinstance(claim_id, str):
-            parts.append(shlex.quote(claim_id))
-        parts.extend(_repair_operands(operation, values))
+        if not isinstance(claim_id, str) or not claim_id:
+            return None
+        parts.append(shlex.quote(claim_id))
     elif operation in _REPAIR_COMMAND_OPERANDS:
         parts.extend(_repair_operands(operation, values))
     return " ".join(parts)

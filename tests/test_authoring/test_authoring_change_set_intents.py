@@ -335,7 +335,7 @@ def test_two_members_on_one_path_and_one_slot_name_their_member_indices(
         payload=_change_set(
             _claim(revises=accepted_claim_id, value="done", rationale="Revise the status."),
             ClaimRetirementMemberV1(
-                claim_ref=accepted_claim_id,
+                retires=accepted_claim_id,
                 reason="was-wrong",
             ),
         ),
@@ -398,7 +398,7 @@ def test_a_retirement_member_carries_its_closure_and_lands_with_the_set(
 
     payload = _change_set(
         SubjectAuthoringPayloadV1(subject=_shell("wi-retire")),
-        ClaimRetirementMemberV1(claim_ref=claim_id, reason="was-rescinded"),
+        ClaimRetirementMemberV1(retires=claim_id, reason="was-rescinded"),
     )
     intent = coordinator.create(
         actor=actor,
@@ -427,7 +427,7 @@ def test_a_retirement_member_refuses_an_incomplete_closure(tmp_path: Path) -> No
         payload=_change_set(
             SubjectAuthoringPayloadV1(subject=_shell("wi-noise")),
             ClaimRetirementMemberV1(
-                claim_ref=claim_id,
+                retires=claim_id,
                 reason="was-wrong",
                 dependents=(
                     ClaimRetireDependentV1(
@@ -526,8 +526,8 @@ def test_eighty_members_of_every_kind_become_exactly_one_generation(tmp_path: Pa
         for predicate in predicates
     ]
     retirements = [
-        ClaimRetirementMemberV1(claim_ref=seeded[0], reason="was-rescinded"),
-        ClaimRetirementMemberV1(claim_ref=seeded[1], reason="was-wrong"),
+        ClaimRetirementMemberV1(retires=seeded[0], reason="was-rescinded"),
+        ClaimRetirementMemberV1(retires=seeded[1], reason="was-wrong"),
     ]
     revision = _claim(
         qualifier="seed2",
@@ -1069,7 +1069,7 @@ def test_a_one_member_change_set_lands_and_keeps_its_change_set_identity(
     )
 
 
-def test_a_retirement_member_spells_its_claim_ref_the_way_a_claim_does(
+def test_a_retirement_member_spells_what_it_retires_the_way_a_claim_does(
     tmp_path: Path,
 ) -> None:
     """One retirement has one spelling, so create-dedup cannot miss it.
@@ -1082,14 +1082,14 @@ def test_a_retirement_member_spells_its_claim_ref_the_way_a_claim_does(
     """
 
     claim_id = "CLM-" + "1" * 32
-    member = ClaimRetirementMemberV1(claim_ref=claim_id, reason="was-rescinded")
+    member = ClaimRetirementMemberV1(retires=claim_id, reason="was-rescinded")
     assert member.claim_id == claim_id
     assert authoring_member_identity(member) == f"ClaimRetirement:{claim_id}"
 
     # Both Claim-addressing member kinds refuse the prefixed spelling, the same
     # way, with the same message.
     with pytest.raises(ClaimFormatError, match="Claim ID must be CLM-"):
-        ClaimRetirementMemberV1(claim_ref=f"Claim:{claim_id}", reason="was-rescinded")
+        ClaimRetirementMemberV1(retires=f"Claim:{claim_id}", reason="was-rescinded")
     with pytest.raises(ClaimFormatError, match="Claim ID must be CLM-"):
         _claim(revises=f"Claim:{claim_id}")
 
@@ -1099,7 +1099,7 @@ def test_a_retirement_member_spells_its_claim_ref_the_way_a_claim_does(
         members=(
             ClaimRetirementInput(
                 kind="claim_retirement",
-                claim_id=f"Claim:{claim_id}",
+                retires=f"Claim:{claim_id}",
                 reason="was-rescinded",
             ),
         ),
@@ -1114,7 +1114,7 @@ def test_a_retirement_member_spells_its_claim_ref_the_way_a_claim_does(
     actor = AuthenticatedActor(actor_id="owner")
     accepted = _accept_one_claim(instance, owner, coordinator, actor)
     payload = _change_set(
-        ClaimRetirementMemberV1(claim_ref=accepted, reason="was-rescinded"),
+        ClaimRetirementMemberV1(retires=accepted, reason="was-rescinded"),
         SubjectAuthoringPayloadV1(subject=_shell("wi-dedup")),
     )
     first = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
@@ -1194,7 +1194,7 @@ def _measured_retirement_set(
     claim_ids = _measured_claim_set(instance, owner, coordinator, actor, count)
     payload = _change_set(
         *(
-            ClaimRetirementMemberV1(claim_ref=claim_id, reason="was-rescinded")
+            ClaimRetirementMemberV1(retires=claim_id, reason="was-rescinded")
             for claim_id in claim_ids
         )
     )
@@ -1394,7 +1394,7 @@ def test_a_set_of_retirements_at_the_old_ceiling_refuses(
     instance.bind_receive_limits(limits)
     payload = _change_set(
         *(
-            ClaimRetirementMemberV1(claim_ref=f"CLM-{index:032x}", reason="was-rescinded")
+            ClaimRetirementMemberV1(retires=f"CLM-{index:032x}", reason="was-rescinded")
             for index in range(582)
         )
     )

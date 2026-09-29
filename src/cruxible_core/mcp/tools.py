@@ -578,18 +578,6 @@ def register_tools(
         return handlers.handle_playbill_get_claim_type(require_instance_id(instance_id), predicate)
 
     @_tool
-    def cruxible_playbill_claim_retire(
-        instance_id: InstanceId = None,
-        *,
-        claim_id: str,
-        request: dict[str, Any],
-    ) -> contracts.PlaybillClaimRetireResponse:
-        """Preflight or submit one attributed Claim retirement closure."""
-        return handlers.handle_playbill_retire_claim(
-            require_instance_id(instance_id), claim_id, request
-        )
-
-    @_tool
     def cruxible_playbill_claim_attest(
         instance_id: InstanceId = None,
         *,

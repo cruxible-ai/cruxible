@@ -7,8 +7,7 @@ import json
 import os
 import re
 import time
-from collections import OrderedDict
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -141,9 +140,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
-    Sha256Value,
     normalize_canonical,
-    typed_digest,
 )
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
 from cruxible_client.contracts.captures import (
@@ -171,7 +168,6 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactV3,
     ClaimRetireDependentV1,
     ClaimRetirementReason,
-    ClaimRetireRequestV1,
     ClaimUnsupportedFormatError,
     LiteralClaimObject,
     SubjectClaimObject,
@@ -261,9 +257,6 @@ _SUBJECT_RE = re.compile(
 # Anything outside the set is skew, not caller error; see _claim_type_object_kind.
 _CLAIM_TYPE_OBJECT_KINDS = frozenset({"literal", "subject", "exact_content"})
 _CLAIM_ADAPTER: TypeAdapter[ClaimArtifactAny] = TypeAdapter(ClaimArtifactAny)
-_RETIRE_CLOSURE_MISMATCH_CODE = "playbill.claim.retire_closure_mismatch"
-_CLAIM_RETIRE_OPERATION_DOMAIN = "playbill-claim-retire-operation-v1"
-_RETIREMENT_SUBMISSION_CACHE_LIMIT = 128
 
 
 def _coordinate(value: api.PlaybillAcceptedCoordinate | Mapping[str, object]) -> AcceptedCoordinate:
@@ -1091,18 +1084,18 @@ class ChangeSetDraft:
     ) -> ChangeSetDraft:
         """Retire one accepted Claim, and its live closure, inside this changeset.
 
-        Takes exactly what `Playbill.retire_claim` takes: the SDK's own rows
-        and refs spell a Claim identity `Claim:CLM-...`, so a builder that
-        refused the prefix made one library disagree with itself. The member
-        carries the one canonical bare spelling, which is what keeps two
-        spellings of one retirement on one member identity and one digest.
+        Takes a Claim ID in either spelling the SDK's rows and refs use
+        (`CLM-...` or `Claim:CLM-...`). The member carries the one canonical bare
+        spelling as `retires`, which is what keeps two spellings of one
+        retirement on one member identity and one digest. `Playbill.retire` is
+        the typed write verb for the common case: it computes the closure.
         """
 
         address = _address(claim, RefKind.CLAIM).removeprefix("Claim:")
         self._members.append(
             _ChangeSetMember(
                 payload=ClaimRetirementMemberV1(
-                    claim_ref=address,
+                    retires=address,
                     reason=reason,
                     effective_until=effective_until,
                     dependents=tuple(dependents),
@@ -1569,27 +1562,6 @@ class Intent:
         )
 
 
-def _all_proposals(
-    client: CruxibleClient,
-    instance_id: str,
-    *,
-    status: Literal["open", "settled", "incomplete"] | None = None,
-) -> Iterator[api.PlaybillProposalListEntry]:
-    """Every listed proposal, following the list's pages at one pinned coordinate."""
-    cursor: str | None = None
-    while True:
-        page = client.list_playbill_proposals(
-            instance_id,
-            status=status,
-            limit=api.PLAYBILL_PROPOSAL_LIST_MAX_LIMIT,
-            cursor=cursor,
-        )
-        yield from page.entries
-        if page.next_cursor is None:
-            return
-        cursor = page.next_cursor
-
-
 class Proposal:
     def __init__(
         self,
@@ -1731,9 +1703,6 @@ class Playbill:
         self._coordinate: AcceptedCoordinate | None = None
         self._pinned = False
         self._owns_client = True
-        self._retirement_submissions: OrderedDict[str, tuple[ClaimRetireRequestV1, str]] = (
-            OrderedDict()
-        )
         # An accepted ClaimType at an exact coordinate never changes, so one read
         # answers every Claim this connection drafts under that predicate there.
         self._claim_type_envelopes: dict[tuple[str, str], Mapping[str, object]] = {}
@@ -2998,164 +2967,6 @@ class Playbill:
             # instead of the SDK raising an untyped, repair-less ValueError.
             return "literal"
         return cast(Literal["literal", "subject", "exact_content"], object_kind)
-
-    def retire_claim(
-        self,
-        claim: str | ClaimRef,
-        *,
-        reason: ClaimRetirementReason,
-        mode: Literal["preflight", "submit"] = "preflight",
-        effective_until: datetime | None = None,
-        dependents: Sequence[ClaimRetireDependentV1] = (),
-    ) -> api.PlaybillClaimRetireResponse:
-        """Preflight or submit one attributed, dependency-closed Claim retirement."""
-
-        claim_address = _address(claim, RefKind.CLAIM)
-        coordinate = claim.coordinate if isinstance(claim, ClaimRef) else self.coordinate
-        request = ClaimRetireRequestV1(
-            mode=mode,
-            claim_ref=claim_address,
-            reason=reason,
-            effective_until=effective_until,
-            expected_coordinate=coordinate,
-            dependents=tuple(dependents),
-        )
-        claim_id = claim_address.removeprefix("Claim:")
-        try:
-            result = self._client.retire_playbill_claim(
-                self._instance_id,
-                claim_id,
-                request=request.model_dump(mode="json"),
-            )
-        except CoreError as original:
-            if (
-                isinstance(claim, ClaimRef)
-                or mode != "submit"
-                or getattr(original, "error_code", None) != _RETIRE_CLOSURE_MISMATCH_CODE
-            ):
-                raise
-            try:
-                history = self._client.playbill_claim_history(self._instance_id, claim_id)
-                cached = self._retirement_submissions.get(claim_id)
-                if cached is None:
-                    submitted_request, submitted_operation_digest = (
-                        self._retirement_submission_from_history(
-                            claim_id=claim_id,
-                            request=request,
-                            entries=history.entries,
-                        )
-                    )
-                else:
-                    self._retirement_submissions.move_to_end(claim_id)
-                    submitted_request, submitted_operation_digest = cached
-                replay_request = request.model_copy(
-                    update={"expected_coordinate": submitted_request.expected_coordinate}
-                )
-                if replay_request != submitted_request:
-                    raise ValueError("retirement request differs from submitted operation")
-                replayed = self._client.retire_playbill_claim(
-                    self._instance_id,
-                    claim_id,
-                    request=replay_request.model_dump(mode="json"),
-                )
-            except (CoreError, KeyError, TypeError, ValueError):
-                raise original from None
-            if (
-                getattr(replayed, "outcome", None) != "already_retired"
-                or replayed.operation_digest != submitted_operation_digest
-            ):
-                raise original
-            self._retirement_submissions.pop(claim_id, None)
-            return replayed
-        if mode == "submit" and getattr(result, "outcome", None) == "proposed":
-            self._retirement_submissions[claim_id] = (request, result.operation_digest)
-            self._retirement_submissions.move_to_end(claim_id)
-            while len(self._retirement_submissions) > _RETIREMENT_SUBMISSION_CACHE_LIMIT:
-                self._retirement_submissions.popitem(last=False)
-        return result
-
-    def _retirement_submission_from_history(
-        self,
-        *,
-        claim_id: str,
-        request: ClaimRetireRequestV1,
-        entries: Sequence[Mapping[str, Any]],
-    ) -> tuple[ClaimRetireRequestV1, str]:
-        """Recover one accepted retirement's original request coordinate and digest."""
-
-        retirement = next(
-            (entry for entry in entries if entry.get("lifecycle_state") == "retired"),
-            None,
-        )
-        if retirement is None:
-            raise ValueError("accepted Claim history has no retirement")
-        candidate_digest = retirement.get("candidate_digest")
-        predecessor_digest = retirement.get("predecessor_digest")
-        if not isinstance(candidate_digest, str) or not isinstance(predecessor_digest, str):
-            raise ValueError("accepted retirement history lacks candidate evidence")
-
-        matches = tuple(
-            entry
-            for entry in _all_proposals(self._client, self._instance_id, status="settled")
-            if entry.candidate_digest == candidate_digest and entry.terminal_reason == "accepted"
-        )
-        if len(matches) != 1:
-            raise ValueError("accepted retirement candidate does not name one proposal")
-        inspection = self._client.inspect_playbill_proposal(
-            self._instance_id, matches[0].proposal_id
-        )
-        proposal = inspection.proposal
-        admission = proposal.get("admission")
-        candidate = proposal.get("candidate")
-        if not isinstance(admission, Mapping) or not isinstance(candidate, Mapping):
-            raise ValueError("accepted retirement proposal evidence is incomplete")
-        if candidate.get("candidate_digest") != candidate_digest:
-            raise ValueError("accepted retirement proposal candidate differs from history")
-
-        law_evidence = candidate.get("law_evidence")
-        if not isinstance(law_evidence, list) or not law_evidence:
-            raise ValueError("accepted retirement candidate lacks law coordinates")
-        coordinates = {
-            json.dumps(item.get("evaluation_coordinate"), sort_keys=True, separators=(",", ":"))
-            for item in law_evidence
-            if isinstance(item, Mapping) and isinstance(item.get("evaluation_coordinate"), Mapping)
-        }
-        if len(coordinates) != 1:
-            raise ValueError("accepted retirement candidate mixes law coordinates")
-        coordinate_payload = json.loads(next(iter(coordinates)))
-        coordinate_payload["tag"] = "playbill-accepted-coordinate-v1"
-        coordinate = AcceptedCoordinate.model_validate(coordinate_payload)
-        if admission.get("proposed_base_oid") != coordinate.git_oid:
-            raise ValueError("accepted retirement proposal base differs from its law coordinate")
-
-        actor_id = admission.get("actor_id")
-        target_ref = admission.get("target_ref")
-        if not isinstance(actor_id, str) or not isinstance(target_ref, str):
-            raise ValueError("accepted retirement proposal lacks operation attribution")
-        target_prefix = f"refs/proposals/{actor_id}/claim-retire-"
-        if not target_ref.startswith(target_prefix):
-            raise ValueError("accepted retirement proposal has another operation family")
-        operation_digest = "sha256:" + target_ref.removeprefix(target_prefix)
-        Sha256Value.from_tagged(operation_digest)
-        root = ClaimRetireDependentV1(
-            artifact_identity=ArtifactIdentity(kind="Claim", name=claim_id),
-            predecessor_digest=predecessor_digest,
-            reason=request.reason,
-            effective_until=request.effective_until,
-        )
-        reproduced = typed_digest(
-            Sha256Value,
-            _CLAIM_RETIRE_OPERATION_DOMAIN,
-            {
-                "actor_principal_id": actor_id,
-                "expected_accepted_coordinate": coordinate.model_dump(mode="json"),
-                "root": root.model_dump(mode="json"),
-                "dependents": [item.model_dump(mode="json") for item in request.dependents],
-            },
-        ).tagged
-        if reproduced != operation_digest:
-            raise ValueError("retirement request differs from accepted operation")
-        return request.model_copy(update={"expected_coordinate": coordinate}), operation_digest
 
     def query_definition(
         self,

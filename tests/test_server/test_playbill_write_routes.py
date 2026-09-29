@@ -71,3 +71,14 @@ def test_a_refused_write_is_an_outcome_and_a_malformed_one_is_a_422(
 
     malformed = client.post(f"{base}/write", json={"because": "x", "changes": []})
     assert malformed.status_code == 422
+
+
+def test_the_dedicated_claim_retire_route_is_gone(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _key = playbill_http
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/claims/CLM-{'0' * 32}/retire",
+        json={"mode": "preflight"},
+    )
+    assert response.status_code in {404, 405}

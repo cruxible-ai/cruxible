@@ -3330,16 +3330,16 @@ def _stage_claim_retirement(
     if content is None:
         _refuse(
             "playbill.authoring.claim_predecessor_not_found",
-            "claim_ref",
+            "retires",
             "The Claim named for retirement does not exist in this change set's tree.",
-            repair_kind="replace_claim_ref",
+            repair_kind="replace_retires",
             repair_description="Retire a Claim accepted at the intent base.",
         )
     claim = parse_claim(content, path=path)
     if claim.lifecycle.state != "live":
         _refuse(
             "playbill.authoring.claim_terminal",
-            "claim_ref",
+            "retires",
             "A retired Claim cannot be retired again.",
             repair_kind="drop_member",
             repair_description="Remove this retirement member; the Claim is already retired.",

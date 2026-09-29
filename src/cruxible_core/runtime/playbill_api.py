@@ -45,7 +45,7 @@ from cruxible_client.contracts.claim_reads import (
     ClaimValuesResultV1,
 )
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.claims import ClaimRetireRequestV1, claim_path
+from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
 from cruxible_client.contracts.discovery import (
     DiscoveryBudgetV1,
@@ -113,10 +113,6 @@ from cruxible_client.contracts.write import (
     as_write_request,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.claims.claim_retirement import (
-    ClaimRetireResponse,
-    service_retire_claim,
-)
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1, lint_claim_type_input
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeMigrationRequest,
@@ -358,9 +354,6 @@ def _curation_validation_boundary(
 
 _CLAIM_TYPE_MIGRATION_RESPONSE: TypeAdapter[contracts.PlaybillClaimTypeMigrationResponse] = (
     TypeAdapter(contracts.PlaybillClaimTypeMigrationResponse)
-)
-_CLAIM_RETIRE_RESPONSE: TypeAdapter[contracts.PlaybillClaimRetireResponse] = TypeAdapter(
-    contracts.PlaybillClaimRetireResponse
 )
 
 
@@ -1339,22 +1332,6 @@ def playbill_get_claim_type(
         paths=(result.path,),
     )
     return contracts.PlaybillClaimTypeView.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_retire_claim(
-    instance_id: str,
-    claim_id: str,
-    *,
-    request: ClaimRetireRequestV1,
-) -> contracts.PlaybillClaimRetireResponse:
-    check_permission("cruxible_playbill_claim_retire", instance_id=instance_id)
-    result: ClaimRetireResponse = service_retire_claim(
-        get_playbill_manager().get(instance_id),
-        claim_id=claim_id,
-        request=request,
-        actor=AuthenticatedActor(actor_id=_actor_id()),
-    )
-    return _CLAIM_RETIRE_RESPONSE.validate_python(result.model_dump(mode="json"))
 
 
 def _permits(tool_name: str, *, instance_id: str) -> bool:

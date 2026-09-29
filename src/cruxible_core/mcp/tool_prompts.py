@@ -156,10 +156,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_get_claim_type": (
         "Use when you need one predicate's accepted structure, cardinality, and policy."
     ),
-    "cruxible_playbill_claim_retire": (
-        "Use when one Claim and its transitive Claim dependents must retire with explicit "
-        "attribution in one governed ChangeSet."
-    ),
     "cruxible_playbill_claim_attest": (
         "Use when you examined a Claim and want to sign support, contradict, or unsure on it, "
         "optionally citing new Captures you examined."

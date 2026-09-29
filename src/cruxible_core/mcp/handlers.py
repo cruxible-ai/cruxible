@@ -44,7 +44,6 @@ from cruxible_client.contracts.claim_attestations import (
     PreparedClaimAttestationRequestV1,
 )
 from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1, ClaimValuesResultV1
-from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
@@ -155,7 +154,6 @@ _AUTHORING_INPUT: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringInputV1)
 _CLAIM_TYPE_MIGRATION: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdapter(
     ClaimTypeMigrationRequest
 )
-_CLAIM_RETIRE = TypeAdapter(ClaimRetireRequestV1)
 
 
 class _LocalFloorClient:
@@ -360,7 +358,6 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_block_declare": TypeAdapter(PlaybillBlockDeclareRequest),
     "cruxible_playbill_block_depublish": TypeAdapter(PlaybillBlockDepublishRequest),
     "cruxible_playbill_claim_attest": None,  # shared preparation helper builds the body
-    "cruxible_playbill_claim_retire": TypeAdapter(ClaimRetireRequestV1),
     "cruxible_playbill_set": TypeAdapter(PlaybillSetRequestV1),
     "cruxible_playbill_retire": TypeAdapter(PlaybillRetireRequestV1),
     "cruxible_playbill_write": TypeAdapter(PlaybillWriteRequestV1),
@@ -1214,28 +1211,6 @@ def handle_playbill_get_claim_type(
         lambda client: client.get_playbill_claim_type(instance_id, predicate),
         lambda: playbill_api.playbill_get_claim_type(instance_id, predicate),
         operation_name="cruxible_playbill_get_claim_type",
-    )
-
-
-def handle_playbill_retire_claim(
-    instance_id: str,
-    claim_id: str,
-    request: dict[str, Any],
-) -> contracts.PlaybillClaimRetireResponse:
-    retirement = _CLAIM_RETIRE.validate_python(request)
-    return _dispatch_remote_or_local(
-        lambda client: client.retire_playbill_claim(
-            instance_id,
-            claim_id,
-            request=retirement.model_dump(mode="json"),
-        ),
-        lambda: playbill_api.playbill_retire_claim(
-            instance_id,
-            claim_id,
-            request=retirement,
-        ),
-        operation_name="cruxible_playbill_claim_retire",
-        local_payload=retirement.model_dump(mode="json"),
     )
 
 

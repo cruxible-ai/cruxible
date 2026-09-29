@@ -74,7 +74,6 @@ from cruxible_client.contracts.claim_attestations import (
     PreparedClaimAttestationRequestV1,
 )
 from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1
-from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
@@ -328,23 +327,6 @@ _AUTHORING_INPUT_ADAPTER: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringI
 _CLAIM_TYPE_MIGRATION_ADAPTER: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdapter(
     ClaimTypeMigrationRequest
 )
-_CLAIM_RETIRE_ADAPTER = TypeAdapter(ClaimRetireRequestV1)
-
-
-def _claim_retire_example() -> ClaimRetireRequestV1:
-    return ClaimRetireRequestV1(
-        mode="preflight",
-        claim_ref="Claim:CLM-0123456789abcdef0123456789abcdef",
-        reason="was-wrong",
-        effective_until=None,
-        expected_coordinate=AcceptedCoordinate(
-            git_oid="0" * 40,
-            semantic_root="sha256:" + "0" * 64,
-            generation_root="sha256:" + "0" * 64,
-            compiler_digest="sha256:" + "0" * 64,
-        ),
-        dependents=(),
-    )
 
 
 def _authoring_examples_for(payload: Mapping[str, Any]) -> tuple[str, ...]:
@@ -2785,108 +2767,6 @@ def attest_claim(
 
     result = _server_call(call, command_name="playbill claim attest")
     _emit_json(result.model_dump(mode="json"))
-
-
-@claim_group.command("retire")
-@click.argument("claim_id", required=False)
-@click.argument("request_file", required=False, type=click.Path(exists=True, dir_okay=False))
-@click.option("--example", is_flag=True, help="Print a valid retirement request file.")
-@and_activate_option
-@click.option(
-    "--workspace-root",
-    type=click.Path(exists=True, file_okay=False),
-    default=".",
-    show_default=True,
-    help="Workspace whose floor is refreshed when --and-activate activates.",
-)
-@brief_option
-@json_option
-@handle_errors
-def retire_claim(
-    claim_id: str | None,
-    request_file: str | None,
-    example: bool,
-    and_activate: bool,
-    workspace_root: str,
-    output_brief: bool,
-    output_json: bool,
-) -> None:
-    """Preflight or submit one attributed Claim retirement closure."""
-
-    if example:
-        if claim_id is not None or request_file is not None:
-            raise click.UsageError("--example does not accept CLAIM_ID or REQUEST_FILE")
-        click.echo(
-            json.dumps(
-                _claim_retire_example().model_dump(mode="json"),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-        )
-        return
-    if claim_id is None or request_file is None:
-        raise click.UsageError("provide CLAIM_ID REQUEST_FILE or --example")
-    try:
-        request = _CLAIM_RETIRE_ADAPTER.validate_python(_read_mapping(request_file))
-    except ValidationError as exc:
-        raise click.ClickException(f"Invalid Claim retirement: {exc}") from exc
-
-    def call(client: CruxibleClient, instance_id: str) -> tuple[Any, Any]:
-        retired = client.retire_playbill_claim(
-            instance_id,
-            claim_id,
-            request=request.model_dump(mode="json"),
-        )
-        proposal_id = _retire_proposal_id(retired)
-        if not and_activate or proposal_id is None:
-            return retired, None
-        return retired, activate_with_workspace_refresh(
-            client, instance_id, proposal_id, workspace=workspace_root
-        )
-
-    result, activation = _server_call(call, command_name="playbill claim retire")
-    payload: dict[str, Any] = {"retire": result.model_dump(mode="json")}
-    if activation is not None:
-        payload["activation"] = activation.model_dump(mode="json")
-    elif and_activate:
-        payload["activation_note"] = (
-            "not activated: this retirement produced no activatable proposal "
-            f"(outcome {getattr(result, 'outcome', 'preflight')})"
-        )
-    if output_brief:
-        proposal_id = _retire_proposal_id(result)
-        _emit_brief(
-            outcome=(
-                "accepted"
-                if activation is not None
-                else str(getattr(result, "outcome", "preflight"))
-            ),
-            ids={"claim": claim_id, "proposal": proposal_id},
-            next_command=(
-                None
-                if activation is not None or proposal_id is None
-                else f"cruxible playbill proposal activate {proposal_id}"
-            ),
-        )
-        return
-    _emit_json(payload if (and_activate or activation is not None) else payload["retire"])
-
-
-def _retire_proposal_id(result: Any) -> str | None:
-    """Return the activatable proposal a submitted retirement produced, if any.
-
-    A preflight produces none, and neither does an `already_retired` replay.
-    """
-
-    proposal = getattr(result, "proposal", None)
-    if proposal is None:
-        return None
-    admission = proposal.proposal.get("admission") if isinstance(proposal.proposal, dict) else None
-    if not isinstance(admission, dict):
-        return None
-    proposal_id = admission.get("proposal_id")
-    return proposal_id if isinstance(proposal_id, str) else None
 
 
 @playbill_group.group("authoring")

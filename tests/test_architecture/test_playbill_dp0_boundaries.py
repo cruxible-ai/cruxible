@@ -405,7 +405,6 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "propose_playbill_claim_type_input",
         "list_playbill_claim_types",
         "get_playbill_claim_type",
-        "retire_playbill_claim",
         "append_playbill_claim_attestation",
         "recover_playbill_claim_attestations",
         "list_playbill_claims",

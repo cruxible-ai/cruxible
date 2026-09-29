@@ -31,7 +31,6 @@ from cruxible_client.contracts.claim_reads import (
     ClaimValuesRequestV1,
     ClaimValuesResultV1,
 )
-from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import (
     PlaybillSinceRequestInvalid,
 )
@@ -73,9 +72,6 @@ from cruxible_client.errors import (
 ModelT = TypeVar("ModelT", bound=BaseModel)
 _CLAIM_TYPE_MIGRATION_RESPONSE: TypeAdapter[contracts.PlaybillClaimTypeMigrationResponse] = (
     TypeAdapter(contracts.PlaybillClaimTypeMigrationResponse)
-)
-_CLAIM_RETIRE_RESPONSE: TypeAdapter[contracts.PlaybillClaimRetireResponse] = TypeAdapter(
-    contracts.PlaybillClaimRetireResponse
 )
 
 
@@ -1007,21 +1003,6 @@ class CruxibleClient:
             params=self._playbill_coordinate_params(at),
         )
         return self._parse_model(response, contracts.PlaybillClaimTypeView)
-
-    def retire_playbill_claim(
-        self,
-        instance_id: str,
-        claim_id: str,
-        *,
-        request: Mapping[str, Any],
-    ) -> contracts.PlaybillClaimRetireResponse:
-        typed_request = ClaimRetireRequestV1.model_validate(request)
-        response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/claims/{claim_id}/retire",
-            json=typed_request.model_dump(mode="json"),
-        )
-        self._check_error(response)
-        return _CLAIM_RETIRE_RESPONSE.validate_python(response.json())
 
     def append_playbill_claim_attestation(
         self,

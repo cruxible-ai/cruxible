@@ -21,7 +21,6 @@ from cruxible_client.contracts.claim_reads import (
     ClaimValuesRequestV1,
     ClaimValuesResultV1,
 )
-from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
 from cruxible_client.contracts.get_reads import PlaybillGetRequestV1, PlaybillGetResultV1
@@ -850,22 +849,6 @@ async def get_claim_type(
         resolve_server_instance_id(instance_id),
         predicate,
         at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-    )
-
-
-@router.post(
-    "/{instance_id}/playbill/claims/{claim_id}/retire",
-    response_model=contracts.PlaybillClaimRetireResponse,
-)
-def retire_claim(
-    instance_id: str,
-    claim_id: str,
-    req: ClaimRetireRequestV1,
-) -> contracts.PlaybillClaimRetireResponse:
-    return playbill_api.playbill_retire_claim(
-        resolve_server_instance_id(instance_id),
-        claim_id,
-        request=req,
     )
 
 

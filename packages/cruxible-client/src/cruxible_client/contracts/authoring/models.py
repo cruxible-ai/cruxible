@@ -1248,25 +1248,25 @@ class ClaimRetirementMemberV1(_StrictAuthoringModel):
     the second, member-local preflight mode of the standalone retirement route
     would only name the same inventory twice.
 
-    `claim_ref` is the bare Claim ID, spelled exactly as
-    `ClaimAuthoringPayloadV1.revises` spells it. Tolerating a `Claim:` prefix
-    here would give two spellings of one retirement the same member identity but
-    different payload digests, so create-dedup would miss and two live intents
-    could carry one semantic identity.
+    `retires` is the bare Claim ID, named and spelled exactly as
+    `ClaimAuthoringPayloadV1.revises` is. Tolerating a `Claim:` prefix here would
+    give two spellings of one retirement the same member identity but different
+    payload digests, so create-dedup would miss and two live intents could carry
+    one semantic identity.
     """
 
     tag: Literal["playbill-claim-retirement-authoring-payload-v1"] = (
         "playbill-claim-retirement-authoring-payload-v1"
     )
     mode: Literal["submit"] = "submit"
-    claim_ref: str
+    retires: str
     reason: ClaimRetirementReason
     effective_until: datetime | None = None
     dependents: tuple[ClaimRetireDependentV1, ...] = ()
 
-    @field_validator("claim_ref")
+    @field_validator("retires")
     @classmethod
-    def _claim_ref(cls, value: str) -> str:
+    def _retires(cls, value: str) -> str:
         claim_path(value)
         return value
 
@@ -1288,7 +1288,7 @@ class ClaimRetirementMemberV1(_StrictAuthoringModel):
 
     @property
     def claim_id(self) -> str:
-        return self.claim_ref
+        return self.retires
 
 
 AuthoringChangeSetMemberV1: TypeAlias = Annotated[
