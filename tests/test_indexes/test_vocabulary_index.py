@@ -1,4 +1,8 @@
-"""The reuse vocabulary index returns exactly the whole-tree oracle's matches."""
+"""The vocabulary index returns exactly the historical reuse oracle's matches.
+
+The index is kept so replay of generations judged under the retired reuse law
+stays fast (dev.decision/reuse-removal-laws-0929).
+"""
 
 from __future__ import annotations
 
@@ -22,13 +26,6 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.discovery import (
-    DiscoveryHintsV1,
-    ProposedSemanticInterfaceV1,
-    ReuseDispositionV1,
-    VocabularyReuseRequestV1,
-    evaluate_vocabulary_reuse,
-)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import (
@@ -39,7 +36,12 @@ from cruxible_client.contracts.subjects import (
 )
 from cruxible_core.indexes.evaluated_state import EvaluationRows
 from cruxible_core.indexes.typed_state import schema_sql, vocabulary_terms
-from cruxible_core.proposals.proposals import _indexed_reuse_interfaces, _reuse_interfaces
+from cruxible_core.proposals.historical_reuse import (
+    ProposedSemanticInterfaceV1,
+    evaluate_vocabulary_reuse,
+    indexed_reuse_interfaces,
+    reuse_interfaces,
+)
 from tests.test_claims.test_claims import _claim, _claim_type
 
 DIGEST = "sha256:" + "ab" * 32
@@ -182,11 +184,7 @@ def test_indexed_candidates_and_result_digest_equal_the_whole_tree_oracle(predic
 
     def evidence(interfaces):
         return evaluate_vocabulary_reuse(
-            VocabularyReuseRequestV1(
-                proposal=proposal,
-                hints=DiscoveryHintsV1(),
-                disposition=ReuseDispositionV1(kind="new_distinct"),
-            ),
+            proposal,
             accepted_interfaces=interfaces,
             coordinate=COORDINATE,
             implementation_digest=COORDINATE.compiler_digest,
@@ -194,10 +192,10 @@ def test_indexed_candidates_and_result_digest_equal_the_whole_tree_oracle(predic
 
     oracle = evidence(
         tuple(
-            item for item in _reuse_interfaces(candidate_tree) if item.address.artifact_path != path
+            item for item in reuse_interfaces(candidate_tree) if item.address.artifact_path != path
         )
     )
-    indexed_interfaces = _indexed_reuse_interfaces(
+    indexed_interfaces = indexed_reuse_interfaces(
         _Rows(candidate_tree), proposal, exclude_path=path
     )
     indexed = evidence(indexed_interfaces)

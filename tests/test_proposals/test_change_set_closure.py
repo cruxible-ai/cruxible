@@ -199,9 +199,11 @@ def test_three_way_rebase_drops_noop_and_reports_all_exact_conflict_digests() ->
     assert result.approvals_invalidated is True
 
 
-def test_candidate_tree_reuse_lookup_blocks_two_simultaneous_adjacent_types(
+def test_two_simultaneous_adjacent_types_need_no_distinction_claims(
     tmp_path: Path,
 ) -> None:
+    # The current ClaimType laws no longer run the vocabulary reuse law
+    # (dev.decision/reuse-removal-laws-0929).
     instance, _owner = initialize_local(tmp_path)
     current = instance.accepted_coordinate()
     base_tree = instance.tree_at(current.git_oid)
@@ -224,11 +226,9 @@ def test_candidate_tree_reuse_lookup_blocks_two_simultaneous_adjacent_types(
         actor_id="owner",
     )
 
-    assert evaluation.candidate is None
-    assert [item.code for item in evaluation.diagnostics] == [
-        "playbill.reuse.distinction_claim_missing",
-        "playbill.reuse.distinction_claim_missing",
-    ]
+    assert evaluation.diagnostics == ()
+    assert evaluation.candidate is not None
+    assert all("reuse" not in item.result for item in evaluation.candidate.law_evidence)
 
 
 def test_multi_member_malformed_artifact_is_a_typed_refusal(tmp_path: Path) -> None:

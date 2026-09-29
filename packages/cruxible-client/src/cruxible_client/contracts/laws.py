@@ -97,7 +97,7 @@ def _subject_law_coordinate() -> AcceptanceLawCoordinate:
 SUBJECT_LAW = _subject_law_coordinate()
 
 
-def _claim_type_law_coordinate() -> AcceptanceLawCoordinate:
+def _claim_type_law_coordinate(semantic_revision: int) -> AcceptanceLawCoordinate:
     return AcceptanceLawCoordinate(
         identifier=CLAIM_TYPE_LAW_IDENTIFIER,
         digest=typed_digest(
@@ -106,13 +106,22 @@ def _claim_type_law_coordinate() -> AcceptanceLawCoordinate:
             {
                 "identifier": CLAIM_TYPE_LAW_IDENTIFIER,
                 "artifact_tag": "playbill-claim-type-v1",
-                "semantic_revision": 4,
+                "semantic_revision": semantic_revision,
             },
         ).tagged,
     )
 
 
-CLAIM_TYPE_LAW = _claim_type_law_coordinate()
+# Every ClaimType law revision before the one named current below ran the
+# vocabulary reuse law: a new ClaimType whose canonical tokens or structural
+# signature matched an accepted one was refused unless a same-change-set
+# ``semantic.distinct_from`` Claim declared them distinct, and each member result
+# recorded the reuse evidence. Those revisions stay installed only so accepted
+# history and pending proposals replay and settle under them. The current
+# revisions drop the reuse law and record no reuse evidence.
+CLAIM_TYPE_LAW_REVISION_4 = _claim_type_law_coordinate(4)
+CLAIM_TYPE_LAW_REVISION_5 = _claim_type_law_coordinate(5)
+CLAIM_TYPE_LAW = CLAIM_TYPE_LAW_REVISION_5
 
 
 def _capture_contract_law_coordinate(semantic_revision: int) -> AcceptanceLawCoordinate:
@@ -210,26 +219,51 @@ CLAIM_LAW_V3_REVISION_9 = _artifact_law_coordinate(
 # Current is an operational alias only. Historical replay and shape-law
 # selection must name the exact revision directly.
 CLAIM_LAW_V3 = CLAIM_LAW_V3_REVISION_9
-CLAIM_TYPE_LAW_V3 = _artifact_law_coordinate(
+# Current revisions drop the vocabulary reuse law (see CLAIM_TYPE_LAW above).
+CLAIM_TYPE_LAW_V3_REVISION_4 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V3_IDENTIFIER,
     "playbill-claim-type-v3",
     semantic_revision=4,
 )
-CLAIM_TYPE_LAW_V4 = _artifact_law_coordinate(
+CLAIM_TYPE_LAW_V3_REVISION_5 = _artifact_law_coordinate(
+    CLAIM_TYPE_LAW_V3_IDENTIFIER,
+    "playbill-claim-type-v3",
+    semantic_revision=5,
+)
+CLAIM_TYPE_LAW_V3 = CLAIM_TYPE_LAW_V3_REVISION_5
+CLAIM_TYPE_LAW_V4_REVISION_4 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V4_IDENTIFIER,
     "playbill-claim-type-v4",
     semantic_revision=4,
 )
-CLAIM_TYPE_LAW_V5 = _artifact_law_coordinate(
+CLAIM_TYPE_LAW_V4_REVISION_5 = _artifact_law_coordinate(
+    CLAIM_TYPE_LAW_V4_IDENTIFIER,
+    "playbill-claim-type-v4",
+    semantic_revision=5,
+)
+CLAIM_TYPE_LAW_V4 = CLAIM_TYPE_LAW_V4_REVISION_5
+CLAIM_TYPE_LAW_V5_REVISION_4 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V5_IDENTIFIER,
     "playbill-claim-type-v5",
     semantic_revision=4,
 )
-CLAIM_TYPE_LAW_V6 = _artifact_law_coordinate(
+CLAIM_TYPE_LAW_V5_REVISION_5 = _artifact_law_coordinate(
+    CLAIM_TYPE_LAW_V5_IDENTIFIER,
+    "playbill-claim-type-v5",
+    semantic_revision=5,
+)
+CLAIM_TYPE_LAW_V5 = CLAIM_TYPE_LAW_V5_REVISION_5
+CLAIM_TYPE_LAW_V6_REVISION_1 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V6_IDENTIFIER,
     "playbill-claim-type-v6",
     semantic_revision=1,
 )
+CLAIM_TYPE_LAW_V6_REVISION_2 = _artifact_law_coordinate(
+    CLAIM_TYPE_LAW_V6_IDENTIFIER,
+    "playbill-claim-type-v6",
+    semantic_revision=2,
+)
+CLAIM_TYPE_LAW_V6 = CLAIM_TYPE_LAW_V6_REVISION_2
 PROVIDER_LAW = _artifact_law_coordinate(
     PROVIDER_LAW_IDENTIFIER,
     "playbill-provider-v1",
@@ -383,29 +417,59 @@ SUBJECT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-subject-v1",
 )
 CLAIM_TYPE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW,
+    coordinate=CLAIM_TYPE_LAW_REVISION_5,
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v1",
 )
+CLAIM_TYPE_REVISION_4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_TYPE_LAW_REVISION_4,
+    artifact_kind="claim-type",
+    artifact_tag="playbill-claim-type-v1",
+    current=False,
+)
 CLAIM_TYPE_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V3,
+    coordinate=CLAIM_TYPE_LAW_V3_REVISION_5,
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v3",
 )
+CLAIM_TYPE_V3_REVISION_4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_TYPE_LAW_V3_REVISION_4,
+    artifact_kind="claim-type",
+    artifact_tag="playbill-claim-type-v3",
+    current=False,
+)
 CLAIM_TYPE_V4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V4,
+    coordinate=CLAIM_TYPE_LAW_V4_REVISION_5,
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v4",
 )
+CLAIM_TYPE_V4_REVISION_4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_TYPE_LAW_V4_REVISION_4,
+    artifact_kind="claim-type",
+    artifact_tag="playbill-claim-type-v4",
+    current=False,
+)
 CLAIM_TYPE_V5_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V5,
+    coordinate=CLAIM_TYPE_LAW_V5_REVISION_5,
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v5",
 )
+CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_TYPE_LAW_V5_REVISION_4,
+    artifact_kind="claim-type",
+    artifact_tag="playbill-claim-type-v5",
+    current=False,
+)
 CLAIM_TYPE_V6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_TYPE_LAW_V6,
+    coordinate=CLAIM_TYPE_LAW_V6_REVISION_2,
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v6",
+)
+CLAIM_TYPE_V6_REVISION_1_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_TYPE_LAW_V6_REVISION_1,
+    artifact_kind="claim-type",
+    artifact_tag="playbill-claim-type-v6",
+    current=False,
 )
 CAPTURE_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CAPTURE_CONTRACT_LAW_REVISION_4,
@@ -725,10 +789,15 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         CLAIM_V3_REVISION_8_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,
+        CLAIM_TYPE_REVISION_4_ACCEPTANCE_LAW,
         CLAIM_TYPE_V3_ACCEPTANCE_LAW,
+        CLAIM_TYPE_V3_REVISION_4_ACCEPTANCE_LAW,
         CLAIM_TYPE_V4_ACCEPTANCE_LAW,
+        CLAIM_TYPE_V4_REVISION_4_ACCEPTANCE_LAW,
         CLAIM_TYPE_V5_ACCEPTANCE_LAW,
+        CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW,
         CLAIM_TYPE_V6_ACCEPTANCE_LAW,
+        CLAIM_TYPE_V6_REVISION_1_ACCEPTANCE_LAW,
         DOCUMENT_ACCEPTANCE_LAW,
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
@@ -764,9 +833,21 @@ __all__ = [
     "PROCEDURE_RUNTIME_POLICY_LAW",
     "PROCEDURE_RUNTIME_POLICY_LAW_IDENTIFIER",
     "CLAIM_TYPE_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_REVISION_4_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_LAW_REVISION_4",
+    "CLAIM_TYPE_LAW_REVISION_5",
     "CLAIM_TYPE_V3_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_V3_REVISION_4_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_LAW_V3_REVISION_4",
+    "CLAIM_TYPE_LAW_V3_REVISION_5",
     "CLAIM_TYPE_V4_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_V4_REVISION_4_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_LAW_V4_REVISION_4",
+    "CLAIM_TYPE_LAW_V4_REVISION_5",
     "CLAIM_TYPE_V6_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_V6_REVISION_1_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_LAW_V6_REVISION_1",
+    "CLAIM_TYPE_LAW_V6_REVISION_2",
     "CLAIM_TYPE_LAW_V6",
     "CLAIM_TYPE_LAW_V6_IDENTIFIER",
     "QUERY_DEFINITION_LAW_REVISION_4",
@@ -780,6 +861,9 @@ __all__ = [
     "CLAIM_TYPE_LAW_V5_IDENTIFIER",
     "CLAIM_TYPE_LAW_V5",
     "CLAIM_TYPE_V5_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_LAW_V5_REVISION_4",
+    "CLAIM_TYPE_LAW_V5_REVISION_5",
     "CLAIM_EVIDENCE_UPGRADE_LAW",
     "SOURCE_CHECKED_PROCEDURE_LAW",
     "SOURCE_CHECKED_UPGRADE_LAW",
