@@ -827,10 +827,14 @@ def test_propose_help_names_the_sanctioned_proposal_paths() -> None:
     assert claim_type.exit_code == 0
     assert "sanctioned typed-input ClaimType proposal path" in claim_type.output
     assert "Deprecated" not in claim_type.output
-    for group in ("subject", "query"):
-        removed = runner.invoke(cli, ["playbill", group, "propose"])
-        assert removed.exit_code != 0
-        assert "No such command 'propose'" in removed.output
+    removed = runner.invoke(cli, ["playbill", "subject", "propose"])
+    assert removed.exit_code != 0
+    assert "No such command 'propose'" in removed.output
+    # `playbill query KIND` answers a query itself, so `propose` is read as a
+    # kind there; what matters is that no propose subcommand exists.
+    from cruxible_core.cli.commands.playbill import query_group
+
+    assert "propose" not in query_group.commands
 
 
 @pytest.mark.parametrize(
