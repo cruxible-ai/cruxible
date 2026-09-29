@@ -755,8 +755,8 @@ class PathFacts:
     """What whole-tree path checks conclude about one tree, advanced by deltas.
 
     Proposal receive and tree writes refuse a tree whose paths are not
-    canonical, collide after case folding, run too deep, or whose files are too
-    large. Each answer here equals what a pass over every path concludes; a
+    canonical, collide after case folding, or run too deep, or whose content is
+    too large in total. Each answer here equals what a pass over every path concludes; a
     successor's facts follow from its parent's and the changed paths alone.
     ``folded`` maps every case-folded path prefix to the spellings that fold
     to it, so a collision is any prefix with more than one spelling.
@@ -767,19 +767,10 @@ class PathFacts:
     colliding: int
     depths: Mapping[int, int]
     folded: PersistentMap[_Spellings]
-    # Files larger than each limit asked about, carried forward like the rest.
-    oversize: dict[int, int]
 
     @property
     def max_depth(self) -> int:
         return max((depth for depth, count in self.depths.items() if count), default=0)
-
-    def oversize_count(self, limit: int, rows: Mapping[str, bytes | BlobRef]) -> int:
-        count = self.oversize.get(limit)
-        if count is None:
-            count = sum(1 for row in rows.values() if _size(row) > limit)
-            self.oversize[limit] = count
-        return count
 
     def advanced(
         self,
@@ -791,7 +782,6 @@ class PathFacts:
         noncanonical = self.noncanonical
         colliding = self.colliding
         depths = dict(self.depths)
-        oversize = dict(self.oversize)
         folded = self.folded
         for path, new in edits.items():
             old = rows.get(path)
@@ -801,8 +791,6 @@ class PathFacts:
                 if row is None:
                     continue
                 content += sign * _size(row)
-                for limit in oversize:
-                    oversize[limit] += sign * (_size(row) > limit)
             if (old is None) == (new is None):
                 continue  # the path stays; only its bytes changed
             sign = 1 if old is None else -1
@@ -814,7 +802,7 @@ class PathFacts:
                 after = _respelled(before, spelling, sign)
                 colliding += (len(after) > 1) - (len(before) > 1)
                 folded = folded.set(key, after) if after else folded.delete(key)
-        return PathFacts(content, noncanonical, colliding, depths, folded, oversize)
+        return PathFacts(content, noncanonical, colliding, depths, folded)
 
 
 def path_facts(root: SnapshotTree) -> PathFacts:
@@ -835,7 +823,7 @@ def path_facts(root: SnapshotTree) -> PathFacts:
                 for key, spelling in _prefixes(path):
                     folded[key] = _respelled(folded.get(key, ()), spelling, 1)
             colliding = sum(1 for spellings in folded.values() if len(spellings) > 1)
-            facts = PathFacts(content, noncanonical, colliding, depths, PersistentMap(folded), {})
+            facts = PathFacts(content, noncanonical, colliding, depths, PersistentMap(folded))
             root._path_facts = facts
     return facts
 

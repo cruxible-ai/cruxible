@@ -515,7 +515,10 @@ def validate_proposal_tree(
             size = len(content)
             if rows is None:
                 result[path] = content
-        if size > limits.max_file_bytes:
+        # Only what the proposal writes is bounded per file. An unchanged path was
+        # accepted already, and a daemon-written record (a change set carrying a
+        # large closure) is bounded by its own record limit when it is written.
+        if not same and size > limits.max_file_bytes:
             raise ProposalAdmissionError(f"proposal blob exceeds its byte limit: {path}")
         total += size
         if total > limits.max_total_bytes:
@@ -549,6 +552,7 @@ def _receives_as_fork(
         fork_of,
         path_facts,
         resolve_blobs,
+        row_size,
         row_values,
         same_row,
     )
@@ -560,14 +564,11 @@ def _receives_as_fork(
     if found is None or rows is None or base_rows is None:
         return False
     root, edits = found
-    root_facts = path_facts(root)
-    root_facts.oversize_count(limits.max_file_bytes, row_values(root) or {})
-    facts = root_facts.advanced(row_values(root) or {}, edits)
+    facts = path_facts(root).advanced(row_values(root) or {}, edits)
     if (
         facts.noncanonical
         or facts.colliding
         or facts.max_depth > limits.max_path_depth
-        or facts.oversize[limits.max_file_bytes]
         or facts.content_bytes > limits.max_total_bytes
     ):
         return False
@@ -589,6 +590,8 @@ def _receives_as_fork(
         if new is not None:
             written.append(path)
     if changed > limits.max_changed_members:
+        return False
+    if any(row_size(rows[path]) > limits.max_file_bytes for path in written):
         return False
     contents = resolve_blobs([rows[path] for path in written])
     return not any(content.startswith(_LFS_PREFIX) for content in contents)

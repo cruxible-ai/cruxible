@@ -1007,6 +1007,8 @@ def _reproduced_claim_adjudication_rule(
                     key: value
                     for key, value in rule.model_dump(mode="json").items()
                     if key not in {"tag", "capture_contract_digests", "capture_contracts"}
+                    # A v1 rule's empty reducer allowlist authorizes nothing.
+                    and not (key == "allowed_reducer_digests" and not value)
                 },
                 "contracts": sorted(
                     {item.target.qualified for item in rule.capture_contracts}
