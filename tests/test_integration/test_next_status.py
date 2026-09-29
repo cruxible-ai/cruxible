@@ -448,9 +448,10 @@ def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path
 def test_worker_findings_report_how_current_they_are(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from datetime import UTC, datetime
+    from datetime import UTC, datetime, timedelta
 
-    from cruxible_core.consumers.evidence import SWEEP_INTERVAL
+    from cruxible_core.triggers.config import TriggerOperationalConfigV1
+    from cruxible_core.triggers.journal import evaluate_triggers
     from tests.test_consumers.test_evidence_availability import _drain, _world
 
     instance, _capture = _world(tmp_path)
@@ -466,7 +467,11 @@ def test_worker_findings_report_how_current_they_are(
     assert [worker["kind"] for worker in idle.detail["workers"]] == ["evidence"]
 
     assert consumers(swept, consumers_running=True).state == "current"
-    late = swept + 2 * SWEEP_INTERVAL
+    first_fire = swept + timedelta(days=1)
+    evaluate_triggers(instance, now=first_fire, config=TriggerOperationalConfigV1())
+    assert consumers(first_fire, consumers_running=True).state == "current"
+    late = swept + timedelta(days=2)
+    evaluate_triggers(instance, now=late, config=TriggerOperationalConfigV1())
     lagging = _status(instance, _request(instance, evaluation_time=late), consumers_running=True)
     assert lagging.consumers.state == "lagging"
     assert _attention(lagging) == (("consumers", lagging.consumers),)

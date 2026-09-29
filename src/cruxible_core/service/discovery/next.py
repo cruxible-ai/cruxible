@@ -3249,14 +3249,15 @@ def _evidence_unavailable_items(
 def _prediction_items(
     instance: PlaybillInstance,
     *,
+    evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1,
 ) -> tuple[PlaybillNextItemV1, ...]:
-    """Predictions the settlement worker found owed, or unable to bind, at its last look.
+    """Unanswered prediction windows closed at the read instant, and unbindable anchors.
 
     One row per closed bound window whose own resolution journal holds no
     current answer, and one per anchor Capture whose material no longer binds
-    the window its contract asks for. The worker's findings are read, never
-    recomputed here.
+    the window its contract asks for. The worker tracks journal answers; reads
+    apply the requested evaluation time to each stored window's end.
     """
 
     if not access_profile.permits("instance"):
@@ -3264,7 +3265,7 @@ def _prediction_items(
     from cruxible_core.consumers.predictions import settleable_windows, unbindable_anchors
 
     items: list[PlaybillNextItemV1] = []
-    for owed in settleable_windows(instance):
+    for owed in settleable_windows(instance, evaluation_time=evaluation_time):
         subject = owed.contract.identity.qualified
         event = None if owed.window.event is None else owed.window.event.model_dump(mode="json")
         items.append(
@@ -3280,7 +3281,6 @@ def _prediction_items(
                         "ends_at": format_datetime(owed.window.ends_at),
                     },
                     "anchor_event": event,
-                    "evaluated_at": format_datetime(owed.checked_at),
                 },
                 repair=PlaybillNextRepairV1(
                     operation="playbill.settle",
@@ -3305,7 +3305,6 @@ def _prediction_items(
                 detail={
                     "anchor_event": anchor.event.model_dump(mode="json"),
                     "code": anchor.code,
-                    "evaluated_at": format_datetime(anchor.checked_at),
                 },
                 repair=PlaybillNextRepairV1(
                     operation="hand_edit",
@@ -4535,7 +4534,9 @@ def _next_queue(
             coordinate=coordinate,
             access_profile=request.access_profile,
         ),
-        *_prediction_items(instance, access_profile=request.access_profile),
+        *_prediction_items(
+            instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile
+        ),
         *_consumer_stalled_items(consumer_healths),
     )
     caller = _CallerView(

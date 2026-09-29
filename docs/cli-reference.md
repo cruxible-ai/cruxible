@@ -151,9 +151,10 @@ decommissioned state. Its `Instances` count is the number
 of governed daemon hosts shown, excluding unrelated local registry entries.
 `server status` also lists the daemon's consumers on every instance it holds
 open: each armed Line and each built-in worker, as `running`, `stalled`,
-`stopped`, or `disabled`. The built-in evidence worker runs on every instance
+`lagging`, `stopped`, or `disabled`. The built-in evidence worker runs on every instance
 by default. It re-hashes the Captures live Claims cite whenever a generation
-cites one, and sweeps them all daily. A missing or corrupt Capture envelope, a
+cites one, and sweeps them all on a daily `evidence.sweep` trigger event.
+Retention is evaluated at the generation or trigger event's recorded instant. A missing or corrupt Capture envelope, a
 corrupt body, or a missing body its contract still requires to be retained is a
 finding. A body whose contract lets it go (`optional` or `never_materialize`
 retention, or a `required_for_duration` window that has passed) is not.
@@ -162,9 +163,11 @@ The built-in prediction worker also runs on every instance by default. It binds
 each accepted ResolutionContract's observation window: a fixed window when the
 contract is accepted, and an event window once per landed Capture its selector
 matches, each its own contract instance. On first start it reads every live
-contract and every retained matching Capture. When a bound window closes, it
-reads that window's own resolution journal, and it reads it again whenever a
-settlement or overturn lands there. A retired or revised contract withdraws its
+contract and every retained matching Capture. It reads each bound window's
+resolution journal initially and whenever a settlement or overturn lands there.
+It stores whether an answer exists; reads decide whether an unanswered window
+has closed at the request's evaluation time. Unbindable anchors are retried on
+`prediction.anchor_retry` events (hourly by default) and new capture landings. A retired or revised contract withdraws its
 windows. `CRUXIBLE_DISABLED_CONSUMERS=prediction` turns it off; list both names,
 comma-separated, to turn off both workers.
 `server status` also renders `Provider lane:` and, when degraded,
@@ -221,7 +224,27 @@ exact stale JSON record under `<state-root>/daemon/provider-process-leases/`.
 Removing a record while its process may still be live abandons the recovery
 identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 
-`<state-root>/daemon/proposal-receive.json` is a second daemon-local operational
+### Trigger operational configuration
+
+The local operator may write `<state-root>/daemon/triggers.json` while the daemon
+is stopped. This daemon-local, non-governed file has a closed shape with tag
+`cruxible-trigger-operational-config-v1`:
+
+| Entry | Default | Purpose |
+|---|---:|---|
+| `evidence_sweep_interval_seconds` | `86400` | Interval between `evidence.sweep` fires. |
+| `prediction_anchor_retry_interval_seconds` | `3600` | Interval between `prediction.anchor_retry` fires. |
+
+An absent file uses the defaults. Unknown entries, non-positive or non-integer
+intervals, malformed JSON, and an unreadable file refuse consumer-loop startup.
+Cadences fire once on the first tick and once after downtime, without backfill.
+Fires and pending one-shot deadlines are retained under each instance's
+`exhaust/triggers.sqlite3`; this append-only event log is not disposable worker
+state. Workers resume from its sequences. Library mode fires no triggers.
+
+### Proposal receive operational configuration
+
+`<state-root>/daemon/proposal-receive.json` is another daemon-local operational
 file, tag `cruxible-proposal-receive-operational-config-v1`, with one entry:
 
 | Entry | Default | Purpose |
@@ -1562,7 +1585,7 @@ last check:
 - `prediction_settleable` names a ResolutionContract with a closed bound window
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the
-  `bound_contract_id`, and `evaluated_at`. An event window has one row per
+  `bound_contract_id`. An event window has one row per
   anchor. The repair is `cruxible playbill settle RSC-...`; add
   `--observation CLAIM_ID` naming an accepted observation inside the window. The worker does not check that such an observation exists; if
   none does, see the note under `playbill settle`.
@@ -1571,18 +1594,20 @@ last check:
 - `prediction_window_unbindable` names a ResolutionContract with a matching
   anchor Capture whose retained material no longer binds a window, with the
   refusal `code`. Restore the material, and the worker binds the window on its
-  hourly retry; or retire the contract.
+  next retry trigger event or new capture landing; or retire the contract.
 - `consumer_stalled` names a consumer that stopped by itself or stopped
   keeping up, with its kind in `detail.kind` and the kind's own repair.
 
 Because those rows are what a worker last observed, `status.consumers` says how
 current that observation is: `current`, `lagging` (a worker is behind on
-generations or overdue on its sweep; this is the facet that asks for
+generations or has not finished earlier sweep/retry work before another fire;
+this facet asks for
 attention), `stalled` (already a `consumer_stalled` row), or `not_running` when
 no consumer loop is running, as in a library read. There, worker rows stand as
 of each worker's last pass. `detail.workers` lists each built-in worker's state
-and cursor, including disabled ones. Worker-derived rows carry when they were
-observed in their own detail.
+and cursor, including disabled ones. Evidence rows carry when they were
+observed in their own detail; prediction rows omit observation timestamps so
+their identity stays stable while the finding is unchanged.
 
 A current `unsure` examined attestation holds a row, and `status.held` counts
 the rows held. A hold lasts only while its basis is unchanged:
