@@ -325,16 +325,68 @@ def test_kinds_name_shared_evidence_once(seeded) -> None:  # type: ignore[no-unt
     assert [item.evidence for item in differing.predicates] == [(), ("feed",)]
 
 
-def test_short_names_stay_unique_when_a_fallback_collides_with_another_short_name() -> None:
-    predicates = ("other.status", "third.status", f"{SUBJECT_KIND}.other.status")
+def test_every_advertised_field_name_resolves_back_to_its_predicate() -> None:
+    """Addendum 2: shorten only when the short string names no accepted predicate."""
 
-    names = orient_module._short_names(predicates, SUBJECT_KIND)
+    from cruxible_core.service.discovery.field_names import resolve_field, short_field_name
 
-    assert len(set(names.values())) == len(predicates)
-    assert names == {
-        "other.status": "other.status",
-        "third.status": "third.status",
+    vocabulary = {
+        SUBJECT_KIND: (
+            "other.status",
+            "third.status",
+            f"{SUBJECT_KIND}.other.status",
+            f"{SUBJECT_KIND}.status",
+            f"{SUBJECT_KIND}.owner",
+        ),
+        "other": ("other.status",),
+    }
+    accepted = frozenset(item for predicates in vocabulary.values() for item in predicates)
+
+    shown = {
+        (kind, predicate): short_field_name(predicate, kind, accepted)
+        for kind, predicates in vocabulary.items()
+        for predicate in predicates
+    }
+
+    assert shown[(SUBJECT_KIND, f"{SUBJECT_KIND}.other.status")] == (f"{SUBJECT_KIND}.other.status")
+    assert shown[(SUBJECT_KIND, f"{SUBJECT_KIND}.status")] == "status"
+    assert shown[(SUBJECT_KIND, "other.status")] == "other.status"
+    assert shown[(SUBJECT_KIND, "third.status")] == "third.status"
+    for (kind, predicate), name in shown.items():
+        assert resolve_field(name, kind, frozenset(vocabulary[kind])) == predicate
+    assert resolve_field("missing", SUBJECT_KIND, frozenset(vocabulary[SUBJECT_KIND])) is None
+
+
+def test_orient_advertises_names_by_the_shared_rule(seeded) -> None:  # type: ignore[no-untyped-def]
+    status = _claim_type()
+    shadowed = status.model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name=f"{SUBJECT_KIND}.other.status"),
+            "predicate": f"{SUBJECT_KIND}.other.status",
+        }
+    )
+    other = status.model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name="other.status"),
+            "predicate": "other.status",
+        }
+    )
+    state = orient_module._State(
+        claim_types=(status, shadowed, other),
+        subjects_by_kind={SUBJECT_KIND: 2},
+        evidence={},
+        digest_named=0,
+        procedures=(),
+        documents=(),
+        queries=(),
+    )
+
+    row = orient_module._kind_row(state, SUBJECT_KIND)
+
+    assert {item.predicate: item.name for item in row.predicates} == {
+        PREDICATE: "status",
         f"{SUBJECT_KIND}.other.status": f"{SUBJECT_KIND}.other.status",
+        "other.status": "other.status",
     }
 
 

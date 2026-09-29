@@ -56,6 +56,7 @@ from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.next import (
     PlaybillNextItemV1,
     PlaybillNextRequestV2,
@@ -299,32 +300,11 @@ def _duration(microseconds: int) -> str:
     return f"{microseconds}us"
 
 
-def _short_names(predicates: Iterable[str], kind: str) -> dict[str, str]:
-    """Each predicate's short name against ``kind``, unique among the kind's names.
+def _short_names(predicates: Iterable[str], kind: str, state: _State) -> dict[str, str]:
+    """Each predicate's advertised field name for ``kind``, by the shared rule."""
 
-    A name two predicates share falls back to the full predicate. A fallback can
-    itself equal another predicate's short name, so collisions are re-checked
-    until none remain; full predicates are unique, so this always ends.
-    """
-
-    prefix = f"{kind}."
-    names = {
-        predicate: predicate[len(prefix) :]
-        if predicate.startswith(prefix)
-        else predicate.rpartition(".")[2]
-        for predicate in predicates
-    }
-    while True:
-        counts: dict[str, int] = {}
-        for name in names.values():
-            counts[name] = counts.get(name, 0) + 1
-        clashing = [
-            predicate for predicate, name in names.items() if counts[name] > 1 and name != predicate
-        ]
-        if not clashing:
-            return names
-        for predicate in clashing:
-            names[predicate] = predicate
+    accepted = {item.predicate for item in state.claim_types}
+    return {predicate: short_field_name(predicate, kind, accepted) for predicate in predicates}
 
 
 def _descriptor(
@@ -364,7 +344,7 @@ def _kind_names(state: _State) -> tuple[str, ...]:
 
 def _kind_row(state: _State, kind: str) -> PlaybillOrientKindV1:
     of_kind = [item for item in state.claim_types if kind in item.allowed_subject_kinds]
-    names = _short_names((item.predicate for item in of_kind), kind)
+    names = _short_names((item.predicate for item in of_kind), kind, state)
     predicates = sorted(
         (
             _descriptor(
@@ -818,7 +798,7 @@ def _kind_detail(
     if kind not in known:
         raise _kind_not_found(kind, known)
     of_kind = [item for item in state.claim_types if kind in item.allowed_subject_kinds]
-    names = _short_names((item.predicate for item in of_kind), kind)
+    names = _short_names((item.predicate for item in of_kind), kind, state)
     prefix = f"subjects/{kind}/"
     with instance.bind_accepted_projection(coordinate) as projection:
         connection = projection.typed.connection
@@ -880,10 +860,16 @@ def _section_rows(
             [item.name for item in state.queries],
             lambda row: f"query:{row.name}",
         )
+    accepted = {item.predicate for item in state.claim_types}
     rows = tuple(
         _descriptor(
             item,
-            name=item.predicate.rpartition(".")[2],
+            # One subject kind: its advertised field name; otherwise the predicate.
+            name=(
+                short_field_name(item.predicate, item.allowed_subject_kinds[0], accepted)
+                if len(item.allowed_subject_kinds) == 1
+                else item.predicate
+            ),
             evidence=state.evidence.get(item.predicate, ()),
             full=True,
         )
