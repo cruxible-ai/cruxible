@@ -47,7 +47,10 @@ uv run cruxible server start \
 ~~~
 
 A TCP daemon, loopback included, refuses to start without `--auth`
-(or `CRUXIBLE_SERVER_AUTH=true`).
+(or `CRUXIBLE_SERVER_AUTH=true`). The bootstrap secret is never printed; the
+daemon writes it owner-only to `<state-root>/daemon/bootstrap-secret` (and to
+`--bootstrap-secret-file` when given), and local `server status|restart|stop`
+read it from there.
 
 Use TLS at the proxy for any non-loopback deployment. Never send bearer tokens
 over plaintext untrusted networks. TCP-created hosts are intentionally

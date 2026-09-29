@@ -90,6 +90,7 @@ def test_start_passes_flags_to_run_server(
         "socket_path": None,
         "capability_ceiling": "governed_write",
         "auth": False,
+        "bootstrap_secret_file": None,
     }
 
 
@@ -113,6 +114,7 @@ def test_start_defaults_are_none_so_env_wins(
         "socket_path": None,
         "capability_ceiling": None,
         "auth": False,
+        "bootstrap_secret_file": None,
     }
 
 

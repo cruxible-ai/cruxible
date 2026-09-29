@@ -84,7 +84,8 @@ _JSON_MEDIA_TYPE = "application/json"
 MISSING_BEARER_CREDENTIAL_MESSAGE = (
     "Daemon reachable; credential missing. Supply a bearer token in "
     "`CRUXIBLE_SERVER_BEARER_TOKEN`. Operators may use the bootstrap-secret file "
-    "created by `cruxible server start --auth --bootstrap-secret-file PATH`."
+    "the daemon writes to <state-root>/daemon/bootstrap-secret (or the copy from "
+    "`cruxible server start --auth --bootstrap-secret-file PATH`)."
 )
 
 

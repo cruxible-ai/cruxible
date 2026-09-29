@@ -273,7 +273,7 @@ def test_credential_mint_list_and_revoke_round_trip(
     }
 
 
-def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
+def test_server_start_hands_the_secret_file_to_the_daemon_and_prints_no_secret(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
     tmp_path: Path,
@@ -294,14 +294,10 @@ def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
     )
 
     assert result.exit_code == 0, result.output
-    generated = os.environ["CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET"]
-    assert generated
-    assert generated not in result.output
-    assert secret_file.read_text().strip() == generated
-    assert stat.S_IMODE(secret_file.stat().st_mode) == 0o600
-    assert f"Wrote bootstrap secret file: {secret_file} (0600)" in result.output
-    assert "cruxible playbill host create" in result.output
-    assert "credential claim-bootstrap --secret-file" in result.output
+    # The daemon generates and writes the secret once it holds the state root;
+    # the launching command neither generates nor prints one.
+    assert "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET" not in os.environ
+    assert result.output == ""
     assert captured == {
         "host": None,
         "port": None,
@@ -309,6 +305,7 @@ def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
         "socket_path": None,
         "capability_ceiling": None,
         "auth": False,
+        "bootstrap_secret_file": str(secret_file.resolve()),
     }
 
 

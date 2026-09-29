@@ -129,19 +129,22 @@ with `--auth` instead:
 ~~~bash
 uv run cruxible server start \
   --socket /tmp/cruxible-playbill-run/daemon.sock \
-  --state-root /tmp/cruxible-playbill-dev --auth \
-  --bootstrap-secret-file /tmp/cruxible-playbill-bootstrap
+  --state-root /tmp/cruxible-playbill-dev --auth
 ~~~
 
-Claim the one-time operator credential with the bootstrap secret, then
-initialize: init makes you the owner and mints your own admin credential into
-your settings file:
+The daemon never prints its bootstrap secret. It writes it owner-only (0600) to
+`<state-root>/daemon/bootstrap-secret`, and `server status`, `restart` and
+`stop` read it from there when they talk to this daemon, so a local restart
+needs no credential typed in. Allocate the host with it, claim the one-time
+operator credential, then initialize: init makes you the owner and mints your
+own admin credential into your settings file:
 
 ~~~bash
 export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-playbill-run/daemon.sock
-uv run cruxible playbill host create --instance-id inst_demo
-uv run cruxible credential claim-bootstrap \
-  --secret-file /tmp/cruxible-playbill-bootstrap
+SECRET_FILE=/tmp/cruxible-playbill-dev/daemon/bootstrap-secret
+CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$SECRET_FILE")" \
+  uv run cruxible playbill host create --instance-id inst_demo
+uv run cruxible credential claim-bootstrap --secret-file "$SECRET_FILE"
 export CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed>
 uv run cruxible playbill init --key-dir /tmp/cruxible-playbill-owner --principal-id me
 set -a; . /tmp/cruxible-playbill-owner/cruxible.env; set +a

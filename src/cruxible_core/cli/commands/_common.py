@@ -200,10 +200,34 @@ def _get_lifecycle_client() -> DaemonLifecycleClient | None:
     if isinstance(client, DaemonLifecycleClient):
         return client
     client = DaemonLifecycleClient(
-        base_url=server_url, socket_path=server_socket, token=get_runtime_bearer_token()
+        base_url=server_url,
+        socket_path=server_socket,
+        token=get_runtime_bearer_token()
+        or _local_bootstrap_secret(server_url=server_url, server_socket=server_socket),
     )
     obj["_lifecycle_client"] = client
     return client
+
+
+def _local_bootstrap_secret(*, server_url: str | None, server_socket: str | None) -> str | None:
+    """The operator secret of the local daemon this command targets, if it is ours.
+
+    Lifecycle commands (`server status`, `restart`, `stop`) fall back to it when
+    no bearer token is configured, so a local restart needs no credential typed
+    in. It is read only when the state root's lock records this exact transport.
+    """
+
+    from cruxible_core.errors import CoreError
+    from cruxible_core.server.bootstrap_secret import read_local_bootstrap_secret
+    from cruxible_core.server.config import get_server_state_root
+
+    try:
+        state_root = get_server_state_root()
+    except CoreError:
+        return None
+    return read_local_bootstrap_secret(
+        state_root, server_url=server_url, server_socket=server_socket
+    )
 
 
 def _current_cli_context() -> CliContextState:

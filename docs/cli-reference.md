@@ -137,8 +137,19 @@ TCP daemon, loopback included, refuses to start without auth
 that can reach the port could otherwise act as any principal. `--auth` is the
 explicit opt-in on either transport; `CRUXIBLE_SERVER_AUTH=true` is its
 environment form. Once a state root has run with auth it refuses to start
-without it (`cruxible.server.auth_latched`). `--bootstrap-secret-file` needs
-auth and is refused on an auth-off start. With `--socket`, the socket is bound with mode 0600;
+without it (`cruxible.server.auth_latched`).
+
+With auth on, the daemon's runtime bootstrap secret (its unscoped operator
+credential) is never printed to stdout, stderr or the request log. Once the
+daemon holds the state-root lock it writes the secret owner-only (0600) to
+`<state-root>/daemon/bootstrap-secret`, and prints only that path. An in-place
+restart keeps the same secret. `server status`, `server restart` and
+`server stop` use that file by default when no `CRUXIBLE_SERVER_BEARER_TOKEN` is
+set and the state root's lock records exactly the transport they are about to
+use, so a local restart needs no credential typed in; the secret is never sent
+to any other daemon. `--bootstrap-secret-file PATH` also writes a 0600 copy to
+PATH; it needs auth and is refused on an auth-off start, which removes any stale
+state-root copy. With `--socket`, the socket is bound with mode 0600;
 a missing socket directory is created 0700; a socket directory that is not
 yours and owner-only, or an ancestor another user could use to replace it, is
 refused at startup. State defaults to `~/.cruxible`; `--state-root` overrides
