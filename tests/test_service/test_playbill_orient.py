@@ -15,6 +15,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV3,
 )
 from cruxible_core.service.discovery import orient as orient_module
+from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.orient import OrientCaller, service_playbill_orient
 from cruxible_core.service.list_pages import PlaybillListCursorMismatch
 from cruxible_core.service.read_refusals import ReadRefusalError
@@ -247,6 +248,14 @@ def test_orient_reads_an_earlier_coordinate_by_git_oid(seeded) -> None:  # type:
     assert result.coordinate.git_oid == earlier.oid and result.generation == earlier.sequence
 
 
+def test_an_unaccepted_at_refuses_with_the_shared_read_code(seeded) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ReadRefusalError) as refused:
+        service_playbill_orient(seeded, at="0" * 40)
+
+    assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+    assert refused.value.http_status == 404
+
+
 def test_identity_rules_name_their_contracts_and_unknown_digests_stay_short(
     seeded,  # type: ignore[no-untyped-def]
 ) -> None:
@@ -275,11 +284,9 @@ def test_identity_rules_name_their_contracts_and_unknown_digests_stay_short(
     )
     coordinate = seeded.accepted_coordinate()
     with seeded.bind_accepted_projection(coordinate) as projection:
-        names = orient_module._ContractNames(seeded, coordinate, projection.typed.connection)
-        assert orient_module._evidence_names(identity_named, names) == (
-            ("sec.advisory-feed",),
-            False,
-        )
+        names = CaptureContractNames(seeded, coordinate, connection=projection.typed.connection)
+        assert names.admitted(identity_named) == ("sec.advisory-feed",)
+        assert not names.names_by_digest(identity_named)
         assert names.name("sha256:" + "ab" * 32) == "unresolved:abababababab"
 
 

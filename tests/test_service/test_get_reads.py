@@ -27,11 +27,10 @@ from cruxible_core.service.authoring.documents import (
     service_store_playbill_body,
 )
 from cruxible_core.service.discovery import get as get_module
-from cruxible_core.service.discovery.get import (
-    CaptureContractNames,
-    service_playbill_get,
-    verdict_flags,
-)
+from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.get import service_playbill_get
+from cruxible_core.service.discovery.read_flags import verdict_flags
+from cruxible_core.service.list_pages import PlaybillListCursorMismatch
 from cruxible_core.service.read_refusals import ReadRefusalError
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._knowledge_loop_support import EVALUATION_TIME, PREDICATE, seed_claims
@@ -316,7 +315,7 @@ def test_at_reads_an_earlier_generation_by_git_oid(world: dict[str, Any]) -> Non
     instance, before = world["instance"], world["before"]
 
     earlier = _get(instance, "Document:design", at=None)
-    assert earlier.coordinate.git_oid == instance.accepted_coordinate().git_oid
+    assert earlier.coordinate.git_oid == instance.accepted_coordinate().git_oid[:12]
     refused = _refusal(instance, "Document:design", at=before.git_oid)
     assert refused.error_code == "playbill.get.ref_not_found"
     at_before = _get(
@@ -324,7 +323,7 @@ def test_at_reads_an_earlier_generation_by_git_oid(world: dict[str, Any]) -> Non
         _SUBJECT,
         at=AcceptedCoordinate.from_internal(before).model_dump(mode="json"),
     )
-    assert at_before.coordinate.git_oid == before.git_oid
+    assert at_before.coordinate.git_oid == before.git_oid[:12]
     bogus = _refusal(instance, _SUBJECT, at="0" * 40)
     assert bogus.error_code == "playbill.read.coordinate_not_accepted"
 
@@ -337,6 +336,9 @@ def test_flags_come_from_the_verdict_and_slot_status() -> None:
         "unsure_hold",
     )
     assert verdict_flags("contradicted", "overturned", held=False) == ("contradicted",)
+    # A Claim whose own evidence both supports and contradicts it is contested
+    # on every verb, even though resolution refuses it rather than conflicting.
+    assert verdict_flags("unresolved", "refused") == ("contested",)
 
 
 # -- identity evidence rules (ClaimType v6 and succession) -------------------------
@@ -377,7 +379,8 @@ def test_contract_succession_reads_by_identity_and_version(tmp_path: Path) -> No
     assert claim_type is not None and claim_type.model_dump()["evidence"] == (IDENTITY.qualified,)
     assert contract is not None and contract.model_dump()["version"] == 2
     assert contract.model_dump()["admitted_by"] == (V6_PREDICATE,)
-    assert history is not None and [item.revision for item in history.revisions] == [1, 2]
+    # Newest first; revision numbers count from the oldest.
+    assert history is not None and [item.revision for item in history.revisions] == [2, 1]
     assert _get(instance, first, detail="proof").proof is not None
     assert _get(instance, first, detail="why").why is not None
 
@@ -698,6 +701,130 @@ def test_a_proposal_is_read_only_at_the_current_head(world: dict[str, Any]) -> N
     assert refused.repair is not None and refused.repair.arguments == {
         "ref": f"Proposal:{proposal}"
     }
-    assert at_head.coordinate.git_oid == head.git_oid
+    assert at_head.coordinate.git_oid == head.git_oid[:12]
+    assert at_head.accepted_coordinate is not None
+    assert at_head.accepted_coordinate.git_oid == head.git_oid
     # One generation per response: the proof carries no other accepted coordinate.
     assert "accepted_coordinate" not in json.dumps(at_head.proof)
+
+
+# -- card shape: long values, row claims, paged history, compact coordinate ----------
+
+
+def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.get_reads import (
+        GET_SUMMARY_TEXT_MAX_CHARS,
+        PlaybillGetTruncatedTextV1,
+    )
+
+    instance, _owner = seed_claims(tmp_path)
+    long_value = "note " * 300
+    # The fixture ClaimType is an enum, so stand a long note in for its value.
+    monkeypatch.setattr(get_module, "_artifact_value", lambda _claim: long_value)
+    monkeypatch.setattr(get_module, "_claim_value", lambda _row: long_value)
+    cut = PlaybillGetTruncatedTextV1(
+        value=long_value[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_value)
+    )
+
+    subject = _get(instance, _SUBJECT).card
+    assert isinstance(subject, PlaybillGetSubjectCardV1)
+    (row,) = subject.claims
+    assert row.value == cut
+    assert row.model_dump(mode="json")["value"] == {
+        "value": long_value[:GET_SUMMARY_TEXT_MAX_CHARS],
+        "truncated": True,
+        "length": len(long_value),
+    }
+    assert isinstance(row.claim, str)
+    claim = _get(instance, row.claim).card
+    assert isinstance(claim, PlaybillGetClaimCardV1) and claim.value == cut
+
+    evidence = _get(instance, row.claim, detail="evidence").evidence
+    assert evidence is not None and evidence.value == long_value
+
+
+def test_summary_value_cuts_only_long_strings() -> None:
+    from cruxible_client.contracts.get_reads import (
+        GET_SUMMARY_TEXT_MAX_CHARS,
+        PlaybillGetTruncatedTextV1,
+        summary_value,
+    )
+
+    edge = "x" * GET_SUMMARY_TEXT_MAX_CHARS
+    assert summary_value(edge) == edge
+    assert summary_value(["ready", 3, {"k": edge + "y"}]) == ["ready", 3, {"k": edge + "y"}]
+    assert summary_value([edge + "y"]) == [
+        PlaybillGetTruncatedTextV1(value=edge, length=GET_SUMMARY_TEXT_MAX_CHARS + 1)
+    ]
+
+
+def test_subject_rows_name_the_claim_behind_each_value(world: dict[str, Any]) -> None:
+    card = _get(world["instance"], _SUBJECT).card
+
+    assert isinstance(card, PlaybillGetSubjectCardV1)
+    assert [(row.claim, row.value) for row in card.claims] == [(world["claim"], "ready")]
+
+
+def test_history_pages_newest_first_with_a_bound_cursor(tmp_path: Path) -> None:
+    from tests.test_claims.test_identity_evidence_rules import _v6_type, _World
+    from tests.test_claims.test_superseded_contract_reads import _observe
+
+    world = _World(tmp_path)
+    world.seed(_v6_type())
+    first = _observe(world, b"status: ready")
+    _observe(world, b"status: done", revises=first)
+    _observe(world, b"status: blocked", revises=first)
+    instance = world.instance
+
+    whole = _get(instance, first, detail="history")
+    assert whole.history is not None and whole.truncated is False and whole.next_cursor is None
+    sequences = [item.sequence for item in whole.history.revisions]
+    assert len(sequences) == 3 and sequences == sorted(sequences, reverse=True)
+    assert [item.revision for item in whole.history.revisions] == [3, 2, 1]
+
+    pages: list[int] = []
+    cursor: str | None = None
+    while True:
+        page = _get(instance, first, detail="history", limit=1, cursor=cursor)
+        assert page.history is not None and len(page.history.revisions) == 1
+        pages.extend(item.sequence for item in page.history.revisions)
+        if not page.truncated:
+            assert page.next_cursor is None
+            break
+        cursor = page.next_cursor
+        assert cursor is not None
+    assert pages == sequences
+
+    first_page = _get(instance, first, detail="history", limit=1)
+    assert first_page.next_cursor is not None
+    # A cursor continues only the listing it was cut from.
+    with pytest.raises(PlaybillListCursorMismatch):
+        _get(instance, "project.work_item/wi-42", detail="history", cursor=first_page.next_cursor)
+    with pytest.raises(ValueError, match="page detail=.history. only"):
+        PlaybillGetRequestV1(ref=first, limit=5)
+
+
+def test_a_summary_names_its_coordinate_compactly_and_proof_in_full(
+    world: dict[str, Any],
+) -> None:
+    instance = world["instance"]
+    head = instance.accepted_coordinate()
+    generation = len(instance.accepted_history()) - 1
+
+    summary = _get(instance, _SUBJECT)
+    assert summary.coordinate.model_dump() == {
+        "git_oid": head.git_oid[:12],
+        "generation": generation,
+    }
+    assert summary.accepted_coordinate is None
+    dumped = summary.model_dump(mode="json")
+    assert "accepted_coordinate" not in dumped
+    assert "semantic_root" not in json.dumps(dumped)
+
+    proof = _get(instance, _SUBJECT, detail="proof")
+    assert proof.accepted_coordinate is not None
+    assert proof.accepted_coordinate.git_oid == head.git_oid
+    asked = _get(instance, _SUBJECT, full_coordinate=True)
+    assert asked.accepted_coordinate == proof.accepted_coordinate

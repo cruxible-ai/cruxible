@@ -14,18 +14,18 @@ and names things by identity.
 from __future__ import annotations
 
 import base64
+import functools
 import json
 import re
 import shlex
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
 from cruxible_client.contracts import PlaybillAcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.captures import (
-    AcceptedCaptureContract,
     CaptureContractV1,
     parse_capture_envelope,
 )
@@ -42,6 +42,7 @@ from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.get_reads import (
     GET_BODY_DEFAULT_MAX_BYTES,
     GET_DETAILS_BY_KIND,
+    GET_HISTORY_DEFAULT_LIMIT,
     PlaybillByteRangeV1,
     PlaybillGetAttestationEvidenceV1,
     PlaybillGetBodyV1,
@@ -51,6 +52,7 @@ from cruxible_client.contracts.get_reads import (
     PlaybillGetClaimCardV1,
     PlaybillGetClaimTypeCardV1,
     PlaybillGetContenderV1,
+    PlaybillGetCoordinateV1,
     PlaybillGetDocumentCardV1,
     PlaybillGetEvidenceV1,
     PlaybillGetHistoryV1,
@@ -67,8 +69,8 @@ from cruxible_client.contracts.get_reads import (
     PlaybillGetSubjectClaimV1,
     PlaybillReadFlag,
     PlaybillReadSurface,
+    summary_value,
 )
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRuleV3
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -76,7 +78,27 @@ from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.read_refusals import ReadRefusalError, nearest
+from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.field_names import short_field_name
+from cruxible_core.service.discovery.read_flags import (
+    answer_flags,
+    ordered_flags,
+    unsure_holds,
+    verdict_flags,
+)
+from cruxible_core.service.list_pages import (
+    ListContinuation,
+    PlaybillListCursorMismatch,
+    decode_list_cursor,
+    encode_list_cursor,
+    list_snapshot,
+    page_after_boundary,
+)
+from cruxible_core.service.read_refusals import (
+    ReadRefusalError,
+    nearest,
+    resolve_read_coordinate,
+)
 from cruxible_core.storage.cas import BodyAccessContext
 
 _CLAIM_ID = re.compile(r"^CLM-[0-9a-f]{32}$")
@@ -174,41 +196,15 @@ def _short_digest(digest: str, *, length: int = 12) -> str:
     return f"{algorithm}:{value[:length]}" if value else digest[:length]
 
 
-def _short_predicate(predicate: str, subject_kind: str | None) -> str:
-    if subject_kind is not None and predicate.startswith(subject_kind + "."):
-        return predicate[len(subject_kind) + 1 :]
-    return predicate.rpartition(".")[2]
+def _live_predicates(projection: Any) -> frozenset[str]:
+    """Every live accepted predicate: the vocabulary field names are shortened against."""
 
-
-# -- coordinate ---------------------------------------------------------------
-
-
-def resolve_read_coordinate(
-    instance: PlaybillInstance,
-    at: ClientCoordinate | AcceptedCoordinate | str | None,
-) -> AcceptedProjectionCoordinate:
-    """The accepted coordinate a read names: head, an exact coordinate, or a git oid."""
-
-    from cruxible_client.contracts.errors import PlaybillError
-
-    if at is None:
-        return instance.accepted_coordinate()
-    try:
-        if isinstance(at, str):
-            return instance.coordinate_for_oid(at)
-        return instance.resolve_accepted_coordinate(
-            git_oid=at.git_oid,
-            semantic_root=at.semantic_root,
-            generation_root=at.generation_root,
-            compiler_digest=at.compiler_digest,
+    return frozenset(
+        str(identity).removeprefix("ClaimType:")
+        for (identity,) in projection.typed.connection.execute(
+            "SELECT identity FROM claim_types WHERE lifecycle='live'"
         )
-    except PlaybillError as exc:
-        raise ReadRefusalError(
-            "playbill.read.coordinate_not_accepted",
-            f"at does not name an accepted generation of this instance ({exc})",
-            http_status=404,
-            repair_line="Omit at to read the current head, or pass a git oid from history",
-        ) from exc
+    )
 
 
 # -- reference resolution ------------------------------------------------------
@@ -516,108 +512,6 @@ def _render_proposal_step(surface: PlaybillReadSurface, step: str, proposal_id: 
     return f"{tool}(proposal_id={json.dumps(proposal_id)})"
 
 
-# -- flags ---------------------------------------------------------------------
-
-
-def verdict_flags(verdict: str, status: str, *, held: bool) -> tuple[PlaybillReadFlag, ...]:
-    """The verdict problems one Claim row shows, from the existing verdict and status."""
-
-    flags: list[PlaybillReadFlag] = []
-    if verdict in {"stale", "stale_evidence"}:
-        flags.append("stale")
-    if status == "conflicted":
-        flags.append("contested")
-    if verdict == "contradicted":
-        flags.append("contradicted")
-    if held:
-        flags.append("unsure_hold")
-    return tuple(flags)
-
-
-def unsure_held_claims(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-    claims: Iterable[ClaimArtifactAny],
-    *,
-    statuses: Mapping[str, str],
-    evaluation_time: datetime,
-) -> frozenset[str]:
-    """Claims an ``unsure`` examined attestation holds right now, as ``next`` decides.
-
-    ``statuses`` are the slot resolution statuses by bare Claim id. The decision
-    is ``next``'s own: its Claim rows for these Claims and its hold coverage.
-    """
-
-    from cruxible_core.service.discovery.next import claim_unsure_holds
-
-    return claim_unsure_holds(
-        instance,
-        coordinate=coordinate,
-        claims=tuple(claims),
-        evaluation_time=evaluation_time,
-        resolution_statuses=statuses,
-    )
-
-
-# -- CaptureContract identities --------------------------------------------------
-
-
-class CaptureContractNames:
-    """Name CaptureContracts by identity and version, never by digest.
-
-    v6 ClaimTypes name contracts by identity already. Older ClaimTypes name
-    exact digests; each digest resolves through accepted history to the
-    identity it is a version of, or shows as ``unresolved:<digest prefix>``.
-    """
-
-    def __init__(self, instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate):
-        self._instance = instance
-        self._at = AcceptedCoordinate.from_internal(coordinate)
-        self._versions: dict[str, AcceptedCaptureContract | None] = {}
-        self._lineages: dict[str, tuple[str, ...]] = {}
-
-    def version_of(self, digest: str) -> AcceptedCaptureContract | None:
-        if digest not in self._versions:
-            self._versions[digest] = self._instance.accepted_capture_contract_version(
-                self._at, digest
-            )
-        return self._versions[digest]
-
-    def lineage(self, identity: str) -> tuple[str, ...]:
-        """Every accepted version digest of one contract identity, oldest first."""
-
-        if identity not in self._lineages:
-            with self._instance.accepted_history_reader(at=self._at) as history:
-                occurrences = history.occurrences(identity)
-            ordered: list[str] = []
-            for location in occurrences:
-                if location.artifact_digest not in ordered:
-                    ordered.append(location.artifact_digest)
-            self._lineages[identity] = tuple(ordered)
-        return self._lineages[identity]
-
-    def version_number(self, identity: str, digest: str) -> int:
-        lineage = self.lineage(identity)
-        return lineage.index(digest) + 1 if digest in lineage else len(lineage)
-
-    def name(self, digest: str) -> str:
-        found = self.version_of(digest)
-        if found is None:
-            return f"unresolved:{_short_digest(digest).partition(':')[2]}"
-        return found.contract.identity.qualified
-
-    def accepted_evidence(self, claim_type: ClaimType) -> tuple[str, ...]:
-        """The contract names a ClaimType's evidence rules admit."""
-
-        names: set[str] = set()
-        for rule in claim_type.evidence_admission_policy.rules:
-            if isinstance(rule, ClaimEvidenceAdmissionRuleV3):
-                names.update(item.target.qualified for item in rule.capture_contracts)
-            else:
-                names.update(self.name(digest) for digest in rule.capture_contract_digests)
-        return tuple(sorted(names, key=lambda item: item.encode("utf-8")))
-
-
 # -- per-kind builders ------------------------------------------------------------
 
 
@@ -693,12 +587,13 @@ def _claim_card(
     verdict = own.verdict if own is not None else "retired"
     status = own.status if own is not None else "retired"
     with instance.bind_accepted_projection(coordinate) as projection:
+        accepted_predicates = _live_predicates(projection)
         contenders = tuple(
             cast(ClaimArtifactAny, projection.typed.source(f"Claim:{item.claim_id}"))
             for item in slot
             if item.claim_id != claim.identity.name
         )
-    held = unsure_held_claims(
+    held = unsure_holds(
         instance,
         coordinate,
         (claim, *contenders),
@@ -712,17 +607,19 @@ def _claim_card(
     return PlaybillGetClaimCardV1(
         claim=name,
         subject=_subject_ref(subject_path),
-        predicate=_short_predicate(statement.predicate, subject_kind),
+        predicate=short_field_name(statement.predicate, subject_kind, accepted_predicates),
         predicate_full=statement.predicate,
         qualifier=statement.qualifier,
-        value=_artifact_value(claim),
+        value=summary_value(_artifact_value(claim)),
         verdict=verdict,
         status=status,
         revision=int(row.revision) if row is not None else 1,
         accepted=accepted,
         contenders=tuple(
             PlaybillGetContenderV1(
-                claim=item.claim_id, value=_claim_value(item), verdict=item.verdict
+                claim=item.claim_id,
+                value=summary_value(_claim_value(item)),
+                verdict=item.verdict,
             )
             for item in slot
             if item.claim_id != name
@@ -750,6 +647,7 @@ def _subject_card(
     rows = _slot_values(instance, coordinate, subject_path=path, evaluation_time=evaluation_time)
     with instance.bind_accepted_projection(coordinate) as projection:
         shell = cast(SubjectShell, projection.typed.source(resolved.identity))
+        accepted_predicates = _live_predicates(projection)
         claim_types: dict[str, ClaimType] = {}
         claims: list[ClaimArtifactAny] = []
         for item in rows:
@@ -765,7 +663,7 @@ def _subject_card(
                 (path,),
             ).fetchone()[0]
         )
-    held = unsure_held_claims(
+    held = unsure_holds(
         instance,
         coordinate,
         claims,
@@ -785,19 +683,22 @@ def _subject_card(
         # while it is contested. Overturned and refused contenders are not values.
         shown = [item for item in members if item.status in {"accepted", "conflicted"}] or members
         values = [_claim_value(item) for item in shown]
-        flags: list[PlaybillReadFlag] = []
+        marks: set[PlaybillReadFlag] = set(
+            answer_flags("many" if many else "one", len({repr(value) for value in values}))
+        )
         for item in shown:
-            for flag in verdict_flags(
-                item.verdict, item.status, held=f"Claim:{item.claim_id}" in held
-            ):
-                if flag not in flags:
-                    flags.append(flag)
+            marks.update(
+                verdict_flags(item.verdict, item.status, held=f"Claim:{item.claim_id}" in held)
+            )
+        listed = many or len(values) > 1
+        claims_shown = tuple(item.claim_id for item in shown)
         entries.append(
             PlaybillGetSubjectClaimV1(
-                predicate=_short_predicate(predicate, kind),
+                predicate=short_field_name(predicate, kind, accepted_predicates),
                 qualifier=qualifier,
-                value=values if many or len(values) > 1 else values[0],
-                flags=tuple(flags),
+                claim=claims_shown if listed else claims_shown[0],
+                value=summary_value(values if listed else values[0]),
+                flags=tuple(ordered_flags(marks)),
             )
         )
     return PlaybillGetSubjectCardV1(
@@ -840,7 +741,7 @@ def _claim_type_card(
                 (claim_type.predicate,),
             ).fetchone()[0]
         )
-    evidence = CaptureContractNames(instance, coordinate).accepted_evidence(claim_type)
+    evidence = CaptureContractNames(instance, coordinate).admitted(claim_type, qualified=True)
     object_type, members = _object_description(claim_type)
     next_steps = [_render_get(surface, resolved.display, "proof")]
     next_steps.extend(
@@ -972,7 +873,8 @@ def _capture_contract_card(
         sorted(
             item.predicate
             for item in claim_types
-            if item.lifecycle.state == "live" and resolved.identity in names.accepted_evidence(item)
+            if item.lifecycle.state == "live"
+            and resolved.identity in names.admitted(item, qualified=True)
         )
     )
     return PlaybillGetCaptureContractCardV1(
@@ -1136,7 +1038,10 @@ def _claim_evidence(
         )
         for item in explanation.exact_attestations
     )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        claim = cast(ClaimArtifactAny, projection.typed.source(resolved.identity))
     return PlaybillGetEvidenceV1(
+        value=_artifact_value(claim),
         captures=tuple(captures),
         attestations=attestations,
         rationale=_claim_rationale(instance, coordinate, _name(resolved.identity)),
@@ -1145,114 +1050,182 @@ def _claim_evidence(
 
 # -- history -------------------------------------------------------------------------
 
+_HISTORY_LIST = "get history"
+
+
+@dataclass(frozen=True)
+class _RevisionEntry:
+    """One accepted revision, located but not yet read."""
+
+    revision: int
+    sequence: int
+    digest: str
+    lifecycle: str | None
+    value: Callable[[], object] | None = None
+
 
 def _revision(
     instance: PlaybillInstance,
     history: Any,
-    *,
-    index: int,
-    sequence: int,
-    digest: str,
-    lifecycle: str | None,
-    value: object = None,
+    entry: _RevisionEntry,
 ) -> PlaybillGetRevisionV1:
-    generation = history.generation(sequence)
-    record = history.read_generation_record(sequence, instance.blob_at)
+    generation = history.generation(entry.sequence)
+    record = history.read_generation_record(entry.sequence, instance.blob_at)
     return PlaybillGetRevisionV1(
-        revision=index,
-        sequence=sequence,
+        revision=entry.revision,
+        sequence=entry.sequence,
         accepted=str(record.candidate.timestamp),
         actor=generation.actor_id or record.actor_binding.actor_id,
         approved_by=tuple(dict.fromkeys(item.attestation.signer_id for item in record.approvals)),
-        lifecycle=lifecycle,
-        value=value,
-        digest=_short_digest(digest),
+        lifecycle=entry.lifecycle,
+        value=None if entry.value is None else entry.value(),
+        digest=_short_digest(entry.digest),
     )
+
+
+def _history_entries(
+    instance: PlaybillInstance,
+    resolved: ResolvedRef,
+    history: Any,
+) -> list[_RevisionEntry]:
+    """Every accepted revision up to the read coordinate, oldest first."""
+
+    from cruxible_core.service.authoring.documents import service_playbill_document_history
+    from cruxible_core.service.claims.claims import service_playbill_claim_history
+    from cruxible_core.service.claims.subjects import service_playbill_subject_history
+
+    cutoff = history.sequence
+    entries: list[_RevisionEntry] = []
+    if resolved.kind == "claim":
+        path = claim_path(_name(resolved.identity))
+
+        def claim_value(git_oid: str) -> Callable[[], object]:
+            def read() -> object:
+                content = instance.blob_at(git_oid, path)
+                return None if content is None else _artifact_value(parse_claim(content, path=path))
+
+            return read
+
+        for claim_entry in service_playbill_claim_history(
+            instance, identity=resolved.identity
+        ).entries:
+            if claim_entry.sequence <= cutoff:
+                entries.append(
+                    _RevisionEntry(
+                        revision=len(entries) + 1,
+                        sequence=claim_entry.sequence,
+                        digest=claim_entry.artifact_digest,
+                        lifecycle=claim_entry.lifecycle_state,
+                        value=claim_value(claim_entry.coordinate.git_oid),
+                    )
+                )
+    elif resolved.kind == "subject":
+        for subject_entry in service_playbill_subject_history(
+            instance, identity=resolved.identity
+        ).entries:
+            if subject_entry.sequence <= cutoff:
+                entries.append(
+                    _RevisionEntry(
+                        revision=len(entries) + 1,
+                        sequence=subject_entry.sequence,
+                        digest=subject_entry.artifact_digest,
+                        lifecycle=subject_entry.lifecycle_state,
+                    )
+                )
+    elif resolved.kind == "document":
+        for document_entry in service_playbill_document_history(
+            instance, identity=resolved.identity
+        ).entries:
+            if document_entry.sequence <= cutoff:
+                body: object = {"body": _short_digest(document_entry.body_digest)}
+                entries.append(
+                    _RevisionEntry(
+                        revision=len(entries) + 1,
+                        sequence=document_entry.sequence,
+                        digest=document_entry.envelope_digest,
+                        lifecycle=None,
+                        value=functools.partial(lambda value: value, body),
+                    )
+                )
+    else:
+        # Definitions keep one version per accepted digest of their identity.
+        seen: set[str] = set()
+        for location in history.occurrences(resolved.identity):
+            if location.artifact_digest in seen:
+                continue
+            seen.add(location.artifact_digest)
+            entries.append(
+                _RevisionEntry(
+                    revision=len(entries) + 1,
+                    sequence=location.occurrence_sequence,
+                    digest=location.artifact_digest,
+                    lifecycle=None,
+                )
+            )
+    return entries
 
 
 def _history(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     resolved: ResolvedRef,
-) -> PlaybillGetHistoryV1:
-    from cruxible_core.service.authoring.documents import service_playbill_document_history
-    from cruxible_core.service.claims.claims import service_playbill_claim_history
-    from cruxible_core.service.claims.subjects import service_playbill_subject_history
+    *,
+    ref: str,
+    limit: int,
+    continuation: ListContinuation | None,
+) -> tuple[PlaybillGetHistoryV1, bool, str | None]:
+    """One page of revisions, newest first, and the cursor that continues it."""
 
     at = AcceptedCoordinate.from_internal(coordinate)
-    revisions: list[PlaybillGetRevisionV1] = []
     with instance.accepted_history_reader(at=at) as history:
-        cutoff = history.sequence
-        if resolved.kind == "claim":
-            path = claim_path(_name(resolved.identity))
-            claim_entries = service_playbill_claim_history(instance, identity=resolved.identity)
-            for entry in (item for item in claim_entries.entries if item.sequence <= cutoff):
-                content = instance.blob_at(entry.coordinate.git_oid, path)
-                value = (
-                    None if content is None else _artifact_value(parse_claim(content, path=path))
-                )
-                revisions.append(
-                    _revision(
-                        instance,
-                        history,
-                        index=len(revisions) + 1,
-                        sequence=entry.sequence,
-                        digest=entry.artifact_digest,
-                        lifecycle=entry.lifecycle_state,
-                        value=value,
-                    )
-                )
-        elif resolved.kind == "subject":
-            subject_entries = service_playbill_subject_history(instance, identity=resolved.identity)
-            for subject_entry in (
-                item for item in subject_entries.entries if item.sequence <= cutoff
-            ):
-                revisions.append(
-                    _revision(
-                        instance,
-                        history,
-                        index=len(revisions) + 1,
-                        sequence=subject_entry.sequence,
-                        digest=subject_entry.artifact_digest,
-                        lifecycle=subject_entry.lifecycle_state,
-                    )
-                )
-        elif resolved.kind == "document":
-            document_entries = service_playbill_document_history(
-                instance, identity=resolved.identity
-            )
-            for document_entry in (
-                item for item in document_entries.entries if item.sequence <= cutoff
-            ):
-                revisions.append(
-                    _revision(
-                        instance,
-                        history,
-                        index=len(revisions) + 1,
-                        sequence=document_entry.sequence,
-                        digest=document_entry.envelope_digest,
-                        lifecycle=None,
-                        value={"body": _short_digest(document_entry.body_digest)},
-                    )
-                )
-        else:
-            # Definitions keep one version per accepted digest of their identity.
-            for location in history.occurrences(resolved.identity):
-                if any(
-                    item.digest == _short_digest(location.artifact_digest) for item in revisions
-                ):
-                    continue
-                revisions.append(
-                    _revision(
-                        instance,
-                        history,
-                        index=len(revisions) + 1,
-                        sequence=location.occurrence_sequence,
-                        digest=location.artifact_digest,
-                        lifecycle=None,
-                    )
-                )
-    return PlaybillGetHistoryV1(revisions=tuple(revisions))
+        newest_first = list(reversed(_history_entries(instance, resolved, history)))
+        keys = [(str(entry.sequence), entry.digest) for entry in newest_first]
+        snapshot = list_snapshot(keys)
+        page, truncated = page_after_boundary(
+            newest_first,
+            keys=keys,
+            snapshot=snapshot,
+            continuation=continuation,
+            limit=limit,
+            list_name=_HISTORY_LIST,
+        )
+        revisions = tuple(_revision(instance, history, entry) for entry in page)
+    next_cursor = (
+        encode_list_cursor(
+            list_name=_HISTORY_LIST,
+            coordinate=at.model_dump(mode="json"),
+            selection={"ref": ref},
+            snapshot=snapshot,
+            last_key=(str(page[-1].sequence), page[-1].digest),
+        )
+        if truncated and page
+        else None
+    )
+    return PlaybillGetHistoryV1(revisions=revisions), truncated, next_cursor
+
+
+def _history_continuation(
+    request: PlaybillGetRequestV1,
+) -> tuple[ListContinuation | None, ClientCoordinate | str | None]:
+    """The page a history cursor continues, pinned to the coordinate it was cut at."""
+
+    if request.cursor is None:
+        return None, request.at
+    continuation = decode_list_cursor(
+        request.cursor, list_name=_HISTORY_LIST, selection={"ref": request.ref}
+    )
+    pinned = ClientCoordinate.model_validate(continuation.coordinate)
+    at = request.at
+    if at is not None and (
+        at != pinned.git_oid
+        if isinstance(at, str)
+        else at.model_dump(mode="json") != pinned.model_dump(mode="json")
+    ):
+        raise PlaybillListCursorMismatch(
+            f"{PlaybillListCursorMismatch.error_code}: the cursor continues a different "
+            "coordinate; omit at to continue it, or read history again without a cursor"
+        )
+    return continuation, pinned
 
 
 # -- body ------------------------------------------------------------------------------
@@ -1448,7 +1421,8 @@ def service_playbill_get(
 ) -> PlaybillGetResultV1:
     """Resolve one reference and answer it at one ``detail`` level."""
 
-    coordinate = resolve_read_coordinate(instance, request.at)
+    continuation, at = _history_continuation(request)
+    coordinate = resolve_read_coordinate(instance, at)
     evaluation_time = request.evaluation_time or utc_now()
     resolved = resolve_get_ref(instance, coordinate, request.ref, surface=request.surface)
     if resolved.kind == "proposal":
@@ -1515,7 +1489,14 @@ def service_playbill_get(
             instance, coordinate, resolved, evaluation_time=evaluation_time, access=access
         )
     elif request.detail == "history":
-        fields["history"] = _history(instance, coordinate, resolved)
+        fields["history"], fields["truncated"], fields["next_cursor"] = _history(
+            instance,
+            coordinate,
+            resolved,
+            ref=request.ref,
+            limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
+            continuation=continuation,
+        )
     elif request.detail == "proof":
         fields["proof"] = _proof(
             instance, coordinate, resolved, evaluation_time=evaluation_time, access=access
@@ -1529,24 +1510,25 @@ def service_playbill_get(
             access=access,
             surface=surface,
         )
+    served = AcceptedCoordinate.from_internal(coordinate)
+    with instance.accepted_history_reader(at=served) as history:
+        generation = int(history.sequence)
+    if request.detail == "proof" or request.full_coordinate:
+        fields["accepted_coordinate"] = ClientCoordinate.model_validate(
+            served.model_dump(mode="json")
+        )
     return PlaybillGetResultV1(
         ref=resolved.display,
         kind=resolved.kind,
         detail=request.detail,
-        coordinate=ClientCoordinate.model_validate(
-            AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
-        ),
+        coordinate=PlaybillGetCoordinateV1(git_oid=served.git_oid[:12], generation=generation),
         evaluation_time=evaluation_time,
         **fields,
     )
 
 
 __all__ = [
-    "CaptureContractNames",
     "ResolvedRef",
     "resolve_get_ref",
-    "resolve_read_coordinate",
     "service_playbill_get",
-    "unsure_held_claims",
-    "verdict_flags",
 ]

@@ -15,12 +15,11 @@ from cruxible_core.service.discovery import compact_query as compact_module
 from cruxible_core.service.discovery.compact_query import service_playbill_query
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.query_vocabulary import (
-    PlaybillQueryNotFound,
-    PlaybillQueryRefused,
     PredicateInfo,
     QueryVocabulary,
 )
 from cruxible_core.service.list_pages import PlaybillListCursorMismatch
+from cruxible_core.service.read_refusals import ReadRefusalError
 from tests.core_support._candidate_support import submit_query_definition_candidate
 from tests.core_support._knowledge_loop_support import (
     EVALUATION_TIME,
@@ -152,21 +151,32 @@ def test_contains_without_kind_searches_every_live_claim_value(instance: Any) ->
 def test_wrong_names_refuse_with_the_nearest_valid_ones(
     instance: Any, fields: dict[str, Any], code: str, nearest: str
 ) -> None:
-    with pytest.raises(PlaybillQueryRefused) as refused:
+    with pytest.raises(ReadRefusalError) as refused:
         _query(instance, **fields)
 
     assert refused.value.error_code == code
-    assert nearest in refused.value.nearest
-    assert "repair:" in str(refused.value)
-    assert refused.value.served_context["nearest"]
+    assert refused.value.http_status == 400
+    assert nearest in refused.value.candidates
+    assert refused.value.repair_line and refused.value.repair_line in str(refused.value)
+    assert refused.value.context["candidates"]
+    assert refused.value.context["field_path"]
+
+
+def test_an_unaccepted_at_refuses_with_the_shared_read_code(instance: Any) -> None:
+    with pytest.raises(ReadRefusalError) as refused:
+        _query(instance, kind=SUBJECT_KIND, at="0" * 40)
+
+    assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+    assert refused.value.http_status == 404
+    assert refused.value.context["field_path"] == "at"
 
 
 def test_exactly_one_mode(instance: Any) -> None:
-    with pytest.raises(PlaybillQueryRefused, match="playbill.query.mode_invalid"):
+    with pytest.raises(ReadRefusalError, match="playbill.query.mode_invalid"):
         _query(instance, kind=SUBJECT_KIND, name=QUERY_NAME)
-    with pytest.raises(PlaybillQueryRefused, match="playbill.query.mode_invalid"):
+    with pytest.raises(ReadRefusalError, match="playbill.query.mode_invalid"):
         _query(instance)
-    with pytest.raises(PlaybillQueryRefused, match="playbill.query.mode_invalid"):
+    with pytest.raises(ReadRefusalError, match="playbill.query.mode_invalid"):
         _query(instance, name=QUERY_NAME, select=["status"])
 
 
@@ -206,7 +216,7 @@ def test_claim_type_rows_name_capture_contracts_never_digests(instance: Any) -> 
     narrowed = _query(instance, kind="ClaimType", select=["predicate", "evidence"])
     assert set(narrowed.rows[0]) == {"predicate", "evidence"}
 
-    with pytest.raises(PlaybillQueryRefused, match="playbill.query.unknown_field"):
+    with pytest.raises(ReadRefusalError, match="playbill.query.unknown_field"):
         _query(instance, kind="ClaimType", where=[{"field": "predicat", "eq": "x"}])
 
 
@@ -220,11 +230,13 @@ def test_named_query_runs_as_run_query_does(instance: Any) -> None:
         ("wi-43", "blocked"),
     ]
 
-    with pytest.raises(PlaybillQueryNotFound) as missing:
+    with pytest.raises(ReadRefusalError) as missing:
         _query(instance, name="project.work_itmes")
-    assert QUERY_NAME in missing.value.nearest
+    assert missing.value.error_code == "playbill.query.name_not_found"
+    assert missing.value.http_status == 404
+    assert QUERY_NAME in missing.value.candidates
 
-    with pytest.raises(PlaybillQueryRefused, match="playbill.query.parameter_undeclared"):
+    with pytest.raises(ReadRefusalError, match="playbill.query.parameter_undeclared"):
         _query(instance, name=QUERY_NAME, params={"stray": "x"})
 
 
@@ -238,8 +250,8 @@ def test_spec_query_pins_claim_types_at_the_coordinate(instance: Any) -> None:
 
 
 def test_flags_come_from_the_verdict_machinery(instance: Any, monkeypatch: Any) -> None:
-    def flagged(*_args: Any, claims: Any, **_kwargs: Any) -> dict[str, set[str]]:
-        return {item.identity: {"stale", "unsure_hold"} for item in claims}
+    def flagged(*_args: Any, identities: Any, **_kwargs: Any) -> dict[str, tuple[str, ...]]:
+        return {identity: ("stale", "unsure_hold") for identity in identities}
 
     monkeypatch.setattr(compact_module, "claim_flags", flagged)
     result = _query(instance, kind=SUBJECT_KIND, select=["status"])
@@ -304,13 +316,16 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
         ClaimEvidenceAdmissionPolicyV3,
         ClaimEvidenceAdmissionRuleV3,
     )
-    from cruxible_core.service.discovery.query_vocabulary import CaptureContractNames
+    from cruxible_core.service.discovery.contract_names import CaptureContractNames
     from tests.test_claims.test_claims import _claim_type
 
     legacy = _claim_type()
     digest = legacy.evidence_admission_policy.rules[0].capture_contract_digests[0]
     names = CaptureContractNames.__new__(CaptureContractNames)
-    names._by_digest = {}
+    names._versions = {}
+    names._names = {}
+    names._lineages = {}
+    names._connection = None
     names._at = None  # type: ignore[assignment]
     names._instance = SimpleNamespace(  # type: ignore[assignment]
         accepted_capture_contract_version=lambda _at, found: (
@@ -319,8 +334,9 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
             else None
         )
     )
-    assert names.of(legacy) == ("direct",)
-    assert names.by_digest("sha256:" + "ab" * 32) == "unresolved:" + "ab" * 6
+    assert names.admitted(legacy) == ("direct",)
+    assert names.admitted(legacy, qualified=True) == ("CaptureContract:direct",)
+    assert names.name("sha256:" + "ab" * 32) == "unresolved:" + "ab" * 6
 
     identity_rule = ClaimEvidenceAdmissionRuleV3(
         rule_id="by-identity",
@@ -344,27 +360,27 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
             ).model_dump(mode="json"),
         }
     )
-    assert names.of(current) == ("fixture.reports",)
+    assert names.admitted(current) == ("fixture.reports",)
     assert names.names_by_digest(legacy) and not names.names_by_digest(current)
 
 
 def test_a_filter_naming_a_missing_subject_refuses(instance: Any) -> None:
-    with pytest.raises(PlaybillQueryRefused) as refused:
+    with pytest.raises(ReadRefusalError) as refused:
         _query(instance, kind=SUBJECT_KIND, where=[{"field": "subject_id", "eq": "wi-44"}])
 
     assert refused.value.error_code == "playbill.query.unknown_ref"
-    assert "wi-42" in refused.value.nearest or "wi-43" in refused.value.nearest
+    assert "wi-42" in refused.value.candidates or "wi-43" in refused.value.candidates
     assert _ids(
         _query(instance, kind=SUBJECT_KIND, where=[{"field": "subject_id", "in": ["wi-43"]}])
     ) == ["wi-43"]
 
 
 def test_a_definition_filter_naming_an_unknown_namespace_refuses(instance: Any) -> None:
-    with pytest.raises(PlaybillQueryRefused) as refused:
+    with pytest.raises(ReadRefusalError) as refused:
         _query(instance, kind="ClaimType", where=[{"field": "namespace", "eq": "project.work_itm"}])
 
     assert refused.value.error_code == "playbill.query.unknown_ref"
-    assert SUBJECT_KIND in refused.value.nearest
+    assert SUBJECT_KIND in refused.value.candidates
 
 
 def _contend(instance: Any, owner: Any, against: Any, value: str, name: str) -> None:
@@ -616,10 +632,10 @@ def test_every_shown_field_name_resolves_back_to_its_predicate() -> None:
     resolved = named_so.resolve_field((kind,), "subject_id", field_path="select[0]")
     assert not isinstance(resolved, str) and resolved.predicate == "subject_id"
     # No last-segment form: `severity` is not project.work_item.severity.
-    with pytest.raises(PlaybillQueryRefused) as refused:
+    with pytest.raises(ReadRefusalError) as refused:
         vocabulary.resolve_field((kind,), "severity", field_path="where[0].field")
     assert refused.value.error_code == "playbill.query.unknown_field"
-    assert "sec.vuln.severity" in refused.value.nearest
+    assert "sec.vuln.severity" in refused.value.candidates
 
 
 def test_query_columns_use_the_shared_short_name(instance: Any) -> None:
@@ -688,7 +704,7 @@ def test_two_columns_never_share_a_row_key() -> None:
 
     # An alias escaped under value.flags meets the predicate value.flags, and
     # neither has another name: refuse rather than serve one over the other.
-    with pytest.raises(PlaybillQueryRefused) as refused:
+    with pytest.raises(ReadRefusalError) as refused:
         _columns(follow=[{"field": "parent", "as": "flags"}], select=["value.flags", "flags"])
     assert refused.value.error_code == "playbill.query.column_collision"
 

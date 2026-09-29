@@ -78,6 +78,14 @@ def test_get_serves_cards_details_and_coded_refusals(
     assert payload["card"]["size"] == len(_BODY)
     # Absent sections are omitted, not null.
     assert "evidence" not in payload and "proof" not in payload
+    # A summary names its coordinate compactly; the full one only when asked.
+    assert set(payload["coordinate"]) == {"git_oid", "generation"}
+    assert len(payload["coordinate"]["git_oid"]) == 12
+    assert "accepted_coordinate" not in payload and "truncated" not in payload
+    pinned = client.post(url, json={"ref": "Document:design", "full_coordinate": True}).json()
+    proof = client.post(url, json={"ref": "Document:design", "detail": "proof"}).json()
+    assert pinned["accepted_coordinate"] == proof["accepted_coordinate"]
+    assert pinned["accepted_coordinate"]["git_oid"].startswith(payload["coordinate"]["git_oid"])
     assert body.status_code == 200, body.text
     assert body.json()["body"]["text"] == _BODY[:8].decode()
 

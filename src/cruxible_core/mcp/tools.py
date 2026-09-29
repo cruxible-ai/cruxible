@@ -17,7 +17,11 @@ from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendR
 from cruxible_client.contracts.claim_reads import ClaimValuesResultV1
 from cruxible_client.contracts.compact_query import QueryFilterV1, QueryFollowV1
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
-from cruxible_client.contracts.get_reads import PlaybillByteRangeV1, PlaybillGetResultV1
+from cruxible_client.contracts.get_reads import (
+    GET_HISTORY_MAX_LIMIT,
+    PlaybillByteRangeV1,
+    PlaybillGetResultV1,
+)
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -844,6 +848,18 @@ def register_tools(
             str | None,
             Field(description="ISO-8601 instant verdicts are evaluated at; default now."),
         ] = None,
+        limit: Annotated[
+            int | None,
+            Field(
+                ge=1,
+                le=GET_HISTORY_MAX_LIMIT,
+                description='Revisions per detail="history" page, newest first; default 20.',
+            ),
+        ] = None,
+        cursor: Annotated[
+            str | None,
+            Field(description='next_cursor of the previous detail="history" page.'),
+        ] = None,
     ) -> PlaybillGetResultV1:
         """Read one governed thing by reference, values first."""
         return handlers.handle_playbill_get(
@@ -853,6 +869,8 @@ def register_tools(
             range=range,
             at=at,
             evaluation_time=evaluation_time,
+            limit=limit,
+            cursor=cursor,
         )
 
     @_tool
@@ -947,7 +965,6 @@ def register_tools(
             int, Field(ge=1, le=contracts.PLAYBILL_QUERY_MAX_LIMIT)
         ] = contracts.PLAYBILL_QUERY_DEFAULT_LIMIT,
         cursor: str | None = None,
-        spec: QueryDefinitionSpecV1 | None = None,
         name: str | None = None,
         params: dict[str, str | int | bool] | None = None,
         at: AcceptedCoordinate | str | None = None,
@@ -964,9 +981,30 @@ def register_tools(
             order_by=order_by,
             limit=limit,
             cursor=cursor,
-            spec=spec,
             name=name,
             params=params,
+            at=at,
+            evaluation_time=evaluation_time,
+        )
+
+    @_tool
+    def cruxible_playbill_query_spec(
+        instance_id: InstanceId = None,
+        *,
+        spec: QueryDefinitionSpecV1,
+        limit: Annotated[
+            int, Field(ge=1, le=contracts.PLAYBILL_QUERY_MAX_LIMIT)
+        ] = contracts.PLAYBILL_QUERY_DEFAULT_LIMIT,
+        cursor: str | None = None,
+        at: AcceptedCoordinate | str | None = None,
+        evaluation_time: str | None = None,
+    ) -> contracts.PlaybillQueryResult:
+        """Run one full QueryDefinition spec inline: the query verb's rows, flags and paging."""
+        return handlers.handle_playbill_query_spec(
+            require_instance_id(instance_id),
+            spec=spec,
+            limit=limit,
+            cursor=cursor,
             at=at,
             evaluation_time=evaluation_time,
         )

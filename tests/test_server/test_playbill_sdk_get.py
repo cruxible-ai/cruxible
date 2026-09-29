@@ -62,6 +62,8 @@ def test_get_resolves_strings_and_typed_refs_directly(
     assert isinstance(subject.value, PlaybillGetSubjectCardV1)
     assert [(row.predicate, row.value) for row in subject.value.claims] == [("status", "ready")]
     assert isinstance(subject.ref, SubjectRef)
+    # Summaries answer a compact coordinate; the SDK asks for the full one to pin.
+    assert subject.coordinate == pb.coordinate
 
     by_leaf = pb.get("status")
     assert by_leaf.kind is RefKind.CLAIM_TYPE and by_leaf.identity == PREDICATE

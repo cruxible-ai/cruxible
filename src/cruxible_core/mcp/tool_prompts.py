@@ -260,10 +260,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         '(e.g. "dev.roadmap_item") with where filters such as '
         '{"field": "adoption_state", "eq": "adopted"} (also ne, lt, lte, gt, gte, in, '
         "exists, contains), select, follow and order_by; contains alone searches every "
-        "Claim value; kind ClaimType or Procedure lists definitions. Or pass a spec, or a "
-        "query name with params. Rows lead with values and carry flags (stale, contested, "
+        "Claim value; kind ClaimType or Procedure lists definitions. Or pass a query name "
+        "with params. Rows lead with values and carry flags (stale, contested, "
         "contradicted, unsure_hold); when truncated, pass next_cursor back as cursor. A "
         "wrong name refuses with the nearest valid names."
+    ),
+    "cruxible_playbill_query_spec": (
+        "Use when compact filters cannot say it: run one full QueryDefinitionSpecV1 inline "
+        "(traversals, disjunctions, projections) without accepting a QueryDefinition. "
+        "Same rows, flags and paging as cruxible_playbill_query."
     ),
     "cruxible_playbill_procedure_readiness": (
         "Use when you need to know whether an accepted Procedure can run or which slots must "

@@ -14,6 +14,7 @@ from cruxible_client.contracts.errors import (
     ProposalActivationRequestInvalid,
     ProposalNotFoundError,
     ProposalSelectorAmbiguousError,
+    ReadRefusalError,
 )
 from cruxible_client.contracts.repairs import ServedRepairV1
 
@@ -219,7 +220,7 @@ class ErrorResponse(BaseModel):
     repair: ServedRepairV1 | None = None
 
 
-def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
+def response_to_error(status: int, body: ErrorResponse) -> CoreError:
     """Reconstruct a client-side error from an HTTP error response."""
     context = body.context
 
@@ -281,6 +282,14 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
         exc = PlaybillObjectFormatConflict(
             body.message,
             workspace_format=context.get("workspace_format"),
+        )
+    elif body.error_type == "ReadRefusalError":
+        # A read verb's coded refusal keeps its code, candidates and repair line.
+        exc = ReadRefusalError.from_served(
+            code=body.error_code or "playbill.read.refused",
+            message=body.message,
+            http_status=status,
+            context=context,
         )
     elif body.error_type == "PlaybillInstanceDecommissioned":
         exc = PlaybillInstanceDecommissioned(
