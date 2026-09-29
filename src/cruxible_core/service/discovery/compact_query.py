@@ -1,0 +1,1743 @@
+"""The ``query`` read verb: any question over accepted state, one call.
+
+Three modes, exactly one per call:
+
+- **compact** -- ``kind`` and/or ``contains`` with optional ``where``, ``select``,
+  ``follow`` and ``order_by``. A Subject-kind query lowers to a
+  ``QueryDefinitionSpecV1`` wrapped as an inline definition (its own digest, no
+  accepted path) and runs through the same evaluator as a governed
+  QueryDefinition. ``kind: ClaimType`` / ``kind: Procedure`` select definitions
+  through the artifact entry. ``contains`` with no kind searches the values of
+  every live Claim.
+- **spec** -- a full ``QueryDefinitionSpecV1``, pinned at the coordinate.
+- **name** -- an accepted QueryDefinition with its ``params``, run exactly as
+  ``run_query`` runs it.
+
+Lowered filters are the ones the accepted grammar states exactly: a
+one-cardinality predicate compared, matched against a set or tested for
+presence, and ``subject_id``. ``contains`` and value filters on many-valued
+predicates are evaluated inline over the evaluator's rows with "any value"
+semantics; they are never part of an accepted QueryDefinition. ``ne`` means no
+value equals, so a Subject without the value matches.
+
+Answers lead with values: typed columns, rows of values with verdict flags, and
+list-page paging whose cursor binds the selection, the coordinate and the
+listing it was cut from.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any, Literal, cast
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.claim_verdicts import EvidenceCurrency, EvidenceRelativeClaimVerdict
+from cruxible_client.contracts.compact_query import (
+    PlaybillQueryColumnV1,
+    PlaybillQueryReceiptV1,
+    PlaybillQueryRequestV1,
+    PlaybillQueryResult,
+    QueryFilterOperator,
+    QueryFilterV1,
+    QueryFlag,
+    QueryMode,
+)
+from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureArtifactV1,
+    ProcedureArtifactV2,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.query.definitions import (
+    CLAIM_TYPE_PIN_ROLE,
+    AcceptedQueryDefinitionV1,
+    QueryDefinitionSpecV1,
+    QueryDefinitionV1,
+    QueryEvaluationPolicyV1,
+    query_definition_digest,
+    query_definition_path,
+)
+from cruxible_client.contracts.query.grammar import (
+    QueryArtifactsEntryV2,
+    QueryBudgetsV1,
+    QueryClaimPresenceFilterV1,
+    QueryClaimValueRefV1,
+    QueryComparisonFilterV1,
+    QueryConjunctionFilterV1,
+    QueryEntryV1,
+    QueryEvaluationTimeRefV1,
+    QueryLiteralRefV1,
+    QueryMembershipFilterV1,
+    QueryNegationFilterV1,
+    QueryOrderingV1,
+    QuerySubjectFieldRefV1,
+    QueryTraversalStepV1,
+    QueryValueRefV1,
+    QueryValueTypeV1,
+    binding_name,
+)
+from cruxible_client.contracts.query.grammar import (
+    QueryFilterV1 as GrammarFilter,
+)
+from cruxible_client.contracts.query.results import ClaimQueryResultV1
+from cruxible_client.contracts.temporal import utc_now
+from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.discovery.query import evaluate_accepted_query
+from cruxible_core.service.discovery.query_values import (
+    LiveValue,
+    ValueIndex,
+    claim_flags,
+    distinct,
+    ensure_values,
+    ordered_flags,
+    read_live_values,
+    subject_labels,
+    unsure_holds,
+)
+from cruxible_core.service.discovery.query_vocabulary import (
+    ORDERABLE_TYPES,
+    SUBJECT_ID_FIELD,
+    CaptureContractNames,
+    PlaybillQueryNotFound,
+    PlaybillQueryRefused,
+    PredicateInfo,
+    QueryVocabulary,
+    check_operator,
+    check_value,
+    claim_type_row,
+    load_query_vocabulary,
+    nearest,
+    object_label,
+    value_type_of,
+)
+from cruxible_core.service.list_pages import (
+    PlaybillListCursorMismatch,
+    decode_list_cursor,
+    encode_list_cursor,
+    list_snapshot,
+    page_after_boundary,
+)
+
+LIST_NAME = "query"
+COMPACT_QUERY_MAX_RESULTS = 5000
+ARTIFACT_QUERY_MAX_RESULTS = 2000
+DEFAULT_COLUMN_CAP = 12
+INLINE_DEFINITION_NAME = "inline"
+ROOT = "subject"
+ARTIFACT_KINDS = ("ClaimType", "Procedure")
+_ALL_VERDICTS: tuple[EvidenceRelativeClaimVerdict, ...] = (
+    "contradicted",
+    "stale",
+    "supported",
+    "uncovered",
+    "unresolved",
+)
+_ALL_CURRENCY: tuple[EvidenceCurrency, ...] = ("current", "not_applicable", "stale")
+_CONTAINS_DIGEST_DOMAIN = "playbill-compact-contains-v1"
+_ENGINE_TYPES: dict[str, QueryValueTypeV1] = {
+    "string": "string",
+    "enum": "string",
+    "date": "string",
+    "integer": "integer",
+    "decimal": "decimal",
+    "boolean": "boolean",
+    "timestamp": "timestamp",
+    "subject": "subject_reference",
+}
+_LOWERED_OPERATORS = frozenset({"eq", "ne", "lt", "lte", "gt", "gte", "in"})
+
+
+# -- mode and coordinate ------------------------------------------------------
+
+
+def _mode(request: PlaybillQueryRequestV1) -> QueryMode:
+    compact = request.kind is not None or request.contains is not None
+    shaping = bool(request.where or request.select or request.follow or request.order_by)
+    chosen = [
+        mode
+        for mode, present in (
+            ("inline", compact),
+            ("spec", request.spec is not None),
+            ("named", request.name is not None),
+        )
+        if present
+    ]
+    if len(chosen) != 1:
+        raise PlaybillQueryRefused(
+            "playbill.query.mode_invalid",
+            "a query takes exactly one mode: kind and/or contains (compact), spec, or name",
+            repair=(
+                'pass kind (e.g. kind="dev.roadmap_item"), contains, a spec, or a name; not several'
+            ),
+        )
+    mode = cast(QueryMode, chosen[0])
+    if mode != "inline" and shaping:
+        raise PlaybillQueryRefused(
+            "playbill.query.mode_invalid",
+            "where, select, follow and order_by shape a compact query only",
+            repair="drop them, or pass kind instead of spec/name",
+        )
+    if request.params is not None and mode != "named":
+        raise PlaybillQueryRefused(
+            "playbill.query.mode_invalid",
+            "params bind a named query only",
+            repair="pass name with params, or drop params",
+        )
+    return mode
+
+
+def _resolve_coordinate(
+    instance: PlaybillInstance, at: AcceptedCoordinate | str | None
+) -> AcceptedProjectionCoordinate:
+    if at is None:
+        return instance.accepted_coordinate()
+    try:
+        if isinstance(at, str):
+            return instance.coordinate_for_oid(at)
+        return instance.resolve_accepted_coordinate(
+            git_oid=at.git_oid,
+            semantic_root=at.semantic_root,
+            generation_root=at.generation_root,
+            compiler_digest=at.compiler_digest,
+        )
+    except PlaybillError as exc:
+        raise PlaybillQueryRefused(
+            "playbill.query.coordinate_unknown",
+            f"at does not name an accepted coordinate ({exc})",
+            repair="omit at for the current head, or pass an accepted git oid",
+            field_path="at",
+        ) from exc
+
+
+# -- answers ------------------------------------------------------------------
+
+
+@dataclass
+class _Answer:
+    """Every candidate row in order, and how to render one page of them."""
+
+    mode: QueryMode
+    kind: str | None
+    spec_digest: str
+    columns: tuple[PlaybillQueryColumnV1, ...]
+    candidates: Sequence[Any]
+    keys: Sequence[tuple[str, ...]]
+    render: Callable[[Sequence[Any]], list[dict[str, Any]]]
+    capped: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _Field:
+    """One resolved field: which binding it reads and what it reads there."""
+
+    name: str
+    binding: str
+    info: PredicateInfo | Literal["subject_id"]
+    label: str
+
+    @property
+    def predicate(self) -> str | None:
+        return None if isinstance(self.info, str) else self.info.predicate
+
+
+@dataclass(frozen=True)
+class _Follow:
+    alias: str
+    info: PredicateInfo
+    target_kinds: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _Column:
+    """A rendered column: a field, or a followed Subject reference."""
+
+    name: str
+    binding: str
+    field: _Field | None
+
+
+@dataclass
+class _InlineFilter:
+    field: _Field
+    operator: QueryFilterOperator
+    value: object
+
+
+def _column(item: _Field | _Follow, *, name: str) -> PlaybillQueryColumnV1:
+    if isinstance(item, _Follow):
+        return PlaybillQueryColumnV1(
+            name=name,
+            predicate=item.info.predicate,
+            type="subject",
+            cardinality="one",
+        )
+    if isinstance(item.info, str):
+        return PlaybillQueryColumnV1(name=name, type="string", cardinality="one")
+    info = item.info
+    return PlaybillQueryColumnV1(
+        name=name,
+        predicate=info.predicate,
+        type=object_label(info),
+        members=info.members or None,
+        cardinality=info.cardinality,
+    )
+
+
+# -- the compact Subject-kind query -------------------------------------------
+
+
+class _CompactPlan:
+    """A validated compact request against one Subject kind."""
+
+    def __init__(self, vocabulary: QueryVocabulary, request: PlaybillQueryRequestV1) -> None:
+        assert request.kind is not None
+        self.vocabulary = vocabulary
+        self.kind = vocabulary.require_kind(request.kind)
+        self.follows: dict[str, _Follow] = {}
+        roots = {name.split(".", 1)[0] for name in (*vocabulary.predicates, *vocabulary.kinds)}
+        for index, follow in enumerate(request.follow):
+            path = f"follow[{index}]"
+            resolved = vocabulary.resolve_field(
+                (self.kind,), follow.field, field_path=f"{path}.field", owner=self.kind
+            )
+            if isinstance(resolved, str) or resolved.value_type != "subject":
+                raise PlaybillQueryRefused(
+                    "playbill.query.follow_not_relation",
+                    f"{follow.field!r} is not a Subject-valued predicate of {self.kind}",
+                    nearest=tuple(
+                        info.leaf
+                        for info in vocabulary.predicates_of(self.kind)
+                        if info.value_type == "subject"
+                    ),
+                    repair="follow a predicate whose values are Subjects",
+                    field_path=f"{path}.field",
+                )
+            alias = follow.as_
+            try:
+                binding_name(alias)
+            except ValueError:
+                alias = ""
+            if (
+                not alias
+                or alias in self.follows
+                or alias in {ROOT, SUBJECT_ID_FIELD}
+                or alias in roots
+            ):
+                raise PlaybillQueryRefused(
+                    "playbill.query.alias_invalid",
+                    f"alias {follow.as_!r} must be a new lower-case identifier that is not "
+                    "subject, subject_id, another alias, or a predicate namespace",
+                    repair='pick a short alias such as "parent"',
+                    field_path=f"{path}.as",
+                )
+            targets = resolved.object_kinds or vocabulary.kinds
+            self.follows[alias] = _Follow(alias=alias, info=resolved, target_kinds=targets)
+
+    def field(self, name: str, *, field_path: str) -> _Field:
+        head, _, rest = name.partition(".")
+        follow = self.follows.get(head) if rest else None
+        if follow is not None:
+            info = self.vocabulary.resolve_field(
+                follow.target_kinds, rest, field_path=field_path, owner=f"{head} ({follow.alias})"
+            )
+            label = rest if isinstance(info, str) else f"{head}.{info.predicate}"
+            return _Field(name=name, binding=follow.alias, info=info, label=label)
+        info = self.vocabulary.resolve_field(
+            (self.kind,), name, field_path=field_path, owner=self.kind
+        )
+        label = SUBJECT_ID_FIELD if isinstance(info, str) else info.predicate
+        return _Field(name=name, binding=ROOT, info=info, label=label)
+
+
+def _literal(value: object) -> QueryLiteralRefV1:
+    return QueryLiteralRefV1(value=value)
+
+
+def _engine_literal(info: PredicateInfo | Literal["subject_id"], value: object) -> object:
+    if not isinstance(info, str) and info.value_type == "subject":
+        return f"Subject:{value}"
+    return value
+
+
+def _value_ref(item: _Field) -> QueryValueRefV1:
+    if isinstance(item.info, str):
+        return QuerySubjectFieldRefV1(binding=item.binding, field="subject_id")
+    return QueryClaimValueRefV1(binding=item.binding, predicate=item.info.predicate)
+
+
+def _engine_type(item: _Field) -> QueryValueTypeV1:
+    if isinstance(item.info, str):
+        return "string"
+    return _ENGINE_TYPES[item.info.value_type]
+
+
+def _lowerable(item: _Field, operator: str) -> bool:
+    if operator == "exists":
+        return not isinstance(item.info, str)
+    if operator not in _LOWERED_OPERATORS:
+        return False
+    if isinstance(item.info, str):
+        return True
+    return item.info.cardinality == "one" and item.info.value_type in _ENGINE_TYPES
+
+
+def _lower_filter(item: _Field, operator: str, value: object) -> GrammarFilter:
+    if operator == "exists":
+        assert not isinstance(item.info, str)
+        return QueryClaimPresenceFilterV1(
+            binding=item.binding, predicate=item.info.predicate, negated=not value
+        )
+    left = _value_ref(item)
+    value_type = _engine_type(item)
+    if operator == "in":
+        assert isinstance(value, tuple)
+        literals = {
+            canonical_bytes(ref.model_dump(mode="json")): ref
+            for ref in (_literal(_engine_literal(item.info, entry)) for entry in value)
+        }
+        return QueryMembershipFilterV1(
+            left=left,
+            values=tuple(literals[key] for key in sorted(literals)),
+            value_type=value_type,
+        )
+    right = _literal(_engine_literal(item.info, value))
+    if operator == "ne":
+        return QueryNegationFilterV1(
+            operand=QueryComparisonFilterV1(
+                left=left, operator="eq", right=right, value_type=value_type
+            )
+        )
+    return QueryComparisonFilterV1(
+        left=left,
+        operator=cast(Literal["eq", "gt", "gte", "lt", "lte"], operator),
+        right=right,
+        value_type=value_type,
+    )
+
+
+def _all_of(filters: Sequence[GrammarFilter]) -> GrammarFilter | None:
+    unique = {canonical_bytes(item.model_dump(mode="json")): item for item in filters}
+    ordered = [unique[key] for key in sorted(unique)]
+    if not ordered:
+        return None
+    if len(ordered) == 1:
+        return ordered[0]
+    return QueryConjunctionFilterV1(filters=tuple(ordered))
+
+
+def _checked_filters(
+    plan: _CompactPlan, where: Sequence[QueryFilterV1]
+) -> list[tuple[_Field, QueryFilterOperator, object]]:
+    checked: list[tuple[_Field, QueryFilterOperator, object]] = []
+    for index, item in enumerate(where):
+        path = f"where[{index}]"
+        resolved = plan.field(item.field, field_path=f"{path}.field")
+        check_operator(resolved.info, item.operator, field_path=path, label=resolved.label)
+        if item.operator == "in":
+            raw = cast(tuple[object, ...], item.value)
+            value: object = tuple(
+                check_value(
+                    resolved.info,
+                    "eq",
+                    entry,
+                    field_path=f"{path}.in[{position}]",
+                    label=resolved.label,
+                )
+                for position, entry in enumerate(raw)
+            )
+        else:
+            value = check_value(
+                resolved.info,
+                item.operator,
+                item.value,
+                field_path=f"{path}.{item.operator}",
+                label=resolved.label,
+            )
+        checked.append((resolved, item.operator, value))
+    return checked
+
+
+def _comparable(info: PredicateInfo | Literal["subject_id"], value: object) -> object:
+    if isinstance(info, str):
+        return value
+    if info.value_type == "decimal":
+        from decimal import Decimal
+
+        try:
+            return Decimal(str(value))
+        except ArithmeticError:  # pragma: no cover - checked values are numeric
+            return value
+    if info.value_type == "timestamp" and isinstance(value, str):
+        from cruxible_core.service.discovery.query_vocabulary import _parse_instant
+
+        return _parse_instant(value) or value
+    return value
+
+
+def _inline_matches(item: _InlineFilter, values: Sequence[object]) -> bool:
+    operator = item.operator
+    if operator == "contains":
+        needle = str(item.value).casefold()
+        return any(isinstance(value, str) and needle in value.casefold() for value in values)
+    info = item.field.info
+    typed = [_comparable(info, value) for value in values]
+    if operator == "in":
+        wanted = {
+            canonical_bytes(_comparable(info, entry))
+            for entry in cast(tuple[object, ...], item.value)
+        }
+        return any(_safe_bytes(value) in wanted for value in typed)
+    target = _comparable(info, item.value)
+    if operator == "eq":
+        return any(value == target for value in typed)
+    if operator == "ne":
+        return not any(value == target for value in typed)
+    return any(_ordered_match(operator, value, target) for value in typed)
+
+
+def _ordered_match(operator: str, left: Any, right: Any) -> bool:
+    try:
+        if operator == "lt":
+            return bool(left < right)
+        if operator == "lte":
+            return bool(left <= right)
+        if operator == "gt":
+            return bool(left > right)
+        return bool(left >= right)
+    except TypeError:
+        return False
+
+
+def _safe_bytes(value: object) -> bytes:
+    try:
+        return canonical_bytes(value)
+    except Exception:
+        return repr(value).encode("utf-8")
+
+
+def _pins(vocabulary: QueryVocabulary, predicates: Sequence[str]) -> tuple[ArtifactPin, ...]:
+    pins = [
+        ArtifactPin(
+            role=CLAIM_TYPE_PIN_ROLE,
+            target=ArtifactIdentity(kind="ClaimType", name=predicate),
+            artifact_digest=vocabulary.predicates[predicate].claim_type_digest,
+        )
+        for predicate in predicates
+    ]
+    return tuple(
+        sorted(
+            pins,
+            key=lambda pin: (
+                pin.role.encode("utf-8"),
+                pin.target.qualified.encode("utf-8"),
+                pin.artifact_digest.encode("ascii"),
+            ),
+        )
+    )
+
+
+def _accepted(query: QueryDefinitionV1) -> AcceptedQueryDefinitionV1:
+    strict = QueryDefinitionV1.model_validate(query.model_dump(mode="json"))
+    return AcceptedQueryDefinitionV1(
+        path=query_definition_path(strict.identity.name),
+        query=strict,
+        artifact_digest=query_definition_digest(strict).tagged,
+    )
+
+
+def _refuse_engine(result: ClaimQueryResultV1, *, declared: Sequence[str] = ()) -> None:
+    if result.refusal is None:
+        return
+    code = result.refusal.code
+    repair = None
+    if code in {
+        "playbill.query.parameter_undeclared",
+        "playbill.query.parameter_missing",
+        "playbill.query.parameter_type_mismatch",
+    }:
+        repair = f"pass params named {', '.join(declared)}" if declared else "pass no params"
+    raise PlaybillQueryRefused(code, result.refusal.message, nearest=declared, repair=repair)
+
+
+def _capped(result: ClaimQueryResultV1) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    clipped = tuple(
+        item for item in result.truncation.clipped_budgets if item != "include_max_items"
+    )
+    if not clipped:
+        return (), ()
+    limits = {
+        "max_results": result.budgets.max_results,
+        "max_paths": result.budgets.max_paths,
+        "max_paths_per_result": result.budgets.max_paths_per_result,
+    }
+    capped = tuple(f"{name}={limits.get(name)}" for name in clipped)
+    note = (
+        f"the answer hit the server cap {', '.join(capped)}; rows past it are not listed; "
+        "narrow the query with where"
+    )
+    return capped, (note,)
+
+
+def _hold_for(vocabulary: QueryVocabulary) -> dict[str, timedelta]:
+    return {
+        predicate: timedelta(microseconds=info.claim_type.unsure_hold_for.microseconds)
+        for predicate, info in vocabulary.predicates.items()
+        if info.claim_type.unsure_hold_for is not None
+    }
+
+
+def _default_hold() -> timedelta:
+    from cruxible_core.service.discovery.next import DEFAULT_UNSURE_HOLD
+
+    return DEFAULT_UNSURE_HOLD
+
+
+def _default_columns(
+    vocabulary: QueryVocabulary, kind: str
+) -> tuple[list[PredicateInfo], tuple[str, ...]]:
+    predicates = sorted(
+        vocabulary.predicates_of(kind), key=lambda info: (info.leaf, info.predicate)
+    )
+    shown = predicates[:DEFAULT_COLUMN_CAP]
+    left_out = tuple(info.leaf for info in predicates[DEFAULT_COLUMN_CAP:])
+    notes: tuple[str, ...] = ()
+    if left_out:
+        notes = (
+            f"showing {DEFAULT_COLUMN_CAP} of {len(predicates)} predicates; left out: "
+            f"{', '.join(left_out)} (name them in select)",
+        )
+    return shown, notes
+
+
+def _column_name(info: PredicateInfo, kind_predicates: Sequence[PredicateInfo]) -> str:
+    leaves = [item.leaf for item in kind_predicates]
+    return info.leaf if leaves.count(info.leaf) == 1 else info.predicate
+
+
+@dataclass
+class _RowRenderer:
+    """Render rows of bound Subjects into values and flags, reading only one page."""
+
+    instance: PlaybillInstance
+    coordinate: AcceptedProjectionCoordinate
+    vocabulary: QueryVocabulary
+    evaluation_time: datetime
+    columns: Sequence[_Column]
+    values: ValueIndex = field(default_factory=ValueIndex)
+
+    def render(
+        self,
+        rows: Sequence[dict[str, str | None]],
+        *,
+        extra_flags: Sequence[set[QueryFlag]] | None = None,
+    ) -> list[dict[str, Any]]:
+        by_binding: dict[str, set[str]] = {}
+        predicates: dict[str, set[str]] = {}
+        for column in self.columns:
+            if column.field is not None and column.field.predicate is not None:
+                predicates.setdefault(column.binding, set()).add(column.field.predicate)
+        for row in rows:
+            for binding, path in row.items():
+                if path is not None:
+                    by_binding.setdefault(binding, set()).add(path)
+        paths = {path for bound in by_binding.values() for path in bound}
+        for binding, wanted in predicates.items():
+            ensure_values(
+                self.values,
+                self.instance,
+                self.coordinate,
+                paths=by_binding.get(binding, set()),
+                predicates=wanted,
+            )
+        with self.instance.bind_accepted_projection(self.coordinate) as projection:
+            labels = subject_labels(projection.typed.connection, paths)
+        shown: list[LiveValue] = []
+        for row in rows:
+            for column in self.columns:
+                path = row.get(column.binding)
+                if path is None or column.field is None or column.field.predicate is None:
+                    continue
+                shown.extend(self.values.slot(path, column.field.predicate))
+        flags = claim_flags(
+            self.instance,
+            self.coordinate,
+            claims=shown,
+            evaluation_time=self.evaluation_time,
+            hold_for=_hold_for(self.vocabulary),
+            default_hold=_default_hold(),
+        )
+        rendered: list[dict[str, Any]] = []
+        for position, row in enumerate(rows):
+            root = row.get(ROOT)
+            label = labels.get(root or "", root or "")
+            out: dict[str, Any] = {
+                "subject": label,
+                "subject_id": label.split("/", 1)[1] if "/" in label else label,
+            }
+            row_flags: set[QueryFlag] = set(extra_flags[position]) if extra_flags else set()
+            for column in self.columns:
+                path = row.get(column.binding)
+                if column.field is None:
+                    out[column.name] = None if path is None else labels.get(path, path)
+                    continue
+                if isinstance(column.field.info, str):
+                    bound = None if path is None else labels.get(path, path)
+                    out[column.name] = None if bound is None else bound.split("/", 1)[-1]
+                    continue
+                info = column.field.info
+                slot = [] if path is None else self.values.slot(path, info.predicate)
+                values = distinct(item.value for item in slot)
+                for item in slot:
+                    row_flags.update(flags.get(item.identity, set()))
+                if info.cardinality == "many":
+                    out[column.name] = values
+                elif len(values) > 1:
+                    out[column.name] = values
+                    row_flags.add("contested")
+                else:
+                    out[column.name] = values[0] if values else None
+            out["flags"] = ordered_flags(row_flags)
+            rendered.append(out)
+        return rendered
+
+
+def _compact_subject_query(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    vocabulary: QueryVocabulary,
+    request: PlaybillQueryRequestV1,
+    evaluation_time: datetime,
+) -> _Answer:
+    plan = _CompactPlan(vocabulary, request)
+    checked = _checked_filters(plan, request.where)
+    lowered: list[GrammarFilter] = []
+    inline: list[_InlineFilter] = []
+    for resolved, operator, value in checked:
+        if _lowerable(resolved, operator):
+            lowered.append(_lower_filter(resolved, operator, value))
+        else:
+            inline.append(_InlineFilter(field=resolved, operator=operator, value=value))
+    orderings: list[QueryOrderingV1] = []
+    for index, raw in enumerate(request.order_by):
+        path = f"order_by[{index}]"
+        descending = raw.startswith("-")
+        resolved = plan.field(raw.removeprefix("-").removeprefix("+"), field_path=path)
+        if not isinstance(resolved.info, str) and (
+            resolved.info.cardinality != "one" or resolved.info.value_type not in ORDERABLE_TYPES
+        ):
+            raise PlaybillQueryRefused(
+                "playbill.query.order_not_applicable",
+                f"cannot order by {resolved.label} "
+                f"({resolved.info.cardinality}-valued {resolved.info.value_type})",
+                repair="order by a one-valued scalar predicate or subject_id",
+                field_path=path,
+            )
+        orderings.append(
+            QueryOrderingV1(
+                key=_value_ref(resolved),
+                direction="descending" if descending else "ascending",
+                value_type=_engine_type(resolved),
+            )
+        )
+    kind_predicates = vocabulary.predicates_of(plan.kind)
+    columns: list[_Column] = []
+    output: list[PlaybillQueryColumnV1] = []
+    notes: tuple[str, ...] = ()
+    if request.select:
+        for index, name in enumerate(request.select):
+            if name in plan.follows:
+                follow = plan.follows[name]
+                columns.append(_Column(name=name, binding=follow.alias, field=None))
+                output.append(_column(follow, name=name))
+                continue
+            resolved = plan.field(name, field_path=f"select[{index}]")
+            if resolved.binding == ROOT and isinstance(resolved.info, str):
+                continue
+            columns.append(_Column(name=name, binding=resolved.binding, field=resolved))
+            output.append(_column(resolved, name=name))
+    else:
+        shown, notes = _default_columns(vocabulary, plan.kind)
+        for info in shown:
+            name = _column_name(info, kind_predicates)
+            resolved = _Field(name=name, binding=ROOT, info=info, label=info.predicate)
+            columns.append(_Column(name=name, binding=ROOT, field=resolved))
+            output.append(_column(resolved, name=name))
+        for alias, follow in plan.follows.items():
+            columns.append(_Column(name=alias, binding=alias, field=None))
+            output.append(_column(follow, name=alias))
+
+    follows = tuple(plan.follows.values())
+    path_shape = bool(follows)
+    budgets = QueryBudgetsV1(
+        max_results=COMPACT_QUERY_MAX_RESULTS,
+        max_traversal_depth=len(follows),
+        max_paths=COMPACT_QUERY_MAX_RESULTS if path_shape else None,
+        max_paths_per_result=COMPACT_QUERY_MAX_RESULTS if path_shape else None,
+    )
+    ordering_keys = {canonical_bytes(item.key.model_dump(mode="json")) for item in orderings}
+    if len(ordering_keys) != len(orderings):
+        raise PlaybillQueryRefused(
+            "playbill.query.order_repeated",
+            "order_by names the same field twice",
+            repair="name each field once",
+            field_path="order_by",
+        )
+    draft: dict[str, Any] = {
+        "artifact_format": "playbill-query-definition-v1",
+        "identity": ArtifactIdentity(kind="QueryDefinition", name=INLINE_DEFINITION_NAME),
+        "entry": QueryEntryV1(binding=ROOT, subject_kinds=(plan.kind,)),
+        "traversal": tuple(
+            QueryTraversalStepV1(
+                binding=follow.alias,
+                from_binding=ROOT,
+                predicate=follow.info.predicate,
+                direction="forward",
+                required=False,
+                target_subject_kinds=tuple(sorted(follow.info.object_kinds)),
+            )
+            for follow in follows
+        ),
+        "where": _all_of(lowered),
+        "result_binding": ROOT,
+        "result_shape": "path" if path_shape else "subject",
+        "result_cardinality": "many",
+        "dedupe": "path" if path_shape else "subject",
+        "orderings": tuple(orderings),
+        "evaluation_policy": QueryEvaluationPolicyV1(
+            visible_verdicts=_ALL_VERDICTS,
+            visible_currency=_ALL_CURRENCY,
+            conflict_behavior="surface_conflicts",
+        ),
+        "default_budgets": budgets,
+        "maximum_budgets": budgets,
+    }
+    unpinned = QueryDefinitionSpecV1(**draft)
+    spec = QueryDefinitionSpecV1(
+        **{**draft, "pins": _pins(vocabulary, unpinned.referenced_predicates)}
+    )
+    definition = _accepted(spec)
+    result = evaluate_accepted_query(
+        instance,
+        definition,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time,
+    )
+    _refuse_engine(result)
+    capped, cap_notes = _capped(result)
+    candidates: list[dict[str, str | None]] = [
+        {binding.binding: binding.subject_path for binding in row.bindings} for row in result.rows
+    ]
+    renderer = _RowRenderer(
+        instance=instance,
+        coordinate=coordinate,
+        vocabulary=vocabulary,
+        evaluation_time=evaluation_time,
+        columns=columns,
+    )
+    if inline or request.contains is not None:
+        candidates = _apply_inline(
+            instance,
+            coordinate,
+            renderer.values,
+            candidates,
+            inline,
+            contains=request.contains,
+            kind_predicates=tuple(info.predicate for info in kind_predicates),
+        )
+    bindings = (ROOT, *(follow.alias for follow in follows))
+    keys = [tuple(row.get(binding) or "" for binding in bindings) for row in candidates]
+    return _Answer(
+        mode="inline",
+        kind=plan.kind,
+        spec_digest=definition.artifact_digest,
+        columns=tuple(output),
+        candidates=candidates,
+        keys=keys,
+        render=lambda page: renderer.render(cast(Sequence[dict[str, str | None]], page)),
+        capped=capped,
+        notes=(*notes, *cap_notes),
+    )
+
+
+def _apply_inline(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    values: ValueIndex,
+    candidates: list[dict[str, str | None]],
+    inline: Sequence[_InlineFilter],
+    *,
+    contains: str | None,
+    kind_predicates: tuple[str, ...],
+) -> list[dict[str, str | None]]:
+    wanted: dict[str, set[str]] = {}
+    for item in inline:
+        if item.field.predicate is not None:
+            wanted.setdefault(item.field.binding, set()).add(item.field.predicate)
+    if contains is not None:
+        wanted.setdefault(ROOT, set()).update(kind_predicates)
+    for binding, predicates in wanted.items():
+        ensure_values(
+            values,
+            instance,
+            coordinate,
+            paths={row[binding] for row in candidates if row.get(binding) is not None},  # type: ignore[misc]
+            predicates=predicates,
+        )
+    labels: dict[str, str] = {}
+    if any(isinstance(item.field.info, str) for item in inline):
+        with instance.bind_accepted_projection(coordinate) as projection:
+            labels = subject_labels(
+                projection.typed.connection,
+                {path for row in candidates for path in row.values() if path is not None},
+            )
+    needle = None if contains is None else contains.casefold()
+    kept: list[dict[str, str | None]] = []
+    for row in candidates:
+        matched = True
+        for item in inline:
+            path = row.get(item.field.binding)
+            if isinstance(item.field.info, str):
+                label = None if path is None else labels.get(path)
+                cell: list[object] = [] if label is None else [label.split("/", 1)[1]]
+            else:
+                cell = (
+                    []
+                    if path is None
+                    else [value.value for value in values.slot(path, item.field.info.predicate)]
+                )
+            if not _inline_matches(item, cell):
+                matched = False
+                break
+        if matched and needle is not None:
+            root = row.get(ROOT)
+            matched = root is not None and any(
+                isinstance(value.value, str) and needle in value.value.casefold()
+                for value in values.subject(root)
+            )
+        if matched:
+            kept.append(row)
+    return kept
+
+
+# -- contains across every kind ------------------------------------------------
+
+
+def _contains_everywhere(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    vocabulary: QueryVocabulary,
+    request: PlaybillQueryRequestV1,
+    evaluation_time: datetime,
+) -> _Answer:
+    assert request.contains is not None
+    needle = request.contains.casefold()
+    matches = [
+        item
+        for item in read_live_values(instance, coordinate, subject_paths=None, predicates=None)
+        if isinstance(item.value, str) and needle in item.value.casefold()
+    ]
+    matches.sort(key=lambda item: (item.subject_path, item.predicate, item.identity))
+    spec_digest = typed_digest(
+        Sha256Value, _CONTAINS_DIGEST_DOMAIN, {"contains": request.contains}
+    ).tagged
+
+    def render(page: Sequence[Any]) -> list[dict[str, Any]]:
+        items = cast(Sequence[LiveValue], page)
+        slots = sorted({(item.subject_path, item.predicate) for item in items})
+        slot_values = ValueIndex()
+        for path, predicate in slots:
+            ensure_values(slot_values, instance, coordinate, paths=(path,), predicates=(predicate,))
+        mates = [value for path, predicate in slots for value in slot_values.slot(path, predicate)]
+        flags = claim_flags(
+            instance,
+            coordinate,
+            claims=mates,
+            evaluation_time=evaluation_time,
+            hold_for=_hold_for(vocabulary),
+            default_hold=_default_hold(),
+        )
+        with instance.bind_accepted_projection(coordinate) as projection:
+            labels = subject_labels(
+                projection.typed.connection, {item.subject_path for item in items}
+            )
+        rows: list[dict[str, Any]] = []
+        for item in items:
+            label = labels.get(item.subject_path, item.subject_path)
+            marks = set(flags.get(item.identity, set()))
+            info = vocabulary.predicates.get(item.predicate)
+            slot = slot_values.slot(item.subject_path, item.predicate)
+            if (
+                info is not None
+                and info.cardinality == "one"
+                and len(distinct(value.value for value in slot)) > 1
+            ):
+                marks.add("contested")
+            rows.append(
+                {
+                    "subject": label,
+                    "subject_id": label.split("/", 1)[-1],
+                    "kind": label.split("/", 1)[0],
+                    "predicate": item.predicate,
+                    "value": item.value,
+                    "claim": item.identity.removeprefix("Claim:"),
+                    "flags": ordered_flags(marks),
+                }
+            )
+        return rows
+
+    return _Answer(
+        mode="inline",
+        kind=None,
+        spec_digest=spec_digest,
+        columns=(
+            PlaybillQueryColumnV1(name="kind", type="string"),
+            PlaybillQueryColumnV1(name="predicate", type="string"),
+            PlaybillQueryColumnV1(name="value", type="string"),
+            PlaybillQueryColumnV1(name="claim", type="string"),
+        ),
+        candidates=matches,
+        keys=[(item.identity,) for item in matches],
+        render=render,
+    )
+
+
+# -- ClaimType and Procedure definitions ---------------------------------------
+
+_ARTIFACT_FIELDS: dict[str, tuple[str, ...]] = {
+    "ClaimType": ("namespace", "name", "subject_kind"),
+    "Procedure": ("namespace", "name"),
+}
+_ARTIFACT_COLUMNS: dict[str, tuple[PlaybillQueryColumnV1, ...]] = {
+    "ClaimType": (
+        PlaybillQueryColumnV1(name="predicate", type="string"),
+        PlaybillQueryColumnV1(name="subject_kinds", type="string", cardinality="many"),
+        PlaybillQueryColumnV1(name="object", type="string"),
+        PlaybillQueryColumnV1(
+            name="cardinality", type="enum", members=("many", "one"), cardinality="one"
+        ),
+        PlaybillQueryColumnV1(name="members", type="string", cardinality="many"),
+        PlaybillQueryColumnV1(name="description", type="string"),
+        PlaybillQueryColumnV1(name="evidence", type="string", cardinality="many"),
+    ),
+    "Procedure": (
+        PlaybillQueryColumnV1(name="name", type="string"),
+        PlaybillQueryColumnV1(
+            name="runnable",
+            type="enum",
+            members=("binding_required", "directly_runnable"),
+        ),
+    ),
+}
+
+
+def _namespace(name: str) -> str:
+    return name.rsplit(".", 1)[0] if "." in name else ""
+
+
+def _artifact_facets(kind: str, row: dict[str, Any]) -> dict[str, list[object]]:
+    name = str(row["predicate"] if kind == "ClaimType" else row["name"])
+    facets: dict[str, list[object]] = {"name": [name], "namespace": [_namespace(name)]}
+    if kind == "ClaimType":
+        facets["subject_kind"] = list(row.get("subject_kinds", ()))
+    return facets
+
+
+def _artifact_answer(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    vocabulary: QueryVocabulary,
+    *,
+    kind: str,
+    definition: AcceptedQueryDefinitionV1,
+    evaluation_time: datetime,
+    mode: QueryMode,
+    request: PlaybillQueryRequestV1 | None,
+) -> _Answer:
+    result = evaluate_accepted_query(
+        instance, definition, coordinate=coordinate, evaluation_time=evaluation_time
+    )
+    _refuse_engine(result)
+    capped, cap_notes = _capped(result)
+    contracts = CaptureContractNames(instance, coordinate)
+    runnable: dict[str, bool] = {}
+    if kind == "Procedure":
+        with instance.bind_accepted_projection(coordinate) as projection:
+            runnable = {
+                row.identity: row.directly_runnable
+                for row in projection.typed.procedure_inventory()
+            }
+    rows: list[dict[str, Any]] = []
+    identities: list[str] = []
+    for item in result.rows:
+        assert item.artifact is not None
+        source = item.artifact.definition
+        if isinstance(source, ClaimType):
+            info = vocabulary.predicates.get(source.predicate)
+            if info is None:
+                value_type, members = value_type_of(source)
+                info = PredicateInfo(
+                    predicate=source.predicate,
+                    claim_type=source,
+                    claim_type_digest=item.artifact.artifact_digest,
+                    value_type=value_type,
+                    members=members,
+                    cardinality=source.cardinality,
+                    subject_kinds=tuple(source.allowed_subject_kinds),
+                    object_kinds=tuple(source.allowed_object_subject_kinds),
+                )
+            rows.append(claim_type_row(info, contracts))
+        else:
+            assert isinstance(source, (ProcedureArtifactV1, ProcedureArtifactV2))
+            rows.append(
+                {
+                    "name": source.identity.name,
+                    "runnable": (
+                        "directly_runnable"
+                        if runnable.get(source.identity.qualified)
+                        else "binding_required"
+                    ),
+                }
+            )
+        identities.append(item.artifact.identity)
+    columns = _ARTIFACT_COLUMNS[kind]
+    if request is not None:
+        rows, identities, columns = _shape_artifact_rows(kind, rows, identities, request)
+    return _Answer(
+        mode=mode,
+        kind=kind,
+        spec_digest=definition.artifact_digest,
+        columns=columns,
+        candidates=rows,
+        keys=[(identity,) for identity in identities],
+        render=lambda page: [dict(row) for row in page],
+        capped=capped,
+        notes=cap_notes,
+    )
+
+
+def _shape_artifact_rows(
+    kind: str,
+    rows: list[dict[str, Any]],
+    identities: list[str],
+    request: PlaybillQueryRequestV1,
+) -> tuple[list[dict[str, Any]], list[str], tuple[PlaybillQueryColumnV1, ...]]:
+    fields = _ARTIFACT_FIELDS[kind]
+    checks: list[tuple[str, QueryFilterOperator, object]] = []
+    for index, item in enumerate(request.where):
+        path = f"where[{index}]"
+        if item.field not in fields:
+            raise PlaybillQueryRefused(
+                "playbill.query.unknown_field",
+                f"{kind} definitions have no field {item.field!r}",
+                nearest=nearest(item.field, fields) or fields,
+                repair=f"filter {kind} on {', '.join(fields)}",
+                field_path=f"{path}.field",
+            )
+        if item.operator not in {"eq", "ne", "in", "contains"}:
+            raise PlaybillQueryRefused(
+                "playbill.query.operator_not_applicable",
+                f"{item.operator!r} does not apply to {kind} {item.field}",
+                nearest=("contains", "eq", "in", "ne"),
+                repair="use eq, ne, in or contains",
+                field_path=path,
+            )
+        value = item.value
+        if item.operator == "in":
+            if not all(isinstance(entry, str) for entry in cast(tuple[object, ...], value)):
+                raise PlaybillQueryRefused(
+                    "playbill.query.value_type_mismatch",
+                    f"{kind} {item.field} values are strings",
+                    repair='pass strings, for example ["dev"]',
+                    field_path=f"{path}.in",
+                )
+        elif not isinstance(value, str):
+            raise PlaybillQueryRefused(
+                "playbill.query.value_type_mismatch",
+                f"{kind} {item.field} values are strings",
+                repair='pass a string, for example "dev"',
+                field_path=f"{path}.{item.operator}",
+            )
+        checks.append((item.field, item.operator, value))
+    needle = None if request.contains is None else request.contains.casefold()
+    kept_rows: list[dict[str, Any]] = []
+    kept_ids: list[str] = []
+    for row, identity in zip(rows, identities, strict=True):
+        facets = _artifact_facets(kind, row)
+        matched = True
+        for name, operator, value in checks:
+            cell = facets.get(name, [])
+            if operator == "eq":
+                matched = value in cell
+            elif operator == "ne":
+                matched = value not in cell
+            elif operator == "in":
+                matched = any(entry in cell for entry in cast(tuple[object, ...], value))
+            else:
+                matched = any(str(value).casefold() in str(entry).casefold() for entry in cell)
+            if not matched:
+                break
+        if matched and needle is not None:
+            texts: list[str] = []
+            for cell in row.values():
+                texts.extend(str(entry) for entry in (cell if isinstance(cell, list) else [cell]))
+            matched = any(needle in text.casefold() for text in texts)
+        if matched:
+            kept_rows.append(row)
+            kept_ids.append(identity)
+    columns = _ARTIFACT_COLUMNS[kind]
+    names = [column.name for column in columns]
+    for index, raw in enumerate(request.order_by):
+        name = raw.removeprefix("-").removeprefix("+")
+        if name not in names:
+            raise PlaybillQueryRefused(
+                "playbill.query.unknown_field",
+                f"{kind} rows have no column {name!r}",
+                nearest=nearest(name, names) or tuple(names),
+                repair=f"order by one of {', '.join(names)}",
+                field_path=f"order_by[{index}]",
+            )
+    for raw in reversed(request.order_by):
+        name = raw.removeprefix("-").removeprefix("+")
+        order = sorted(
+            range(len(kept_rows)),
+            key=lambda position: str(kept_rows[position].get(name, "")),
+            reverse=raw.startswith("-"),
+        )
+        kept_rows = [kept_rows[position] for position in order]
+        kept_ids = [kept_ids[position] for position in order]
+    if request.select:
+        chosen: list[PlaybillQueryColumnV1] = []
+        for index, name in enumerate(request.select):
+            match = next((column for column in columns if column.name == name), None)
+            if match is None:
+                raise PlaybillQueryRefused(
+                    "playbill.query.unknown_field",
+                    f"{kind} rows have no column {name!r}",
+                    nearest=nearest(name, names) or tuple(names),
+                    repair=f"select from {', '.join(names)}",
+                    field_path=f"select[{index}]",
+                )
+            chosen.append(match)
+        key = "predicate" if kind == "ClaimType" else "name"
+        selected = {column.name for column in chosen} | {key}
+        kept_rows = [
+            {name: value for name, value in row.items() if name in selected} for row in kept_rows
+        ]
+        columns = tuple(chosen)
+    return kept_rows, kept_ids, columns
+
+
+def _artifact_definition(
+    vocabulary: QueryVocabulary, request: PlaybillQueryRequestV1
+) -> AcceptedQueryDefinitionV1:
+    kind = cast(Literal["ClaimType", "Procedure"], request.kind)
+    selection: Literal["all", "namespaces", "name_prefixes"] = "all"
+    namespaces: tuple[str, ...] = ()
+    prefixes: tuple[str, ...] = ()
+    for item in request.where:
+        if item.field != "namespace" or item.operator not in {"eq", "in"}:
+            continue
+        raw = cast(tuple[object, ...], item.value) if item.operator == "in" else (item.value,)
+        names = tuple(sorted({str(entry) for entry in raw}, key=lambda value: value.encode()))
+        try:
+            if kind == "ClaimType":
+                QueryArtifactsEntryV2(artifact_kind=kind, selection="namespaces", namespaces=names)
+                selection, namespaces = "namespaces", names
+            else:
+                candidate = tuple(sorted(f"{name}." for name in names))
+                QueryArtifactsEntryV2(
+                    artifact_kind=kind, selection="name_prefixes", name_prefixes=candidate
+                )
+                selection, prefixes = "name_prefixes", candidate
+        except ValueError:
+            known = {_namespace(name) for name in vocabulary.predicates}
+            raise PlaybillQueryRefused(
+                "playbill.query.value_type_mismatch",
+                f"{names!r} is not a {kind} namespace",
+                nearest=nearest(names[0], known) if names else (),
+                repair="pass a dotted lower-case namespace such as dev.roadmap_item",
+                field_path="where",
+            ) from None
+        break
+    budgets = QueryBudgetsV1(max_results=ARTIFACT_QUERY_MAX_RESULTS, max_traversal_depth=0)
+    query = QueryDefinitionSpecV1(
+        artifact_format="playbill-query-definition-v2",
+        identity=ArtifactIdentity(kind="QueryDefinition", name=INLINE_DEFINITION_NAME),
+        entry=QueryArtifactsEntryV2(
+            artifact_kind=kind,
+            selection=selection,
+            namespaces=namespaces,
+            name_prefixes=prefixes,
+        ),
+        result_binding="definition",
+        result_shape="artifact_definition",
+        result_cardinality="many",
+        dedupe="artifact",
+        evaluation_policy=QueryEvaluationPolicyV1(
+            visible_verdicts=_ALL_VERDICTS,
+            visible_currency=_ALL_CURRENCY,
+            conflict_behavior="surface_conflicts",
+        ),
+        default_budgets=budgets,
+        maximum_budgets=budgets,
+    )
+    return _accepted(query)
+
+
+# -- spec and named queries -------------------------------------------------------
+
+
+def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpecV1) -> QueryDefinitionV1:
+    if isinstance(spec.entry, QueryEntryV1):
+        for index, kind in enumerate(spec.entry.subject_kinds):
+            vocabulary.require_kind(kind, field_path=f"spec.entry.subject_kinds[{index}]")
+    referenced = spec.referenced_predicates
+    for predicate in referenced:
+        if predicate not in vocabulary.predicates:
+            raise PlaybillQueryRefused(
+                "playbill.query.unknown_field",
+                f"the spec reads predicate {predicate!r}, which is not an accepted ClaimType",
+                nearest=nearest(predicate, vocabulary.predicates),
+                repair="use accepted predicates (query kind=ClaimType lists them)",
+                field_path="spec",
+            )
+    explicit = {pin.target.name: pin for pin in spec.pins if pin.role == CLAIM_TYPE_PIN_ROLE}
+    for predicate, pin in explicit.items():
+        if pin.artifact_digest != vocabulary.predicates[predicate].claim_type_digest:
+            raise PlaybillQueryRefused(
+                "playbill.query.pin_stale",
+                f"the spec pins ClaimType {predicate} at a version that is not accepted here",
+                repair="omit ClaimType pins to resolve them at this coordinate",
+                field_path="spec.pins",
+            )
+    others = tuple(pin for pin in spec.pins if pin.role != CLAIM_TYPE_PIN_ROLE)
+    pins = tuple(
+        sorted(
+            (*others, *_pins(vocabulary, referenced)),
+            key=lambda pin: (
+                pin.role.encode("utf-8"),
+                pin.target.qualified.encode("utf-8"),
+                pin.artifact_digest.encode("ascii"),
+            ),
+        )
+    )
+    budget = spec.default_budgets
+    capped = budget.model_copy(
+        update={"max_results": min(budget.max_results, COMPACT_QUERY_MAX_RESULTS)}
+    )
+    try:
+        return QueryDefinitionV1.model_validate(
+            {
+                **spec.model_dump(mode="json"),
+                "pins": [pin.model_dump(mode="json") for pin in pins],
+                "default_budgets": capped.model_dump(mode="json"),
+            }
+        )
+    except ValueError as exc:
+        raise PlaybillQueryRefused(
+            "playbill.query.spec_invalid",
+            f"the spec does not validate once pinned: {str(exc).splitlines()[0]}",
+            repair="check the spec against QueryDefinitionSpecV1",
+            field_path="spec",
+        ) from exc
+
+
+def _field_column(
+    vocabulary: QueryVocabulary, name: str, ref: QueryValueRefV1
+) -> PlaybillQueryColumnV1:
+    if isinstance(ref, QueryClaimValueRefV1):
+        info = vocabulary.predicates.get(ref.predicate)
+        if info is not None:
+            return PlaybillQueryColumnV1(
+                name=name,
+                predicate=info.predicate,
+                type=object_label(info),
+                members=info.members or None,
+                cardinality=info.cardinality,
+            )
+        return PlaybillQueryColumnV1(name=name, predicate=ref.predicate, type="json")
+    if isinstance(ref, QuerySubjectFieldRefV1):
+        return PlaybillQueryColumnV1(name=name, type="string")
+    if isinstance(ref, QueryEvaluationTimeRefV1):
+        return PlaybillQueryColumnV1(name=name, type="timestamp")
+    return PlaybillQueryColumnV1(name=name, type="json")
+
+
+def _engine_answer(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    vocabulary: QueryVocabulary,
+    *,
+    definition: AcceptedQueryDefinitionV1,
+    result: ClaimQueryResultV1,
+    evaluation_time: datetime,
+    mode: QueryMode,
+) -> _Answer:
+    """Shape a governed evaluation's rows as values and flags."""
+
+    query = definition.query
+    capped, cap_notes = _capped(result)
+    projection = query.projection
+    notes: tuple[str, ...] = ()
+    renderer_columns: list[_Column] = []
+    output: list[PlaybillQueryColumnV1] = []
+    if projection is not None:
+        output = [_field_column(vocabulary, item.name, item.value) for item in projection.fields]
+    elif (
+        isinstance(query.entry, QueryEntryV1)
+        and len(query.entry.subject_kinds) == 1
+        and (query.result_binding == query.entry.binding)
+    ):
+        kind = query.entry.subject_kinds[0]
+        shown, notes = _default_columns(vocabulary, kind)
+        kind_predicates = vocabulary.predicates_of(kind)
+        for info in shown:
+            name = _column_name(info, kind_predicates)
+            resolved = _Field(name=name, binding=ROOT, info=info, label=info.predicate)
+            renderer_columns.append(_Column(name=name, binding=ROOT, field=resolved))
+            output.append(_column(resolved, name=name))
+    renderer = _RowRenderer(
+        instance=instance,
+        coordinate=coordinate,
+        vocabulary=vocabulary,
+        evaluation_time=evaluation_time,
+        columns=renderer_columns,
+    )
+    candidates = list(result.rows)
+    keys = [
+        (
+            *(binding.subject_path or "" for binding in row.bindings),
+            *(item.claim_path for item in row.path),
+        )
+        for row in candidates
+    ]
+
+    def render(page: Sequence[Any]) -> list[dict[str, Any]]:
+        rows = page
+        bound = [{ROOT: _subject_path_of(row, query.result_binding)} for row in rows]
+        extra: list[set[QueryFlag]] = []
+        read_identities: set[str] = set()
+        for row in rows:
+            marks: set[QueryFlag] = set()
+            for visibility in row.read_claims:
+                if visibility.verdict == "stale" or visibility.currency == "stale":
+                    marks.add("stale")
+                if visibility.verdict == "contradicted":
+                    marks.add("contradicted")
+                if visibility.verdict == "unresolved":
+                    marks.add("contested")
+                read_identities.add(visibility.claim_path)
+            if row.conflicts:
+                marks.add("contested")
+            extra.append(marks)
+        holds = _holds_for_paths(instance, coordinate, vocabulary, read_identities, evaluation_time)
+        for row, marks in zip(rows, extra, strict=True):
+            if any(item.claim_path in holds for item in row.read_claims):
+                marks.add("unsure_hold")
+        for row, marks in zip(rows, extra, strict=True):
+            if any(projected.state == "conflict" for projected in row.fields):
+                marks.add("contested")
+        rendered = renderer.render(bound, extra_flags=extra)
+        for out, row in zip(rendered, rows, strict=True):
+            flags = out.pop("flags")
+            for projected in row.fields:
+                value = projected.value if projected.state == "present" else None
+                if isinstance(value, str) and value.startswith("Subject:"):
+                    value = value.removeprefix("Subject:")
+                out[projected.name] = value
+            out["flags"] = flags
+        return rendered
+
+    return _Answer(
+        mode=mode,
+        kind=(
+            query.entry.subject_kinds[0]
+            if isinstance(query.entry, QueryEntryV1) and len(query.entry.subject_kinds) == 1
+            else None
+        ),
+        spec_digest=definition.artifact_digest,
+        columns=tuple(output),
+        candidates=candidates,
+        keys=keys,
+        render=render,
+        capped=capped,
+        notes=(*notes, *cap_notes),
+    )
+
+
+def _subject_path_of(row: Any, binding: str) -> str | None:
+    for item in row.bindings:
+        if item.binding == binding:
+            return cast(str | None, item.subject_path)
+    return None
+
+
+def _holds_for_paths(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    vocabulary: QueryVocabulary,
+    claim_paths: set[str],
+    evaluation_time: datetime,
+) -> set[str]:
+    if not claim_paths:
+        return set()
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        ordered = sorted(claim_paths)
+        found: list[LiveValue] = []
+        path_of: dict[str, str] = {}
+        for start in range(0, len(ordered), 400):
+            chunk = ordered[start : start + 400]
+            marks = ",".join("?" for _ in chunk)
+            for identity, path, subject_path, predicate, digest in connection.execute(
+                "SELECT identity, path, subject_path, predicate, artifact_digest FROM claims "
+                f"WHERE path IN ({marks})",
+                tuple(chunk),
+            ):
+                path_of[str(identity)] = str(path)
+                found.append(
+                    LiveValue(
+                        identity=str(identity),
+                        subject_path=str(subject_path),
+                        predicate=str(predicate),
+                        value=None,
+                        artifact_digest=str(digest),
+                    )
+                )
+    held = unsure_holds(
+        instance,
+        coordinate,
+        claims=found,
+        evaluation_time=evaluation_time,
+        hold_for=_hold_for(vocabulary),
+        default_hold=_default_hold(),
+    )
+    return {path_of[identity] for identity in held if identity in path_of}
+
+
+def _named_answer(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    vocabulary: QueryVocabulary,
+    request: PlaybillQueryRequestV1,
+    evaluation_time: datetime,
+) -> _Answer:
+    from cruxible_core.service.discovery.query import service_run_playbill_query
+
+    assert request.name is not None
+    with instance.bind_accepted_projection(coordinate) as projection:
+        names = tuple(
+            row.identity.removeprefix("QueryDefinition:")
+            for row in projection.typed.envelopes(kind="query-definition")
+        )
+    if request.name not in names:
+        raise PlaybillQueryNotFound(request.name, nearest=nearest(request.name, names))
+    run = service_run_playbill_query(
+        instance,
+        name=request.name,
+        evaluation_time=evaluation_time,
+        parameters=dict(request.params or {}),
+        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+    )
+    from cruxible_core.service.discovery.query_definitions import accepted_query_definition
+
+    definition = accepted_query_definition(instance, name=request.name, coordinate=coordinate)
+    _refuse_engine(run.result, declared=tuple(item.name for item in definition.query.parameters))
+    if isinstance(definition.query.entry, QueryArtifactsEntryV2):
+        return _artifact_answer(
+            instance,
+            coordinate,
+            vocabulary,
+            kind=definition.query.entry.artifact_kind,
+            definition=definition,
+            evaluation_time=evaluation_time,
+            mode="named",
+            request=None,
+        )
+    return _engine_answer(
+        instance,
+        coordinate,
+        vocabulary,
+        definition=definition,
+        result=run.result,
+        evaluation_time=evaluation_time,
+        mode="named",
+    )
+
+
+def _spec_answer(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    vocabulary: QueryVocabulary,
+    request: PlaybillQueryRequestV1,
+    evaluation_time: datetime,
+) -> _Answer:
+    assert request.spec is not None
+    definition = _accepted(_pinned_spec(vocabulary, request.spec))
+    if isinstance(definition.query.entry, QueryArtifactsEntryV2):
+        return _artifact_answer(
+            instance,
+            coordinate,
+            vocabulary,
+            kind=definition.query.entry.artifact_kind,
+            definition=definition,
+            evaluation_time=evaluation_time,
+            mode="spec",
+            request=None,
+        )
+    result = evaluate_accepted_query(
+        instance, definition, coordinate=coordinate, evaluation_time=evaluation_time
+    )
+    _refuse_engine(result, declared=tuple(item.name for item in definition.query.parameters))
+    return _engine_answer(
+        instance,
+        coordinate,
+        vocabulary,
+        definition=definition,
+        result=result,
+        evaluation_time=evaluation_time,
+        mode="spec",
+    )
+
+
+# -- the verb ---------------------------------------------------------------------
+
+
+def _selection(request: PlaybillQueryRequestV1, mode: QueryMode) -> dict[str, Any]:
+    body = request.model_dump(
+        mode="json", exclude={"cursor", "limit", "at", "evaluation_time"}, by_alias=True
+    )
+    body["mode"] = mode
+    return body
+
+
+def service_playbill_query(
+    instance: PlaybillInstance,
+    *,
+    request: PlaybillQueryRequestV1,
+) -> PlaybillQueryResult:
+    """Answer one ``query`` call: one page of values, flags and paging."""
+
+    mode = _mode(request)
+    selection = _selection(request, mode)
+    continuation = (
+        None
+        if request.cursor is None
+        else decode_list_cursor(request.cursor, list_name=LIST_NAME, selection=selection)
+    )
+    evaluation_time = request.evaluation_time
+    at: AcceptedCoordinate | str | None = request.at
+    if continuation is not None:
+        pinned = AcceptedCoordinate.model_validate(continuation.coordinate["at"])
+        if at is not None:
+            requested = AcceptedCoordinate.from_internal(_resolve_coordinate(instance, at))
+            if requested != pinned:
+                raise PlaybillListCursorMismatch(
+                    f"{PlaybillListCursorMismatch.error_code}: the cursor continues a different "
+                    "coordinate; query again without a cursor"
+                )
+        at = pinned
+        if evaluation_time is None:
+            evaluation_time = datetime.fromisoformat(
+                str(continuation.coordinate["evaluation_time"])
+            )
+    if evaluation_time is None:
+        evaluation_time = utc_now()
+    if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
+        raise PlaybillQueryRefused(
+            "playbill.query.evaluation_time_invalid",
+            "evaluation_time must carry a timezone",
+            repair="pass an ISO-8601 instant such as 2026-09-28T12:00:00Z",
+            field_path="evaluation_time",
+        )
+    coordinate = _resolve_coordinate(instance, at)
+    vocabulary = load_query_vocabulary(instance, coordinate)
+    if mode == "named":
+        answer = _named_answer(instance, coordinate, vocabulary, request, evaluation_time)
+    elif mode == "spec":
+        answer = _spec_answer(instance, coordinate, vocabulary, request, evaluation_time)
+    elif request.kind in ARTIFACT_KINDS:
+        if request.follow:
+            raise PlaybillQueryRefused(
+                "playbill.query.follow_not_relation",
+                f"{request.kind} definitions have no relations to follow",
+                repair="drop follow",
+                field_path="follow",
+            )
+        answer = _artifact_answer(
+            instance,
+            coordinate,
+            vocabulary,
+            kind=request.kind,
+            definition=_artifact_definition(vocabulary, request),
+            evaluation_time=evaluation_time,
+            mode="inline",
+            request=request,
+        )
+    elif request.kind is None:
+        if request.where or request.select or request.follow or request.order_by:
+            raise PlaybillQueryRefused(
+                "playbill.query.mode_invalid",
+                "where, select, follow and order_by need a kind",
+                repair="pass kind, or search values with contains alone",
+            )
+        answer = _contains_everywhere(instance, coordinate, vocabulary, request, evaluation_time)
+    else:
+        answer = _compact_subject_query(instance, coordinate, vocabulary, request, evaluation_time)
+
+    served = AcceptedCoordinate.from_internal(coordinate)
+    snapshot = list_snapshot([list(key) for key in answer.keys])
+    page, truncated = page_after_boundary(
+        answer.candidates,
+        keys=answer.keys,
+        snapshot=snapshot,
+        continuation=continuation,
+        limit=request.limit,
+        list_name=LIST_NAME,
+    )
+    start = 0 if continuation is None else list(answer.keys).index(continuation.last_key) + 1
+    last_key = answer.keys[start + len(page) - 1] if page else None
+    rows = answer.render(page)
+    next_cursor = None
+    if truncated and last_key is not None:
+        next_cursor = encode_list_cursor(
+            list_name=LIST_NAME,
+            coordinate={
+                "at": served.model_dump(mode="json"),
+                "evaluation_time": evaluation_time.isoformat(),
+            },
+            selection=selection,
+            snapshot=snapshot,
+            last_key=last_key,
+        )
+    return PlaybillQueryResult(
+        kind=answer.kind,
+        columns=answer.columns,
+        rows=tuple(rows),
+        truncated=truncated or bool(answer.capped),
+        next_cursor=next_cursor,
+        capped=answer.capped,
+        notes=answer.notes,
+        receipt=PlaybillQueryReceiptV1(
+            mode=answer.mode,
+            spec_digest=answer.spec_digest,
+            coordinate=served,
+            evaluation_time=evaluation_time,
+        ),
+    )
+
+
+__all__ = [
+    "COMPACT_QUERY_MAX_RESULTS",
+    "DEFAULT_COLUMN_CAP",
+    "PlaybillQueryNotFound",
+    "PlaybillQueryRefused",
+    "service_playbill_query",
+]
