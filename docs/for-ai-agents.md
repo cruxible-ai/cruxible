@@ -91,7 +91,9 @@ detail=...)`, `cruxible playbill get REF`, or `cruxible_playbill_get`. It takes
 any reference form you have seen (a Claim id or prefix, `kind/id`, a predicate,
 `Document:<name>`, a proposal id, ...), answers values first with verdict flags,
 and refuses a wrong name with the nearest names. `detail` goes deeper:
-`evidence`, `why`, `history`, `proof`, or a Document `body` by byte range.
+`evidence`, `why`, `history` (newest first, paged), `proof`, or a Document
+`body` by byte range. A summary cuts a long string value to 500 characters and
+marks it `truncated`; `evidence` and `proof` read it whole.
 Use `pb.run_query(name_or_ref, parameters=...)` for named joins and filtered
 populations, checking truncation before assuming completeness.
 To ask any question over accepted state in one call, use `query`: MCP

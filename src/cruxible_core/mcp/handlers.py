@@ -1566,6 +1566,8 @@ def handle_playbill_get(
     range: PlaybillByteRangeV1 | None = None,
     at: contracts.PlaybillAcceptedCoordinate | str | None = None,
     evaluation_time: str | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
 ) -> PlaybillGetResultV1:
     try:
         request = PlaybillGetRequestV1.model_validate(
@@ -1576,6 +1578,8 @@ def handle_playbill_get(
                 "at": at,
                 "evaluation_time": evaluation_time,
                 "surface": "mcp",
+                "limit": limit,
+                "cursor": cursor,
             }
         )
     except ValidationError as exc:

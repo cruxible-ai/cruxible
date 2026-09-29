@@ -1675,7 +1675,8 @@ scope, and operational input head remain unchanged.
 
 ~~~text
 cruxible playbill get REF [--detail summary|evidence|why|history|proof|body]
-  [--range START:END] [--at GIT_OID] [--evaluation-time TS] [--json]
+  [--range START:END] [--limit N] [--cursor C] [--at GIT_OID]
+  [--evaluation-time TS] [--json]
 ~~~
 
 Reads one thing by any reference form you have seen: `CLM-...` (or a unique
@@ -1688,9 +1689,15 @@ aligned table, a Claim's value, verdict and flags (`stale`, `contested`,
 `contradicted`, `unsure_hold`) -- `evidence` lists a Claim's captures by
 CaptureContract name and version, its attestations and rationale, `why` and
 `proof` print today's explanation and full envelope, `history` lists revisions
-oldest first with values and who changed them, and `body` prints a Document's
-bytes. A body over 64 KiB needs `--range`. A wrong or ambiguous REF refuses with
-a code and the nearest names. `--json` prints the whole structured result.
+newest first with values and who changed them (`--limit`, default 20, per page;
+a cut page prints the `--cursor` command that continues it), and `body` prints
+a Document's bytes. A body over 64 KiB needs `--range`. A summary cuts a string
+value over 500 characters and says how long it is; `--detail evidence` or
+`proof` shows it whole. Subject rows carry the Claim id behind each value. A
+summary's coordinate is the git oid's 12-hex prefix and the generation; the
+full accepted coordinate is under `--detail proof`. A wrong or ambiguous REF
+refuses with a code and the nearest names. `--json` prints the whole structured
+result.
 
 ## playbill discover
 

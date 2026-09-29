@@ -251,6 +251,14 @@ def _coordinate(value: api.PlaybillAcceptedCoordinate | Mapping[str, object]) ->
     return AcceptedCoordinate.model_validate(payload)
 
 
+def _get_coordinate(result: PlaybillGetResultV1) -> AcceptedCoordinate:
+    """The full accepted coordinate a ``get`` answered at (requested by the SDK)."""
+
+    if result.accepted_coordinate is None:  # pragma: no cover - the SDK always asks for it
+        raise ValueError("get answered without the full accepted coordinate the SDK requested")
+    return _coordinate(result.accepted_coordinate)
+
+
 def _api_coordinate(value: AcceptedCoordinate) -> api.PlaybillAcceptedCoordinate:
     return api.PlaybillAcceptedCoordinate.model_validate(value.model_dump(mode="json"))
 
@@ -3239,7 +3247,7 @@ class Playbill:
         if detail == "summary" and result.kind == "claim" and not claim_summary:
             # The reference resolved to a Claim only on the daemon; read its
             # envelope at the same coordinate for the typed view.
-            result = self._get(result.ref, "proof", None, _coordinate(result.coordinate))
+            result = self._get(result.ref, "proof", None, _get_coordinate(result))
         kind = _GET_REF_KINDS[result.kind]
         identity = (
             result.ref
@@ -3260,7 +3268,7 @@ class Playbill:
                 for item in (result.evidence, result.history, result.body, result.why, result.proof)
                 if item is not None
             )
-        return KnowledgeCard(kind, identity, _coordinate(result.coordinate), value)
+        return KnowledgeCard(kind, identity, _get_coordinate(result), value)
 
     def _get(
         self,
@@ -3270,18 +3278,39 @@ class Playbill:
         coordinate: AcceptedCoordinate | None,
     ) -> PlaybillGetResultV1:
         requested = self._read_at(coordinate)
-        result = self._client.playbill_get(
-            self._instance_id,
-            request=PlaybillGetRequestV1(
-                ref=ref,
-                detail=detail,
-                range=window,
-                at=requested,
-                evaluation_time=datetime.fromisoformat(self._evaluation_time()),
-                surface="sdk",
-            ),
+        request = PlaybillGetRequestV1(
+            ref=ref,
+            detail=detail,
+            range=window,
+            at=requested,
+            evaluation_time=datetime.fromisoformat(self._evaluation_time()),
+            surface="sdk",
+            # The SDK pins every read, so it asks for the full coordinate
+            # that summary answers otherwise leave out.
+            full_coordinate=True,
         )
-        self._observe_read(_coordinate(result.coordinate), expected=requested)
+        result = self._client.playbill_get(self._instance_id, request=request)
+        self._observe_read(_get_coordinate(result), expected=requested)
+        if result.history is not None:
+            # History pages newest first; the SDK reads every page, pinned to
+            # the first page's coordinate by the cursor, so it never answers
+            # a silently cut history.
+            revisions = list(result.history.revisions)
+            page = result
+            while page.truncated and page.next_cursor is not None:
+                page = self._client.playbill_get(
+                    self._instance_id,
+                    request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
+                )
+                assert page.history is not None
+                revisions.extend(page.history.revisions)
+            result = result.model_copy(
+                update={
+                    "history": result.history.model_copy(update={"revisions": tuple(revisions)}),
+                    "truncated": False,
+                    "next_cursor": None,
+                }
+            )
         return result
 
     def _source_card(self, ref: SourceRef) -> KnowledgeCard:

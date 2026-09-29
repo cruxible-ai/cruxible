@@ -2605,11 +2605,17 @@ def playbill_get(instance_id: str, *, request: PlaybillGetRequestV1) -> Playbill
     from cruxible_core.service.discovery.get import service_playbill_get
 
     check_permission("cruxible_playbill_get", instance_id=instance_id)
+    # Consumption is recorded at the full coordinate, which a summary answer
+    # leaves out unless the caller asked for it.
     result = service_playbill_get(
         get_playbill_manager().get(instance_id),
-        request=request,
+        request=request.model_copy(update={"full_coordinate": True}),
         access=_access(instance_id, include_body=request.detail == "body"),
     )
+    read_at = result.accepted_coordinate
+    assert read_at is not None
+    if not request.full_coordinate and request.detail != "proof":
+        result = result.model_copy(update={"accepted_coordinate": None})
     consumed: dict[str, tuple[ConsumptionOperation, str]] = {
         "claim": ("playbill.claim.get", claim_path(result.ref) if result.kind == "claim" else ""),
         "subject": ("playbill.subject.get", f"subjects/{result.ref}.json"),
@@ -2631,7 +2637,7 @@ def playbill_get(instance_id: str, *, request: PlaybillGetRequestV1) -> Playbill
         _record_consumed_paths(
             instance_id,
             operation=operation,
-            coordinate=AcceptedCoordinate.model_validate(result.coordinate.model_dump()),
+            coordinate=AcceptedCoordinate.model_validate(read_at.model_dump()),
             paths=(path,),
         )
     return result

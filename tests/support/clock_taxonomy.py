@@ -300,6 +300,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillGetCaptureEvidenceV1", "observed_at"): "ASSERTION TIME",
     ("PlaybillGetAttestationEvidenceV1", "at"): "ASSERTION TIME",
     ("PlaybillGetRevisionV1", "sequence"): "SETTLEMENT ORDER",
+    ("PlaybillGetCoordinateV1", "generation"): "SETTLEMENT ORDER",
+    ("_RevisionEntry", "sequence"): "SETTLEMENT ORDER",
     ("PlaybillSearchRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillSearchResult", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillSearchResultV1", "evaluation_time"): "EVALUATION INSTANT",

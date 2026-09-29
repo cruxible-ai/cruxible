@@ -3528,6 +3528,13 @@ def _emit_retirement_context(context: Mapping[str, Any]) -> None:
 )
 @click.option("--at", "at_oid", default=None, help="Accepted git oid to read at; default head.")
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Revisions per --detail history page, newest first (default 20).",
+)
+@click.option("--cursor", default=None, help="Continue --detail history from its next_cursor.")
 @json_option
 @handle_errors
 def get_by_ref(
@@ -3536,6 +3543,8 @@ def get_by_ref(
     byte_range: str | None,
     at_oid: str | None,
     evaluation_time: str | None,
+    limit: int | None,
+    cursor: str | None,
     output_json: bool,
 ) -> None:
     """Read one governed thing by reference, values first.
@@ -3556,6 +3565,8 @@ def get_by_ref(
                 "at": at_oid,
                 "evaluation_time": evaluation_time,
                 "surface": "cli",
+                "limit": limit,
+                "cursor": cursor,
             }
         )
     except (ValidationError, ValueError) as exc:
@@ -3572,9 +3583,22 @@ def get_by_ref(
         _emit_json(result.model_dump(mode="json"))
         return
     _emit_get_text(result)
+    if result.next_cursor is not None:
+        click.echo(
+            f"next: cruxible playbill get {shlex.quote(ref)} --detail history "
+            f"--cursor {result.next_cursor}"
+        )
 
 
 def _get_value_text(value: object, *, width: int = 120) -> str:
+    if isinstance(value, dict) and value.get("truncated") is True and "length" in value:
+        # A summary card cut this string; --detail evidence reads it whole.
+        shown = _get_value_text(value.get("value", ""), width=width - 24)
+        return f"{shown.removesuffix('…')}… ({value['length']} chars)"
+    if isinstance(value, list) and any(
+        isinstance(item, dict) and item.get("truncated") is True for item in value
+    ):
+        return "[" + ", ".join(_get_value_text(item, width=width) for item in value) + "]"
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     text = printable(text)
     return text if len(text) <= width else text[: width - 1] + "…"

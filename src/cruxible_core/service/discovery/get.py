@@ -14,11 +14,12 @@ and names things by identity.
 from __future__ import annotations
 
 import base64
+import functools
 import json
 import re
 import shlex
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
@@ -41,6 +42,7 @@ from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.get_reads import (
     GET_BODY_DEFAULT_MAX_BYTES,
     GET_DETAILS_BY_KIND,
+    GET_HISTORY_DEFAULT_LIMIT,
     PlaybillByteRangeV1,
     PlaybillGetAttestationEvidenceV1,
     PlaybillGetBodyV1,
@@ -50,6 +52,7 @@ from cruxible_client.contracts.get_reads import (
     PlaybillGetClaimCardV1,
     PlaybillGetClaimTypeCardV1,
     PlaybillGetContenderV1,
+    PlaybillGetCoordinateV1,
     PlaybillGetDocumentCardV1,
     PlaybillGetEvidenceV1,
     PlaybillGetHistoryV1,
@@ -66,6 +69,7 @@ from cruxible_client.contracts.get_reads import (
     PlaybillGetSubjectClaimV1,
     PlaybillReadFlag,
     PlaybillReadSurface,
+    summary_value,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
@@ -80,6 +84,14 @@ from cruxible_core.service.discovery.read_flags import (
     ordered_flags,
     unsure_holds,
     verdict_flags,
+)
+from cruxible_core.service.list_pages import (
+    ListContinuation,
+    PlaybillListCursorMismatch,
+    decode_list_cursor,
+    encode_list_cursor,
+    list_snapshot,
+    page_after_boundary,
 )
 from cruxible_core.service.read_refusals import (
     ReadRefusalError,
@@ -591,14 +603,16 @@ def _claim_card(
         predicate=_short_predicate(statement.predicate, subject_kind),
         predicate_full=statement.predicate,
         qualifier=statement.qualifier,
-        value=_artifact_value(claim),
+        value=summary_value(_artifact_value(claim)),
         verdict=verdict,
         status=status,
         revision=int(row.revision) if row is not None else 1,
         accepted=accepted,
         contenders=tuple(
             PlaybillGetContenderV1(
-                claim=item.claim_id, value=_claim_value(item), verdict=item.verdict
+                claim=item.claim_id,
+                value=summary_value(_claim_value(item)),
+                verdict=item.verdict,
             )
             for item in slot
             if item.claim_id != name
@@ -668,11 +682,14 @@ def _subject_card(
             marks.update(
                 verdict_flags(item.verdict, item.status, held=f"Claim:{item.claim_id}" in held)
             )
+        listed = many or len(values) > 1
+        claims_shown = tuple(item.claim_id for item in shown)
         entries.append(
             PlaybillGetSubjectClaimV1(
                 predicate=_short_predicate(predicate, kind),
                 qualifier=qualifier,
-                value=values if many or len(values) > 1 else values[0],
+                claim=claims_shown if listed else claims_shown[0],
+                value=summary_value(values if listed else values[0]),
                 flags=tuple(ordered_flags(marks)),
             )
         )
@@ -1013,7 +1030,10 @@ def _claim_evidence(
         )
         for item in explanation.exact_attestations
     )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        claim = cast(ClaimArtifactAny, projection.typed.source(resolved.identity))
     return PlaybillGetEvidenceV1(
+        value=_artifact_value(claim),
         captures=tuple(captures),
         attestations=attestations,
         rationale=_claim_rationale(instance, coordinate, _name(resolved.identity)),
@@ -1022,114 +1042,182 @@ def _claim_evidence(
 
 # -- history -------------------------------------------------------------------------
 
+_HISTORY_LIST = "get history"
+
+
+@dataclass(frozen=True)
+class _RevisionEntry:
+    """One accepted revision, located but not yet read."""
+
+    revision: int
+    sequence: int
+    digest: str
+    lifecycle: str | None
+    value: Callable[[], object] | None = None
+
 
 def _revision(
     instance: PlaybillInstance,
     history: Any,
-    *,
-    index: int,
-    sequence: int,
-    digest: str,
-    lifecycle: str | None,
-    value: object = None,
+    entry: _RevisionEntry,
 ) -> PlaybillGetRevisionV1:
-    generation = history.generation(sequence)
-    record = history.read_generation_record(sequence, instance.blob_at)
+    generation = history.generation(entry.sequence)
+    record = history.read_generation_record(entry.sequence, instance.blob_at)
     return PlaybillGetRevisionV1(
-        revision=index,
-        sequence=sequence,
+        revision=entry.revision,
+        sequence=entry.sequence,
         accepted=str(record.candidate.timestamp),
         actor=generation.actor_id or record.actor_binding.actor_id,
         approved_by=tuple(dict.fromkeys(item.attestation.signer_id for item in record.approvals)),
-        lifecycle=lifecycle,
-        value=value,
-        digest=_short_digest(digest),
+        lifecycle=entry.lifecycle,
+        value=None if entry.value is None else entry.value(),
+        digest=_short_digest(entry.digest),
     )
+
+
+def _history_entries(
+    instance: PlaybillInstance,
+    resolved: ResolvedRef,
+    history: Any,
+) -> list[_RevisionEntry]:
+    """Every accepted revision up to the read coordinate, oldest first."""
+
+    from cruxible_core.service.authoring.documents import service_playbill_document_history
+    from cruxible_core.service.claims.claims import service_playbill_claim_history
+    from cruxible_core.service.claims.subjects import service_playbill_subject_history
+
+    cutoff = history.sequence
+    entries: list[_RevisionEntry] = []
+    if resolved.kind == "claim":
+        path = claim_path(_name(resolved.identity))
+
+        def claim_value(git_oid: str) -> Callable[[], object]:
+            def read() -> object:
+                content = instance.blob_at(git_oid, path)
+                return None if content is None else _artifact_value(parse_claim(content, path=path))
+
+            return read
+
+        for claim_entry in service_playbill_claim_history(
+            instance, identity=resolved.identity
+        ).entries:
+            if claim_entry.sequence <= cutoff:
+                entries.append(
+                    _RevisionEntry(
+                        revision=len(entries) + 1,
+                        sequence=claim_entry.sequence,
+                        digest=claim_entry.artifact_digest,
+                        lifecycle=claim_entry.lifecycle_state,
+                        value=claim_value(claim_entry.coordinate.git_oid),
+                    )
+                )
+    elif resolved.kind == "subject":
+        for subject_entry in service_playbill_subject_history(
+            instance, identity=resolved.identity
+        ).entries:
+            if subject_entry.sequence <= cutoff:
+                entries.append(
+                    _RevisionEntry(
+                        revision=len(entries) + 1,
+                        sequence=subject_entry.sequence,
+                        digest=subject_entry.artifact_digest,
+                        lifecycle=subject_entry.lifecycle_state,
+                    )
+                )
+    elif resolved.kind == "document":
+        for document_entry in service_playbill_document_history(
+            instance, identity=resolved.identity
+        ).entries:
+            if document_entry.sequence <= cutoff:
+                body: object = {"body": _short_digest(document_entry.body_digest)}
+                entries.append(
+                    _RevisionEntry(
+                        revision=len(entries) + 1,
+                        sequence=document_entry.sequence,
+                        digest=document_entry.envelope_digest,
+                        lifecycle=None,
+                        value=functools.partial(lambda value: value, body),
+                    )
+                )
+    else:
+        # Definitions keep one version per accepted digest of their identity.
+        seen: set[str] = set()
+        for location in history.occurrences(resolved.identity):
+            if location.artifact_digest in seen:
+                continue
+            seen.add(location.artifact_digest)
+            entries.append(
+                _RevisionEntry(
+                    revision=len(entries) + 1,
+                    sequence=location.occurrence_sequence,
+                    digest=location.artifact_digest,
+                    lifecycle=None,
+                )
+            )
+    return entries
 
 
 def _history(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     resolved: ResolvedRef,
-) -> PlaybillGetHistoryV1:
-    from cruxible_core.service.authoring.documents import service_playbill_document_history
-    from cruxible_core.service.claims.claims import service_playbill_claim_history
-    from cruxible_core.service.claims.subjects import service_playbill_subject_history
+    *,
+    ref: str,
+    limit: int,
+    continuation: ListContinuation | None,
+) -> tuple[PlaybillGetHistoryV1, bool, str | None]:
+    """One page of revisions, newest first, and the cursor that continues it."""
 
     at = AcceptedCoordinate.from_internal(coordinate)
-    revisions: list[PlaybillGetRevisionV1] = []
     with instance.accepted_history_reader(at=at) as history:
-        cutoff = history.sequence
-        if resolved.kind == "claim":
-            path = claim_path(_name(resolved.identity))
-            claim_entries = service_playbill_claim_history(instance, identity=resolved.identity)
-            for entry in (item for item in claim_entries.entries if item.sequence <= cutoff):
-                content = instance.blob_at(entry.coordinate.git_oid, path)
-                value = (
-                    None if content is None else _artifact_value(parse_claim(content, path=path))
-                )
-                revisions.append(
-                    _revision(
-                        instance,
-                        history,
-                        index=len(revisions) + 1,
-                        sequence=entry.sequence,
-                        digest=entry.artifact_digest,
-                        lifecycle=entry.lifecycle_state,
-                        value=value,
-                    )
-                )
-        elif resolved.kind == "subject":
-            subject_entries = service_playbill_subject_history(instance, identity=resolved.identity)
-            for subject_entry in (
-                item for item in subject_entries.entries if item.sequence <= cutoff
-            ):
-                revisions.append(
-                    _revision(
-                        instance,
-                        history,
-                        index=len(revisions) + 1,
-                        sequence=subject_entry.sequence,
-                        digest=subject_entry.artifact_digest,
-                        lifecycle=subject_entry.lifecycle_state,
-                    )
-                )
-        elif resolved.kind == "document":
-            document_entries = service_playbill_document_history(
-                instance, identity=resolved.identity
-            )
-            for document_entry in (
-                item for item in document_entries.entries if item.sequence <= cutoff
-            ):
-                revisions.append(
-                    _revision(
-                        instance,
-                        history,
-                        index=len(revisions) + 1,
-                        sequence=document_entry.sequence,
-                        digest=document_entry.envelope_digest,
-                        lifecycle=None,
-                        value={"body": _short_digest(document_entry.body_digest)},
-                    )
-                )
-        else:
-            # Definitions keep one version per accepted digest of their identity.
-            for location in history.occurrences(resolved.identity):
-                if any(
-                    item.digest == _short_digest(location.artifact_digest) for item in revisions
-                ):
-                    continue
-                revisions.append(
-                    _revision(
-                        instance,
-                        history,
-                        index=len(revisions) + 1,
-                        sequence=location.occurrence_sequence,
-                        digest=location.artifact_digest,
-                        lifecycle=None,
-                    )
-                )
-    return PlaybillGetHistoryV1(revisions=tuple(revisions))
+        newest_first = list(reversed(_history_entries(instance, resolved, history)))
+        keys = [(str(entry.sequence), entry.digest) for entry in newest_first]
+        snapshot = list_snapshot(keys)
+        page, truncated = page_after_boundary(
+            newest_first,
+            keys=keys,
+            snapshot=snapshot,
+            continuation=continuation,
+            limit=limit,
+            list_name=_HISTORY_LIST,
+        )
+        revisions = tuple(_revision(instance, history, entry) for entry in page)
+    next_cursor = (
+        encode_list_cursor(
+            list_name=_HISTORY_LIST,
+            coordinate=at.model_dump(mode="json"),
+            selection={"ref": ref},
+            snapshot=snapshot,
+            last_key=(str(page[-1].sequence), page[-1].digest),
+        )
+        if truncated and page
+        else None
+    )
+    return PlaybillGetHistoryV1(revisions=revisions), truncated, next_cursor
+
+
+def _history_continuation(
+    request: PlaybillGetRequestV1,
+) -> tuple[ListContinuation | None, ClientCoordinate | str | None]:
+    """The page a history cursor continues, pinned to the coordinate it was cut at."""
+
+    if request.cursor is None:
+        return None, request.at
+    continuation = decode_list_cursor(
+        request.cursor, list_name=_HISTORY_LIST, selection={"ref": request.ref}
+    )
+    pinned = ClientCoordinate.model_validate(continuation.coordinate)
+    at = request.at
+    if at is not None and (
+        at != pinned.git_oid
+        if isinstance(at, str)
+        else at.model_dump(mode="json") != pinned.model_dump(mode="json")
+    ):
+        raise PlaybillListCursorMismatch(
+            f"{PlaybillListCursorMismatch.error_code}: the cursor continues a different "
+            "coordinate; omit at to continue it, or read history again without a cursor"
+        )
+    return continuation, pinned
 
 
 # -- body ------------------------------------------------------------------------------
@@ -1325,7 +1413,8 @@ def service_playbill_get(
 ) -> PlaybillGetResultV1:
     """Resolve one reference and answer it at one ``detail`` level."""
 
-    coordinate = resolve_read_coordinate(instance, request.at)
+    continuation, at = _history_continuation(request)
+    coordinate = resolve_read_coordinate(instance, at)
     evaluation_time = request.evaluation_time or utc_now()
     resolved = resolve_get_ref(instance, coordinate, request.ref, surface=request.surface)
     if resolved.kind == "proposal":
@@ -1392,7 +1481,14 @@ def service_playbill_get(
             instance, coordinate, resolved, evaluation_time=evaluation_time, access=access
         )
     elif request.detail == "history":
-        fields["history"] = _history(instance, coordinate, resolved)
+        fields["history"], fields["truncated"], fields["next_cursor"] = _history(
+            instance,
+            coordinate,
+            resolved,
+            ref=request.ref,
+            limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
+            continuation=continuation,
+        )
     elif request.detail == "proof":
         fields["proof"] = _proof(
             instance, coordinate, resolved, evaluation_time=evaluation_time, access=access
@@ -1406,13 +1502,18 @@ def service_playbill_get(
             access=access,
             surface=surface,
         )
+    served = AcceptedCoordinate.from_internal(coordinate)
+    with instance.accepted_history_reader(at=served) as history:
+        generation = int(history.sequence)
+    if request.detail == "proof" or request.full_coordinate:
+        fields["accepted_coordinate"] = ClientCoordinate.model_validate(
+            served.model_dump(mode="json")
+        )
     return PlaybillGetResultV1(
         ref=resolved.display,
         kind=resolved.kind,
         detail=request.detail,
-        coordinate=ClientCoordinate.model_validate(
-            AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
-        ),
+        coordinate=PlaybillGetCoordinateV1(git_oid=served.git_oid[:12], generation=generation),
         evaluation_time=evaluation_time,
         **fields,
     )

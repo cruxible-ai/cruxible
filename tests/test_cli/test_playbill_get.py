@@ -10,11 +10,11 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from cruxible_client import contracts
 from cruxible_client.contracts.get_reads import (
     PlaybillByteRangeV1,
     PlaybillGetBodyV1,
     PlaybillGetClaimCardV1,
+    PlaybillGetCoordinateV1,
     PlaybillGetRequestV1,
     PlaybillGetResultV1,
     PlaybillGetSubjectCardV1,
@@ -22,12 +22,7 @@ from cruxible_client.contracts.get_reads import (
 )
 from cruxible_core.cli.main import cli
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
-    git_oid="1" * 64,
-    semantic_root="sha256:" + "2" * 64,
-    generation_root="sha256:" + "3" * 64,
-    compiler_digest="sha256:" + "4" * 64,
-)
+COORDINATE = PlaybillGetCoordinateV1(git_oid="1" * 12, generation=7)
 PREFIX = ["--server-url", "http://server", "--instance-id", "inst_get"]
 WHEN = datetime(2026, 9, 1, tzinfo=UTC)
 
@@ -77,9 +72,11 @@ def test_a_subject_prints_its_claims_as_an_aligned_value_table(
                 kind="dev.roadmap_item",
                 lifecycle="live",
                 claims=(
-                    PlaybillGetSubjectClaimV1(predicate="adoption_state", value="adopted"),
                     PlaybillGetSubjectClaimV1(
-                        predicate="task_title", value="Ship it", flags=("stale",)
+                        predicate="adoption_state", claim="CLM-1", value="adopted"
+                    ),
+                    PlaybillGetSubjectClaimV1(
+                        predicate="task_title", claim="CLM-2", value="Ship it", flags=("stale",)
                     ),
                 ),
                 incoming_count=2,
@@ -195,3 +192,72 @@ def test_other_cards_print_names_whole_and_nested_rows_readably(
     assert "status: open" in result.output
     assert "changes:\n  documents/design.json  create" in result.output
     assert "next: cruxible playbill proposal review sha256:" in result.output
+
+
+def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.get_reads import (
+        PlaybillGetHistoryV1,
+        PlaybillGetRevisionV1,
+        PlaybillGetTruncatedTextV1,
+    )
+
+    stub = _stub(
+        monkeypatch,
+        _result(
+            "claim",
+            detail="history",
+            history=PlaybillGetHistoryV1(
+                revisions=(
+                    PlaybillGetRevisionV1(
+                        revision=3,
+                        sequence=9,
+                        accepted="2026-09-01T00:00:00Z",
+                        actor="owner",
+                        value="done",
+                        digest="sha256:abc",
+                    ),
+                )
+            ),
+            truncated=True,
+            next_cursor="CURSOR",
+        ),
+    )
+
+    paged = CliRunner().invoke(
+        cli, [*PREFIX, "playbill", "get", "CLM-aaaa", "--detail", "history", "--limit", "1"]
+    )
+
+    assert paged.exit_code == 0, paged.output
+    assert stub.requests[0].limit == 1 and stub.requests[0].cursor is None
+    assert "rev 3  seq 9" in paged.output
+    assert "next: cruxible playbill get CLM-aaaa --detail history --cursor CURSOR" in paged.output
+
+    long_row = PlaybillGetSubjectClaimV1(
+        predicate="note",
+        claim="CLM-3",
+        value=PlaybillGetTruncatedTextV1(value="n" * 500, length=900),
+    )
+    _stub(
+        monkeypatch,
+        _result(
+            "subject",
+            card=PlaybillGetSubjectCardV1(
+                subject="dev.roadmap_item/x",
+                kind="dev.roadmap_item",
+                lifecycle="live",
+                claims=(long_row,),
+                incoming_count=0,
+            ),
+        ),
+    )
+    summary = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "dev.roadmap_item/x"])
+    as_json = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "dev.roadmap_item/x", "--json"])
+
+    assert summary.exit_code == 0, summary.output
+    assert "(900 chars)" in summary.output
+    payload = json.loads(as_json.output)
+    assert payload["card"]["claims"][0]["value"]["truncated"] is True
+    assert payload["coordinate"] == {"git_oid": "1" * 12, "generation": 7}
+    assert "accepted_coordinate" not in payload

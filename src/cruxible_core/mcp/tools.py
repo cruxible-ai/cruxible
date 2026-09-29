@@ -17,7 +17,11 @@ from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendR
 from cruxible_client.contracts.claim_reads import ClaimValuesResultV1
 from cruxible_client.contracts.compact_query import QueryFilterV1, QueryFollowV1
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
-from cruxible_client.contracts.get_reads import PlaybillByteRangeV1, PlaybillGetResultV1
+from cruxible_client.contracts.get_reads import (
+    GET_HISTORY_MAX_LIMIT,
+    PlaybillByteRangeV1,
+    PlaybillGetResultV1,
+)
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -844,6 +848,18 @@ def register_tools(
             str | None,
             Field(description="ISO-8601 instant verdicts are evaluated at; default now."),
         ] = None,
+        limit: Annotated[
+            int | None,
+            Field(
+                ge=1,
+                le=GET_HISTORY_MAX_LIMIT,
+                description='Revisions per detail="history" page, newest first; default 20.',
+            ),
+        ] = None,
+        cursor: Annotated[
+            str | None,
+            Field(description='next_cursor of the previous detail="history" page.'),
+        ] = None,
     ) -> PlaybillGetResultV1:
         """Read one governed thing by reference, values first."""
         return handlers.handle_playbill_get(
@@ -853,6 +869,8 @@ def register_tools(
             range=range,
             at=at,
             evaluation_time=evaluation_time,
+            limit=limit,
+            cursor=cursor,
         )
 
     @_tool

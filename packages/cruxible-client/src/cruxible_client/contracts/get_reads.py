@@ -37,6 +37,11 @@ PlaybillReadSurface = Literal["mcp", "cli", "sdk"]
 GET_BODY_DEFAULT_MAX_BYTES = 64 * 1024
 #: The widest byte range one ``get(detail="body")`` returns.
 GET_BODY_RANGE_MAX_BYTES = 256 * 1024
+#: A summary card shows at most this many characters of one string value.
+GET_SUMMARY_TEXT_MAX_CHARS = 500
+#: Revisions per ``get(detail="history")`` page, by default and at most.
+GET_HISTORY_DEFAULT_LIMIT = 20
+GET_HISTORY_MAX_LIMIT = 200
 
 _GIT_OID = r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
 
@@ -96,6 +101,13 @@ class PlaybillGetRequestV1(_StrictGetModel):
     at: PlaybillAcceptedCoordinate | str | None = None
     evaluation_time: datetime | None = None
     surface: PlaybillReadSurface = "mcp"
+    # ``detail="history"`` pages: revisions per page (default 20) and the
+    # opaque ``next_cursor`` of the page before.
+    limit: int | None = Field(default=None, ge=1, le=GET_HISTORY_MAX_LIMIT)
+    cursor: str | None = Field(default=None, min_length=1)
+    # Also answer the full four-digest accepted coordinate, which only
+    # ``detail="proof"`` carries otherwise (the SDK pins reads with it).
+    full_coordinate: bool = False
 
     @field_validator("at")
     @classmethod
@@ -117,7 +129,41 @@ class PlaybillGetRequestV1(_StrictGetModel):
     def _range_only_for_body(self) -> PlaybillGetRequestV1:
         if self.range is not None and self.detail != "body":
             raise ValueError('range applies only to detail="body"')
+        if (self.limit is not None or self.cursor is not None) and self.detail != "history":
+            raise ValueError('limit and cursor page detail="history" only')
         return self
+
+
+class PlaybillGetTruncatedTextV1(_StrictGetModel):
+    """A long string value cut short on a summary card.
+
+    ``value`` is its first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters and
+    ``length`` its whole length; ``detail="evidence"`` or ``"proof"`` reads the
+    whole value.
+    """
+
+    value: str
+    truncated: Literal[True] = True
+    length: int = Field(gt=GET_SUMMARY_TEXT_MAX_CHARS)
+
+
+def summary_value(value: Any) -> Any:
+    """A value as a summary card shows it: long strings cut, lists element-wise."""
+
+    if isinstance(value, str) and len(value) > GET_SUMMARY_TEXT_MAX_CHARS:
+        return PlaybillGetTruncatedTextV1(
+            value=value[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(value)
+        )
+    if isinstance(value, list | tuple):
+        return [summary_value(item) for item in value]
+    return value
+
+
+class PlaybillGetCoordinateV1(_StrictGetModel):
+    """Which accepted generation answered: the git oid's 12-hex prefix and its sequence."""
+
+    git_oid: str = Field(pattern=r"^[0-9a-f]{12}$")
+    generation: int = Field(ge=0)
 
 
 class PlaybillGetContenderV1(_StrictGetModel):
@@ -145,6 +191,9 @@ class PlaybillGetClaimCardV1(_StrictGetModel):
 class PlaybillGetSubjectClaimV1(_StrictGetModel):
     predicate: str
     qualifier: str | None = Field(default=None, exclude_if=_omit_none)
+    # The Claim behind the value; a list, aligned with ``value``, when the row
+    # shows several (a many-valued predicate or a contested slot).
+    claim: str | tuple[str, ...]
     value: Any
     flags: tuple[PlaybillReadFlag, ...] = ()
 
@@ -263,6 +312,8 @@ class PlaybillGetAttestationEvidenceV1(_StrictGetModel):
 
 
 class PlaybillGetEvidenceV1(_StrictGetModel):
+    # The Claim's whole value, never cut as a summary card cuts a long one.
+    value: Any
     captures: tuple[PlaybillGetCaptureEvidenceV1, ...]
     attestations: tuple[PlaybillGetAttestationEvidenceV1, ...]
     rationale: str | None = Field(default=None, exclude_if=_omit_none)
@@ -280,6 +331,8 @@ class PlaybillGetRevisionV1(_StrictGetModel):
 
 
 class PlaybillGetHistoryV1(_StrictGetModel):
+    """One page of revisions, newest first; ``revision`` counts from the oldest."""
+
     revisions: tuple[PlaybillGetRevisionV1, ...]
 
 
@@ -306,7 +359,14 @@ class PlaybillGetResultV1(_StrictGetModel):
     why: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
     # Today's full accepted envelope, unchanged.
     proof: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
-    coordinate: PlaybillAcceptedCoordinate
+    # ``detail="history"`` paging; absent on every other detail.
+    truncated: bool | None = Field(default=None, exclude_if=_omit_none)
+    next_cursor: str | None = Field(default=None, exclude_if=_omit_none)
+    coordinate: PlaybillGetCoordinateV1
+    # The full accepted coordinate: under ``detail="proof"``, or when asked for.
+    accepted_coordinate: PlaybillAcceptedCoordinate | None = Field(
+        default=None, exclude_if=_omit_none
+    )
     evaluation_time: datetime
 
 
@@ -314,6 +374,9 @@ __all__ = [
     "GET_BODY_DEFAULT_MAX_BYTES",
     "GET_BODY_RANGE_MAX_BYTES",
     "GET_DETAILS_BY_KIND",
+    "GET_HISTORY_DEFAULT_LIMIT",
+    "GET_HISTORY_MAX_LIMIT",
+    "GET_SUMMARY_TEXT_MAX_CHARS",
     "PlaybillByteRangeV1",
     "PlaybillGetAttestationEvidenceV1",
     "PlaybillGetBodyV1",
@@ -323,6 +386,7 @@ __all__ = [
     "PlaybillGetClaimCardV1",
     "PlaybillGetClaimTypeCardV1",
     "PlaybillGetContenderV1",
+    "PlaybillGetCoordinateV1",
     "PlaybillGetDetail",
     "PlaybillGetDocumentCardV1",
     "PlaybillGetEvidenceV1",
@@ -338,6 +402,8 @@ __all__ = [
     "PlaybillGetRevisionV1",
     "PlaybillGetSubjectCardV1",
     "PlaybillGetSubjectClaimV1",
+    "PlaybillGetTruncatedTextV1",
     "PlaybillReadFlag",
     "PlaybillReadSurface",
+    "summary_value",
 ]
