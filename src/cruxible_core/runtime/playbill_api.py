@@ -266,9 +266,12 @@ from cruxible_core.service.procedures.predictions import (
     service_settle_playbill_prediction,
 )
 from cruxible_core.service.procedures.procedure_runs import (
+    LineRunNotAccepted,
     LineRunRequestV1,
     ProcedureBindRequestV1,
+    ProcedureNotFound,
     ProcedureReadinessRequestV1,
+    ProcedureRetired,
     ProcedureRunRequestV2,
     line_run_target_rung,
     procedure_run_target_rung,
@@ -1907,10 +1910,23 @@ def _check_run_permission(tool_name: str, instance_id: str, target_rung: Callabl
 
     Running an observe-only Line or Procedure is a read. One whose terminals
     can propose or settle writes governed state, so it needs governed write.
+    A shared hosted profile refuses before any instance is read. A target with
+    no live accepted artifact has nothing to gate: the service refuses it after
+    its own request checks, and re-checks the caller's tier for any target it
+    finds.
     """
 
     check_permission(tool_name, instance_id=instance_id, audit_success=False)
-    required = PermissionMode(run_permission_rung(target_rung()) + 1)
+    # A shared hosted profile with no isolated execution backend cannot run
+    # customer code at all; refuse at the served boundary so the operator gets
+    # the mapped error instead of a node refusal buried in a run journal.
+    enforce_customer_code_execution_supported()
+    try:
+        rung = target_rung()
+    except (ProcedureNotFound, ProcedureRetired, LineRunNotAccepted):
+        check_permission(tool_name, instance_id=instance_id)
+        return
+    required = PermissionMode(run_permission_rung(rung) + 1)
     check_permission(tool_name, instance_id=instance_id, required_override=required)
 
 
@@ -1927,10 +1943,6 @@ def playbill_procedure_run(
             get_playbill_manager().get(instance_id), name, request.at
         ),
     )
-    # A shared hosted profile with no isolated execution backend cannot run
-    # customer code at all; refuse at the served boundary so the operator gets
-    # the mapped error instead of a node refusal buried in a run journal.
-    enforce_customer_code_execution_supported()
     actor = _actor_context()
     if actor is None:
         raise AuthenticationError("Procedure run requires an authenticated actor identity")
@@ -2099,7 +2111,6 @@ def playbill_line_dispatch(
         instance_id,
         lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line),
     )
-    enforce_customer_code_execution_supported()
     actor = _actor_context()
     if actor is None:
         raise AuthenticationError("Dispatch requires an authenticated actor identity")
@@ -2144,7 +2155,6 @@ def playbill_line_run(
         instance_id,
         lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line_identity_digest),
     )
-    enforce_customer_code_execution_supported()
     actor = _actor_context()
     if actor is None:
         raise AuthenticationError("Line run requires an authenticated actor identity")
