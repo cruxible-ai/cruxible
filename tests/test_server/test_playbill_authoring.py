@@ -436,6 +436,8 @@ def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_i
             "procedure_runtime_policy",
             "query_definition",
             "subject",
+            "line",
+            "acquisition_policy",
         }
     assert "BriefInput" not in schemas
     assert "ClaimSlotPolicyV1" not in schemas
