@@ -6,7 +6,10 @@
   ``w.dev.roadmap_item.where(adoption_state="adopted").select("task_title")``.
   Keyword filters take operator suffixes (``__ne``, ``__lt``, ``__lte``,
   ``__gt``, ``__gte``, ``__in``, ``__exists``, ``__contains``); every name and
-  enum value is checked against the World's vocabulary before the wire.
+  enum value is checked against the World's vocabulary before the wire. A
+  field leaf that is ``self``, a Python keyword, contains ``__`` or ends in
+  ``_`` is spelled with one trailing underscore (``self_``, ``class_``,
+  ``status__ne_``), before any operator suffix (``self___ne``).
 - ``parse_where`` reads the CLI's ``f=v`` / ``f!=v`` / ``f<v`` / ``f in a,b`` /
   ``f exists`` / ``f~text`` expressions, and ``render_query_table`` prints a page
   as an aligned table of values and flags.
@@ -15,6 +18,7 @@
 from __future__ import annotations
 
 import difflib
+import keyword
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import datetime
@@ -196,6 +200,35 @@ _SUFFIXES = tuple(operator for operator in QUERY_FILTER_OPERATORS if operator !=
 _ORDERED = frozenset({"integer", "number", "string"})
 
 
+def keyword_name(field: str) -> str | None:
+    """The ``where()`` keyword a field leaf is spelled as, or None if none can be.
+
+    A leaf that is ``self``, a Python keyword, carries the operator separator
+    ``__``, or already ends in ``_`` takes one trailing underscore: ``self_``,
+    ``class_``, ``status__ne_``. Every other identifier is its own keyword. The
+    escaped names are exactly those ending in ``_``, so the rule is injective,
+    and no keyword, bare or operator-suffixed, reads as another field's.
+    """
+
+    if not field.isidentifier():
+        return None
+    if field == "self" or keyword.iskeyword(field) or "__" in field or field.endswith("_"):
+        return field + "_"
+    return field
+
+
+def keyword_field(key: str) -> tuple[str, str]:
+    """Split one ``where()`` keyword into the field it names and its operator."""
+
+    name, operator = key, "eq"
+    head, _, suffix = key.rpartition("__")
+    if head and suffix in _SUFFIXES:
+        name, operator = head, suffix
+    if name.endswith("_") and keyword_name(name[:-1]) == name:
+        name = name[:-1]
+    return name, operator
+
+
 def _nearest(value: str, names: Sequence[str]) -> tuple[str, ...]:
     return tuple(difflib.get_close_matches(value, sorted(set(names)), n=5, cutoff=0.5))
 
@@ -306,16 +339,24 @@ class CompactQuery:
 
     # -- building ------------------------------------------------------------------
 
-    def where(self, **filters: object) -> CompactQuery:
-        """Add all-of filters: ``field=value`` or ``field__<op>=value``."""
+    def where(self, /, **filters: object) -> CompactQuery:
+        """Add all-of filters: ``field=value`` or ``field__<op>=value``.
+
+        A leaf that is ``self``, a Python keyword, contains ``__`` or ends in
+        ``_`` is spelled with one trailing underscore (see ``keyword_name``).
+        """
 
         added: list[QueryFilterV1] = []
         for key, value in filters.items():
-            name, operator = key, "eq"
+            name, operator = keyword_field(key)
             head, _, suffix = key.rpartition("__")
-            if head and suffix in _SUFFIXES:
-                name, operator = head, suffix
-            elif head and suffix:
+            if (
+                operator == "eq"
+                and head
+                and suffix
+                and name != "subject_id"
+                and name not in self._fields()
+            ):
                 raise QueryNameError(
                     f"{key!r} names no operator {suffix!r}",
                     nearest=_nearest(suffix, _SUFFIXES),
@@ -381,6 +422,8 @@ __all__ = [
     "QueryResult",
     "WHERE_SYNTAX",
     "filters_from_mappings",
+    "keyword_field",
+    "keyword_name",
     "parse_where",
     "render_query_table",
 ]

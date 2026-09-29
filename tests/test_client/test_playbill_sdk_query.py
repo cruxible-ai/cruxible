@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from keyword import iskeyword
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +15,15 @@ from cruxible_client.authoring.compact_query import (
     CompactQuery,
     QueryNameError,
     QueryResult,
+    keyword_field,
+    keyword_name,
     parse_where,
 )
 from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
 from tests.test_client.test_playbill_sdk_world import (
     _COORDINATE,
     SEVERITY,
+    _claim_type,
     _mypy,
     _workspace,
     _WorldClient,
@@ -207,3 +211,84 @@ def test_a_type_checker_reads_where_as_typed_keywords(
     for line in (8, 9, 10, 12):
         assert f"queries.py:{line}: error:" in report, report
     assert "queries.py:11:" not in report, report
+
+
+# ---------------------------------------------------------------------------
+# Field leaves the generated where() signature must escape
+# ---------------------------------------------------------------------------
+
+_ESCAPED_LEAVES = ("self", "class", "status", "status__ne", "note_")
+
+
+class _ReservedLeafClient(_QueryClient):
+    """A kind whose predicate leaves collide with `self`, keywords and suffixes."""
+
+    def list_playbill_claim_types(
+        self, _instance_id: str, *, at: Any = None
+    ) -> api.PlaybillClaimTypeList:
+        self.claim_type_list_calls += 1
+        return api.PlaybillClaimTypeList(
+            coordinate=at or self.coordinate,
+            claim_types=[_claim_type(f"sec.vulnerability.{leaf}") for leaf in _ESCAPED_LEAVES],
+        )
+
+
+def test_a_stub_for_reserved_leaves_compiles_and_type_checks(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _ReservedLeafClient()
+    playbill = Playbill._from_client(  # type: ignore[arg-type]
+        client, instance_id="inst_world", workspace=tmp_path, clock=lambda: WHEN
+    )
+    world = playbill.world()
+    rendered = world.stub()
+    compile(rendered, "world.pyi", "exec")
+
+    project = tmp_path / "reserved-project"
+    project.mkdir()
+    (project / "world.pyi").write_text(rendered, encoding="utf-8")
+    (project / "reserved.py").write_text(
+        "from __future__ import annotations\n"
+        "\n"
+        "from world import World\n"
+        "\n"
+        "\n"
+        "def queries(world: World) -> None:\n"
+        "    world.sec.vulnerability.where(\n"
+        '        self_="high", class___ne="low", status="high", status__ne_="low",\n'
+        '        status__ne="low", note____in=["high"],\n'
+        "    )\n"
+        '    world.sec.vulnerability.where(self_="hihg")\n',
+        encoding="utf-8",
+    )
+    report = _mypy(project, "reserved.py")
+    assert "reserved.py:7:" not in report and "reserved.py:8:" not in report, report
+    assert "reserved.py:11: error:" in report, report
+
+    # The escaped keywords the stub declares are the ones where() reads.
+    request = world.sec.vulnerability.where(  # type: ignore[attr-defined]
+        self_="high",
+        class___ne="low",
+        status="high",
+        status__ne_="low",
+        status__ne="low",
+        note____in=["high"],
+    ).request()
+    assert [(item.field, item.operator, item.value) for item in request.where] == [
+        ("self", "eq", "high"),
+        ("class", "ne", "low"),
+        ("status", "eq", "high"),
+        ("status__ne", "eq", "low"),
+        ("status", "ne", "low"),
+        ("note_", "in", ("high",)),
+    ]
+
+
+@pytest.mark.parametrize(
+    "field", ["self", "class", "status", "status__ne", "note_", "_", "__x", "a__b__in", "match"]
+)
+@pytest.mark.parametrize("operator", ["eq", "ne", "in", "exists", "contains"])
+def test_where_keyword_escape_round_trips(field: str, operator: str) -> None:
+    spelled = keyword_name(field)
+    assert spelled is not None and spelled.isidentifier() and not iskeyword(spelled)
+    key = spelled if operator == "eq" else f"{spelled}__{operator}"
+    assert keyword_field(key) == (field, operator)

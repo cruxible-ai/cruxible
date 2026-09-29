@@ -449,13 +449,15 @@ class KindNamespace:
             lifecycle=ArtifactLifecycle(),
         )
 
-    def where(self, **filters: object) -> CompactQuery:
+    def where(self, /, **filters: object) -> CompactQuery:
         """Start a compact query over this kind, filtered all-of by keyword.
 
         ``where(adoption_state="adopted", implementation_state__ne="completed")``;
         suffixes ``__ne``, ``__lt``, ``__lte``, ``__gt``, ``__gte``, ``__in``,
-        ``__exists`` and ``__contains`` pick the operator. Names and enum
-        values are checked against this World before the wire.
+        ``__exists`` and ``__contains`` pick the operator. A leaf that is
+        ``self``, a Python keyword, contains ``__`` or ends in ``_`` takes one
+        trailing underscore before any suffix (``self_``, ``class___ne``).
+        Names and enum values are checked against this World before the wire.
         """
 
         return self._query().where(**filters)

@@ -24,6 +24,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from cruxible_client.authoring.compact_query import keyword_name
 from cruxible_client.authoring.world import (
     CLAIM_TYPE_MEMBERS,
     KindNamespace,
@@ -265,18 +266,24 @@ def _value_annotation(claim_type: WorldClaimType) -> tuple[str, tuple[str, ...]]
 
 
 def _filter_parameters(world: World, kind: str) -> tuple[list[str], list[str]]:
-    """Keyword filters and selectable field names for one kind, deterministically."""
+    """Keyword filters and selectable field names for one kind, deterministically.
+
+    A leaf spelled with the documented escape (`keyword_name`: `self_`,
+    `class_`, `status__ne_`) never repeats the `self` parameter or collides
+    with another leaf's operator-suffixed keyword.
+    """
 
     parameters: list[str] = []
     fields: list[str] = ["subject_id"]
     for leaf, predicates in sorted(world._leaf_map(kind).items()):
         fields.extend(predicates)
-        if len(predicates) != 1 or not _is_identifier(leaf) or leaf == "subject_id":
+        spelled = keyword_name(leaf)
+        if len(predicates) != 1 or spelled is None or leaf == "subject_id":
             continue
         fields.append(leaf)
         annotation, operators = _value_annotation(world.claim_type(predicates[0]))
         for operator in operators:
-            name = leaf if operator == "eq" else f"{leaf}__{operator}"
+            name = spelled if operator == "eq" else f"{spelled}__{operator}"
             if operator == "in":
                 value = f"Sequence[{annotation}]"
             elif operator == "exists":

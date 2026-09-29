@@ -2622,8 +2622,11 @@ Start a compact query over this kind at the World's coordinate, for example
 `w.dev.roadmap_item.where(adoption_state="adopted", implementation_state__ne="completed").select("task_title")`.
 A keyword is a predicate's short or full name, or `subject_id`; the suffixes
 `__ne`, `__lt`, `__lte`, `__gt`, `__gte`, `__in`, `__exists` and `__contains`
-pick the operator. Names, operators and enum members are checked against the
-World before the wire and raise `QueryNameError` with the nearest names.
+pick the operator. A leaf that is `self`, a Python keyword, contains `__` or
+ends in `_` is spelled with one trailing underscore before any suffix
+(`self_`, `class___ne`, `status__ne_`). Names, operators and enum members are
+checked against the World before the wire and raise `QueryNameError` with the
+nearest names.
 `run()` returns a `QueryResult`; iterating the query walks every page. The
 generated stub types `where(...)` per kind, with enum members as `Literal`s, so
 a type checker rejects a wrong predicate or member.
