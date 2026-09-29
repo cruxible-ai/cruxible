@@ -312,10 +312,10 @@ authority plane beside accepted state.
 `cruxible_playbill_next` renders each repair's `command` as the MCP tool call
 that performs it (for example `cruxible_playbill_settle(prediction_id="RSC-...")`,
 adding the observation's Claim ID), or none when its operands are local files.
-A row whose repair is a settle, Line dispatch or Line arm the session cannot
-perform -- its profile does not advertise that tool (the `default` profile
-advertises none of them), or its tier is too low -- is left out and counted in
-`status.hidden`.
+A row or nested finding whose repair the session cannot perform -- its profile
+does not advertise the tool that performs it, or its tier is too low -- is left
+out and counted in `status.hidden`. The `default` profile advertises neither
+`cruxible_playbill_settle` nor the Line tools, for example.
 
 Lists that can outgrow one answer are paged. `proposal_list`,
 `policies_in_force` and `curation_list` take `limit` and `cursor`; a cut page

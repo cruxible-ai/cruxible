@@ -834,15 +834,37 @@ def _repair_operands(operation: NextRepairOperation, values: Mapping[str, object
 
 NextCallerSurface: TypeAlias = Literal["cli", "mcp", "sdk"]
 
-#: Repairs a caller may be unable to perform, with the MCP tool each needs and
-#: the least caller rung (``PermissionMode.value - 1``) it runs at. A Line
-#: dispatch's rung is the Line's own: an observe-only Line dispatches at read.
-_GATED_REPAIR_TOOLS: Mapping[str, str] = {
-    "playbill.settle": "cruxible_playbill_settle",
-    "playbill.line.dispatch": "cruxible_playbill_line_dispatch",
+#: Every repair operation's served door: the tool that performs it. The tool's
+#: entry in ``TOOL_PERMISSIONS`` is the tier the repair needs on every surface,
+#: and an MCP caller must also advertise the tool. ``None`` is a repair with no
+#: served door to gate: a hand edit, or a client-local block stamp (`block
+#: repin` / `block sync` rewrite workspace files and write no governed state).
+_REPAIR_TOOLS: Mapping[str, str | None] = {
+    "playbill.authoring.create": "cruxible_playbill_authoring_create",
+    "playbill.authoring.bind": "cruxible_playbill_authoring_bind",
+    "playbill.claim.retire": "cruxible_playbill_claim_retire",
+    "playbill.floor.export": "cruxible_playbill_floor_export",
+    "playbill.block.depublish": "cruxible_playbill_block_depublish",
+    "playbill.block.repin": None,
+    "playbill.block.sync": None,
+    "playbill.document.propose": "cruxible_playbill_propose_document",
+    "playbill.proposal.readmit": "cruxible_playbill_proposal_readmit",
+    "playbill.proposal.approve": "cruxible_playbill_approve",
+    "playbill.compiler.upgrade": "cruxible_playbill_compiler_upgrade",
     "playbill.line.arm": "cruxible_playbill_line_arm",
+    "playbill.line.dispatch": "cruxible_playbill_line_dispatch",
+    "playbill.settle": "cruxible_playbill_settle",
+    "hand_edit": None,
 }
 _GOVERNED_WRITE_RUNG = 1
+
+
+def _tool_rung(tool: str) -> int:
+    """The least caller rung (``PermissionMode.value - 1``) a tool runs at."""
+
+    from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
+
+    return int(TOOL_PERMISSIONS[tool]) - 1
 
 
 def _mcp_call(tool: str, **arguments: object) -> str:
@@ -4030,9 +4052,12 @@ class _CallerView:
         self.caller_rung = caller_rung
         self._line_rungs: dict[str, int] = {}
 
-    def _required_rung(self, repair: PlaybillNextRepairV1) -> int:
+    def _required_rung(self, repair: PlaybillNextRepairV1, tool: str) -> int:
+        static = _tool_rung(tool)
         if repair.operation != "playbill.line.dispatch":
-            return _GOVERNED_WRITE_RUNG
+            return static
+        # A Line dispatch's tier is the Line's own: an observe-only Line
+        # dispatches at read, one whose runs propose or settle at governed write.
         line = repair.arguments.get("line") if isinstance(repair.arguments, Mapping) else None
         if not isinstance(line, str):
             return _GOVERNED_WRITE_RUNG
@@ -4048,15 +4073,15 @@ class _CallerView:
                 )
             except PlaybillError:
                 self._line_rungs[line] = _GOVERNED_WRITE_RUNG
-        return self._line_rungs[line]
+        return max(static, self._line_rungs[line])
 
     def can_run(self, repair: PlaybillNextRepairV1) -> bool:
-        tool = _GATED_REPAIR_TOOLS.get(repair.operation)
+        tool = _REPAIR_TOOLS[repair.operation]
         if tool is None:
             return True
         if self.surface == "mcp" and self.tools is not None and tool not in self.tools:
             return False
-        return self.caller_rung is None or self.caller_rung >= self._required_rung(repair)
+        return self.caller_rung is None or self.caller_rung >= self._required_rung(repair, tool)
 
     def _render(self, row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> PlaybillNextItemV1:
         """One row or nested finding as a standalone row, its repair for this surface."""
