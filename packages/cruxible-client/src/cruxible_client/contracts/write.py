@@ -320,6 +320,14 @@ class ChangeOutcome(_StrictWriteModel):
         exclude_if=_omit_empty,
         description="Live Claims this one now contends with in a single-value slot.",
     )
+    verdict: str | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description=(
+            "The written Claim's verdict: at the accepted coordinate once accepted, "
+            "otherwise as the candidate evaluation found it."
+        ),
+    )
 
 
 class WriteProposalRef(_StrictWriteModel):
@@ -339,6 +347,24 @@ class ApprovalNeeded(_StrictWriteModel):
         description="The approve call for one of the eligible approvers, on your surface.",
     )
     activate: str = Field(description="The call that accepts it once approved.")
+
+
+class WriteWarning(_StrictWriteModel):
+    """Something the write did that the writer did not ask for, said plainly.
+
+    ``playbill.write.verdict_not_supported``: the written Claim's verdict is not
+    ``supported`` -- for example ``uncovered`` because the ClaimType's evidence
+    policy does not admit the evidence given. The write still lands.
+    """
+
+    code: str
+    change: int
+    claim: str | None = Field(default=None, exclude_if=_omit_none)
+    verdict: str
+    message: str
+    admitted_contracts: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
+    used_contract: str | None = Field(default=None, exclude_if=_omit_none)
+    repair: str | None = Field(default=None, exclude_if=_omit_none)
 
 
 class WriteRefusal(_StrictWriteModel):
@@ -379,6 +405,7 @@ class WriteOutcome(_StrictWriteModel):
         description="The full accepted coordinate, when the request asked for it.",
     )
     approval: ApprovalNeeded | None = Field(default=None, exclude_if=_omit_none)
+    warnings: tuple[WriteWarning, ...] = Field(default=(), exclude_if=_omit_empty)
     refusal: WriteRefusal | None = Field(default=None, exclude_if=_omit_none)
     next: str | None = Field(default=None, exclude_if=_omit_none)
 

@@ -1060,6 +1060,12 @@ def _validate_literal_schema(value: object, schema: Mapping[str, object]) -> boo
     return True
 
 
+def literal_satisfies_schema(value: object, schema: Mapping[str, object]) -> bool:
+    """Whether one literal satisfies a ClaimType's literal schema, as the Claim law reads it."""
+
+    return _validate_literal_schema(value, schema)
+
+
 @dataclass(frozen=True)
 class _ResolvedReferent:
     identity: ArtifactIdentity
@@ -1836,9 +1842,18 @@ def evaluate_claim_law(
             contract.literal_schema is None
             or not _validate_literal_schema(statement.object.value, contract.literal_schema)
         ):
+            members = (
+                None if contract.literal_schema is None else contract.literal_schema.get("enum")
+            )
+            admitted = (
+                "; its members are: " + ", ".join(str(item) for item in members)
+                if isinstance(members, list) and members
+                else ""
+            )
             return _diagnostic(
                 "playbill.claim.literal_schema_invalid",
-                f"The Claim literal fails the exact schema of ClaimType {contract.predicate!r}.",
+                f"The Claim literal {statement.object.value!r} fails the exact schema of "
+                f"ClaimType {contract.predicate!r}{admitted}.",
                 path=path,
                 field="object",
             )
@@ -2546,6 +2561,7 @@ __all__ = [
     "claim_retirement_pin_digest_updates",
     "claim_path",
     "claim_referent_context_digest",
+    "literal_satisfies_schema",
     "claim_statement_address",
     "claim_statement_digest",
     "claim_statement_card",

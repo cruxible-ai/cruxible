@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Literal, cast
@@ -78,6 +79,7 @@ from cruxible_core.proposals.proposals import (
     ProposalAdmissionRequest,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.storage.cas import dry_run_bodies
 
 AUTHORING_REBASE_DOMAIN = "playbill-authoring-rebase-v1"
 
@@ -249,38 +251,13 @@ class AuthoringIntentCoordinator:
                     "playbill.authoring.program_stamp_contract_mismatch",
                     "a v3 program stamp requires the v2 reference-assertion envelope",
                 )
-        intent_id = self.store.mint_intent_id()
-        semantic_identity = self._mint_semantic_identity(payload)
-        status = CandidateStatusV1(
-            state="draft",
-            current_accepted_coordinate=at,
-        )
-        intent_values = {
-            "intent_id": intent_id,
-            "instance_id": self.instance.descriptor.instance_id,
-            "actor_id": actor.actor_id,
-            "canonical_timestamp": canonical_timestamp,
-            "base_coordinate": at,
-            "semantic_identity": semantic_identity,
-            "payload": payload,
-            "payload_digest": authoring_payload_digest(payload),
-            "create_fingerprint": authoring_create_fingerprint(
-                instance_id=self.instance.descriptor.instance_id,
-                actor_id=actor.actor_id,
-                payload=payload,
-            ),
-            "candidate_status": status,
-            "change_set_claim_identities": self._mint_change_set_claim_identities(payload),
-        }
-        intent = (
-            AuthoringIntentV1.model_validate(intent_values)
-            if reference_expectations is None
-            else AuthoringIntentV2.model_validate(
-                {
-                    **intent_values,
-                    "reference_expectations": reference_expectations,
-                }
-            )
+        intent = self._draft_intent(
+            actor=actor,
+            payload=payload,
+            canonical_timestamp=canonical_timestamp,
+            at=at,
+            reference_expectations=reference_expectations,
+            intent_id=self.store.mint_intent_id(),
         )
         operation_key = typed_digest(
             Sha256Value,
@@ -309,6 +286,78 @@ class AuthoringIntentCoordinator:
                 program_stamp=program_stamp,
             )
         return AuthoringIntentViewV1(intent=stored)
+
+    def _draft_intent(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        payload: AuthoringPayloadV1,
+        canonical_timestamp: str,
+        at: AcceptedCoordinate,
+        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None,
+        intent_id: str,
+    ) -> AuthoringIntentV1:
+        """Build one draft intent in memory, minting its identities; nothing is stored."""
+
+        semantic_identity = self._mint_semantic_identity(payload)
+        status = CandidateStatusV1(
+            state="draft",
+            current_accepted_coordinate=at,
+        )
+        intent_values = {
+            "intent_id": intent_id,
+            "instance_id": self.instance.descriptor.instance_id,
+            "actor_id": actor.actor_id,
+            "canonical_timestamp": canonical_timestamp,
+            "base_coordinate": at,
+            "semantic_identity": semantic_identity,
+            "payload": payload,
+            "payload_digest": authoring_payload_digest(payload),
+            "create_fingerprint": authoring_create_fingerprint(
+                instance_id=self.instance.descriptor.instance_id,
+                actor_id=actor.actor_id,
+                payload=payload,
+            ),
+            "candidate_status": status,
+            "change_set_claim_identities": self._mint_change_set_claim_identities(payload),
+        }
+        return (
+            AuthoringIntentV1.model_validate(intent_values)
+            if reference_expectations is None
+            else AuthoringIntentV2.model_validate(
+                {
+                    **intent_values,
+                    "reference_expectations": reference_expectations,
+                }
+            )
+        )
+
+    def preview(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        payload: AuthoringPayloadV1,
+        canonical_timestamp: str,
+    ) -> tuple[AuthoringIntentV1, ComputedPreflight]:
+        """Preflight one payload exactly as submit would, and write nothing.
+
+        This is a dry run: the draft is built in memory under a fresh intent ID
+        instead of being stored, and the bodies lowering stores are held in
+        memory (``dry_run_bodies``), so the same lowering and evaluation run as
+        for a submit, against the current accepted coordinate, without a write.
+        """
+
+        self.instance.require_writable()
+        with dry_run_bodies():
+            intent = self._draft_intent(
+                actor=actor,
+                payload=payload,
+                canonical_timestamp=canonical_timestamp,
+                at=AcceptedCoordinate.from_internal(self.instance.accepted_coordinate()),
+                reference_expectations=None,
+                intent_id=f"AIT-{secrets.token_hex(16)}",
+            )
+            return intent, compute_preflight(self.instance, intent=intent, actor=actor)
 
     def create_input(
         self,

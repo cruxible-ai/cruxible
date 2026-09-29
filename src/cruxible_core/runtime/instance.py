@@ -159,7 +159,12 @@ from cruxible_core.proposals.settlement import (
     prepare_generation,
     render_generation_descriptor,
 )
-from cruxible_core.storage.cas import CasObjectMetadata, ContentAddressedBodyStore
+from cruxible_core.storage.cas import (
+    CasObjectMetadata,
+    ContentAddressedBodyStore,
+    DryRunBodyStore,
+    dry_run_held_bodies,
+)
 
 if TYPE_CHECKING:
     from cruxible_core.evidence.claim_attestation_store import ClaimAttestationEvidenceStore
@@ -763,8 +768,19 @@ class PlaybillInstance:
             return history.identities_for_digest(digest)
 
     def body_store(self) -> ContentAddressedBodyStore:
-        """Return PB-C's inert, access-controlled content-addressed body store."""
+        """Return PB-C's inert, access-controlled content-addressed body store.
 
+        Inside ``dry_run_bodies()`` the store holds what it is asked to store in
+        memory instead, so a dry run takes the write's own path and writes nothing.
+        """
+
+        store = self._disk_body_store()
+        held = dry_run_held_bodies()
+        if held is None:
+            return store
+        return cast(ContentAddressedBodyStore, DryRunBodyStore(store, held))
+
+    def _disk_body_store(self) -> ContentAddressedBodyStore:
         paths = self._validated_paths(self.root, self.descriptor.storage)
         try:
             algorithm = _lstat_identity(paths["cas"] / "sha256")
