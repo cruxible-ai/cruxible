@@ -161,12 +161,11 @@ class NextQueueConsumers:
             if connection is None:
                 return ()
             row = connection.execute(
-                "SELECT coordinate,door,generation,checked_at,last_error,last_error_at "
-                "FROM progress"
+                "SELECT coordinate,door,generation,last_error FROM progress"
             ).fetchone()
         if row is None:
             return ()
-        coordinate, door, generation, checked_at, error, error_at = row
+        coordinate, door, generation, error = row
         head = AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump_json()
         door_head = instance.claim_attestation_evidence_store().head()
         with instance.accepted_history_reader() as history:
@@ -183,9 +182,7 @@ class NextQueueConsumers:
                     "generations_behind": behind,
                     "attestation_head_digest": door,
                     "attestations_behind": door != door_head,
-                    "checked_at": checked_at,
                     "last_error": error,
-                    "last_error_at": error_at,
                 },
                 repair=(
                     ConsumerRepair(

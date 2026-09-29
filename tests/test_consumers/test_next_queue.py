@@ -147,6 +147,7 @@ def test_queue_equivalence_across_histories_and_interval_edges(
             # Rebuild this disposable projection to test each interval.
             consumer._STATE.path(instance).unlink(missing_ok=True)
             _check_edges(instance, time)
+        assert any(row.reason == "claim_stale_evidence" for row in _stored(instance, time).rows)
         return
     elif history == "conflict":
         instance, owner = seed_claims(tmp_path)
@@ -259,6 +260,24 @@ def test_queue_equivalence_across_histories_and_interval_edges(
             ),
         )
     _check_edges(instance, at)
+    expected = {
+        "uncovered": "claim_uncovered",
+        "conflict": "claim_conflicted",
+        "dependency": "claim_dependency_stale",
+    }.get(history)
+    if history.startswith("door-") or history == "threshold":
+        consumer._STATE.path(instance).unlink()
+        later = at + timedelta(minutes=2)
+        _check_edges(instance, later)
+        expected = {
+            "door-contradict": "claim_contradicting_evidence_available",
+            "door-support": "claim_new_evidence_supporting",
+            "door-unsure": "claim_new_evidence_unreviewed",
+            "threshold": "claim_attestation_threshold_met",
+        }[history]
+        at = later
+    if expected is not None:
+        assert any(row.reason == expected for row in _stored(instance, at).rows)
 
 
 def test_serving_skips_claim_folds_and_keeps_paging_and_delta(tmp_path: Path) -> None:
@@ -398,6 +417,13 @@ def test_a_failed_fold_stays_due_and_reports_a_repair(tmp_path: Path) -> None:
             WORKER.run(manager, "instance", work, now=EVALUATION_TIME)
     (health,) = WORKER.health(instance, now=EVALUATION_TIME)
     assert health.state == "stalled" and health.repair is not None
+    from cruxible_core.service.discovery.next import _consumer_stalled_items
+
+    (row,) = _consumer_stalled_items((health,))
+    assert "checked_at" not in row.detail and "last_error_at" not in row.detail
+    with sqlite3.connect(consumer._STATE.path(instance)) as connection:
+        connection.execute("UPDATE progress SET checked_at=?,last_error_at=?", ("later", "later"))
+    assert _consumer_stalled_items(WORKER.health(instance, now=EVALUATION_TIME)) == (row,)
     assert tuple(WORKER.due(instance, now=EVALUATION_TIME))
     _drain(instance)
     assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
@@ -414,3 +440,29 @@ def test_a_new_target_is_not_lost_when_an_old_flight_finishes(tmp_path: Path) ->
     assert tuple(WORKER.due(instance, now=EVALUATION_TIME))
     _drain(instance)
     assert _stored(instance, EVALUATION_TIME) is not None
+
+
+def test_request_observations_merge_with_stored_rows_exactly(tmp_path: Path) -> None:
+    from tests.test_discovery.test_next_request_reads import _rich_request
+    from tests.test_query.test_query_execution_service import _instance_with_query
+
+    instance, _owner = _instance_with_query(tmp_path)
+    request = _rich_request(instance)
+    _drain(instance, request.evaluation_time)
+    assert _stored(instance, request.evaluation_time, version=1) is not None
+    served = service_playbill_next(instance, request=request)
+    with patch.object(consumer, "stored_claim_queue", return_value=None):
+        live = service_playbill_next(instance, request=request)
+    assert served.model_dump_json() == live.model_dump_json()
+
+
+def test_a_queue_behind_head_is_never_used_by_a_read(tmp_path: Path) -> None:
+    from cruxible_core.service.discovery import next as next_module
+
+    instance, owner = _freshness_world(tmp_path)
+    _drain(instance)
+    _refresh_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
+    request = PlaybillNextRequestV2(evaluation_time=EVALUATION_TIME, access_profile=_access())
+    with patch.object(next_module, "_claim_rows", wraps=next_module._claim_rows) as live:
+        service_playbill_next(instance, request=request)
+        assert live.called
