@@ -51,6 +51,24 @@ def test_set_accepts_revises_and_advances_the_connection(pb: Playbill) -> None:
     assert second.changes[0].verdict == "supported"
 
 
+def test_a_stale_set_refuses_then_setting_again_replaces_the_value_it_showed(
+    pb: Playbill, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    first = pb.set(WI1, "status", "ready", because="Checked.")
+    client, instance_id, _key = playbill_http
+    _sdk(client, instance_id, tmp_path, name="other").set(
+        WI1, "status", "blocked", because="Someone else."
+    )
+    with pytest.raises(WriteRefusalError) as caught:
+        pb.set(WI1, "status", "done", because="Stale.")
+    assert caught.value.error_code == "playbill.write.slot_changed"
+    assert "'blocked'" in str(caught.value)
+    again = pb.set(WI1, "status", "done", because="Seen it; replacing.")
+    assert again.status == "accepted"
+    assert again.changes[0].before == "blocked"
+    assert again.changes[0].revises == first.changes[0].claim
+
+
 def test_a_refusal_raises_a_typed_error_carrying_the_outcome(pb: Playbill) -> None:
     with pytest.raises(WriteRefusalError) as caught:
         pb.set(WI1, "status", "dne", because="x")

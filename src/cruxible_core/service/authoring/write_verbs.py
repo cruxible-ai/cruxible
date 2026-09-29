@@ -1393,9 +1393,27 @@ def service_playbill_write(
     request: PlaybillWriteRequestV1,
     caller: WriteCaller,
 ) -> WriteOutcome:
-    """Resolve, check and lower one write, then preview it or carry it to acceptance."""
+    """Resolve, check and lower one write, then preview it or carry it to acceptance.
+
+    Every outcome is pinned to one accepted coordinate: the new generation once
+    accepted, otherwise the head the write was checked against. A caller that
+    asks for ``full_coordinate`` (the SDK, to pin its reads) gets it whole.
+    """
 
     instance.require_writable()
+    outcome = _service_write(instance, request=request, caller=caller)
+    if request.full_coordinate and outcome.accepted_coordinate is None:
+        pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)
+        outcome = outcome.model_copy(update={"accepted_coordinate": _full(pinned)})
+    return outcome
+
+
+def _service_write(
+    instance: PlaybillInstance,
+    *,
+    request: PlaybillWriteRequestV1,
+    caller: WriteCaller,
+) -> WriteOutcome:
     head = instance.accepted_coordinate()
     refused: WriteStatus = "would_refuse" if request.dry_run else "refused"
 
