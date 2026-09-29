@@ -38,7 +38,7 @@ Before minting a new subject:
 2. search type and namespace;
 3. search optional recall-only tags;
 4. inspect near candidates;
-5. choose reuse, alias, or an explicit distinct-from disposition.
+5. reuse an existing subject, add an alias, or mint a new one.
 
 Aliases affect resolution and therefore require stronger authority than
 recall-only tags.

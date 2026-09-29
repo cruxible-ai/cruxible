@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **ClaimTypes no longer need a distinction Claim beside adjacent vocabulary.**
+  The current ClaimType acceptance laws (`playbill.claim-type.v1`, `v3`, `v4`
+  and `v5` at revision 5, `v6` at revision 2) drop the vocabulary reuse check:
+  a new ClaimType whose predicate leaf or structure matches an accepted one,
+  such as `dev.track.title` beside `dev.batch.title`, is accepted without a
+  `semantic.distinct_from` Claim, and the `playbill.reuse.*` refusals are gone.
+  Generations and pending proposals judged under the previous revisions still
+  settle and replay under them unchanged. The reuse models
+  (`VocabularyReuseLawEvidenceV1`, `DiscoveryHintsV1` and related) and the
+  unused descriptor-seed and descriptor-authority contracts leave
+  `cruxible_client.contracts.discovery`.
+
 - **Kits travel as OCI artifacts.** `cruxible playbill kit push` publishes a kit
   as a content-addressed OCI artifact (manifest config blob, one deterministic
   tar layer) and prints its digest-pinned reference; `kit pull` fetches and
