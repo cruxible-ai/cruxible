@@ -366,7 +366,7 @@ class _World:
                 ),
             ),
             citation_role="evidence",
-            claim_ref=claim_ref,
+            revises=claim_ref,
         )
         actor = AuthenticatedActor(actor_id="owner")
         intent = self.coordinator.create(
