@@ -684,3 +684,54 @@ def test_two_columns_never_share_a_row_key() -> None:
     with pytest.raises(PlaybillQueryRefused) as refused:
         _columns(follow=[{"field": "parent", "as": "flags"}], select=["value.flags", "flags"])
     assert refused.value.error_code == "playbill.query.column_collision"
+
+
+def test_spec_mode_clips_path_budgets_at_execution_not_in_the_spec(
+    instance: Any, monkeypatch: Any
+) -> None:
+    declared = work_item_query("project.pathy").model_dump(mode="json")
+    declared.update(
+        traversal=[
+            {
+                "binding": "next",
+                "from_binding": "item",
+                "predicate": PREDICATE,
+                "direction": "forward",
+            }
+        ],
+        result_shape="path",
+        dedupe="path",
+        default_budgets={
+            "max_results": 10,
+            "max_traversal_depth": 1,
+            "max_paths": 10,
+            "max_paths_per_result": 10,
+        },
+        maximum_budgets={
+            "max_results": 50,
+            "max_traversal_depth": 1,
+            "max_paths": 50,
+            "max_paths_per_result": 50,
+        },
+    )
+    spec = QueryDefinitionSpecV1.model_validate({**declared, "pins": []})
+    seen: list[tuple[str, Any]] = []
+
+    class Evaluated(Exception):
+        pass
+
+    def evaluate(_instance: Any, definition: Any, **values: Any) -> Any:
+        seen.append((definition.artifact_digest, values.get("budgets")))
+        raise Evaluated
+
+    monkeypatch.setattr(compact_module, "evaluate_accepted_query", evaluate)
+    with pytest.raises(Evaluated):
+        _query(instance, spec=spec)
+    monkeypatch.setattr(compact_module, "COMPACT_QUERY_MAX_RESULTS", 1)
+    with pytest.raises(Evaluated):
+        _query(instance, spec=spec)
+
+    (digest, _), (clipped_digest, budgets) = seen
+    assert clipped_digest == digest
+    assert (budgets.max_results, budgets.max_paths, budgets.max_paths_per_result) == (1, 1, 1)
+    assert budgets.max_traversal_depth == 1

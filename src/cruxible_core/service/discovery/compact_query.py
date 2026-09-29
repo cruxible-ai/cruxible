@@ -1588,16 +1588,11 @@ def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpecV1) -> Qu
             ),
         )
     )
-    budget = spec.default_budgets
-    capped = budget.model_copy(
-        update={"max_results": min(budget.max_results, COMPACT_QUERY_MAX_RESULTS)}
-    )
     try:
         return QueryDefinitionV1.model_validate(
             {
                 **spec.model_dump(mode="json"),
                 "pins": [pin.model_dump(mode="json") for pin in pins],
-                "default_budgets": capped.model_dump(mode="json"),
             }
         )
     except ValueError as exc:
@@ -1848,6 +1843,13 @@ def _spec_answer(
 ) -> _Answer:
     assert request.spec is not None
     definition = _accepted(_pinned_spec(vocabulary, request.spec))
+    # The server ceiling is an execution input, never part of the spec, so the
+    # submitted spec keeps its digest while every budget is clipped.
+    artifacts = isinstance(definition.query.entry, QueryArtifactsEntryV2)
+    budgets = _server_budgets(
+        definition.query.default_budgets,
+        ARTIFACT_QUERY_MAX_RESULTS if artifacts else COMPACT_QUERY_MAX_RESULTS,
+    )
     if isinstance(definition.query.entry, QueryArtifactsEntryV2):
         return _artifact_answer(
             instance,
@@ -1858,9 +1860,14 @@ def _spec_answer(
             evaluation_time=evaluation_time,
             mode="spec",
             request=None,
+            budgets=budgets,
         )
     result = evaluate_accepted_query(
-        instance, definition, coordinate=coordinate, evaluation_time=evaluation_time
+        instance,
+        definition,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time,
+        budgets=budgets,
     )
     _refuse_engine(result, declared=tuple(item.name for item in definition.query.parameters))
     return _engine_answer(
