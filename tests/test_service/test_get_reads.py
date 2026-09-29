@@ -580,13 +580,17 @@ def test_a_held_stale_dependency_shows_the_unsure_hold_next_parks(
     # coverage -- is the instance's own.
     earlier = "sha256:" + "0" * 64
 
+    def with_input(claim: Any) -> Any:
+        if claim.identity.qualified != dependent.identity.qualified:
+            return claim
+        backing = claim.backing.model_copy(update={"input_claim_digests": (earlier,)})
+        return claim.model_copy(update={"backing": backing})
+
     def recorded(facts: Any) -> Any:
         rows = []
         for row in facts.claims:
-            claim = row.accepted.claim
-            if claim.identity.qualified == dependent.identity.qualified:
-                backing = claim.backing.model_copy(update={"input_claim_digests": (earlier,)})
-                claim = claim.model_copy(update={"backing": backing})
+            claim = with_input(row.accepted.claim)
+            if claim is not row.accepted.claim:
                 row = row.model_copy(
                     update={"accepted": row.accepted.model_copy(update={"claim": claim})}
                 )
@@ -596,6 +600,14 @@ def test_a_held_stale_dependency_shows_the_unsure_hold_next_parks(
     real_facts = next_module.build_accepted_query_facts
     real_read = next_module._AcceptedQueryFactsRead.build
     real_lineages = next_module._bounded_claim_lineages
+    real_dependencies = next_module._claim_dependency_items
+
+    def dependencies(*args: Any, claims: Any = None, **kwargs: Any) -> Any:
+        # The fold first asks the parsed population whether any Claim consumes
+        # another; the recorded input must be visible there as well as in facts.
+        if claims is not None:
+            claims = tuple(with_input(claim) for claim in claims)
+        return real_dependencies(*args, claims=claims, **kwargs)
 
     def lineages(*args: Any, **kwargs: Any) -> Any:
         found, incomplete = real_lineages(*args, **kwargs)
@@ -615,6 +627,7 @@ def test_a_held_stale_dependency_shows_the_unsure_hold_next_parks(
         lambda self, **kwargs: recorded(real_read(self, **kwargs)),
     )
     monkeypatch.setattr(next_module, "_bounded_claim_lineages", lineages)
+    monkeypatch.setattr(next_module, "_claim_dependency_items", dependencies)
 
     (row,) = _rows(_next(instance), "claim_dependency_stale", dependent.identity.qualified)
     assert row.related_identities == (source.identity.qualified,)
