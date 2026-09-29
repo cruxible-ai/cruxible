@@ -148,6 +148,17 @@ def _dependency_order(
         found.discard(path)
         return found
 
+    # Membership first, through both kinds of reference; then order that set by
+    # exact dependencies alone, so an identity reference can never close a cycle.
+    members: set[str] = set()
+    pending = sorted(within if within is not None else states, reverse=True)
+    while pending:
+        path = pending.pop()
+        if path in members:
+            continue
+        members.add(path)
+        pending.extend(sorted(exact(path) | named(path), reverse=True))
+
     done: set[str] = set()
     visiting: set[str] = set()
 
@@ -162,12 +173,9 @@ def _dependency_order(
             yield from visit(dependency)
         visiting.discard(path)
         done.add(path)
-        carried = named(path)
-        yield path, tuple(sorted(ordered | carried))
-        for dependency in sorted(carried):
-            yield from visit(dependency)
+        yield path, tuple(sorted(ordered | named(path)))
 
-    for path in sorted(within if within is not None else states):
+    for path in sorted(members):
         yield from visit(path)
 
 

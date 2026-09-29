@@ -853,3 +853,45 @@ def test_an_identity_reference_never_makes_a_kit_cycle() -> None:
         tree, PlaybillKitBuildRequestV1(kit_id="acme", version="1.0.0", owns=("acme.",))
     )
     assert {item.path for item in bundle.manifest.artifacts} == set(tree)
+
+
+def test_a_release_diff_starting_at_the_contract_sees_no_cycle() -> None:
+    import json
+
+    from cruxible_core.claims.closure import parse_dependency_artifact
+    from cruxible_core.service.kits import _dependency_order, _references  # noqa: F401
+
+    identity_type = _v6_type().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name="acme.work_item.status"),
+            "predicate": "acme.work_item.status",
+            "allowed_subject_kinds": ("acme.work_item",),
+        }
+    )
+    pinning = ORIGINAL.model_copy(
+        update={
+            "pins": tuple(
+                sorted(
+                    (
+                        *ORIGINAL.pins,
+                        ArtifactPin(
+                            role="claim-type",
+                            target=identity_type.identity,
+                            artifact_digest=claim_type_digest(identity_type).tagged,
+                        ),
+                    ),
+                    key=lambda pin: (pin.role, pin.target.qualified),
+                )
+            )
+        }
+    )
+    tree = {
+        claim_type_path(identity_type.predicate): render_claim_type(identity_type),
+        CONTRACT_PATH: render_capture_contract(pinning),
+    }
+    states = {path: parse_dependency_artifact(path, content) for path, content in tree.items()}
+    payloads = {path: json.loads(content) for path, content in tree.items()}
+    for start in (CONTRACT_PATH, claim_type_path(identity_type.predicate)):
+        order = [path for path, _pinned in _dependency_order(states, payloads, within={start})]  # type: ignore[arg-type]
+        assert set(order) == set(tree)
+        assert order.index(claim_type_path(identity_type.predicate)) < order.index(CONTRACT_PATH)
