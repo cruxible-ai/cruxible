@@ -497,3 +497,35 @@ def test_a_column_named_like_row_metadata_keeps_its_values(instance: Any) -> Non
     assert result.rows[0]["value.flags"] == "ready"
     assert result.rows[0]["value.subject"] == "wi-42"
     assert result.rows[0]["flags"] == []
+
+
+@pytest.mark.parametrize(
+    ("value_type", "cell", "wanted", "matched"),
+    [
+        (
+            "timestamp",
+            ["2026-09-01T00:00:00Z", "2026-09-02T12:00:00Z"],
+            ("2026-09-02T12:00:00+00:00",),
+            True,
+        ),
+        ("timestamp", ["2026-09-01T00:00:00Z"], ("2026-09-03T00:00:00Z",), False),
+        ("decimal", [1, 3], ("3.0",), True),
+        ("boolean", [True], (1,), False),
+    ],
+)
+def test_inline_in_compares_temporal_and_decimal_values(
+    value_type: str, cell: list[object], wanted: tuple[object, ...], matched: bool
+) -> None:
+    from cruxible_core.service.discovery.compact_query import (
+        _Field,
+        _inline_matches,
+        _InlineFilter,
+    )
+
+    info = SimpleNamespace(value_type=value_type, cardinality="many", predicate="k.p")
+    item = _InlineFilter(
+        field=_Field(name="p", binding="subject", info=info, label="k.p"),  # type: ignore[arg-type]
+        operator="in",
+        value=wanted,
+    )
+    assert _inline_matches(item, cell) is matched

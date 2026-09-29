@@ -573,10 +573,9 @@ def _inline_matches(item: _InlineFilter, values: Sequence[object]) -> bool:
     typed = [_comparable(info, value) for value in values]
     if operator == "in":
         wanted = {
-            canonical_bytes(_comparable(info, entry))
-            for entry in cast(tuple[object, ...], item.value)
+            _member_key(_comparable(info, entry)) for entry in cast(tuple[object, ...], item.value)
         }
-        return any(_safe_bytes(value) in wanted for value in typed)
+        return any(_member_key(value) in wanted for value in typed)
     target = _comparable(info, item.value)
     if operator == "eq":
         return any(value == target for value in typed)
@@ -598,11 +597,18 @@ def _ordered_match(operator: str, left: Any, right: Any) -> bool:
         return False
 
 
-def _safe_bytes(value: object) -> bytes:
+def _member_key(value: object) -> tuple[bool, object]:
+    """A hashable membership key over comparable forms: instants, decimals, text.
+
+    A boolean is kept apart from the integers it would otherwise equal. A value
+    that cannot be hashed (a JSON array or object) is keyed by its repr.
+    """
+
     try:
-        return canonical_bytes(value)
-    except Exception:
-        return repr(value).encode("utf-8")
+        hash(value)
+    except TypeError:
+        return (False, repr(value))
+    return (isinstance(value, bool), value)
 
 
 def _pins(vocabulary: QueryVocabulary, predicates: Sequence[str]) -> tuple[ArtifactPin, ...]:
