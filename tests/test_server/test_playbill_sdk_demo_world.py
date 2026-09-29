@@ -578,9 +578,14 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         "plane": "external",
         "identity": "corpus.vuln-response-runbook",
     }
-    assert drift.repair.operation == "playbill.authoring.bind"
+    # The repair is the set verb that restates the Claim on the redrifted source:
+    # the door on every profile (full is a superset), and the tool its tier gate names.
+    assert drift.repair.operation == "playbill.set"
     assert drift.repair.required_change == "adjudicate_citation_drift"
     assert drift.repair.arguments["source_id"] == "corpus.vuln-response-runbook"
+    assert drift.repair.arguments["claim_id"] == claim_id
+    assert drift.repair.command is not None
+    assert drift.repair.command.startswith("playbill.set(")
     runbook.write_text(original_runbook, encoding="utf-8")
     reverted = pb.next(expiring_within=Duration.days(count=7))
     assert not any(item.reason == "citation_drifted" for item in reverted.items)

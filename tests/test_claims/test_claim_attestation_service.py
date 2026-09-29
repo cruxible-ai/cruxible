@@ -712,9 +712,11 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
         "lineage_status",
     }
     assert rows[0].detail["lineage_status"] == "proven"
-    assert rows[0].repair.command.endswith(
-        f"--attestation-claim-id {claim_id} --capture-digest {capture.capture_digest}"
-    )
+    # The door example revises the Claim citing the Capture: the set verb, on
+    # every profile, with the Capture as evidence.
+    assert rows[0].repair.operation == "playbill.set"
+    assert rows[0].repair.arguments["claim_id"] == claim_id
+    assert rows[0].repair.command.endswith(f"--capture {capture.capture_digest}")
 
 
 def _assert_successor_resolves_attestation_membership(
