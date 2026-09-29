@@ -151,6 +151,11 @@ from cruxible_client.contracts.laws import (
     CLAIM_LAW_V2_REVISION_7,
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_LAW_V3_REVISION_9,
+    CLAIM_TYPE_LAW_REVISION_4,
+    CLAIM_TYPE_LAW_V3_REVISION_4,
+    CLAIM_TYPE_LAW_V4_REVISION_4,
+    CLAIM_TYPE_LAW_V5_REVISION_4,
+    CLAIM_TYPE_LAW_V6_REVISION_1,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
@@ -795,6 +800,21 @@ def _canonical_model_digest(domain: str, model: BaseModel) -> str:
 
 def _sorted_terms(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(sorted(values, key=lambda item: item.encode("utf-8")))
+
+
+# The ClaimType law coordinates that ran the vocabulary reuse law. Their member
+# results carry a ``reuse`` key (evidence for a new ClaimType, null for a
+# revision) that replay and settlement must reproduce byte for byte.
+HISTORICAL_REUSE_CLAIM_TYPE_LAWS: frozenset[tuple[str, str]] = frozenset(
+    (law.identifier, law.digest)
+    for law in (
+        CLAIM_TYPE_LAW_REVISION_4,
+        CLAIM_TYPE_LAW_V3_REVISION_4,
+        CLAIM_TYPE_LAW_V4_REVISION_4,
+        CLAIM_TYPE_LAW_V5_REVISION_4,
+        CLAIM_TYPE_LAW_V6_REVISION_1,
+    )
+)
 
 
 def _reuse_interface(
@@ -3079,8 +3099,16 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
                     ),
                 )
             )
+    installed = _installed(context, claim_type.artifact_format)
+    # Only the historical ClaimType law revisions ran the vocabulary reuse law;
+    # they are reachable solely by replaying or settling under their recorded
+    # coordinate, and they must reproduce their recorded evidence exactly.
+    reuse_law = (
+        installed.coordinate.identifier,
+        installed.coordinate.digest,
+    ) in HISTORICAL_REUSE_CLAIM_TYPE_LAWS
     reuse: dict[str, object] | None = None
-    if predecessor is None:
+    if reuse_law and predecessor is None:
         reuse = _claim_type_reuse_evidence(
             claim_type=claim_type,
             path=context.path,
@@ -3127,7 +3155,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         context.used_expansions.add(expansion.expanded_artifact_digest)
     return _accepted(
         context,
-        _installed(context, claim_type.artifact_format),
+        installed,
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -3139,7 +3167,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
                 None if expansion is None else expansion.model_dump(mode="json")
             ),
             "expanded_claim_type": claim_type.model_dump(mode="json"),
-            "reuse": reuse,
+            **({"reuse": reuse} if reuse_law else {}),
             "verdict": "accepted",
         },
         policy_digests=tuple(

@@ -226,7 +226,7 @@ def _accept_tree(instance: Any, tree: dict[str, bytes], name: str) -> None:
 
 
 def test_get_cards_name_predicates_by_the_shared_rule_as_orient_does(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """Addendum 2 on get: no last-segment names, and the same names orient shows."""
 
@@ -241,7 +241,6 @@ def test_get_cards_name_predicates_by_the_shared_rule_as_orient_does(
         PlaybillGetClaimCardV1,
         PlaybillGetSubjectCardV1,
     )
-    from cruxible_core.proposals import proposals as proposals_module
     from cruxible_core.service.discovery.field_names import resolve_field
     from tests.core_support._claim_authoring_support import service_propose_playbill_claim
     from tests.core_support._knowledge_loop_support import activate, authoring
@@ -268,15 +267,8 @@ def test_get_cards_name_predicates_by_the_shared_rule_as_orient_does(
     for predicate, claim_type in collisions.items():
         tree[claim_type_path(predicate)] = render_claim_type(claim_type)
     # The collision fixture is deliberately near-duplicate vocabulary (every leaf
-    # is ``status``); the reuse law's distinction review is not under test here.
-    reuse = proposals_module.evaluate_vocabulary_reuse
-    with monkeypatch.context() as patch:
-        patch.setattr(
-            proposals_module,
-            "evaluate_vocabulary_reuse",
-            lambda request, **kw: reuse(request, **{**kw, "accepted_interfaces": ()}),
-        )
-        _accept_tree(instance, tree, "collision-claim-types")
+    # is ``status``), which current ClaimType laws accept as is.
+    _accept_tree(instance, tree, "collision-claim-types")
     for index, (predicate, claim_type) in enumerate(collisions.items()):
         request = authoring("wi-42", "ready", with_claim_type=False)
         request = request.model_copy(
