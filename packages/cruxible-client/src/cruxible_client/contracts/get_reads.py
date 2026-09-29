@@ -222,6 +222,8 @@ class PlaybillGetProposalChangeV1(_StrictGetModel):
 class PlaybillGetProposalCardV1(_StrictGetModel):
     proposal: str
     status: str
+    # Retained partial evidence: which records are missing, as the list says.
+    incomplete: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
     verdict: str | None = Field(default=None, exclude_if=_omit_none)
     reason: str | None = Field(default=None, exclude_if=_omit_none)
     actor: str | None = Field(default=None, exclude_if=_omit_none)

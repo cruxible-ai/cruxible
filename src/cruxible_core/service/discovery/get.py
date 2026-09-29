@@ -286,12 +286,38 @@ def resolve_get_ref(
 
 
 def _resolve_proposal(instance: PlaybillInstance, selector: str) -> ResolvedRef:
+    """A proposal id or unique prefix, or a target ref, without requiring every record.
+
+    Retained partial evidence is still a proposal: the by-ID status read answers
+    it as ``incomplete``, so resolution must not demand the admission first.
+    """
+
+    from cruxible_client.contracts.errors import ProposalSelectorAmbiguousError
+    from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix
     from cruxible_core.service.proposals.proposals import (
+        service_playbill_proposal_status,
         service_resolve_playbill_proposal_selector,
     )
 
-    resolved = service_resolve_playbill_proposal_selector(instance, selector=selector)
-    return ResolvedRef("proposal", resolved.proposal_id, f"Proposal:{resolved.proposal_id}")
+    if selector.startswith("refs/"):
+        resolved = service_resolve_playbill_proposal_selector(instance, selector=selector)
+        return ResolvedRef("proposal", resolved.proposal_id, f"Proposal:{resolved.proposal_id}")
+    try:
+        entry = service_playbill_proposal_status(instance, proposal_id=selector)
+    except AmbiguousIdPrefix as exc:
+        evidence = instance.proposal_evidence()
+        candidates = (
+            ()
+            if evidence.index is None
+            else tuple(
+                row["proposal_id"]
+                for row in evidence.index.rows(
+                    evidence, "proposal_id>=? AND proposal_id<?", (selector, selector + "\uffff")
+                )
+            )
+        )
+        raise ProposalSelectorAmbiguousError(selector, candidates) from exc
+    return ResolvedRef("proposal", entry.proposal_id, f"Proposal:{entry.proposal_id}")
 
 
 def _envelope(projection: Any, identity: str) -> Any | None:
@@ -967,33 +993,55 @@ def _capture_contract_card(
     )
 
 
+def _proposal_records(instance: PlaybillInstance, proposal_id: str) -> dict[str, Any]:
+    """The proposal's list entry and whichever of its records are retained.
+
+    The entry is the by-ID status read's, which authenticates every record that
+    is present and answers ``incomplete`` with its reasons for any that is not.
+    """
+
+    from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
+
+    entry = service_playbill_proposal_status(instance, proposal_id=proposal_id)
+    missing = set(entry.incomplete_reasons)
+    evidence = instance.proposal_evidence()
+    admission = None if "missing_admission" in missing else evidence.read_admission(proposal_id)
+    evaluation = None if "missing_evaluation" in missing else evidence.read_evaluation(proposal_id)
+    candidate = (
+        None
+        if evaluation is None
+        or evaluation.candidate_digest is None
+        or "missing_candidate" in missing
+        else evidence.read_candidate(evaluation.candidate_digest)
+    )
+    return {
+        "status": entry,
+        "admission": admission,
+        "evaluation": evaluation,
+        "candidate": candidate,
+    }
+
+
 def _proposal_card(
     instance: PlaybillInstance,
     resolved: ResolvedRef,
     *,
     surface: PlaybillReadSurface,
 ) -> PlaybillGetProposalCardV1:
-    from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
-    from cruxible_core.service.proposals.proposals import service_playbill_proposal_status
-
-    entry = service_playbill_proposal_status(instance, proposal_id=resolved.identity)
-    rationale: str | None = None
+    records = _proposal_records(instance, resolved.identity)
+    entry = records["status"]
+    admission = records["admission"]
+    candidate = records["candidate"]
     changes: list[PlaybillGetProposalChangeV1] = []
-    if "missing_admission" not in entry.incomplete_reasons and (
-        "missing_evaluation" not in entry.incomplete_reasons
-    ):
-        inspection = service_inspect_playbill_proposal(instance, proposal_id=resolved.identity)
-        rationale = inspection.proposal.admission.rationale
-        candidate = inspection.proposal.candidate
-        members = () if candidate is None else candidate.members
-        for member in members[:_MAX_CHANGES]:
-            changes.append(PlaybillGetProposalChangeV1(path=member.path, change=member.disposition))
-        if len(members) > _MAX_CHANGES:
-            changes.append(
-                PlaybillGetProposalChangeV1(
-                    path="…", change=f"{len(members) - _MAX_CHANGES} more; see detail=proof"
-                )
+    members = () if candidate is None else candidate.members
+    for member in members[:_MAX_CHANGES]:
+        changes.append(PlaybillGetProposalChangeV1(path=member.path, change=member.disposition))
+    if len(members) > _MAX_CHANGES:
+        changes.append(
+            PlaybillGetProposalChangeV1(
+                path="…", change=f"{len(members) - _MAX_CHANGES} more; see detail=proof"
             )
+        )
     step: str | None = None
     if entry.status == "open" and entry.verdict == "candidate":
         step = "review"
@@ -1004,11 +1052,12 @@ def _proposal_card(
     return PlaybillGetProposalCardV1(
         proposal=resolved.identity,
         status=entry.status,
+        incomplete=entry.incomplete_reasons,
         verdict=entry.verdict,
         reason=entry.terminal_reason,
         actor=entry.actor_id,
         admitted_at=entry.admitted_at,
-        rationale=rationale,
+        rationale=None if admission is None else admission.rationale,
         changes=tuple(changes),
         next=() if step is None else (_render_proposal_step(surface, step, resolved.identity),),
     )
@@ -1343,11 +1392,11 @@ def _proof(
             "artifact_digest": row.artifact_digest if row else None,
             "envelope": contract.model_dump(mode="json"),
         }
-    from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
-
-    return service_inspect_playbill_proposal(instance, proposal_id=resolved.identity).model_dump(
-        mode="json"
-    )
+    # Proposals are operational: the status entry and the retained records.
+    return {
+        name: None if value is None else value.model_dump(mode="json")
+        for name, value in _proposal_records(instance, resolved.identity).items()
+    }
 
 
 def _why(

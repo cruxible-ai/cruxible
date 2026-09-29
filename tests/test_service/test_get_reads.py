@@ -532,3 +532,49 @@ def test_a_new_contender_ends_the_unsure_hold_exactly_as_next_decides(tmp_path: 
     _contend(instance, owner, contenders[-1], "done", "hold-conflict-new")
     assert _rows(_next(instance), "claim_conflicted")
     assert "unsure_hold" not in flags()
+
+
+@pytest.mark.parametrize("missing", ("admission", "evaluation", "candidate"))
+def test_a_partial_proposal_reads_as_incomplete_not_an_integrity_error(
+    tmp_path: Path, missing: str
+) -> None:
+    from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecordV1
+    from tests.core_support._support import initialize_local
+    from tests.test_proposals.test_grouped_proposal_notes import _submit
+
+    instance, _ = initialize_local(tmp_path)
+    partial = _submit(instance, "partial")
+    proposal_id = partial.admission.proposal_id
+    evidence = instance.proposal_evidence()
+    if missing == "admission":
+        evidence.write_withdrawal(
+            ProposalWithdrawalRecordV1(
+                proposal_id=proposal_id,
+                actor_id="owner",
+                reason="retain this row",
+                withdrawn_at="2026-08-11T12:31:00.000000Z",
+            )
+        )
+        evidence.index.locate(evidence, proposal_id)
+        path = evidence.proposals / f"{proposal_id.removeprefix('sha256:')}.json"
+    elif missing == "evaluation":
+        path = evidence.root / evidence.index.locate(evidence, proposal_id)["evaluation_path"]
+    else:
+        path = (
+            evidence.candidates
+            / f"{partial.candidate.candidate_digest.removeprefix('sha256:')}.json"
+        )
+    path.unlink()
+
+    for ref in (proposal_id, proposal_id[:20], f"Proposal:{proposal_id}"):
+        result = _get(instance, ref)
+        card = result.card
+        assert result.kind == "proposal" and card is not None
+        fields = card.model_dump()
+        assert fields["status"] == "incomplete"
+        assert fields["incomplete"] == (f"missing_{missing}",)
+        assert fields["next"] == ()
+    proof = _get(instance, proposal_id, detail="proof").proof
+    assert proof is not None
+    assert proof["status"]["incomplete_reasons"] == [f"missing_{missing}"]
+    assert (proof.get("admission") is None) == (missing == "admission")
