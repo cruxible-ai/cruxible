@@ -796,9 +796,9 @@ class PredictionSettlementConsumers:
             contract = _contract_row(tuple(contract_row))
             event = TriggerEventReferenceV1.model_validate_json(event_json)
             window = _bind(instance, contract, event)
+            retried.append((contract.identity, digest, retry_mark))
             if window is None:
                 continue
-            retried.append((contract.identity, digest, retry_mark))
             if isinstance(window, str):
                 rebound.append((contract, [], [(digest, event, window)], []))
                 continue

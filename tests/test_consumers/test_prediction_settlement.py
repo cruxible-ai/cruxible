@@ -674,3 +674,56 @@ def test_retry_health_reports_unprocessed_events_and_backlog(
     (health,) = WORKER.health(instance, now=served.PREDICTED_AT)
     assert health.state == "running" and health.detail["pending_anchor_retries"] == 0
     assert tuple(WORKER.due(instance, now=FIXED_CLOSES + timedelta(days=100))) == ()
+
+
+def test_a_retryable_anchor_is_attempted_once_per_trigger_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _event, _restore = unbindable_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    (anchor,) = unbindable_anchors(instance)
+    attempts = []
+
+    def unavailable(*args, **kwargs):  # type: ignore[no-untyped-def]
+        attempts.append(args[2])
+        return None
+
+    monkeypatch.setattr(predictions, "_bind", unavailable)
+    for hour in (1, 2):
+        fired_at = served.PREDICTED_AT + timedelta(hours=hour)
+        evaluate_triggers(instance, now=fired_at, config=TriggerOperationalConfigV1())
+        drain(instance, now=fired_at)
+        assert len(attempts) == hour
+        assert unbindable_anchors(instance) == (anchor,)
+        for tick in range(3):
+            drain(instance, now=fired_at + timedelta(seconds=tick))
+        assert len(attempts) == hour
+        assert tuple(WORKER.due(instance, now=fired_at + timedelta(days=100))) == ()
+
+
+def test_a_new_retry_event_during_an_attempt_remains_queued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _event, _restore = unbindable_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    fired_at = served.PREDICTED_AT + timedelta(hours=1)
+    evaluate_triggers(instance, now=fired_at, config=TriggerOperationalConfigV1())
+    WORKER.match(instance, now=fired_at, daemon_id="daemon")
+    attempts = []
+
+    def unavailable(*args, **kwargs):  # type: ignore[no-untyped-def]
+        attempts.append(args[2])
+        if len(attempts) == 1:
+            next_fire = fired_at + timedelta(hours=1)
+            evaluate_triggers(instance, now=next_fire, config=TriggerOperationalConfigV1())
+            WORKER.match(instance, now=next_fire, daemon_id="daemon")
+        return None
+
+    monkeypatch.setattr(predictions, "_bind", unavailable)
+    manager = SimpleNamespace(get=lambda _: instance)
+    (work,) = WORKER.due(instance, now=fired_at)
+    WORKER.run(manager, "instance", work, now=fired_at)
+    assert len(attempts) == 1
+    assert tuple(WORKER.due(instance, now=fired_at))
+    drain(instance, now=fired_at)
+    assert len(attempts) == 2 and not tuple(WORKER.due(instance, now=fired_at))
