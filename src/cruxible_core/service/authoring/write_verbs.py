@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import shlex
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -220,6 +221,27 @@ def _render_commit(surface: PlaybillReadSurface, git_oid: str) -> str:
     if surface == "sdk":
         return f"Call it again with dry_run=False, at={json.dumps(git_oid)}"
     return f'Call it again with dry_run=false and at="{git_oid}"'
+
+
+_INTEGER_TEXT = re.compile(r"-?(?:0|[1-9][0-9]*)")
+
+
+def _coerce_text(value: object, info: PredicateInfo) -> object:
+    """Read a canonical text spelling of a number or boolean as that value.
+
+    The CLI passes every value as text, and an agent may too. A field whose
+    schema is an integer or a boolean takes the one canonical spelling of such
+    a value (``42``, ``-3``, ``true``, ``false``); any other text stays text and
+    is refused by the schema check with the type it needed.
+    """
+
+    if not isinstance(value, str):
+        return value
+    if info.value_type in ("integer", "decimal") and _INTEGER_TEXT.fullmatch(value):
+        return int(value)
+    if info.value_type == "boolean" and value in ("true", "false"):
+        return value == "true"
+    return value
 
 
 # -- planning ------------------------------------------------------------------------
@@ -461,6 +483,7 @@ class _Planner:
         self, info: PredicateInfo, value: object, *, index: int, field_name: str
     ) -> LiteralClaimObject:
         path = f"changes[{index}].value"
+        value = _coerce_text(value, info)
         if isinstance(value, float):
             if not value.is_integer():
                 raise _refuse(

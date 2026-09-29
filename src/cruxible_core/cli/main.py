@@ -796,6 +796,15 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "get": _command(
                 "playbill", "get_by_ref", "Read one governed thing by reference, values first."
             ),
+            "set": _command(
+                "playbill", "set_value", "Set one field of one Subject, replacing its value."
+            ),
+            "retire": _command(
+                "playbill", "retire", "Retire one live Claim, by ID or by Subject and field."
+            ),
+            "write": _command(
+                "playbill", "write_changes", "Apply set, add and retire changes as one change set."
+            ),
             "search": _command("playbill", "search", "Search accepted Claims and Procedures."),
             "since": _command("playbill", "since", "Read accepted ChangeSet history."),
             "list": _command(

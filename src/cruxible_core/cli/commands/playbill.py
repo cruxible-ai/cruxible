@@ -16,7 +16,7 @@ from typing import Any, Literal, TypeVar, cast, get_args
 
 import click
 import yaml
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from cruxible_client import (
     CruxibleClient,
@@ -25,7 +25,7 @@ from cruxible_client import (
     materialize_playbill_floor,
     observe_playbill_next_workspace,
 )
-from cruxible_client._error_base import printable
+from cruxible_client._error_base import CoreError, printable
 from cruxible_client.artifacts import (
     RegistryClient,
     parse_reference,
@@ -65,6 +65,7 @@ from cruxible_client.authoring.workspace import (
     write_playbill_workspace_config,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for
+from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -103,6 +104,14 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
+from cruxible_client.contracts.write import (
+    Change,
+    FileEvidence,
+    PlaybillRetireRequestV1,
+    PlaybillSetRequestV1,
+    PlaybillWriteRequestV1,
+    WriteOutcome,
+)
 from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
     KIT_ARTIFACT,
@@ -3505,6 +3514,310 @@ def _emit_retirement_context(context: Mapping[str, Any]) -> None:
             f"{relation['retired_claim_count']} retired Claim(s): "
             + ", ".join(relation["retired_claim_witnesses"])
         )
+
+
+# -- the write verbs: set, retire, write --------------------------------------------
+
+
+class _WriteFileV1(BaseModel):
+    """What ``cruxible playbill write FILE`` reads: the changes, and why."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    because: str | None = Field(
+        default=None, min_length=1, description="Why; --because overrides it."
+    )
+    changes: list[Change] = Field(min_length=1)
+
+
+def _write_options(function: Callable[..., Any]) -> Callable[..., Any]:
+    for option in reversed(
+        (
+            click.option("--dry-run", is_flag=True, help="Run every check; write nothing."),
+            click.option(
+                "--no-accept",
+                is_flag=True,
+                help="Only propose, even when policy would let this write be accepted now.",
+            ),
+            click.option(
+                "--at",
+                "at_oid",
+                default=None,
+                help="The git oid (or 12+ hex prefix) you read at; refuse if the slot moved.",
+            ),
+            json_option,
+        )
+    ):
+        function = option(function)
+    return function
+
+
+def _write_text(outcome: WriteOutcome) -> None:
+    head = outcome.status.replace("_", " ")
+    click.echo(f"{head} (generation {outcome.coordinate.generation}, {outcome.coordinate.git_oid})")
+    for change in outcome.changes:
+        target = " ".join(part for part in (change.subject, change.field) if part)
+        if change.op == "retire":
+            line = f"  retire {target}: {_get_value_text(change.before)}"
+        elif change.op == "add":
+            line = f"  add {target}: {_get_value_text(change.after)}"
+        elif change.before is None:
+            line = f"  set {target}: {_get_value_text(change.after)}"
+        else:
+            line = (
+                f"  set {target}: {_get_value_text(change.before)} -> "
+                f"{_get_value_text(change.after)}"
+            )
+        details = [item for item in (change.claim,) if item]
+        if change.verdict is not None:
+            details.append(f"verdict {change.verdict}")
+        if change.retired:
+            details.append(f"also retires {', '.join(change.retired)}")
+        if change.contenders_created:
+            details.append(f"contends with {', '.join(change.contenders_created)}")
+        click.echo(line + (f"  [{'; '.join(details)}]" if details else ""))
+    for subject in outcome.subjects_added:
+        click.echo(f"  + subject {subject}")
+    if outcome.proposal is not None and outcome.status != "accepted":
+        click.echo(f"proposal: {outcome.proposal.proposal_id} ({outcome.proposal.state})")
+    if outcome.approval is not None:
+        approval = outcome.approval
+        who = ", ".join(approval.eligible_approvers) or "you, with a tier that may activate"
+        click.echo(f"awaiting: {approval.reason.replace('_', ' ')}; approvers: {who}")
+    for warning in outcome.warnings:
+        click.echo(f"warning {warning.code}: {warning.message}", err=True)
+    if outcome.refusal is not None:
+        refusal = outcome.refusal
+        where = "" if refusal.change is None else f" (change {refusal.change})"
+        click.echo(f"{refusal.code}{where}: {refusal.message}", err=True)
+        if refusal.candidates:
+            click.echo(f"  nearest: {', '.join(refusal.candidates)}", err=True)
+        if refusal.repair:
+            click.echo(f"  repair: {refusal.repair}", err=True)
+    if outcome.next is not None:
+        click.echo(f"next: {outcome.next}")
+
+
+def _finish_write(outcome: WriteOutcome, *, output_json: bool) -> None:
+    if output_json:
+        _emit_json(outcome.model_dump(mode="json"))
+    else:
+        _write_text(outcome)
+    if outcome.refused:
+        raise SystemExit(1)
+
+
+def _write_request(model: type[ResultT], fields: Mapping[str, Any], *, example: str) -> ResultT:
+    validator = getattr(model, "model_validate")
+    try:
+        return cast(ResultT, validator({**fields, "surface": "cli"}))
+    except ValidationError as exc:
+        raise click.UsageError(
+            "; ".join(_model_field_errors(exc)) + f" (example: {example})"
+        ) from None
+
+
+def _evidence_option_value(
+    evidence_file: str | None, capture: str | None, workspace_root: str
+) -> dict[str, Any] | None:
+    if evidence_file is not None and capture is not None:
+        raise click.UsageError("pass --evidence-file or --capture, not both")
+    if capture is not None:
+        return {"kind": "capture", "capture": capture}
+    if evidence_file is None:
+        return None
+    try:
+        observed = observe_evidence(
+            FileEvidence(file=evidence_file), workspace=Path(workspace_root)
+        )
+    except (ValidationError, CoreError) as exc:
+        raise click.UsageError(f"--evidence-file {evidence_file}: {exc}") from None
+    assert observed is not None
+    return observed.model_dump(mode="json")
+
+
+@playbill_group.command("set")
+@click.argument("subject")
+@click.argument("field")
+@click.argument("value")
+@click.option("--because", required=True, help="Why; also the default evidence.")
+@click.option(
+    "--evidence-file",
+    default=None,
+    help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
+)
+@click.option("--capture", default=None, help="Cite an existing Capture by digest.")
+@click.option("--role", default=None, help="Only when the field permits several roles.")
+@click.option("--contend", is_flag=True, help="Contest the live value instead of replacing it.")
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose source catalog --evidence-file reads.",
+)
+@_write_options
+@handle_errors
+def set_value(
+    subject: str,
+    field: str,
+    value: str,
+    because: str,
+    evidence_file: str | None,
+    capture: str | None,
+    role: str | None,
+    contend: bool,
+    workspace_root: str,
+    dry_run: bool,
+    no_accept: bool,
+    at_oid: str | None,
+    output_json: bool,
+) -> None:
+    """Set FIELD of SUBJECT (kind/id) to VALUE, replacing the live value.
+
+    The Claim it replaces is found for you. A Subject of a known kind that does
+    not exist yet is added. VALUE is text: an enum member, a number or true/false
+    for such fields, a Subject as kind/id, or the text itself for exact content.
+    """
+
+    request = _write_request(
+        PlaybillSetRequestV1,
+        {
+            "subject": subject,
+            "field": field,
+            "value": value,
+            "because": because,
+            "evidence": _evidence_option_value(evidence_file, capture, workspace_root),
+            "role": role,
+            "contend": contend,
+            "dry_run": dry_run,
+            "accept": "never" if no_accept else "if_allowed",
+            "at": at_oid,
+        },
+        example='cruxible playbill set dev.item/tidy-cli status done --because "Shipped."',
+    )
+    outcome = _server_call(
+        lambda client, instance_id: client.playbill_set(instance_id, request=request),
+        command_name="playbill set",
+    )
+    _finish_write(outcome, output_json=output_json)
+
+
+@playbill_group.command("retire")
+@click.argument("target")
+@click.argument("field", required=False)
+@click.option("--because", required=True, help="Why it ends.")
+@click.option(
+    "--reason",
+    type=click.Choice(["was-rescinded", "was-wrong", "superseded"]),
+    default="was-rescinded",
+    show_default=True,
+    help="was-rescinded: withdrawn; was-wrong: it was false; superseded: its shape is gone.",
+)
+@_write_options
+@handle_errors
+def retire(
+    target: str,
+    field: str | None,
+    because: str,
+    reason: str,
+    dry_run: bool,
+    no_accept: bool,
+    at_oid: str | None,
+    output_json: bool,
+) -> None:
+    """Retire one live Claim: TARGET is a Claim ID, or a Subject (kind/id) and its FIELD.
+
+    Claims that depend on it retire with it, in the same change set.
+    """
+
+    request = _write_request(
+        PlaybillRetireRequestV1,
+        {
+            "target": target if field is None else {"subject": target, "field": field},
+            "because": because,
+            "reason": reason,
+            "dry_run": dry_run,
+            "accept": "never" if no_accept else "if_allowed",
+            "at": at_oid,
+        },
+        example='cruxible playbill retire CLM-0123456789abcdef0123456789abcdef --because "Wrong."',
+    )
+    outcome = _server_call(
+        lambda client, instance_id: client.playbill_retire(instance_id, request=request),
+        command_name="playbill retire",
+    )
+    _finish_write(outcome, output_json=output_json)
+
+
+@playbill_group.command("write")
+@click.argument("file", required=False, type=click.Path(exists=True, dir_okay=False))
+@click.option("--because", default=None, help="Why; overrides the file's because.")
+@click.option("--schema", is_flag=True, help="Print the JSON schema FILE is validated against.")
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose source catalog file evidence reads.",
+)
+@_write_options
+@handle_errors
+def write_changes(
+    file: str | None,
+    because: str | None,
+    schema: bool,
+    workspace_root: str,
+    dry_run: bool,
+    no_accept: bool,
+    at_oid: str | None,
+    output_json: bool,
+) -> None:
+    """Apply FILE's set, add and retire changes as one change set.
+
+    FILE (YAML or JSON) holds {"because": ..., "changes": [...]}, or a bare list
+    of changes with --because. Each change is {"op": "set" | "add", "subject",
+    "field", "value"} or {"op": "retire", "target"}; --schema prints the schema.
+    """
+
+    if schema:
+        _emit_json(_WriteFileV1.model_json_schema())
+        return
+    if file is None:
+        raise click.UsageError("pass FILE, or --schema to see what FILE holds")
+    source = Path(file).expanduser()
+    try:
+        payload = yaml.safe_load(source.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise click.ClickException(f"Could not read {source}: {exc}") from exc
+    if isinstance(payload, list):
+        payload = {"changes": payload}
+    try:
+        parsed = _WriteFileV1.model_validate(payload)
+    except ValidationError as exc:
+        raise DataValidationError(
+            f"{source} is not a valid write file (cruxible playbill write --schema prints it)",
+            errors=_model_field_errors(exc),
+        ) from exc
+    rationale = because or parsed.because
+    if rationale is None:
+        raise click.UsageError("give the write a reason: --because, or because in FILE")
+    request = _write_request(
+        PlaybillWriteRequestV1,
+        {
+            "changes": observe_changes(parsed.changes, workspace=Path(workspace_root)),
+            "because": rationale,
+            "dry_run": dry_run,
+            "accept": "never" if no_accept else "if_allowed",
+            "at": at_oid,
+        },
+        example="cruxible playbill write changes.yaml",
+    )
+    outcome = _server_call(
+        lambda client, instance_id: client.playbill_write(instance_id, request=request),
+        command_name="playbill write",
+    )
+    _finish_write(outcome, output_json=output_json)
 
 
 @playbill_group.command("get")
