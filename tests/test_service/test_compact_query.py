@@ -280,6 +280,18 @@ def test_a_contested_slot_shows_every_live_value(tmp_path: Path) -> None:
     assert "contested" in row["flags"]
     # A contested slot never matches a value filter; it stays visible unfiltered.
     assert _ids(_query(seeded, kind=SUBJECT_KIND, where=[{"field": "status", "eq": "ready"}])) == []
+    # ... and never any other value filter: ne, in, or an inline contains.
+    for where in (
+        [{"field": "status", "ne": "blocked"}],
+        [{"field": "status", "ne": "ready"}],
+        [{"field": "status", "in": ["ready", "done"]}],
+        [{"field": "status", "contains": "rea"}],
+    ):
+        assert "wi-42" not in _ids(_query(seeded, kind=SUBJECT_KIND, where=where)), where
+    assert _ids(_query(seeded, kind=SUBJECT_KIND, where=[{"field": "status", "ne": "ready"}])) == [
+        "wi-43"
+    ]
+    assert _ids(_query(seeded, kind=SUBJECT_KIND, contains="rea")) == []
 
 
 def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:

@@ -27,7 +27,7 @@ listing it was cut from.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast
@@ -68,6 +68,7 @@ from cruxible_client.contracts.query.grammar import (
     QueryClaimValueRefV1,
     QueryComparisonFilterV1,
     QueryConjunctionFilterV1,
+    QueryDisjunctionFilterV1,
     QueryEntryV1,
     QueryEvaluationTimeRefV1,
     QueryLiteralRefV1,
@@ -408,11 +409,19 @@ def _lower_filter(item: _Field, operator: str, value: object) -> GrammarFilter:
         )
     right = _literal(_engine_literal(item.info, value))
     if operator == "ne":
-        return QueryNegationFilterV1(
-            operand=QueryComparisonFilterV1(
-                left=left, operator="eq", right=right, value_type=value_type
-            )
+        # No value equals: a Subject without the value matches, and a contested
+        # slot matches no value filter (its comparison is a conflict, never true).
+        differs = QueryComparisonFilterV1(
+            left=left, operator="ne", right=right, value_type=value_type
         )
+        if isinstance(item.info, str):
+            return differs
+        absent = QueryNegationFilterV1(
+            operand=QueryClaimPresenceFilterV1(binding=item.binding, predicate=item.info.predicate)
+        )
+        operands: list[GrammarFilter] = [differs, absent]
+        operands.sort(key=lambda entry: canonical_bytes(entry.model_dump(mode="json")))
+        return QueryDisjunctionFilterV1(filters=tuple(operands))
     return QueryComparisonFilterV1(
         left=left,
         operator=cast(Literal["eq", "gt", "gte", "lt", "lte"], operator),
@@ -532,6 +541,12 @@ def _comparable(info: PredicateInfo | Literal["subject_id"], value: object) -> o
 
         return _parse_instant(value) or value
     return value
+
+
+def _contested(cardinality: str, values: Sequence[object]) -> bool:
+    """A one-value slot holding more than one live value: no value filter matches it."""
+
+    return cardinality == "one" and len(distinct(values)) > 1
 
 
 def _inline_matches(item: _InlineFilter, values: Sequence[object]) -> bool:
@@ -888,6 +903,9 @@ def _compact_subject_query(
             inline,
             contains=request.contains,
             kind_predicates=tuple(info.predicate for info in kind_predicates),
+            cardinality_of={
+                predicate: info.cardinality for predicate, info in vocabulary.predicates.items()
+            },
         )
     bindings = (ROOT, *(follow.alias for follow in follows))
     keys = [tuple(row.get(binding) or "" for binding in bindings) for row in candidates]
@@ -913,6 +931,7 @@ def _apply_inline(
     *,
     contains: str | None,
     kind_predicates: tuple[str, ...],
+    cardinality_of: Mapping[str, str],
 ) -> list[dict[str, str | None]]:
     wanted: dict[str, set[str]] = {}
     for item in inline:
@@ -950,13 +969,21 @@ def _apply_inline(
                     if path is None
                     else [value.value for value in values.slot(path, item.field.info.predicate)]
                 )
+                if _contested(item.field.info.cardinality, cell):
+                    matched = False
+                    break
             if not _inline_matches(item, cell):
                 matched = False
                 break
         if matched and needle is not None:
             root = row.get(ROOT)
             matched = root is not None and any(
-                isinstance(value.value, str) and needle in value.value.casefold()
+                isinstance(value.value, str)
+                and needle in value.value.casefold()
+                and not _contested(
+                    cardinality_of.get(value.predicate, "many"),
+                    [mate.value for mate in values.slot(root, value.predicate)],
+                )
                 for value in values.subject(root)
             )
         if matched:
