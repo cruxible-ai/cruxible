@@ -404,6 +404,24 @@ def _py(value: object) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _python(value: object) -> str:
+    """A Python literal for an SDK suggestion: ``True``/``None``, never JSON's ``true``/``null``.
+
+    Strings keep their double-quoted JSON spelling, which is also a valid Python
+    string literal, so SDK and MCP suggestions read alike.
+    """
+
+    if isinstance(value, str):
+        return _py(value)
+    if isinstance(value, Mapping):
+        return (
+            "{" + ", ".join(f"{_python(key)}: {_python(item)}" for key, item in value.items()) + "}"
+        )
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_python(item) for item in value) + "]"
+    return repr(value)
+
+
 def _cli_value(value: object) -> str:
     return shlex.quote(value if isinstance(value, str) else _py(value))
 
@@ -429,8 +447,12 @@ def render_orient_call(call: _Call, surface: PlaybillOrientSurface) -> str:
         if call.verb == "next":
             return "pb.next(expiring_within=Duration.days(count=7))"
         if call.verb == "get":
-            return f"pb.get({_py(args['ref'])})"
-        return f"pb.{call.verb}({', '.join(f'{key}={_py(value)}' for key, value in call.args)})"
+            return f"pb.get({_python(args['ref'])})"
+        return (
+            f"pb.{call.verb}("
+            + ", ".join(f"{key}={_python(value)}" for key, value in call.args)
+            + ")"
+        )
     # cli
     if call.verb == "evidence_rules_upgrade":
         return "cruxible playbill claim-type upgrade-evidence-rules"

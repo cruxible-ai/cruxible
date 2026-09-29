@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -335,3 +336,28 @@ def test_short_names_stay_unique_when_a_fallback_collides_with_another_short_nam
         "third.status": "third.status",
         f"{SUBJECT_KIND}.other.status": f"{SUBJECT_KIND}.other.status",
     }
+
+
+def test_sdk_suggestions_are_python_literals_and_mcp_keeps_json() -> None:
+    call = orient_module._Call(
+        "query",
+        (
+            ("kind", SUBJECT_KIND),
+            ("where", [{"field": "flag", "eq": True}, {"field": "note", "eq": None}]),
+            ("limit", 10),
+        ),
+    )
+
+    sdk = orient_module.render_orient_call(call, "sdk")
+    parsed = ast.parse(sdk, mode="eval").body
+    assert isinstance(parsed, ast.Call)
+    arguments = {item.arg: ast.literal_eval(item.value) for item in parsed.keywords}
+    assert arguments == {
+        "kind": SUBJECT_KIND,
+        "where": [{"field": "flag", "eq": True}, {"field": "note", "eq": None}],
+        "limit": 10,
+    }
+    assert orient_module.render_orient_call(call, "mcp") == (
+        f'cruxible_playbill_query(kind="{SUBJECT_KIND}", where=[{{"field": "flag", "eq": true}}, '
+        '{"field": "note", "eq": null}], limit=10)'
+    )
