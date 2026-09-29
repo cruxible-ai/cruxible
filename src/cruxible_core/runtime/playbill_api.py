@@ -157,7 +157,7 @@ from cruxible_core.runtime.permissions import (
     check_permission,
     current_request_instance_scope,
     get_current_mode,
-    permits,
+    may_read_exact_content,
 )
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.actor_identity import local_operator_actor_context
@@ -401,7 +401,7 @@ def _content_access() -> BodyAccessContext:
     actor = _actor_context()
     return BodyAccessContext(
         principal_id="anonymous" if actor is None else actor.actor_id,
-        can_read_body=permits("cruxible_playbill_body_read"),
+        can_read_body=may_read_exact_content(),
     )
 
 

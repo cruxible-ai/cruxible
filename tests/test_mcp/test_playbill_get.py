@@ -119,3 +119,24 @@ def test_exact_content_reads_as_text_only_for_a_caller_who_may_read_bodies(
     with request_permission_scope(PermissionMode.GOVERNED_WRITE):
         assert playbill_api._content_access().can_read_body is True
     reset_permissions()
+
+
+def test_exact_content_text_has_one_named_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Flipping who reads exact-content text is one name, and every read verb follows it."""
+
+    import inspect
+
+    from cruxible_core.runtime import permissions, playbill_api
+    from cruxible_core.runtime.permissions import request_permission_scope, reset_permissions
+
+    assert permissions.EXACT_CONTENT_TEXT_GATE == "cruxible_playbill_body_read"
+    source = inspect.getsource(playbill_api)
+    assert source.count("may_read_exact_content()") == 1
+    assert source.count("content_access=_content_access()") == 2  # get and query
+
+    monkeypatch.setenv("CRUXIBLE_MODE", "admin")
+    reset_permissions()
+    monkeypatch.setattr(permissions, "EXACT_CONTENT_TEXT_GATE", "cruxible_playbill_get")
+    with request_permission_scope(PermissionMode.READ_ONLY):
+        assert playbill_api._content_access().can_read_body is True
+    reset_permissions()
