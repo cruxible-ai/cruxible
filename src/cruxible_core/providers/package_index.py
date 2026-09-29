@@ -8,12 +8,14 @@ pins the provider's environment comes from inside the wheel, never from the
 index, so the materialization is exactly the one the package was released with.
 """
 
+import platform
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urldefrag, urljoin, urlsplit
 from zipfile import ZipFile
 
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.tags import sys_tags
 from packaging.utils import (
     InvalidWheelFilename,
@@ -30,6 +32,10 @@ from cruxible_core.providers.package_materialization import ArtifactTransport, t
 DEFAULT_PROVIDER_INDEX_URLS = ("https://pypi.org/simple/", "https://files.pythonhosted.org/")
 
 EMBEDDED_LOCK = "extra_metadata/uv.lock"
+# The same unpacked budget wheel registration inspection applies, checked
+# before anything is decompressed; a lock is far smaller than either.
+_WHEEL_UNPACKED_LIMIT = 128 * 1024 * 1024
+_LOCK_LIMIT = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,7 @@ class _File:
     url: str
     sha256: str | None
     yanked: bool
+    requires_python: str | None
 
 
 class _SimplePage(HTMLParser):
@@ -79,6 +86,7 @@ class _SimplePage(HTMLParser):
                     url=url,
                     sha256=digest.lower() if algorithm == "sha256" and digest else None,
                     yanked="data-yanked" in self._anchor,
+                    requires_python=self._anchor.get("data-requires-python"),
                 )
             )
         self._anchor = None
@@ -120,6 +128,7 @@ def find_release(
         raise ConfigError(f"{version!r} is not a release version") from exc
     label = name if version is None else f"{name}=={version}"
     supported = [str(tag) for tag in sys_tags()]
+    python = platform.python_version()
     for index_url in index_urls:
         listing = _listing(index_url, name, transport)
         if listing is None:
@@ -136,6 +145,12 @@ def find_release(
                 continue
             if wanted is None and (found_version.is_prerelease or item.yanked):
                 continue
+            if item.requires_python:
+                try:
+                    if python not in SpecifierSet(item.requires_python):
+                        continue
+                except InvalidSpecifier:
+                    continue
             ranks = [supported.index(str(tag)) for tag in tags if str(tag) in supported]
             if ranks:
                 candidates.append((found_version, -min(ranks), item))
@@ -172,9 +187,19 @@ def embedded_lock(wheel: Path) -> bytes:
     name, version, _build, _tags = parse_wheel_filename(wheel.name)
     member = f"{str(name).replace('-', '_')}-{version}.dist-info/{EMBEDDED_LOCK}"
     with ZipFile(wheel) as archive:
-        if member not in archive.namelist():
+        entries = {item.filename: item for item in archive.infolist()}
+        if sum(item.file_size for item in entries.values()) > _WHEEL_UNPACKED_LIMIT:
+            raise ConfigError(f"{wheel.name} exceeds the provider wheel unpacked-size limit")
+        entry = entries.get(member)
+        if entry is None:
             raise ConfigError(
                 f"{wheel.name} does not embed its lock, so it cannot be installed by name; "
                 "transfer the wheel with its lock instead"
             )
-        return archive.read(member)
+        if entry.file_size > _LOCK_LIMIT:
+            raise ConfigError(f"{wheel.name} embeds a lock over the {_LOCK_LIMIT} byte limit")
+        with archive.open(entry) as handle:
+            content = handle.read(_LOCK_LIMIT + 1)
+        if len(content) > _LOCK_LIMIT:
+            raise ConfigError(f"{wheel.name} embeds a lock over the {_LOCK_LIMIT} byte limit")
+        return content

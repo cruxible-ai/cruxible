@@ -56,8 +56,7 @@ def test_by_name_is_the_newest_final_listed_release(tmp_path):
     # An exact version is honoured even when yanked or a prerelease.
     assert find_release((index,), "cruxible-provider-web", "0.3.0", transport).version == "0.3.0"
     assert (
-        find_release((index,), "cruxible-provider-web", "0.4.0rc1", transport).version
-        == "0.4.0rc1"
+        find_release((index,), "cruxible-provider-web", "0.4.0rc1", transport).version == "0.4.0rc1"
     )
     with pytest.raises(ConfigError, match="no installable wheel for cruxible-provider-web==9"):
         find_release((index,), "cruxible-provider-web", "9", transport)
@@ -131,3 +130,40 @@ def test_a_wheel_without_its_lock_cannot_install_by_name(tmp_path):
     without = _wheel(tmp_path, "cruxible-provider-docs", "0.2.0")
     with pytest.raises(ConfigError, match="does not embed its lock"):
         embedded_lock(without)
+
+
+def test_a_release_this_python_cannot_run_is_never_chosen(tmp_path):
+    files = tmp_path / "files"
+    files.mkdir()
+    index = _index(
+        tmp_path / "simple",
+        "cruxible-provider-web",
+        [
+            (_wheel(files, "cruxible-provider-web", "0.2.0"), ' data-requires-python="&gt;=3.11"'),
+            (_wheel(files, "cruxible-provider-web", "0.3.0"), ' data-requires-python="&gt;=99"'),
+        ],
+    )
+    transport = ArtifactTransport(tmp_path)
+    assert find_release((index,), "cruxible-provider-web", None, transport).version == "0.2.0"
+    with pytest.raises(ConfigError, match="no installable wheel for cruxible-provider-web==0.3.0"):
+        find_release((index,), "cruxible-provider-web", "0.3.0", transport)
+
+
+def test_an_oversized_embedded_lock_refuses_before_decompressing(tmp_path, monkeypatch):
+    from zipfile import ZIP_DEFLATED
+
+    from cruxible_core.providers import package_index
+
+    monkeypatch.setattr(package_index, "_LOCK_LIMIT", 1024)
+    wheel = tmp_path / "cruxible_provider_web-0.2.0-py3-none-any.whl"
+    with ZipFile(wheel, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("cruxible_provider_web-0.2.0.dist-info/METADATA", "")
+        archive.writestr(
+            "cruxible_provider_web-0.2.0.dist-info/extra_metadata/uv.lock", b"x" * 4096
+        )
+    assert wheel.stat().st_size < 1024
+    with pytest.raises(ConfigError, match="embeds a lock over"):
+        embedded_lock(wheel)
+    monkeypatch.setattr(package_index, "_WHEEL_UNPACKED_LIMIT", 2048)
+    with pytest.raises(ConfigError, match="unpacked-size limit"):
+        embedded_lock(wheel)
