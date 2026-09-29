@@ -7,7 +7,10 @@ and each surface renders its own invocation.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
+
+import pytest
 
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.next import (
@@ -146,3 +149,76 @@ def test_every_repair_operation_names_its_door_in_one_table() -> None:
 
     assert set(_REPAIR_TOOLS) == set(get_args(NextRepairOperation))
     assert {tool for tool in _REPAIR_TOOLS.values() if tool is not None} <= set(TOOL_PERMISSIONS)
+
+
+def _line_arm_row() -> PlaybillNextItemV1:
+    return _item(
+        severity="repair",
+        reason="consumer_stalled",
+        subject_identity="Line:hourly",
+        detail={},
+        repair=PlaybillNextRepairV1(
+            operation="playbill.line.arm",
+            target="Line:hourly",
+            required_change="arm_the_line",
+            arguments={"line": "hourly"},
+        ),
+    )
+
+
+def test_sdk_rows_render_sdk_calls_not_cli_commands() -> None:
+    rows = [_line_arm_row(), _approval_row()]
+
+    kept, hidden = _view(surface="sdk").items(rows)
+
+    assert hidden == 0
+    commands = {item.repair.operation: item.repair.command for item in kept}
+    assert commands["playbill.line.arm"] == 'playbill.arm_line("hourly")'
+    assert commands["playbill.proposal.approve"] == (
+        'playbill.proposal("PRP-0001").approve(reviewed=playbill.proposal("PRP-0001").review())'
+    )
+    for command in commands.values():
+        assert command is None or not command.startswith("cruxible ")
+
+
+def test_the_sdk_next_names_its_surface(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from cruxible_client import contracts
+    from cruxible_client.authoring import sdk as sdk_module
+    from tests.test_cli.test_playbill_next import COORDINATE, HEALTHY_STATUS
+
+    calls: list[dict[str, object]] = []
+
+    class StubClient:
+        def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
+            calls.append(values)
+            return contracts.PlaybillNextResult(
+                coordinate=COORDINATE,
+                evaluation_time="2026-08-24T18:00:00.000000Z",
+                observed_domains=["accepted_state"],
+                unobserved_domains=[],
+                status=HEALTHY_STATUS,
+                items=[],
+                total_items=0,
+                result_digest="sha256:" + "5" * 64,
+            )
+
+    playbill = sdk_module.Playbill.__new__(sdk_module.Playbill)
+    playbill._client = StubClient()  # type: ignore[assignment]
+    playbill._instance_id = "inst_sdk_next"
+    playbill._workspace = tmp_path
+    playbill._access_profile = sdk_module.AccessProfile(
+        profile_id="default", permitted_access_classes=(), disclose_restricted_existence=False
+    )
+    monkeypatch.setattr(playbill, "_read_at", lambda: None)
+    monkeypatch.setattr(playbill, "_evaluation_time", lambda: "2026-08-24T18:00:00.000000Z")
+    monkeypatch.setattr(playbill, "_observe_read", lambda *_a, **_k: None)
+    monkeypatch.setattr(sdk_module, "observe_playbill_next_workspace", lambda _w: None)
+    monkeypatch.setattr(
+        sdk_module,
+        "observe_playbill_next_workspace_with_coverage",
+        lambda *_a, **_k: (None, None),
+    )
+
+    playbill.next(expiring_within=sdk_module.Duration(value=1))
+
+    assert [call["caller_surface"] for call in calls] == ["sdk"]

@@ -3365,6 +3365,8 @@ class Playbill:
                 workspace_observation=observation,
                 limit=api.PLAYBILL_NEXT_MAX_LIMIT,
                 cursor=cursor,
+                # Repairs render as SDK calls, not CLI commands.
+                caller_surface="sdk",
             )
 
         # A NextPage is the whole queue. Each cursor pins its first page's

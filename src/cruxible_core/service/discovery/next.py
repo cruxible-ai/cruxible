@@ -916,6 +916,61 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
     return None
 
 
+def _sdk_call(target: str, *positional: object, **keywords: object) -> str:
+    rendered = [json.dumps(value) for value in positional]
+    rendered.extend(f"{key}={json.dumps(value)}" for key, value in keywords.items())
+    return f"{target}({', '.join(rendered)})"
+
+
+def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> str | None:
+    """Render one repair as the `Playbill` SDK call that performs it, or None.
+
+    Like the CLI and MCP renderings, an operand only the caller holds -- the
+    signer, the observation, the retirement reason -- is left for it to add. A
+    repair the SDK facade has no method for, or whose operands are local files,
+    renders no call rather than another surface's command.
+    """
+
+    values = arguments if isinstance(arguments, Mapping) else {}
+
+    def text(key: str) -> str | None:
+        value = values.get(key)
+        return value if isinstance(value, str) and value else None
+
+    if operation == "playbill.line.arm" and (line := text("line")):
+        return _sdk_call("playbill.arm_line", line)
+    if operation == "playbill.line.dispatch" and (line := text("line")):
+        limit = values.get("limit")
+        if isinstance(limit, int) and limit > 1:
+            return _sdk_call("playbill.dispatch_line", line, limit=limit)
+        return _sdk_call("playbill.dispatch_line", line)
+    if operation == "playbill.settle" and (prediction := text("prediction_id")):
+        return _sdk_call("playbill.settle", prediction)
+    if operation == "playbill.authoring.create" and not text("payload_file"):
+        example = text("example")
+        return None if example is None else _sdk_call("authoring_example", example)
+    if operation == "playbill.proposal.approve" and (proposal := text("proposal_id")):
+        handle = _sdk_call("playbill.proposal", proposal)
+        return f"{handle}.approve(reviewed={handle}.review())"
+    if operation == "playbill.claim.retire" and (claim := text("claim_id")):
+        return _sdk_call("playbill.retire_claim", claim)
+    if operation == "playbill.block.repin" and (source := text("source_id")):
+        block = text("block_id")
+        if block is None:
+            return None
+        listed = values.get("claim")
+        named = [values.get("claim_id"), *(listed if isinstance(listed, (list, tuple)) else ())]
+        claims = [
+            value.removeprefix("Claim:") for value in named if isinstance(value, str) and value
+        ]
+        if claims:
+            return _sdk_call("playbill.block.repin", source, block, claims=claims)
+        return _sdk_call("playbill.block.repin", source, block)
+    if operation == "playbill.block.sync" and values.get("all") is True:
+        return _sdk_call("playbill.block.sync", all=True)
+    return None
+
+
 def _repair_command(
     operation: NextRepairOperation,
     *,
@@ -928,6 +983,8 @@ def _repair_command(
         return None
     if surface == "mcp":
         return _mcp_repair_call(operation, arguments=arguments)
+    if surface == "sdk":
+        return _sdk_repair_call(operation, arguments=arguments)
     parts = ["cruxible", _REPAIR_COMMAND_PATHS[operation]]
     values = arguments if isinstance(arguments, Mapping) else {}
     if operation == "playbill.block.repin":
@@ -1038,6 +1095,10 @@ def _item(
                 name=example,
                 claim_id=claim_id,
                 capture_digest=capture_digest,
+            )
+        elif isinstance(claim_id, str) and isinstance(capture_digest, str) and surface == "sdk":
+            command = _sdk_call(
+                "authoring_example", example, claim_id=claim_id, capture_digest=capture_digest
             )
         elif isinstance(claim_id, str) and isinstance(capture_digest, str):
             command = " ".join(
@@ -4134,9 +4195,11 @@ class _CallerView:
             return health
         if not self.can_run(repair):
             return health.model_copy(update={"repair": None})
-        if self.surface != "mcp":
+        if self.surface in {None, "cli"}:
             return health
-        command = _repair_command(repair.operation, arguments=repair.arguments, surface="mcp")
+        command = _repair_command(
+            repair.operation, arguments=repair.arguments, surface=self.surface
+        )
         return health.model_copy(update={"repair": repair.model_copy(update={"command": command})})
 
 
