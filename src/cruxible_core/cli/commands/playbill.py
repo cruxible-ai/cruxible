@@ -5089,7 +5089,11 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     if kinds is not None:
         lines.append(f"Kinds ({len(kinds)}):")
         for kind in kinds:
-            lines.append(f"  {kind['kind']}  subjects={kind['subjects']}")
+            shared = kind.get("evidence")
+            lines.append(
+                f"  {kind['kind']}  subjects={kind['subjects']}"
+                + (f"  evidence={','.join(shared)}" if shared else "")
+            )
             lines.extend(f"    {_orient_predicate_line(item)}" for item in kind["predicates"])
     artifacts = result.get("artifacts")
     if artifacts is not None:

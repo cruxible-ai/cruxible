@@ -26807,6 +26807,14 @@
             "additionalProperties": false,
             "description": "One kind in full, with a few Subject IDs to read next.",
             "properties": {
+              "evidence": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence",
+                "type": "array"
+              },
               "kind": {
                 "title": "Kind",
                 "type": "string"
@@ -26842,8 +26850,16 @@
           },
           "PlaybillOrientKindV1": {
             "additionalProperties": false,
-            "description": "One Subject kind: how many live Subjects it has and its predicates.",
+            "description": "One Subject kind: how many live Subjects it has and its predicates.\n\nWhen every predicate of the kind admits the same CaptureContracts, the\ncompact map names them once here as ``evidence`` and the predicates leave\ntheirs out; otherwise each predicate carries its own.",
             "properties": {
+              "evidence": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence",
+                "type": "array"
+              },
               "kind": {
                 "title": "Kind",
                 "type": "string"

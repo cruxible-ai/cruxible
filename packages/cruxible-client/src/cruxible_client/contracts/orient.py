@@ -84,10 +84,16 @@ class PlaybillOrientPredicateV1(_StrictOrientModel):
 
 
 class PlaybillOrientKindV1(_StrictOrientModel):
-    """One Subject kind: how many live Subjects it has and its predicates."""
+    """One Subject kind: how many live Subjects it has and its predicates.
+
+    When every predicate of the kind admits the same CaptureContracts, the
+    compact map names them once here as ``evidence`` and the predicates leave
+    theirs out; otherwise each predicate carries its own.
+    """
 
     kind: str
     subjects: int = Field(ge=0)
+    evidence: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
     predicates: tuple[PlaybillOrientPredicateV1, ...]
 
 

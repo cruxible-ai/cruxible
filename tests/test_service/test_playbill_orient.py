@@ -103,9 +103,9 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
     )
     other = SimpleNamespace(
         severity="repair",
-        reason="claim_conflicted",
-        subject_identity="Claim:CLM-1",
-        repair=SimpleNamespace(command=None, required_change="resolve"),
+        reason="proposal_stale",
+        subject_identity="sha256:" + "0123456789ab" + "c" * 52,
+        repair=SimpleNamespace(command=None, required_change="readmit"),
     )
     monkeypatch.setattr(
         orient_module,
@@ -117,7 +117,8 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
 
     assert attention is not None and attention.next_items == 7
     assert attention.top == (
-        "repair claim_conflicted: Claim:CLM-1",
+        # A full digest shortens to the 12-hex prefix every selector accepts.
+        "repair proposal_stale: sha256:0123456789ab",
         "warning claim_uncovered: ClaimType:project.work_item.status",
     )
     # next's own line is reused; orient does not add a second upgrade note.
@@ -291,3 +292,34 @@ def test_a_decommissioned_instance_still_orients_and_says_why(seeded) -> None:  
     assert any(
         "decommissioned" in note and "migrated to a new host" in note for note in attention.notes
     )
+
+
+def test_kinds_name_shared_evidence_once(seeded) -> None:  # type: ignore[no-untyped-def]
+    status = _claim_type()
+    owner = status.model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name=f"{SUBJECT_KIND}.owner"),
+            "predicate": f"{SUBJECT_KIND}.owner",
+        }
+    )
+    state = orient_module._State(
+        claim_types=(status, owner),
+        subjects_by_kind={SUBJECT_KIND: 2},
+        evidence={status.predicate: ("feed",), owner.predicate: ("feed",)},
+        digest_named=0,
+        procedures=(),
+        documents=(),
+        queries=(),
+    )
+
+    shared = orient_module._kind_row(state, SUBJECT_KIND)
+    assert shared.evidence == ("feed",)
+    assert [item.evidence for item in shared.predicates] == [(), ()]
+    assert "evidence" not in shared.model_dump(mode="json")["predicates"][0]
+
+    differing = orient_module._kind_row(
+        orient_module._State(**{**state.__dict__, "evidence": {status.predicate: ("feed",)}}),
+        SUBJECT_KIND,
+    )
+    assert differing.evidence == ()
+    assert [item.evidence for item in differing.predicates] == [(), ("feed",)]

@@ -17,6 +17,7 @@ state, so a digest is shown only when no accepted contract carries it.
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
@@ -370,9 +371,16 @@ def _kind_row(state: _State, kind: str) -> PlaybillOrientKindV1:
         ),
         key=lambda item: item.name,
     )
+    shared = {item.evidence for item in predicates}
+    evidence: tuple[str, ...] = ()
+    if len(shared) == 1 and len(predicates) > 1:
+        # Every predicate admits the same contracts: name them once, on the kind.
+        (evidence,) = shared
+        predicates = [item.model_copy(update={"evidence": ()}) for item in predicates]
     return PlaybillOrientKindV1(
         kind=kind,
         subjects=state.subjects_by_kind.get(kind, 0),
+        evidence=evidence,
         predicates=tuple(predicates),
     )
 
@@ -463,8 +471,14 @@ def _upgrade_hint(items: Sequence[PlaybillNextItemV1]) -> PlaybillNextItemV1 | N
     return None
 
 
+_FULL_DIGEST = re.compile(r"sha256:([0-9a-f]{12})[0-9a-f]{52}")
+
+
 def _line(item: PlaybillNextItemV1) -> str:
-    return f"{item.severity} {item.reason}: {item.subject_identity}"
+    # A full digest is a unique prefix at 12 hex characters, which every
+    # proposal selector (and get) accepts; the line stays one short line.
+    subject = _FULL_DIGEST.sub(r"sha256:\1", item.subject_identity)
+    return f"{item.severity} {item.reason}: {subject}"
 
 
 def _attention(
