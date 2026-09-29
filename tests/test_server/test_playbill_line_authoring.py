@@ -67,6 +67,21 @@ def test_the_procedure_line_policy_and_mandate_examples_are_accepted_together(
     _accept(http, instance_id, key, change_set)
 
 
+def test_an_observe_only_line_runs_without_a_mandate(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """The example Procedure only observes, so its Line needs no mandate to run or arm."""
+
+    http, instance_id, key = playbill_http
+    _accept(http, instance_id, key, _members("procedure", "line"))
+    transport = _transport(http)
+    run = transport.run_playbill_line(instance_id, "replace-me", occurrence_id=None)
+    assert run.status == "succeeded", run.terminal
+    assert run.result == {"count": 1}
+    armed = transport.arm_playbill_line(instance_id, "replace-me")
+    assert armed.state == "armed"
+
+
 def test_a_line_may_name_the_example_policy_even_though_it_acquires_nothing(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
@@ -82,6 +97,8 @@ def test_a_line_may_name_the_example_policy_even_though_it_acquires_nothing(
         ),
     )
     _accept(http, instance_id, key, change_set)
+    run = _transport(http).run_playbill_line(instance_id, "replace-me", occurrence_id=None)
+    assert run.status == "succeeded", run.terminal
 
 
 def test_singleton_line_and_policy_inputs_lower_through_the_tagless_union(
@@ -131,3 +148,30 @@ def test_example_templates_agree_on_names_and_caps() -> None:
     assert procedure.definition["name"] == mandate.procedure_name == line.procedure_name
     caps = ProcedureHardCapsV3.model_validate(procedure.definition["hard_caps"])
     assert mandate.resource_ceiling == caps
+
+
+def test_a_mandate_wider_than_its_procedure_names_each_widened_cap(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    http, instance_id, _key = playbill_http
+    mandate = authoring_example("procedure-mandate")
+    assert isinstance(mandate, ProcedureMandateInputV1)
+    wide = mandate.model_copy(
+        update={
+            "resource_ceiling": mandate.resource_ceiling.model_copy(
+                update={"max_items": 1000, "max_provider_calls": 100}
+            )
+        }
+    )
+    change_set = ChangeSetInput(
+        kind="change_set",
+        members=(authoring_example("procedure"), wide),  # type: ignore[arg-type]
+    )
+    compiled = _transport(http).compile_playbill_authoring_input(
+        instance_id, input=change_set.model_dump(mode="json")
+    )
+    assert compiled.verdict != "passed"
+    frontier = str(compiled.frontier)
+    assert "resource_ceiling_widens_procedure" in frontier
+    assert "max_items 1000 > 200" in frontier
+    assert "max_provider_calls 100 > 0" in frontier

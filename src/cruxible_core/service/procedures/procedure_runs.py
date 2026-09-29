@@ -169,7 +169,11 @@ from cruxible_client.contracts.providers import (
     AcceptedProviderV1,
     ProviderV2,
 )
-from cruxible_client.contracts.repairs import RepairOperationV1, served_repair_for_refusal
+from cruxible_client.contracts.repairs import (
+    RUNNABLE_REFUSAL_REPAIRS,
+    RepairOperationV1,
+    served_repair_for_refusal,
+)
 from cruxible_client.contracts.resolution_contracts import (
     InvestigationBindingV1,
     ResolutionContractReferenceV1,
@@ -414,6 +418,43 @@ class LineNeverArmed(ProcedureSurfaceError):
             f"`cruxible playbill line arm {line}`"
         )
         self.repair = RepairOperationV1(operation="playbill.line.arm", arguments={"line": line})
+
+
+class LineMandateRequired(ProcedureSurfaceError):
+    """Arming a Line that can propose or settle when no mandate covers it."""
+
+    code = "playbill.line.mandate_required"
+    error_code = "line_mandate_required"
+    http_status = 409
+
+    def __init__(self, line: str, procedure: str) -> None:
+        super().__init__(
+            f"{self.code}: Line {line!r} can propose or settle, and Procedure {procedure!r} "
+            "has no current accepted ProcedureMandate, so every run would refuse; author "
+            "and accept one (`cruxible playbill authoring create --example procedure-mandate`) "
+            "before arming"
+        )
+        self.repair = RUNNABLE_REFUSAL_REPAIRS["line_mandate_required"]
+
+
+def require_line_mandate(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpecV1,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    now: datetime,
+) -> None:
+    """Refuse up front when a Line that needs a mandate has none covering it."""
+
+    accepted = _accepted_procedure(
+        instance, name=accepted_line.line.procedure.target.name, coordinate=coordinate
+    )
+    if line_authority_rung(accepted_line, accepted) <= 1:
+        return
+    if not _accepted_line_mandates(instance, accepted, coordinate=coordinate, evaluation_time=now):
+        raise LineMandateRequired(
+            accepted_line.line.identity.name, accepted.procedure.identity.name
+        )
 
 
 class LineRunIdentityMismatch(ProcedureSurfaceError):
@@ -3402,6 +3443,20 @@ def _line_refusal_state(
     )
 
 
+def line_authority_rung(accepted_line: AcceptedLineSpecV1, accepted: AcceptedProcedureV1) -> int:
+    """The most this Line's runs can do: 1 observe, 2 propose, 3 settle.
+
+    It is the lower of what the Procedure's terminals reach and what the Line
+    allows. A Line at rung 1 only observes: it needs no mandate, and running or
+    dispatching it needs only read permission.
+    """
+
+    return min(
+        int(accepted.procedure.definition.terminal_capability),
+        line_requested_rung(accepted_line.line),
+    )
+
+
 def _accepted_line_mandates(
     instance: PlaybillInstance,
     accepted: AcceptedProcedureV1,
@@ -3624,7 +3679,7 @@ def _run_playbill_line(
         coordinate=coordinate,
         evaluation_time=evaluation_time,
     )
-    if not mandates:
+    if not mandates and line_authority_rung(accepted_line, accepted) > 1:
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -3632,7 +3687,10 @@ def _run_playbill_line(
             head_at_admission=head_at_admission,
             evaluation_time=evaluation_time,
             code="line_mandate_required",
-            message="The Line's bound Procedure has no current accepted ProcedureMandate.",
+            message=(
+                "This Line can propose or settle, and its bound Procedure has no current "
+                "accepted ProcedureMandate."
+            ),
             details={
                 "repair": "Author and accept a ProcedureMandate pinning this exact Procedure."
             },
@@ -4172,7 +4230,11 @@ def _run_playbill_line(
         acquisition_plan=plan,
         acquisition_plan_digest=plan_digest,
     )
-    mandate_rung = max(procedure_mandate_rung(mandate) for _digest, mandate in mandates)
+    # An observe-only Line runs with no mandate; its effective rung is then
+    # capped at the mandate-free ceiling, which is observe.
+    mandate_rung = max(
+        (procedure_mandate_rung(mandate) for _digest, mandate in mandates), default=None
+    )
     effective_rung = compute_effective_rung(
         procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
         requested_terminal_rung=line_requested_rung(accepted_line.line),

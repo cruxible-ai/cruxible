@@ -854,3 +854,25 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
         caller_rung=3,
     ).items[0]
     assert next_item.status == "admitted" and next_item.occurrence_id == occurrence_ids[1]
+
+
+def test_arming_a_line_that_can_propose_refuses_up_front_without_a_mandate(tmp_path, monkeypatch):
+    from cruxible_client.contracts.procedures.line_specs import ManualTriggerPolicyV1
+    from cruxible_core.service.procedures import procedure_runs
+    from cruxible_core.service.procedures.procedure_runs import LineMandateRequired
+
+    instance, line, _ = line_world(tmp_path, ManualTriggerPolicyV1())
+    monkeypatch.setattr(procedure_runs, "_accepted_line_mandates", lambda *_a, **_k: ())
+    with pytest.raises(LineMandateRequired) as refused:
+        service_arm_line(
+            instance,
+            line.identity.name,
+            principal=LOCAL_OPERATOR,
+            actor=_actor(instance),
+            now=READ_TIME,
+            daemon_id="first",
+        )
+    assert refused.value.code == "playbill.line.mandate_required"
+    assert refused.value.repair.arguments == {"example": "procedure-mandate"}
+    with LineDispatchStore(instance).locked() as conn:
+        assert conn.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0

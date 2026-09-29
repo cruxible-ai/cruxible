@@ -1143,8 +1143,9 @@ it matches, with no explicit call. Runs use the arming caller's credential,
 which the daemon rechecks before every admission: a revoked credential, one
 moved to another instance, or one no longer permitted to dispatch stops the arm
 with that reason (`credential_revoked`, `credential_scope_changed`,
-`permission_insufficient`). Arming needs the permission `dispatch` needs, and
-keeps only the credential's identifier, never a token. An arm is pinned to the
+`permission_insufficient`). Arming needs governed write, and keeps only the
+credential's identifier, never a token. A Line that can propose
+or settle refuses to arm while no current mandate covers it. An arm is pinned to the
 Line version current when it was armed: any accepted change to the Line stops
 it (`line_changed`, or `epoch_changed`) until it is rearmed. Because a settle
 mandate, not the caller's tier, authorizes settling, an armed Line whose
@@ -1212,8 +1213,15 @@ bound is refused. That bound is operational, not wire: the daemon reads
 `evaluation_instant_skew_seconds` from `daemon/procedure-runs.json` in its own
 state root, defaulting to the 300-second ProcedureMandate skew the bound
 protects, and refuses the run if that file exists but cannot be read as one.
-The accepted Line's governed mandate authorizes execution; without one the
-operation returns a typed no-mandate refusal.
+A Line whose runs can propose or settle needs a current accepted
+ProcedureMandate over its exact Procedure; without one each run refuses
+`line_mandate_required`, and `arm` refuses up front with
+`playbill.line.mandate_required`, both naming `authoring create --example
+procedure-mandate`. An observe-only Line -- one whose Procedure's terminals, or
+whose `max_authority`, stop at observe -- needs no mandate. A mandate whose
+`resource_ceiling` exceeds the Procedure's hard caps is refused naming each
+widened cap with both values; `--example procedure-mandate` uses the
+`--example procedure` caps.
 
 A Line whose Procedure ends in a `propose_change_set` terminal produces a
 proposal. Each resolved candidate template must be one Claim proposal item --

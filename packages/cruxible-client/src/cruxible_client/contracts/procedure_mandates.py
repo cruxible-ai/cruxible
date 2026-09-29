@@ -189,23 +189,46 @@ def _law_refusal(code: str, message: str, *, path: str) -> ProcedureMandateLawRe
     )
 
 
+def _ceiling_widenings(
+    ceiling: ProcedureHardCapsV3,
+    hard_caps: ProcedureHardCapsV3,
+) -> tuple[str, ...]:
+    """Name each cap ``ceiling`` sets above ``hard_caps``, with both values."""
+
+    pairs: tuple[tuple[str, int | None, int | None], ...] = (
+        (
+            "max_wall_clock.microseconds",
+            ceiling.max_wall_clock.microseconds,
+            hard_caps.max_wall_clock.microseconds,
+        ),
+        ("max_provider_calls", ceiling.max_provider_calls, hard_caps.max_provider_calls),
+        ("max_capture_bytes", ceiling.max_capture_bytes, hard_caps.max_capture_bytes),
+        ("max_result_bytes", ceiling.max_result_bytes, hard_caps.max_result_bytes),
+        ("max_items", ceiling.max_items, hard_caps.max_items),
+        ("max_repeat_attempts", ceiling.max_repeat_attempts, hard_caps.max_repeat_attempts),
+    )
+    widened: list[str] = []
+    for name, value, cap in pairs:
+        if cap is None:
+            continue
+        if value is None or value > cap:
+            shown = "unbounded" if value is None else str(value)
+            widened.append(f"{name} {shown} > {cap}")
+    return tuple(widened)
+
+
 def _ceiling_within(
     ceiling: ProcedureHardCapsV3,
     hard_caps: ProcedureHardCapsV3,
 ) -> bool:
+    return not _ceiling_widenings(ceiling, hard_caps)
+
+
+def _widen_message(field: str, widenings: tuple[str, ...]) -> str:
     return (
-        ceiling.max_wall_clock.microseconds <= hard_caps.max_wall_clock.microseconds
-        and ceiling.max_provider_calls <= hard_caps.max_provider_calls
-        and ceiling.max_capture_bytes <= hard_caps.max_capture_bytes
-        and (
-            hard_caps.max_result_bytes is None
-            or (
-                ceiling.max_result_bytes is not None
-                and ceiling.max_result_bytes <= hard_caps.max_result_bytes
-            )
-        )
-        and ceiling.max_items <= hard_caps.max_items
-        and ceiling.max_repeat_attempts <= hard_caps.max_repeat_attempts
+        f"ProcedureMandate {field} may narrow but never widen Procedure hard caps; "
+        f"it widens {', '.join(widenings)} (mandate > Procedure). Set each to at most "
+        "the Procedure's hard cap."
     )
 
 
@@ -230,10 +253,13 @@ def evaluate_procedure_mandate_law(
             "ProcedureMandate must pin the exact candidate Procedure artifact.",
             path=path,
         )
-    if not _ceiling_within(mandate.authority_ceiling, procedure.procedure.definition.hard_caps):
+    widenings = _ceiling_widenings(
+        mandate.authority_ceiling, procedure.procedure.definition.hard_caps
+    )
+    if widenings:
         return _law_refusal(
             "playbill.procedure_mandate.authority_ceiling_widens_procedure",
-            "ProcedureMandate authority_ceiling may narrow but never widen Procedure hard caps.",
+            _widen_message("authority_ceiling", widenings),
             path=path,
         )
     if predecessor is None and mandate.lifecycle.predecessor_digest is not None:
@@ -295,10 +321,11 @@ def evaluate_procedure_mandate_v2_law(
             path=path,
         )
     definition = procedure.procedure.definition
-    if not _ceiling_within(mandate.resource_ceiling, definition.hard_caps):
+    widenings = _ceiling_widenings(mandate.resource_ceiling, definition.hard_caps)
+    if widenings:
         return _law_refusal(
             "playbill.procedure_mandate.resource_ceiling_widens_procedure",
-            "ProcedureMandate resource_ceiling may narrow but never widen Procedure hard caps.",
+            _widen_message("resource_ceiling", widenings),
             path=path,
         )
     # A settle grant over a Procedure that cannot settle is incoherent authority.
