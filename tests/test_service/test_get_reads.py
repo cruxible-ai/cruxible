@@ -534,6 +534,82 @@ def test_a_new_contender_ends_the_unsure_hold_exactly_as_next_decides(tmp_path: 
     assert "unsure_hold" not in flags()
 
 
+def test_a_held_stale_dependency_shows_the_unsure_hold_next_parks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import timedelta
+
+    from cruxible_core.service.discovery import next as next_module
+    from tests.test_integration.test_next_closed_loop import EVALUATION_TIME as LATER
+    from tests.test_integration.test_next_closed_loop import _current_claim
+    from tests.test_integration.test_next_holds import _attest, _next, _rows
+
+    instance, owner = seed_claims(tmp_path)
+    source = _current_claim(instance)
+    dependent = _current_claim(instance, subject_id="wi-43")
+
+    def flags() -> tuple[str, ...]:
+        card = _get(instance, dependent.identity.name, evaluation_time=LATER).card
+        assert isinstance(card, PlaybillGetClaimCardV1)
+        return card.flags
+
+    # The dependent records an earlier version of the source as its backing
+    # input; everything else -- the Claims, the attestation store, the hold
+    # coverage -- is the instance's own.
+    earlier = "sha256:" + "0" * 64
+
+    def recorded(facts: Any) -> Any:
+        rows = []
+        for row in facts.claims:
+            claim = row.accepted.claim
+            if claim.identity.qualified == dependent.identity.qualified:
+                backing = claim.backing.model_copy(update={"input_claim_digests": (earlier,)})
+                claim = claim.model_copy(update={"backing": backing})
+                row = row.model_copy(
+                    update={"accepted": row.accepted.model_copy(update={"claim": claim})}
+                )
+            rows.append(row)
+        return facts.model_copy(update={"claims": tuple(rows)})
+
+    real_facts = next_module.build_accepted_query_facts
+    real_read = next_module._AcceptedQueryFactsRead.build
+    real_lineages = next_module._bounded_claim_lineages
+
+    def lineages(*args: Any, **kwargs: Any) -> Any:
+        found, incomplete = real_lineages(*args, **kwargs)
+        return {
+            path: (*digests, earlier) if path.endswith(f"{source.identity.name}.json") else digests
+            for path, digests in found.items()
+        }, incomplete
+
+    monkeypatch.setattr(
+        next_module,
+        "build_accepted_query_facts",
+        lambda *args, **kwargs: recorded(real_facts(*args, **kwargs)),
+    )
+    monkeypatch.setattr(
+        next_module._AcceptedQueryFactsRead,
+        "build",
+        lambda self, **kwargs: recorded(real_read(self, **kwargs)),
+    )
+    monkeypatch.setattr(next_module, "_bounded_claim_lineages", lineages)
+
+    (row,) = _rows(_next(instance), "claim_dependency_stale", dependent.identity.qualified)
+    assert row.related_identities == (source.identity.qualified,)
+    assert "unsure_hold" not in flags()
+
+    # An examined unsure attestation on the dependent parks the row in next, and
+    # get shows the same hold rather than deciding from fewer row families.
+    _attest(instance, owner, dependent, tmp_path, at=LATER - timedelta(minutes=1))
+    parked = _next(instance)
+    assert not _rows(parked, "claim_dependency_stale")
+    assert parked.status.held >= 1
+    assert "unsure_hold" in flags()
+    # The hold is the dependent's; its upstream input is not held by it.
+    card = _get(instance, source.identity.name, evaluation_time=LATER).card
+    assert isinstance(card, PlaybillGetClaimCardV1) and "unsure_hold" not in card.flags
+
+
 @pytest.mark.parametrize("missing", ("admission", "evaluation", "candidate"))
 def test_a_partial_proposal_reads_as_incomplete_not_an_integrity_error(
     tmp_path: Path, missing: str
