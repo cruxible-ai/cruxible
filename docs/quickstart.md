@@ -120,6 +120,57 @@ Storing body bytes was inert. Proposing created a frozen candidate. A voluntary
 non-creator approval, when supplied, signs exactly that candidate. Only
 activation changed accepted state.
 
+## Add a propose-only agent
+
+A propose-only agent authors and proposes but cannot approve or activate. That
+limit is a credential tier, so it needs a daemon with auth. Start the daemon
+with `--auth` instead:
+
+~~~bash
+uv run cruxible server start \
+  --socket /tmp/cruxible-playbill-run/daemon.sock \
+  --state-root /tmp/cruxible-playbill-dev --auth \
+  --bootstrap-secret-file /tmp/cruxible-playbill-bootstrap
+~~~
+
+Claim the one-time operator credential with the bootstrap secret, then
+initialize: init makes you the owner and mints your own admin credential into
+your settings file:
+
+~~~bash
+export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-playbill-run/daemon.sock
+uv run cruxible playbill host create --instance-id inst_demo
+uv run cruxible credential claim-bootstrap \
+  --secret-file /tmp/cruxible-playbill-bootstrap
+export CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed>
+uv run cruxible playbill init --key-dir /tmp/cruxible-playbill-owner --principal-id me
+set -a; . /tmp/cruxible-playbill-owner/cruxible.env; set +a
+~~~
+
+Add the agent in one command. `--signer-key` defaults to your own key from the
+settings you just loaded, so the registration is proposed, approved by you, and
+activated, and the agent's `governed_write` credential is minted:
+
+~~~bash
+uv run cruxible playbill principal add agent-b --key-dir /tmp/agent-b
+~~~
+
+Hand the agent its directory. It loads its settings and acts as `agent-b`:
+
+~~~bash
+set -a; . /tmp/agent-b/cruxible.env; set +a
+uv run cruxible playbill whoami        # agent-b, governed_write
+uv run cruxible playbill document propose --envelope /tmp/demo-envelope.json \
+  --name agent-b-change
+uv run cruxible playbill proposal activate PROPOSAL_ID   # refused: needs graph_write
+~~~
+
+You review, approve, and activate the agent's proposal under your own settings.
+With auth off (the default socket daemon) the same `principal add` registers
+the agent and writes its settings without a credential, but every process of
+your OS user is equally trusted, so nothing stops a process from loading your
+settings instead; the principal ID is a claim, not a boundary.
+
 ## Source catalogs
 
 For local or external files, author a portable catalog and optional ignored

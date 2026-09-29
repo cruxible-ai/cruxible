@@ -15,6 +15,7 @@ from cruxible_client.authoring.signing import sign_runtime_credential_mint
 from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProofV1
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.cli.principal_settings import set_principal_settings_token
 from cruxible_core.server.config import get_server_state_root
 from cruxible_core.server.credentials import (
     RuntimeCredentialRecord,
@@ -213,13 +214,24 @@ def mint_cmd(
         label=label,
         principal_proof=proof,
     )
+    settings = (
+        None
+        if key_dir is None or not result.token
+        else set_principal_settings_token(Path(key_dir), result.token)
+    )
     if output_json:
-        _common._emit_json(result.model_dump(mode="json"))
+        payload = result.model_dump(mode="json")
+        if settings is not None:
+            payload["token"] = None
+            payload["settings_path"] = str(settings)
+        _common._emit_json(payload)
         return
 
     click.echo("Credential minted.")
     _echo_credential_metadata(result.credential)
-    if result.token:
+    if settings is not None:
+        click.echo(f"Token written to {settings} (not printed).")
+    elif result.token:
         _echo_token_once(result.token, label="Token")
 
 

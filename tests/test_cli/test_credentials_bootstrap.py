@@ -435,3 +435,62 @@ def test_credential_mint_signs_the_principals_consent_with_its_key_dir(
     )
     assert missing.exit_code == 2
     assert "no private key for principal ghost" in missing.output
+
+
+def test_credential_mint_writes_the_token_into_the_principals_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.cli.principal_settings import write_principal_settings
+    from cruxible_core.governance.keys import generate_client_principal_key
+
+    key = generate_client_principal_key(
+        tmp_path / "agent-keys", principal_id="agent-b", kind="ordinary", forbidden_roots=()
+    )
+    settings = write_principal_settings(
+        tmp_path / "agent-keys",
+        ctx_obj={"server_url": "http://server"},
+        instance_id="inst_123",
+        principal_id="agent-b",
+        private_key_path=key.private_key_path,
+        token=None,
+        written_by="test",
+    )
+
+    class StubClient:
+        def create_runtime_credential(self, instance_id: str, **_kwargs: object):
+            credential = contracts.RuntimeCredentialMetadata(
+                credential_id="rcred_agent",
+                instance_id=instance_id,
+                principal_id="agent-b",
+                label="agent-b",
+                permission_mode="governed_write",
+                created_at="2026-09-29T00:00:00Z",
+            )
+            return contracts.RuntimeCredentialResult(credential=credential, token="crt_secret")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    minted = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "credential",
+            "mint",
+            "--principal-id",
+            "agent-b",
+            "--key-dir",
+            str(tmp_path / "agent-keys"),
+            "--mode",
+            "governed_write",
+        ],
+    )
+
+    assert minted.exit_code == 0, minted.output
+    assert "crt_secret" not in minted.output
+    assert f"Token written to {settings}" in minted.output
+    assert "export CRUXIBLE_SERVER_BEARER_TOKEN=crt_secret" in settings.read_text()
+    assert stat.S_IMODE(settings.stat().st_mode) == 0o600

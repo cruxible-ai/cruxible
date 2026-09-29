@@ -428,5 +428,15 @@ def test_cli_init_needs_an_owner_principal_and_claims_it_on_an_auth_off_daemon(
     assert made.exit_code == 0, made.output
     assert claimed == ["alice"]
     assert "Owner principal: alice" in made.output
-    assert "export CRUXIBLE_PRINCIPAL_ID=alice" in made.output
+    settings = tmp_path / "c" / "cruxible.env"
+    assert f"Owner settings: {settings.resolve()}" in made.output
     assert "a claim of identity" in made.output
+    assert stat.S_IMODE(settings.stat().st_mode) == 0o600
+    written = settings.read_text()
+    assert "export CRUXIBLE_PRINCIPAL_ID=alice" in written
+    assert "export CRUXIBLE_INSTANCE_ID=inst_cli_init" in written
+    assert "export CRUXIBLE_SERVER_URL=https://playbill.invalid" in written
+    assert (
+        f"export CRUXIBLE_PRINCIPAL_KEY={(tmp_path / 'c' / 'alice.ed25519').resolve()}" in written
+    )
+    assert "BEARER_TOKEN" not in written

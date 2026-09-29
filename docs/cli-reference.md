@@ -2101,7 +2101,8 @@ ledger](#playbill-ledger) for what the mirror carries and how to get its URL.
 
 ~~~text
 cruxible playbill principal list
-cruxible playbill principal add PRINCIPAL_ID --key-dir DIR [--kind ordinary] [--name NAME]
+cruxible playbill principal add PRINCIPAL_ID --key-dir DIR [--signer-key PATH]
+  [--mode governed_write] [--kind ordinary] [--name NAME] [--json]
 cruxible playbill principal rotate ...
 cruxible playbill principal revoke ...
 cruxible playbill principal recover ...
@@ -2122,6 +2123,28 @@ grants authority immediately nor sends a private key to the daemon. Other
 non-creator principals may record additional voluntary approvals. `--kind`
 is explicit and may be `ordinary` or `recovery`; the daemon kind is
 instance-owned. Recovery principals cannot approve ordinary Document candidates.
+
+`principal add` is the one command that sets up an agent. With `--signer-key`
+(your own private key; also `CRUXIBLE_PRINCIPAL_KEY`) it proposes the
+registration, approves it as you, and activates it. When the daemon runs with
+auth it then mints the new principal's bearer credential at `--mode` (default
+`governed_write`), signed with the new principal's key. Everything the agent
+needs lands owner-only in `DIR/cruxible.env`: the transport, the instance, its
+principal ID, its key path, and, with auth, its credential (written, never
+printed). The agent loads it with `set -a; . DIR/cruxible.env; set +a`; the CLI,
+SDK and MCP server all read those variables. Without `--signer-key` the
+registration is only proposed and the command prints each remaining step:
+`proposal approve`, `proposal activate`, and, with auth,
+`credential mint --principal-id ID --key-dir DIR`, which writes the token into
+the same settings file. `playbill init` writes the owner's settings file the
+same way. `proposal approve` defaults `--signer-id` to the configured principal
+and `--key` to `CRUXIBLE_PRINCIPAL_KEY`.
+
+A propose-only agent is a principal whose credential is `governed_write`: it
+can author and propose, and the tier refuses approvals and activation. That
+limit needs daemon auth; with auth off every process of the OS user is equally
+trusted and could load another principal's settings. See the
+[quickstart](quickstart.md#add-a-propose-only-agent) for the worked example.
 
 ## playbill sources
 

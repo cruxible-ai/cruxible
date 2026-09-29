@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-29:identity-batch",
-    "surface_digest": "sha256:13ecacdb57e4f06535232062f9a63ec4615a8a957541fd5a41a62bdfdc8bd905"
+    "surface_digest": "sha256:86d85f9352574a8314fddab86432163173e403c7978665f740499915eb410a42"
   },
   "surface": {
     "cli_leaves": [
@@ -574,7 +574,10 @@
       },
       {
         "client_operations": [
+          "activate_playbill_proposal",
+          "create_runtime_credential",
           "list_playbill_principals",
+          "playbill_whoami",
           "propose_playbill_principal_change"
         ],
         "command": "playbill principal add",
