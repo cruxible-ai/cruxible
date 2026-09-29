@@ -93,22 +93,33 @@ def _wait_for_daemon(
     boot id differs from the one that acknowledged. Returns the version the new
     image reports; raising here keeps the command skew-proof.
     """
+    if old_boot_id is None or not old_boot_id.strip():
+        raise click.ClickException(
+            "Daemon replacement could not be confirmed: restart acknowledgement has no boot ID."
+        )
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
+    still_old = False
+    missing_boot_id = False
     while time.monotonic() < deadline:
         try:
             version, boot_id = client.daemon_identity()
         except Exception as exc:  # connection refused while the image is replaced
             last_error = exc
+            still_old = False
         else:
-            if old_boot_id is None or boot_id != old_boot_id:
+            identifiable = boot_id is not None and bool(boot_id.strip())
+            if identifiable and boot_id != old_boot_id:
                 return version
+            missing_boot_id = not identifiable
+            still_old = identifiable
             last_error = None
         time.sleep(_RESTART_POLL_INTERVAL_SECONDS)
-    still_old = last_error is None and old_boot_id is not None
     raise click.ClickException(
-        f"Daemon did not come back within {timeout:.0f}s after restart"
+        f"Daemon did not come back within {timeout:.0f}s after restart; "
+        "replacement could not be confirmed"
         + ("; the old process image is still answering" if still_old else "")
+        + ("; a version probe has no boot ID" if missing_boot_id else "")
         + (f": {last_error}" if last_error is not None else "")
     )
 
