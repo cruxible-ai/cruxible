@@ -687,6 +687,8 @@ def test_unavailable_workspace_configuration_reaches_run_service_as_typed_absenc
     monkeypatch.setattr(playbill_api, "get_playbill_manager", lambda: manager)
     monkeypatch.setattr(playbill_api, "check_permission", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(playbill_api, "_actor_context", lambda: object())
+    # The stub instance has no accepted Procedure to tier the run by.
+    monkeypatch.setattr(playbill_api, "procedure_run_target_rung", lambda *_args: 0)
 
     def service(*_args: object, **kwargs: object) -> None:
         assert kwargs["workspace_file_reader"] is None
