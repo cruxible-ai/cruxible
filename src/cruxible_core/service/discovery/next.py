@@ -927,9 +927,36 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
     return None
 
 
+def _python_literal(value: object) -> str:
+    """Render a str, bool, None, int, or list/dict of those as Python source.
+
+    A JSON string literal is a valid Python one (every JSON escape is a Python
+    escape), so strings keep their double quotes; JSON's `true`, `false` and
+    `null` are not Python, so they are rendered here.
+    """
+
+    if value is None or isinstance(value, bool):
+        return repr(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_python_literal(item) for item in value) + "]"
+    if isinstance(value, Mapping):
+        return (
+            "{"
+            + ", ".join(
+                f"{_python_literal(key)}: {_python_literal(item)}" for key, item in value.items()
+            )
+            + "}"
+        )
+    raise TypeError(f"no Python literal for an SDK repair operand of type {type(value).__name__}")
+
+
 def _sdk_call(target: str, *positional: object, **keywords: object) -> str:
-    rendered = [json.dumps(value) for value in positional]
-    rendered.extend(f"{key}={json.dumps(value)}" for key, value in keywords.items())
+    rendered = [_python_literal(value) for value in positional]
+    rendered.extend(f"{key}={_python_literal(value)}" for key, value in keywords.items())
     return f"{target}({', '.join(rendered)})"
 
 

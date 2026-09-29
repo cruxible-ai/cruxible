@@ -345,3 +345,56 @@ def test_supporting_evidence_folded_into_a_conflict_is_rendered_for_the_caller(
         "claim_new_evidence_supporting",
     ]
     _assert_rendered_for(surface, items)
+
+
+_SDK_REPAIRS: tuple[tuple[str, dict[str, object]], ...] = (
+    ("playbill.line.arm", {"line": "hourly"}),
+    ("playbill.line.dispatch", {"line": "hourly", "limit": 3}),
+    ("playbill.settle", {"prediction_id": "RSC-0001"}),
+    ("playbill.authoring.create", {"example": "procedure-mandate"}),
+    ("playbill.proposal.approve", {"proposal_id": "PRP-0001", "signer_id": "reviewer"}),
+    ("playbill.claim.retire", {"claim_id": "CLM-0001"}),
+    ("playbill.block.repin", {"source_id": "SRC-1", "block_id": "b1", "claim_id": "CLM-0001"}),
+    ("playbill.block.sync", {"all": True}),
+)
+
+
+def test_every_sdk_rendered_repair_is_python() -> None:
+    import ast
+
+    from cruxible_core.service.discovery.next import _repair_command
+
+    commands = [
+        _repair_command(operation, arguments=arguments, surface="sdk")  # type: ignore[arg-type]
+        for operation, arguments in _SDK_REPAIRS
+    ]
+    commands.append(
+        _item(
+            severity="warning",
+            reason="claim_new_evidence_unreviewed",
+            subject_identity=_CLAIM,
+            detail={},
+            repair=_unreviewed_capture_row(_CLAIM).repair.model_copy(update={"command": None}),
+            surface="sdk",
+        ).repair.command
+    )
+
+    assert all(command is not None for command in commands), commands
+    for command in commands:
+        ast.parse(str(command), mode="eval")
+
+
+def test_the_sdk_block_sync_repair_runs_as_written() -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.service.discovery.next import _repair_command
+
+    calls: list[dict[str, object]] = []
+    playbill = SimpleNamespace(
+        block=SimpleNamespace(sync=lambda *paths, **options: calls.append(options))
+    )
+
+    command = _repair_command("playbill.block.sync", arguments={"all": True}, surface="sdk")
+    eval(str(command), {"__builtins__": {}}, {"playbill": playbill})  # noqa: S307
+
+    assert calls == [{"all": True}]
