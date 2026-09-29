@@ -8,6 +8,8 @@ everyday agent loop:
 
 - orient and pick work: `cruxible_playbill_search` (its `orient` mode),
   `cruxible_playbill_next`, and `cruxible_playbill_expand`;
+- one thing by any reference, values first: `cruxible_playbill_get` (`detail`
+  picks summary, evidence, why, history, proof, or a Document body range);
 - Claim, ClaimType, and Subject reads: `cruxible_playbill_claim_values` (a status
   table for one Subject kind), `cruxible_playbill_list_claims`,
   `cruxible_playbill_get_claim`, `cruxible_playbill_explain_claim`,
@@ -192,6 +194,7 @@ paths and root aliases, not compilation wire.
 | `cruxible_playbill_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
 | `cruxible_playbill_list_claims` | List accepted Claims by Subject, `subject_kind` or predicate | `READ_ONLY` |
 | `cruxible_playbill_claim_values` | Status table: each live Claim's `subject_id`, value and verdict for every Subject of one kind (or named `subject_ids`) and the given predicates | `READ_ONLY` |
+| `cruxible_playbill_get` | Read one thing by any reference (Claim id or prefix, `kind/id`, predicate, `Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, artifact path, proposal id); `detail` is `summary` (values-first card with verdict flags), `evidence`, `why`, `history`, `proof`, or `body` with a byte `range`; a wrong name refuses with the nearest names | `READ_ONLY` |
 | `cruxible_playbill_get_claim` | Read one accepted Claim | `READ_ONLY` |
 | `cruxible_playbill_claim_history` | Read one Claim's accepted lineage | `READ_ONLY` |
 | `cruxible_playbill_explain_claim` | Explain a Claim's verdict and evidence | `READ_ONLY` |

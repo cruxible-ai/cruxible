@@ -24,6 +24,7 @@ from cruxible_client.contracts.claim_reads import (
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequestV1, PlaybillGetResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -1156,6 +1157,12 @@ def read_claim_values(instance_id: str, req: ClaimValuesRequestV1) -> ClaimValue
     return playbill_api.playbill_read_claim_values(
         resolve_server_instance_id(instance_id), request=req
     )
+
+
+@router.post("/{instance_id}/playbill/get", response_model=PlaybillGetResultV1)
+def get_by_ref(instance_id: str, req: PlaybillGetRequestV1) -> PlaybillGetResultV1:
+    """One governed thing by reference, values first; ``detail`` chooses the depth."""
+    return playbill_api.playbill_get(resolve_server_instance_id(instance_id), request=req)
 
 
 @router.post("/{instance_id}/playbill/claims/backings", response_model=ClaimBackingsResultV1)

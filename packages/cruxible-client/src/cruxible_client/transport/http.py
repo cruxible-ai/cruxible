@@ -36,6 +36,7 @@ from cruxible_client.contracts.errors import (
     PlaybillSinceRequestInvalid,
 )
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequestV1, PlaybillGetResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -1312,6 +1313,19 @@ class CruxibleClient:
             json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, ClaimValuesResultV1)
+
+    def playbill_get(
+        self,
+        instance_id: str,
+        *,
+        request: PlaybillGetRequestV1,
+    ) -> PlaybillGetResultV1:
+        """One governed thing by any reference form, values first; see ``detail``."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/get",
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        return self._parse_model(response, PlaybillGetResultV1)
 
     def get_playbill_claim_backings(
         self,

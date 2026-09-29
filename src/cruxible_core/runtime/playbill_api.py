@@ -57,6 +57,7 @@ from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
 )
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequestV1, PlaybillGetResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -2518,6 +2519,46 @@ def playbill_export_floor(
             for path, content in files.items()
         ],
     )
+
+
+def playbill_get(instance_id: str, *, request: PlaybillGetRequestV1) -> PlaybillGetResultV1:
+    """One governed thing by reference; a Document body needs body-read permission."""
+
+    from cruxible_client.contracts.claim_types import claim_type_path
+    from cruxible_client.contracts.query.definitions import query_definition_path
+    from cruxible_core.service.discovery.get import service_playbill_get
+
+    check_permission("cruxible_playbill_get", instance_id=instance_id)
+    result = service_playbill_get(
+        get_playbill_manager().get(instance_id),
+        request=request,
+        access=_access(instance_id, include_body=request.detail == "body"),
+    )
+    consumed: dict[str, tuple[ConsumptionOperation, str]] = {
+        "claim": ("playbill.claim.get", claim_path(result.ref) if result.kind == "claim" else ""),
+        "subject": ("playbill.subject.get", f"subjects/{result.ref}.json"),
+        "claim_type": (
+            "playbill.claim_type.get",
+            claim_type_path(result.ref.removeprefix("ClaimType:"))
+            if result.kind == "claim_type"
+            else "",
+        ),
+        "query": (
+            "playbill.query_definition.get",
+            query_definition_path(result.ref.removeprefix("query:"))
+            if result.kind == "query"
+            else "",
+        ),
+    }
+    if result.kind in consumed and request.detail != "history":
+        operation, path = consumed[result.kind]
+        _record_consumed_paths(
+            instance_id,
+            operation=operation,
+            coordinate=AcceptedCoordinate.model_validate(result.coordinate.model_dump()),
+            paths=(path,),
+        )
+    return result
 
 
 __all__ = [name for name in globals() if name.startswith("playbill_")]

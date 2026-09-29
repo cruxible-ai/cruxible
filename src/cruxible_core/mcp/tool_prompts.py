@@ -219,6 +219,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "every Subject of one kind (or named subject_ids) and the given predicates, "
         "without full Claim views."
     ),
+    "cruxible_playbill_get": (
+        "Use when you have a reference to one thing -- a Claim id or prefix, kind/id, a "
+        "predicate, Document:/Procedure:/query:/CaptureContract:<name>, or a proposal id -- "
+        "and want its values. detail: summary (default card), evidence, why, history, proof "
+        "(full envelope), body (Document bytes by range). A wrong name refuses with the "
+        "nearest names."
+    ),
     "cruxible_playbill_get_claim": (
         "Use when you need one accepted Claim envelope and its structured facts."
     ),

@@ -1653,6 +1653,27 @@ Audit reads do not create qualifying consumption touches or change governed
 state. Follow `next_cursor` only while its accepted coordinate, evaluation time,
 scope, and operational input head remain unchanged.
 
+## playbill get
+
+~~~text
+cruxible playbill get REF [--detail summary|evidence|why|history|proof|body]
+  [--range START:END] [--at GIT_OID] [--evaluation-time TS] [--json]
+~~~
+
+Reads one thing by any reference form you have seen: `CLM-...` (or a unique
+prefix of at least four hex digits), `kind/id` or `Subject:kind/id`, a
+predicate (full, or a leaf unique across kinds) or `ClaimType:<predicate>`,
+`Document:<name>`, `Procedure:<name>`, `query:<name>`, `CaptureContract:<name>`,
+an artifact path, or a proposal id or prefix. `--detail` picks the depth:
+`summary` (default) prints a values-first card -- a Subject's Claims as an
+aligned table, a Claim's value, verdict and flags (`stale`, `contested`,
+`contradicted`, `unsure_hold`) -- `evidence` lists a Claim's captures by
+CaptureContract name and version, its attestations and rationale, `why` and
+`proof` print today's explanation and full envelope, `history` lists revisions
+oldest first with values and who changed them, and `body` prints a Document's
+bytes. A body over 64 KiB needs `--range`. A wrong or ambiguous REF refuses with
+a code and the nearest names. `--json` prints the whole structured result.
+
 ## playbill discover
 
 ~~~text
