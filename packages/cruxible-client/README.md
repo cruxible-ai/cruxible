@@ -2868,9 +2868,12 @@ Import: `cruxible_client.authoring.sdk_types.SourceRef`. [Source](src/cruxible_c
 
 <a id="api-slotref"></a>
 
-## `SlotRef`
+## `ProcedureSlotRef`
 
-Import: `cruxible_client.authoring.sdk_types.SlotRef`. [Source](src/cruxible_client/authoring/sdk_types.py)
+One input slot of a Procedure, as `Procedure.bind` names it. A Subject's field is
+`cruxible_client.contracts.write.SlotRef` (also `cruxible_client.SlotRef`).
+
+Import: `cruxible_client.authoring.sdk_types.ProcedureSlotRef`. [Source](src/cruxible_client/authoring/sdk_types.py)
 
 | Field | Type | Default / construction |
 |---|---|---|
@@ -3703,7 +3706,7 @@ readiness() -> api.PlaybillProcedureReadiness
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-bind(*, bindings: Mapping[str | SlotRef, TypedRef]) -> api.PlaybillProcedureBindResult
+bind(*, bindings: Mapping[str | ProcedureSlotRef, TypedRef]) -> api.PlaybillProcedureBindResult
 ```
 
 <a id="api-procedure-run"></a>
@@ -6628,7 +6631,7 @@ include constructor/validator definitions for request and response contracts.
 | `PropertySchema` | `cruxible_client.contracts.procedures.contract_schema` · [Source](src/cruxible_client/contracts/procedures/contract_schema.py) |
 | `QueryRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ReferentSensitivity` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
-| `SlotRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
+| `ProcedureSlotRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `SourceRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `StateTapNodeV3` | `cruxible_client.contracts.procedures.models` · [Source](src/cruxible_client/contracts/procedures/models.py) |
 | `SubjectRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |

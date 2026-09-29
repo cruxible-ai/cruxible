@@ -60,11 +60,11 @@ from cruxible_client.authoring.sdk_types import (
     PendingClaimTypeRef,
     PendingSubjectRef,
     ProcedureRef,
+    ProcedureSlotRef,
     QueryRef,
     ReferenceKindError,
     ReferentSensitivity,
     RefKind,
-    SlotRef,
     SourceMapEntry,
     SourceRef,
     SubjectRef,
@@ -235,12 +235,12 @@ from cruxible_client.contracts.write import (
     PlaybillWriteRequestV1,
     RetireChange,
     SetChange,
+    SlotRef,
     WriteAccept,
     WriteOutcome,
     WriteRetireReason,
     WriteRole,
 )
-from cruxible_client.contracts.write import SlotRef as WriteSlotRef
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 
@@ -1239,7 +1239,7 @@ def _write_value(value: ClaimValue | SubjectRef | LiteralValue) -> ClaimValue:
     return value
 
 
-def _write_target(target: str | ClaimRef | WriteSlotRef) -> str | WriteSlotRef:
+def _write_target(target: str | ClaimRef | SlotRef) -> str | SlotRef:
     if isinstance(target, ClaimRef):
         return target.address
     return target
@@ -1302,7 +1302,7 @@ class WriteBatch:
 
     def retire(
         self,
-        target: str | ClaimRef | WriteSlotRef,
+        target: str | ClaimRef | SlotRef,
         *,
         because: str | None = None,
         reason: WriteRetireReason = "was-rescinded",
@@ -2489,7 +2489,7 @@ class Playbill:
 
     def retire(
         self,
-        target: str | ClaimRef | WriteSlotRef,
+        target: str | ClaimRef | SlotRef,
         *,
         because: str,
         reason: WriteRetireReason = "was-rescinded",
@@ -4041,7 +4041,7 @@ class Procedure:
         return result
 
     def bind(
-        self, *, bindings: Mapping[str | SlotRef, TypedRef]
+        self, *, bindings: Mapping[str | ProcedureSlotRef, TypedRef]
     ) -> api.PlaybillProcedureBindResult:
         # Binding is a current-state write with the existing daemon admission
         # contract, not a snapshot read. Preserve its observed-reference guard.
@@ -4050,9 +4050,9 @@ class Procedure:
         rows: list[dict[str, object]] = []
         for key, value in bindings.items():
             slot = key if isinstance(key, str) else _address(key, RefKind.SLOT)
-            if isinstance(key, SlotRef) and key.coordinate != coordinate:
+            if isinstance(key, ProcedureSlotRef) and key.coordinate != coordinate:
                 raise ValueError("procedure binding references must match its observed coordinate")
-            if isinstance(value, SlotRef):
+            if isinstance(value, ProcedureSlotRef):
                 raise ReferenceKindError("a slot cannot be bound to another slot")
             if value.coordinate != coordinate:
                 raise ValueError("procedure binding references must match its observed coordinate")

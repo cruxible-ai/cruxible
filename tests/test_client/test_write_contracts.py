@@ -115,3 +115,16 @@ def test_write_refusal_error_carries_its_repair() -> None:
         "candidates": ["done"],
         "repair_line": "Use one of: blocked, done, ready",
     }
+
+
+def test_one_slot_ref_names_a_subject_field_and_procedure_slots_are_named_apart() -> None:
+    """R11: one SlotRef, the write contract's, everywhere; a Procedure slot has its own name."""
+
+    import cruxible_client
+    from cruxible_client.authoring import sdk, sdk_types
+
+    assert cruxible_client.SlotRef is SlotRef
+    assert sdk.SlotRef is SlotRef
+    assert not hasattr(sdk_types, "SlotRef")
+    assert not hasattr(sdk, "WriteSlotRef")
+    assert cruxible_client.ProcedureSlotRef is sdk_types.ProcedureSlotRef
