@@ -1784,5 +1784,44 @@ def test_next_applies_prediction_window_time_at_read_without_a_worker_tick(tmp_p
         if item.reason == "prediction_settleable"
     ]
     assert len(rows) == 1
-    assert datetime.fromisoformat(rows[0].detail["evaluated_at"]) == worker.FIXED_CLOSES
+    assert "evaluated_at" not in rows[0].detail
     assert tuple(worker.WORKER.due(instance, now=worker.FIXED_CLOSES)) == ()
+
+
+def test_prediction_row_identity_stays_stable_after_the_window_closes(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from tests.test_consumers import test_prediction_settlement as worker
+
+    instance, _owner, _capture, _contract = worker.fixed_world(tmp_path)
+    worker.drain(instance, now=worker.served.PREDICTED_AT)
+    request = _request(instance)
+    items = []
+    for instant in (worker.FIXED_CLOSES, worker.FIXED_CLOSES + timedelta(hours=1)):
+        result = service_playbill_next(
+            instance, request=request.model_copy(update={"evaluation_time": instant})
+        )
+        (row,) = [item for item in result.items if item.reason == "prediction_settleable"]
+        items.append(row)
+    assert items[0] == items[1]
+    assert items[0].item_id == items[1].item_id
+    assert "evaluated_at" not in items[0].detail
+
+
+def test_unbindable_prediction_row_identity_survives_an_unchanged_retry(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from cruxible_core.triggers.config import TriggerOperationalConfigV1
+    from cruxible_core.triggers.journal import evaluate_triggers
+    from tests.test_consumers import test_prediction_settlement as worker
+
+    instance, _event, _restore = worker.unbindable_world(tmp_path)
+    worker.drain(instance, now=worker.served.PREDICTED_AT)
+    request = _request(instance)
+    first = _row(instance, "prediction_window_unbindable", request)
+    later = worker.served.PREDICTED_AT + timedelta(hours=1)
+    evaluate_triggers(instance, now=later, config=TriggerOperationalConfigV1())
+    worker.drain(instance, now=later)
+    second = _row(instance, "prediction_window_unbindable", request)
+    assert first == second and first.item_id == second.item_id
+    assert "evaluated_at" not in second.detail

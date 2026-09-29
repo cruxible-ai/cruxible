@@ -1585,7 +1585,7 @@ last check:
 - `prediction_settleable` names a ResolutionContract with a closed bound window
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the
-  `bound_contract_id`, and `evaluated_at`. An event window has one row per
+  `bound_contract_id`. An event window has one row per
   anchor. The repair is `cruxible playbill settle RSC-...`; add
   `--observation CLAIM_ID` naming an accepted observation inside the window. The worker does not check that such an observation exists; if
   none does, see the note under `playbill settle`.
@@ -1604,8 +1604,9 @@ generations or has an unfinished fired sweep/retry event; this facet asks for
 attention), `stalled` (already a `consumer_stalled` row), or `not_running` when
 no consumer loop is running, as in a library read. There, worker rows stand as
 of each worker's last pass. `detail.workers` lists each built-in worker's state
-and cursor, including disabled ones. Worker-derived rows carry when they were
-observed in their own detail.
+and cursor, including disabled ones. Evidence rows carry when they were
+observed in their own detail; prediction rows omit observation timestamps so
+their identity stays stable while the finding is unchanged.
 
 A current `unsure` examined attestation holds a row, and `status.held` counts
 the rows held. A hold lasts only while its basis is unchanged:

@@ -3281,7 +3281,6 @@ def _prediction_items(
                         "ends_at": format_datetime(owed.window.ends_at),
                     },
                     "anchor_event": event,
-                    "evaluated_at": format_datetime(evaluation_time),
                 },
                 repair=PlaybillNextRepairV1(
                     operation="playbill.settle",
@@ -3306,7 +3305,6 @@ def _prediction_items(
                 detail={
                     "anchor_event": anchor.event.model_dump(mode="json"),
                     "code": anchor.code,
-                    "evaluated_at": format_datetime(anchor.checked_at),
                 },
                 repair=PlaybillNextRepairV1(
                     operation="hand_edit",
