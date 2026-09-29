@@ -417,7 +417,14 @@ def test_get_and_query_show_an_exact_content_value_as_its_text(
         (text, ruling.digest)
     ]
 
-    # query: the same values and digests, on compact and spec rows alike.
+    # A long revision value is cut by the same card rule.
+    long_history = _exact_get(instance, long_ruling.claim_id, detail="history").history
+    assert long_history is not None
+    assert [(item.value, item.content_digest) for item in long_history.revisions] == [
+        (cut, long_ruling.digest)
+    ]
+
+    # query: the same values, on compact and spec rows alike.
     compact = {
         row["subject"]: row
         for row in _exact_query(instance, kind=EXACT_KIND, select=["status"]).rows
@@ -533,3 +540,5 @@ def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
     assert isinstance(card.claims[0].claim, str)
     evidence = _exact_get(instance, card.claims[0].claim, detail="evidence").evidence
     assert evidence is not None and evidence.value == long_note
+    history = _exact_get(instance, card.claims[0].claim, detail="history").history
+    assert history is not None and [item.value for item in history.revisions] == [cut]

@@ -1113,7 +1113,9 @@ def _revision(
         actor=generation.actor_id or record.actor_binding.actor_id,
         approved_by=tuple(dict.fromkeys(item.attestation.signer_id for item in record.approvals)),
         lifecycle=entry.lifecycle,
-        value=value,
+        # Every revision value follows the card rule; detail="evidence" reads
+        # the current value whole.
+        value=summary_value(value),
         content_digest=content_digest,
         digest=_short_digest(entry.digest),
     )

@@ -355,7 +355,11 @@ class PlaybillGetRevisionV1(_StrictGetModel):
 
 
 class PlaybillGetHistoryV1(_StrictGetModel):
-    """One page of revisions, newest first; ``revision`` counts from the oldest."""
+    """One page of revisions, newest first; ``revision`` counts from the oldest.
+
+    Each revision's value follows the summary card rule: a string over 500
+    characters is cut to ``{value, truncated: true, length}``.
+    """
 
     revisions: tuple[PlaybillGetRevisionV1, ...]
 
