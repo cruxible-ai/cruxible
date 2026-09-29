@@ -655,6 +655,22 @@ def _refuse_engine(result: ClaimQueryResultV1, *, declared: Sequence[str] = ()) 
     raise PlaybillQueryRefused(code, result.refusal.message, nearest=declared, repair=repair)
 
 
+def _server_budgets(budgets: QueryBudgetsV1, ceiling: int) -> QueryBudgetsV1:
+    """A definition's own budgets held under the query surface's server ceiling."""
+
+    return budgets.model_copy(
+        update={
+            "max_results": min(budgets.max_results, ceiling),
+            "max_paths": None if budgets.max_paths is None else min(budgets.max_paths, ceiling),
+            "max_paths_per_result": (
+                None
+                if budgets.max_paths_per_result is None
+                else min(budgets.max_paths_per_result, ceiling)
+            ),
+        }
+    )
+
+
 def _capped(result: ClaimQueryResultV1) -> tuple[tuple[str, ...], tuple[str, ...]]:
     clipped = tuple(
         item for item in result.truncation.clipped_budgets if item != "include_max_items"
@@ -1165,9 +1181,14 @@ def _artifact_answer(
     evaluation_time: datetime,
     mode: QueryMode,
     request: PlaybillQueryRequestV1 | None,
+    budgets: QueryBudgetsV1 | None = None,
 ) -> _Answer:
     result = evaluate_accepted_query(
-        instance, definition, coordinate=coordinate, evaluation_time=evaluation_time
+        instance,
+        definition,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time,
+        budgets=budgets,
     )
     _refuse_engine(result)
     capped, cap_notes = _capped(result)
@@ -1676,16 +1697,22 @@ def _named_answer(
         )
     if request.name not in names:
         raise PlaybillQueryNotFound(request.name, nearest=nearest(request.name, names))
+    from cruxible_core.service.discovery.query_definitions import accepted_query_definition
+
+    definition = accepted_query_definition(instance, name=request.name, coordinate=coordinate)
+    artifacts = isinstance(definition.query.entry, QueryArtifactsEntryV2)
+    budgets = _server_budgets(
+        definition.query.default_budgets,
+        ARTIFACT_QUERY_MAX_RESULTS if artifacts else COMPACT_QUERY_MAX_RESULTS,
+    )
     run = service_run_playbill_query(
         instance,
         name=request.name,
         evaluation_time=evaluation_time,
         parameters=dict(request.params or {}),
         at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        budgets=budgets,
     )
-    from cruxible_core.service.discovery.query_definitions import accepted_query_definition
-
-    definition = accepted_query_definition(instance, name=request.name, coordinate=coordinate)
     _refuse_engine(run.result, declared=tuple(item.name for item in definition.query.parameters))
     if isinstance(definition.query.entry, QueryArtifactsEntryV2):
         return _artifact_answer(
@@ -1697,6 +1724,7 @@ def _named_answer(
             evaluation_time=evaluation_time,
             mode="named",
             request=None,
+            budgets=budgets,
         )
     return _engine_answer(
         instance,

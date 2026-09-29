@@ -529,3 +529,13 @@ def test_inline_in_compares_temporal_and_decimal_values(
         value=wanted,
     )
     assert _inline_matches(item, cell) is matched
+
+
+def test_named_mode_applies_the_server_ceiling(instance: Any, monkeypatch: Any) -> None:
+    monkeypatch.setattr(compact_module, "COMPACT_QUERY_MAX_RESULTS", 1)
+
+    result = _query(instance, name=QUERY_NAME)
+
+    assert len(result.rows) == 1
+    assert result.capped == ("max_results=1",)
+    assert result.truncated is True
