@@ -429,7 +429,7 @@ def service_disarm_line(
         return _arm_view(store, conn, data, outcome="disarmed")
 
 
-def service_line_arm_status(instance: PlaybillInstance, line: str) -> LineArmV1:
+def service_line_status(instance: PlaybillInstance, line: str) -> LineArmV1:
     """The Line's current arm, or the last one and why it stopped."""
 
     accepted = _accepted_line_by_reference(

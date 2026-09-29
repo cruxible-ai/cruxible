@@ -1773,11 +1773,11 @@ def handle_playbill_line_disarm(instance_id: str, line: str) -> contracts.LineAr
     )
 
 
-def handle_playbill_line_arm_status(instance_id: str, line: str) -> contracts.LineArmV1:
+def handle_playbill_line_status(instance_id: str, line: str) -> contracts.LineArmV1:
     return _dispatch_remote_or_local(
-        lambda client: client.playbill_line_arm_status(instance_id, line),
-        lambda: playbill_api.playbill_line_arm_status(instance_id, line),
-        operation_name="cruxible_playbill_line_arm_status",
+        lambda client: client.playbill_line_status(instance_id, line),
+        lambda: playbill_api.playbill_line_status(instance_id, line),
+        operation_name="cruxible_playbill_line_status",
     )
 
 

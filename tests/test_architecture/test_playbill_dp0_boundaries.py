@@ -423,7 +423,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "check_playbill_line",
         "arm_playbill_line",
         "disarm_playbill_line",
-        "playbill_line_arm_status",
+        "playbill_line_status",
         "evaluate_playbill_line",
         "dispatch_playbill_line",
         "run_playbill_line",

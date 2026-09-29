@@ -1371,8 +1371,8 @@ def disarm_line(instance_id: str, line: str) -> contracts.LineArmV1:
 
 
 @router.get("/{instance_id}/playbill/lines/{line}/arm", response_model=contracts.LineArmV1)
-def line_arm_status(instance_id: str, line: str) -> contracts.LineArmV1:
-    return playbill_api.playbill_line_arm_status(resolve_server_instance_id(instance_id), line)
+def line_status(instance_id: str, line: str) -> contracts.LineArmV1:
+    return playbill_api.playbill_line_status(resolve_server_instance_id(instance_id), line)
 
 
 @router.post(

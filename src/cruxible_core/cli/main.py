@@ -755,7 +755,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "playbill", "disarm_line", "Stop a Line admitting work automatically."
                     ),
                     "status": _command(
-                        "playbill", "line_arm_status", "Show a Line's arm and why it stopped."
+                        "playbill", "line_status", "Show a Line's arm and why it stopped."
                     ),
                     "check": _command(
                         "playbill",

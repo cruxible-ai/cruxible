@@ -41,7 +41,7 @@ def test_typed_sdk_http_check_listen_evaluate_and_dispatch(playbill_http, tmp_pa
     armed = sdk.arm_line(line.identity.name)
     assert armed.state == "armed" and armed.armed_by.kind == "local_operator"
     assert armed.outcome == "armed"
-    assert sdk.line_arm(line.identity.name) == armed.model_copy(update={"outcome": None})
+    assert sdk.line_status(line.identity.name) == armed.model_copy(update={"outcome": None})
     again = sdk.arm_line(line.identity.name)
     assert (again.arm_id, again.outcome) == (armed.arm_id, "already_armed")
     disarmed = sdk.disarm_line(line.identity.name)

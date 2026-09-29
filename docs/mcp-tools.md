@@ -255,7 +255,7 @@ exactly one may omit it.
 | `cruxible_playbill_line_check` | Read trigger eligibility, exact matches, and admitted occurrences without queuing or running. | `READ_ONLY` |
 | `cruxible_playbill_line_arm` | Arm a Line forward-only: the daemon admits what it matches under the caller's credential, rechecked before each run. Repeating it unchanged returns `outcome: already_armed`. | `GOVERNED_WRITE` |
 | `cruxible_playbill_line_disarm` | Stop a Line admitting work on its own; admitted runs keep going. A stopped arm returns `outcome: already_disarmed`. | `GOVERNED_WRITE` |
-| `cruxible_playbill_line_arm_status` | Read a Line's arm, its pending work, and why an arm stopped. | `READ_ONLY` |
+| `cruxible_playbill_line_status` | Read a Line's arm, its pending work, and why an arm stopped. | `READ_ONLY` |
 | `cruxible_playbill_line_evaluate` | Evaluate an explicit historical range into pending work; never executes. | `GOVERNED_WRITE` |
 | `cruxible_playbill_line_dispatch` | Admit retained pending occurrences under the current caller’s authority. | `READ_ONLY` |
 | `cruxible_playbill_line_run` | Trigger one due accepted Line occurrence; a Line that can propose or settle needs a mandate, an observe-only one none | `READ_ONLY` |

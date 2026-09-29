@@ -278,7 +278,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Stop a Line admitting work on its own. Runs already admitted keep going. "
         "A Line already stopped returns already_disarmed."
     ),
-    "cruxible_playbill_line_arm_status": (
+    "cruxible_playbill_line_status": (
         "Read whether a Line is armed, its pending work, and why an arm stopped "
         "(credential revoked, Line changed, disarmed). Rearm to resume."
     ),

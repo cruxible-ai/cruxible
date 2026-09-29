@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -82,10 +83,11 @@ from cruxible_client.contracts.kits import (
     PlaybillKitRemoveRequestV1,
 )
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.procedures.results import ProcedureHaltTerminalV1
 from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequestV1
-from cruxible_client.contracts.repairs import render_served_repair
+from cruxible_client.contracts.repairs import RepairOperationV1, render_served_repair
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReferenceV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
@@ -3887,6 +3889,51 @@ def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
     _emit_json(result.model_dump(mode="json"))
 
 
+#: Repair arguments a CLI leaf takes as its positional operand.
+_POSITIONAL_REPAIR_ARGUMENTS = frozenset(
+    {"line", "name", "claim_id", "proposal_id", "prediction_id", "run_id"}
+)
+
+
+def _cli_repair(repair: Any) -> str:
+    """Render a served repair as the CLI command that performs it."""
+
+    if not isinstance(repair, RepairOperationV1) or not repair.operation.startswith("playbill."):
+        return render_served_repair(repair)
+    parts = ["cruxible", *repair.operation.split(".")]
+    for key, value in repair.arguments.items():
+        if key in _POSITIONAL_REPAIR_ARGUMENTS:
+            parts.append(shlex.quote(str(value)))
+        elif value is True:
+            parts.append("--" + key.replace("_", "-"))
+        elif value not in (None, False):
+            parts.extend(["--" + key.replace("_", "-"), shlex.quote(str(value))])
+    return " ".join(parts)
+
+
+def _echo_run_outcome(result: contracts.PlaybillProcedureRunState, label: str) -> None:
+    """Lead with the answer: the result on success, the code and repair on refusal."""
+
+    click.echo(f"{label}: {result.status}")
+    if result.status == "succeeded" and result.result is not None:
+        click.echo("Result: " + json.dumps(result.result, sort_keys=True))
+    terminal = result.terminal
+    code = getattr(terminal, "code", None)
+    if code is not None:
+        click.echo(f"Refused: {code}: {getattr(terminal, 'message', '')}")
+        details = getattr(terminal, "details", None)
+        if isinstance(details, dict) and details.get("field_path"):
+            click.echo(f"Field: {details['field_path']}")
+        repair = getattr(terminal, "repair", None)
+        if repair is not None:
+            click.echo(f"Repair: {_cli_repair(repair)}")
+        elif isinstance(details, dict) and isinstance(details.get("repair"), str):
+            click.echo(f"Repair: {details['repair']}")
+    elif isinstance(terminal, ProcedureHaltTerminalV1) and terminal.reason:
+        click.echo(f"Halted at {terminal.node_id}: {terminal.reason}")
+    click.echo(f"Next: {result.next_operation['kind']}")
+
+
 def _echo_source_observations(result: contracts.PlaybillProcedureRunState) -> None:
     """Print what each admitted Source occurrence really observed.
 
@@ -4003,8 +4050,7 @@ def run_procedure(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(f"{result.run_id}: {result.status}")
-    click.echo(f"Next: {result.next_operation['kind']}")
+    _echo_run_outcome(result, result.run_id or name)
     if result.receipt_digest is not None:
         click.echo(f"Receipt: {result.receipt_digest}")
     _echo_source_observations(result)
@@ -4230,11 +4276,11 @@ def disarm_line(line: str, output_json: bool) -> None:
 @click.argument("line")
 @json_option
 @handle_errors
-def line_arm_status(line: str, output_json: bool) -> None:
+def line_status(line: str, output_json: bool) -> None:
     """Show whether the Line is armed and why an arm stopped."""
 
     result = _server_call(
-        lambda client, instance_id: client.playbill_line_arm_status(instance_id, line),
+        lambda client, instance_id: client.playbill_line_status(instance_id, line),
         command_name="playbill line status",
     )
     if output_json:
@@ -4370,8 +4416,7 @@ def run_line(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(f"{result.run_id or line}: {result.status}")
-    click.echo(f"Next: {result.next_operation['kind']}")
+    _echo_run_outcome(result, result.run_id or line)
     _echo_source_observations(result)
 
 

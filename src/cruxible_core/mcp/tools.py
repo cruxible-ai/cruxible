@@ -961,11 +961,11 @@ def register_tools(
         return handlers.handle_playbill_line_disarm(require_instance_id(instance_id), line)
 
     @_tool
-    def cruxible_playbill_line_arm_status(
+    def cruxible_playbill_line_status(
         instance_id: InstanceId = None, *, line: str
     ) -> contracts.LineArmV1:
         """Read a Line's current arm, or its last one and why it stopped."""
-        return handlers.handle_playbill_line_arm_status(require_instance_id(instance_id), line)
+        return handlers.handle_playbill_line_status(require_instance_id(instance_id), line)
 
     @_tool
     def cruxible_playbill_line_evaluate(

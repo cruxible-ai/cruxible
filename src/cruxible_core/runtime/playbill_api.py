@@ -2064,13 +2064,13 @@ def playbill_line_disarm(instance_id: str, line: str) -> contracts.LineArmV1:
     )
 
 
-def playbill_line_arm_status(instance_id: str, line: str) -> contracts.LineArmV1:
+def playbill_line_status(instance_id: str, line: str) -> contracts.LineArmV1:
     """The Line's current arm, or its last one and why it stopped."""
 
-    check_permission("cruxible_playbill_line_arm_status", instance_id=instance_id)
-    from cruxible_core.service.procedures.line_dispatch import service_line_arm_status
+    check_permission("cruxible_playbill_line_status", instance_id=instance_id)
+    from cruxible_core.service.procedures.line_dispatch import service_line_status
 
-    return service_line_arm_status(get_playbill_manager().get(instance_id), line)
+    return service_line_status(get_playbill_manager().get(instance_id), line)
 
 
 def playbill_line_evaluate(

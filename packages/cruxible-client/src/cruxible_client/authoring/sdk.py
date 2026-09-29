@@ -3045,9 +3045,9 @@ class Playbill:
         """
         return self._client.disarm_playbill_line(self._instance_id, line)
 
-    def line_arm(self, line: str) -> api.LineArmV1:
+    def line_status(self, line: str) -> api.LineArmV1:
         """The Line's current arm, or its last one and why it stopped."""
-        return self._client.playbill_line_arm_status(self._instance_id, line)
+        return self._client.playbill_line_status(self._instance_id, line)
 
     def evaluate_line(
         self,

@@ -1553,7 +1553,7 @@ class CruxibleClient:
         response = self._client.post(f"/api/v1/{instance_id}/playbill/lines/{line}/disarm")
         return self._parse_model(response, contracts.LineArmV1)
 
-    def playbill_line_arm_status(self, instance_id: str, line: str) -> contracts.LineArmV1:
+    def playbill_line_status(self, instance_id: str, line: str) -> contracts.LineArmV1:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/lines/{line}/arm")
         return self._parse_model(response, contracts.LineArmV1)
 
