@@ -55,9 +55,14 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
         return
     if create:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    connection = sqlite3.connect(path, timeout=30)
+    connection = (
+        sqlite3.connect(path, timeout=30)
+        if create
+        else sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
+    )
     try:
-        connection.execute("PRAGMA synchronous=FULL")
+        if create:
+            connection.execute("PRAGMA synchronous=FULL")
         connection.execute("BEGIN IMMEDIATE" if create else "BEGIN")
         (version,) = connection.execute("PRAGMA user_version").fetchone()
         if version == 0 and create:
@@ -124,33 +129,51 @@ def schedule_deadline(instance: Any, name: str, at: datetime) -> None:
         )
 
 
+def _due_triggers(
+    connection: sqlite3.Connection | None, *, now: datetime, config: TriggerOperationalConfigV1
+) -> list[tuple[str, datetime]]:
+    pending: list[tuple[str, datetime]] = []
+    last = (
+        {}
+        if connection is None
+        else dict(connection.execute("SELECT name,last_fired_at FROM cadences").fetchall())
+    )
+    for name, interval in config.cadences().items():
+        due = cadence_due(interval, last=None if name not in last else _instant(last[name]))
+        if due is None or due <= now:
+            pending.append((name, now if due is None else due))
+    if connection is not None:
+        pending.extend(
+            (name, _instant(due))
+            for name, due in connection.execute(
+                "SELECT name,due_at FROM deadlines WHERE due_at<=?", (format_datetime(now),)
+            ).fetchall()
+        )
+    return sorted(pending, key=lambda item: (item[1], item[0]))
+
+
 def evaluate_triggers(
     instance: Any, *, now: datetime, config: TriggerOperationalConfigV1
 ) -> tuple[TriggerEvent, ...]:
     """Fire each due timer once, restarting a cadence from this tick after downtime."""
 
+    with _open(instance) as connection:
+        if not _due_triggers(connection, now=now, config=config):
+            return ()
     fired: list[TriggerEvent] = []
     with _open(instance, create=True) as connection:
         assert connection is not None
-        pending: list[tuple[str, datetime]] = []
-        last = dict(connection.execute("SELECT name,last_fired_at FROM cadences").fetchall())
-        for name, interval in config.cadences().items():
-            due = cadence_due(interval, last=None if name not in last else _instant(last[name]))
-            if due is None or due <= now:
-                pending.append((name, now if due is None else due))
+        # Recheck under the writer lock: another evaluator may have fired, or
+        # a deadline may have been replaced since the read-only due check.
+        for name, due in _due_triggers(connection, now=now, config=config):
+            if name in config.cadences():
                 connection.execute(
                     "INSERT INTO cadences VALUES (?,?) "
                     "ON CONFLICT(name) DO UPDATE SET last_fired_at=excluded.last_fired_at",
                     (name, format_datetime(now)),
                 )
-        deadlines = connection.execute(
-            "SELECT name,due_at FROM deadlines WHERE due_at<=?", (format_datetime(now),)
-        ).fetchall()
-        pending.extend((name, _instant(due)) for name, due in deadlines)
-        connection.executemany(
-            "DELETE FROM deadlines WHERE name=?", ((name,) for name, _ in deadlines)
-        )
-        for name, due in sorted(pending, key=lambda item: (item[1], item[0])):
+            else:
+                connection.execute("DELETE FROM deadlines WHERE name=?", (name,))
             cursor = connection.execute(
                 "INSERT INTO events(name,due_at,fired_at) VALUES (?,?,?)",
                 (name, format_datetime(due), format_datetime(now)),

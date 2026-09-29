@@ -133,3 +133,60 @@ def test_runner_fires_before_matching_consumers(tmp_path: Path) -> None:
     runner = ConsumerRunner(SimpleNamespace(), kinds=(kind,))
     runner.match_once("instance", world, now=NOW)
     assert len(seen) == 2
+
+
+def test_an_idle_tick_uses_only_a_read_connection_without_a_writer_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = instance(tmp_path)
+    evaluate_triggers(world, now=NOW, config=CONFIG)
+    schedule_deadline(world, "next.expire", NOW + timedelta(minutes=1))
+    statements = []
+    connections = []
+    connect = sqlite3.connect
+
+    def observed(*args, **kwargs):  # type: ignore[no-untyped-def]
+        connections.append((args, kwargs))
+        connection = connect(*args, **kwargs)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", observed)
+    # An operator can hold the writer lock while an idle tick reads.
+    with connect(journal_path(world), timeout=0.1) as writer:
+        writer.execute("BEGIN IMMEDIATE")
+        for seconds in (0, 1, 59):
+            assert (
+                evaluate_triggers(world, now=NOW + timedelta(seconds=seconds), config=CONFIG) == ()
+            )
+    assert len(connections) == 3
+    assert all(args[0].endswith("?mode=ro") and kwargs["uri"] for args, kwargs in connections)
+    assert "BEGIN IMMEDIATE" not in statements
+    assert not any("synchronous" in statement.lower() for statement in statements)
+    assert not any(statement.startswith(("INSERT", "UPDATE", "DELETE")) for statement in statements)
+
+
+def test_due_triggers_are_rechecked_after_the_read_before_firing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.triggers import journal
+
+    world = instance(tmp_path)
+    evaluate_triggers(world, now=NOW, config=CONFIG)
+    schedule_deadline(world, "next.expire", NOW + timedelta(minutes=1))
+    due = journal._due_triggers
+    replaced = []
+
+    def replace_after_read(connection, **kwargs):  # type: ignore[no-untyped-def]
+        pending = due(connection, **kwargs)
+        if pending and not replaced:
+            replaced.append(True)
+            # Finish the read before an operator replaces the deadline.
+            connection.commit()
+            schedule_deadline(world, "next.expire", NOW + timedelta(minutes=2))
+        return pending
+
+    monkeypatch.setattr(journal, "_due_triggers", replace_after_read)
+    assert evaluate_triggers(world, now=NOW + timedelta(minutes=1), config=CONFIG) == ()
+    (event,) = evaluate_triggers(world, now=NOW + timedelta(minutes=2), config=CONFIG)
+    assert event.name == "next.expire" and event.due_at == NOW + timedelta(minutes=2)
