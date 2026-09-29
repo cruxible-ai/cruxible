@@ -18,7 +18,13 @@ def test_http_orient_answers_the_map_rendered_for_the_requested_surface(
     body = response.json()
     assert body["tag"] == "playbill-orient-v1" and body["instance"] == instance_id
     assert body["kinds"] == [] and body["truncated"] is False
-    assert set(body["artifacts"]) == {"claim_types", "procedures", "documents", "queries"}
+    assert set(body["artifacts"]) == {
+        "claim_types",
+        "procedures",
+        "documents",
+        "queries",
+        "interfaces",
+    }
     assert body["you"]["actor"] is not None
     # Optional parts that do not apply are absent, never null.
     assert "kind_detail" not in body and "next_cursor" not in body

@@ -3359,7 +3359,8 @@ class Playbill:
         artifact counts, named queries, whether this caller can author, what
         needs attention, and ``next`` suggestions written as SDK calls.
         ``kind`` reads one kind in full with sample Subject IDs; ``section``
-        pages documents, procedures, claim_types or queries. Follow
+        pages documents, procedures, claim_types, queries or interfaces (the
+        provider interfaces a Procedure can call). Follow
         ``next_cursor`` while ``truncated``.
         """
 

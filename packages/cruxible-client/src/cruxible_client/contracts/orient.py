@@ -5,7 +5,8 @@ kinds with their counts and compact predicate descriptors, how many of each
 artifact family exist, the named queries, who the caller is and whether it can
 author, what needs attention, and runnable follow-up calls. ``orient(kind=K)``
 widens one kind to every predicate in full plus sample Subject IDs, and
-``orient(section=S)`` pages one artifact family as compact rows.
+``orient(section=S)`` pages one artifact family as compact rows, including the
+provider interfaces a Procedure can call.
 
 Values lead: a predicate's accepted evidence is shown as CaptureContract NAMES,
 never digests, and absent optional fields are left out of the wire rather than
@@ -21,7 +22,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
-PlaybillOrientSection: TypeAlias = Literal["documents", "procedures", "claim_types", "queries"]
+PlaybillOrientSection: TypeAlias = Literal[
+    "documents", "procedures", "claim_types", "queries", "interfaces"
+]
 #: The surface a caller renders ``next`` for: tool calls, commands, or SDK calls.
 PlaybillOrientSurface: TypeAlias = Literal["mcp", "cli", "sdk"]
 
@@ -108,6 +111,7 @@ class PlaybillOrientArtifactCountsV1(_StrictOrientModel):
     procedures: int = Field(ge=0)
     documents: int = Field(ge=0)
     queries: int = Field(ge=0)
+    interfaces: int = Field(ge=0)
 
 
 class PlaybillOrientQueryV1(_StrictOrientModel):
@@ -131,6 +135,25 @@ class PlaybillOrientProcedureV1(_StrictOrientModel):
     runnable: Literal["directly_runnable", "binding_required"]
 
 
+class PlaybillOrientInterfaceV1(_StrictOrientModel):
+    """One live provider interface a Procedure node can call.
+
+    ``input`` and ``output`` list the operation contract's fields as
+    ``name: type`` (``?`` when optional); an acquisition interface's output is
+    the named external-capture contract instead. ``effect`` is the interface's
+    governed effect class: an ``external_mutation`` call needs an effect policy
+    on its node. ``providers`` are the live Providers implementing it; one with
+    none has nothing to run it yet.
+    """
+
+    name: str
+    description: str | None = Field(default=None, exclude_if=_is_none)
+    input: tuple[str, ...] = ()
+    output: tuple[str, ...] = ()
+    effect: Literal["none", "external_read", "external_mutation"]
+    providers: tuple[str, ...] = ()
+
+
 class PlaybillOrientAttentionV1(_StrictOrientModel):
     """What the ``next`` queue holds, and anything else the instance needs."""
 
@@ -147,7 +170,7 @@ class PlaybillOrientResultV1(_StrictOrientModel):
       ``artifacts``, ``queries`` and ``attention``;
     - ``kind``: ``kind_detail``;
     - ``section``: that section's rows (``documents``, ``procedures``,
-      ``claim_types`` or ``queries``), paged.
+      ``claim_types``, ``queries`` or ``interfaces``), paged.
 
     ``next`` is rendered for the requesting surface.
     """
@@ -175,6 +198,9 @@ class PlaybillOrientResultV1(_StrictOrientModel):
         default=None, exclude_if=_is_none
     )
     queries: tuple[PlaybillOrientQueryV1, ...] | None = Field(default=None, exclude_if=_is_none)
+    interfaces: tuple[PlaybillOrientInterfaceV1, ...] | None = Field(
+        default=None, exclude_if=_is_none
+    )
     truncated: bool = False
     next_cursor: str | None = Field(default=None, exclude_if=_is_none)
     next: tuple[str, ...] = ()
@@ -189,6 +215,7 @@ __all__ = [
     "PlaybillOrientArtifactCountsV1",
     "PlaybillOrientAttentionV1",
     "PlaybillOrientDocumentV1",
+    "PlaybillOrientInterfaceV1",
     "PlaybillOrientKindDetailV1",
     "PlaybillOrientKindV1",
     "PlaybillOrientPredicateV1",

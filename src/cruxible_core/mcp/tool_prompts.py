@@ -75,7 +75,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "predicates (type, enum members, accepted evidence), artifact counts, named queries, "
         "whether you can author, what needs attention, and runnable next calls. Pass kind for "
         "one kind in full with sample Subject IDs, or section to page documents, procedures, "
-        "claim_types or queries."
+        "claim_types, queries, or interfaces (the provider interfaces a Procedure can call)."
     ),
     "cruxible_playbill_whoami": (
         "Use when you need which instance this server acts on, who you are there, and "

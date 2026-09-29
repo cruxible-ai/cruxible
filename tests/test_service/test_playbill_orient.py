@@ -431,3 +431,154 @@ def test_a_decommissioned_instance_cannot_be_authored_even_by_an_active_writer(s
     assert you.actor == "owner" and you.principal == "owner"
     assert you.reason is not None
     assert "decommissioned" in you.reason and "migrated to a new host" in you.reason
+
+
+def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+    """Accept the demo interface with its Provider, plus an acquisition interface with none."""
+
+    import cruxible_core.proposals.proposals as proposal_module
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_client.contracts.provider_interfaces import (
+        ProviderBucketVocabularyV1,
+        provider_bucket_vocabulary_digest,
+        provider_interface_definition_digest,
+        provider_interface_path,
+        render_provider_interface,
+    )
+    from cruxible_client.contracts.providers import render_provider
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+    from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
+    from tests.core_support._p2b1_support import (
+        accepted_interface,
+        accepted_provider,
+        interface_fixture,
+        interface_registration,
+    )
+    from tests.core_support._support import initialize_local
+
+    instance, owner = initialize_local(tmp_path)
+    fixture = interface_fixture()
+    monkeypatch.setattr(
+        proposal_module,
+        "core_provider_bucket_conformance_fixtures",
+        lambda: {fixture.fixture_id: fixture},
+    )
+    demo, provider = accepted_interface(), accepted_provider()
+    definition = canonical_bytes(
+        {
+            "interface_id": "demo.fetch",
+            "version": 1,
+            "effect_class": "external_read",
+            "contracts": {
+                "input": {
+                    "fields": {
+                        "url": {"type": "string"},
+                        "max_bytes": {"type": "integer", "optional": True},
+                    }
+                },
+                "output": "playbill-provider-result-to-external-capture-v1",
+            },
+        }
+    ).hex()
+    base = interface_registration()
+    vocabulary = canonical_bytes(
+        ProviderBucketVocabularyV1.model_validate_json(bytes.fromhex(base.vocabulary_bytes_hex))
+        .model_copy(
+            update={
+                "interface_id": "demo.fetch",
+                "description": "Fetch one resource over HTTP. Buckets size the payload.",
+            }
+        )
+        .model_dump(mode="json")
+    ).hex()
+    fetch = base.model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ProviderInterface", name="demo.fetch"),
+            "interface_id": "demo.fetch",
+            "interface_bytes_hex": definition,
+            "interface_digest": provider_interface_definition_digest(definition),
+            "vocabulary_bytes_hex": vocabulary,
+            "vocabulary_digest": provider_bucket_vocabulary_digest(vocabulary),
+        }
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[demo.path] = render_provider_interface(demo.registration)
+    tree[provider_interface_path("demo.fetch")] = render_provider_interface(fetch)
+    tree[provider.path] = render_provider(provider.provider)
+    proposed = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/orient-interfaces",
+            proposed_base_oid=instance.accepted_coordinate().git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp=TIMESTAMP,
+    )
+    assert proposed.evaluation.verdict == "candidate", proposed.evaluation.diagnostics
+    accept_proposal(
+        instance,
+        owner,
+        service_inspect_playbill_proposal(instance, proposal_id=proposed.admission.proposal_id),
+    )
+    return instance
+
+
+def test_orient_pages_the_provider_interfaces_a_procedure_can_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.orient import PlaybillOrientInterfaceV1
+    from cruxible_core.service.discovery.discovery import service_discover_playbill_semantic
+
+    instance = _accept_interfaces(tmp_path, monkeypatch)
+
+    first = service_playbill_orient(instance, section="interfaces", limit=1, surface="mcp")
+    assert first.section == "interfaces" and first.truncated and first.next_cursor
+    assert first.interfaces == (
+        PlaybillOrientInterfaceV1(
+            name="demo.fetch",
+            description="Fetch one resource over HTTP.",
+            input=("max_bytes?: integer", "url: string"),
+            output=("playbill-provider-result-to-external-capture-v1",),
+            effect="external_read",
+        ),
+    )
+    # get reads no interface, so the only suggestion continues the page.
+    assert first.next == (
+        f'cruxible_playbill_orient(section="interfaces", cursor="{first.next_cursor}")',
+    )
+    rest = service_playbill_orient(instance, section="interfaces", cursor=first.next_cursor)
+    assert rest.interfaces is not None
+    ((demo),) = rest.interfaces
+    assert (demo.name, demo.input, demo.output, demo.effect, demo.providers) == (
+        "demo.interface",
+        (),
+        (),
+        "external_read",
+        ("demo-provider",),
+    )
+
+    # The rows come from discover's own inventory: the same interfaces, in order.
+    inventory = service_discover_playbill_semantic(
+        instance, evaluation_time="2026-08-16T21:00:00Z", profile="interfaces"
+    )
+    assert [item.identity.removeprefix("ProviderInterface:") for item in inventory.interfaces] == [  # type: ignore[union-attr]
+        "demo.fetch",
+        "demo.interface",
+    ]
+
+    # The map counts them and points at the section.
+    default = service_playbill_orient(instance, surface="mcp")
+    assert default.artifacts is not None and default.artifacts.interfaces == 2
+    assert 'cruxible_playbill_orient(section="interfaces")' in default.next
+
+
+def test_orient_without_interfaces_counts_none_and_suggests_no_section(
+    seeded,  # type: ignore[no-untyped-def]
+) -> None:
+    instance = seeded
+    result = service_playbill_orient(instance, surface="mcp")
+
+    assert result.artifacts is not None and result.artifacts.interfaces == 0
+    assert not any("interfaces" in line for line in result.next)
+    empty = service_playbill_orient(instance, section="interfaces")
+    assert empty.interfaces == () and empty.next == ()

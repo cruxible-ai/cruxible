@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast, get_args
 
 import click
 import yaml
@@ -5491,6 +5491,14 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     if section in {"documents", "procedures"}:
         for row in result[section]:
             lines.append("  ".join(str(value) for value in row.values()))
+    if section == "interfaces":
+        for row in result["interfaces"]:
+            providers = ",".join(row.get("providers", ())) or "(no provider)"
+            lines.append(f"{row['name']}  effect={row['effect']}  providers={providers}")
+            if row.get("description"):
+                lines.append(f"  {row['description']}")
+            lines.append(f"  in:  {', '.join(row.get('input', ())) or '-'}")
+            lines.append(f"  out: {', '.join(row.get('output', ())) or '-'}")
     if section == "claim_types":
         for row in result["claim_types"]:
             lines.append(
@@ -5523,7 +5531,7 @@ def _render_orient(result: Mapping[str, Any]) -> str:
 @click.option("--kind", default=None, help="Read one Subject kind in full.")
 @click.option(
     "--section",
-    type=click.Choice(["documents", "procedures", "claim_types", "queries"]),
+    type=click.Choice(list(get_args(contracts.PlaybillOrientSection))),
     default=None,
     help="Page one artifact family instead of the map.",
 )

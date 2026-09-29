@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -30,6 +31,7 @@ from cruxible_client.contracts.provider_contracts import (
 )
 from cruxible_client.contracts.provider_interfaces import (
     ProviderEffectClassV1,
+    ProviderInterfaceRegistration,
     parse_provider_interface,
     provider_interface_digest,
 )
@@ -133,11 +135,19 @@ class PlaybillInterfaceInventoryV1(_StrictDiscoveryServiceModel):
         return self
 
 
+@dataclass(frozen=True)
+class AcceptedProviderInterface:
+    """One live accepted interface: its registration and its inventory entry."""
+
+    registration: ProviderInterfaceRegistration
+    entry: ProviderInterfaceEntryV1
+
+
 def _provider_interfaces(
     tree: Mapping[str, bytes],
     *,
     installed_classifier_digests: frozenset[str],
-) -> tuple[ProviderInterfaceEntryV1, ...]:
+) -> tuple[AcceptedProviderInterface, ...]:
     implementations: dict[str, list[ProviderInterfaceImplementationV1]] = {}
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("providers/"):
@@ -153,43 +163,63 @@ def _provider_interfaces(
                     implementation_digest=implementation.implementation_digest,
                 )
             )
-    entries: list[ProviderInterfaceEntryV1] = []
+    entries: list[AcceptedProviderInterface] = []
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("provider-interfaces/"):
             continue
         registration = parse_provider_interface(tree[path], path=path)
         if registration.lifecycle.state != "live":
             continue
-        entries.append(
-            ProviderInterfaceEntryV1(
-                providers=tuple(
-                    sorted(
-                        implementations.get(registration.interface_id, ()),
-                        key=lambda item: (
-                            item.provider_identity.encode("utf-8"),
-                            item.implementation_digest.encode("ascii"),
-                        ),
-                    )
-                ),
-                identity=registration.identity.qualified,
-                artifact_digest=provider_interface_digest(registration).tagged,
-                interface_digest=registration.interface_digest,
-                operation_contract=(
-                    read_provider_operation_contract(registration.interface_bytes_hex)
-                    if "contracts" in json.loads(bytes.fromhex(registration.interface_bytes_hex))
-                    else None
-                ),
-                vocabulary_digest=registration.vocabulary_digest,
-                classifier_digest=registration.classifier_digest,
-                effect_class=registration.effect_class,
-                classifier_status=(
-                    "installed"
-                    if registration.classifier_digest in installed_classifier_digests
-                    else "not_installed"
-                ),
-            )
+        entry = ProviderInterfaceEntryV1(
+            providers=tuple(
+                sorted(
+                    implementations.get(registration.interface_id, ()),
+                    key=lambda item: (
+                        item.provider_identity.encode("utf-8"),
+                        item.implementation_digest.encode("ascii"),
+                    ),
+                )
+            ),
+            identity=registration.identity.qualified,
+            artifact_digest=provider_interface_digest(registration).tagged,
+            interface_digest=registration.interface_digest,
+            operation_contract=(
+                read_provider_operation_contract(registration.interface_bytes_hex)
+                if "contracts" in json.loads(bytes.fromhex(registration.interface_bytes_hex))
+                else None
+            ),
+            vocabulary_digest=registration.vocabulary_digest,
+            classifier_digest=registration.classifier_digest,
+            effect_class=registration.effect_class,
+            classifier_status=(
+                "installed"
+                if registration.classifier_digest in installed_classifier_digests
+                else "not_installed"
+            ),
         )
-    return tuple(sorted(entries, key=lambda item: item.identity.encode("utf-8")))
+        entries.append(AcceptedProviderInterface(registration=registration, entry=entry))
+    return tuple(sorted(entries, key=lambda item: item.entry.identity.encode("utf-8")))
+
+
+def accepted_provider_interfaces(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    *,
+    installed_classifier_digests: frozenset[str] = frozenset(),
+) -> tuple[AcceptedProviderInterface, ...]:
+    """Every live accepted provider interface at one coordinate, sorted by identity.
+
+    The one inventory source: ``discover(profile="interfaces")`` serves its
+    entries, and ``orient(section="interfaces")`` its compact rows.
+    """
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        tree = {
+            row.path: projection.typed.member_bytes(row.path)
+            for kind in ("provider", "provider-interface")
+            for row in projection.typed.envelopes(kind=kind)
+        }
+    return _provider_interfaces(tree, installed_classifier_digests=installed_classifier_digests)
 
 
 def _resolve_coordinate(
@@ -292,15 +322,13 @@ def service_discover_playbill_semantic(
         raise ProposalIntegrityError("discovery accepts only verified accepted coordinates")
     coordinate = _resolve_coordinate(instance, at)
     if profile == "interfaces" and query is None and entrypoint is None:
-        with instance.bind_accepted_projection(coordinate) as projection:
-            tree = {
-                row.path: projection.typed.member_bytes(row.path)
-                for kind in ("provider", "provider-interface")
-                for row in projection.typed.envelopes(kind=kind)
-            }
-        interfaces = _provider_interfaces(
-            tree,
-            installed_classifier_digests=installed_classifier_digests,
+        interfaces = tuple(
+            item.entry
+            for item in accepted_provider_interfaces(
+                instance,
+                coordinate,
+                installed_classifier_digests=installed_classifier_digests,
+            )
         )
         return PlaybillInterfaceInventoryV1(
             coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
@@ -345,10 +373,12 @@ def service_discover_playbill_semantic(
 
 
 __all__ = [
+    "AcceptedProviderInterface",
     "PlaybillInterfaceInventoryV1",
     "PlaybillDiscoveryResultV1",
     "ProviderInterfaceEntryV1",
     "accepted_claim_types",
+    "accepted_provider_interfaces",
     "accepted_query_definitions",
     "build_accepted_discovery_vocabulary",
     "service_discover_playbill_semantic",
