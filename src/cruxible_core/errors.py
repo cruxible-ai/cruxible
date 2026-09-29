@@ -242,6 +242,10 @@ PrincipalRefusalCode = Literal[
     "playbill.identity.principal_revoked",
     "playbill.identity.principal_unconfigured",
     "playbill.identity.init_owner_mismatch",
+    "playbill.identity.credential_unbound",
+    "runtime_credential.principal_authority_required",
+    "runtime_credential.principal_proof_invalid",
+    "runtime_credential.principal_proof_replayed",
 ]
 
 #: HTTP status per identity refusal: a malformed claim is a bad request, a claim
@@ -250,6 +254,7 @@ PrincipalRefusalCode = Literal[
 _PRINCIPAL_REFUSAL_STATUS: dict[str, int] = {
     "playbill.identity.principal_claim_invalid": 400,
     "playbill.identity.principal_claim_mismatch": 401,
+    "runtime_credential.principal_proof_replayed": 409,
 }
 
 

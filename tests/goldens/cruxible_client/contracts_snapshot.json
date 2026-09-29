@@ -21,6 +21,7 @@
         "line_changed",
         "epoch_changed",
         "credential_revoked",
+        "credential_unbound",
         "credential_scope_changed",
         "permission_insufficient",
         "authentication_changed"
@@ -1513,6 +1514,7 @@
                   "line_changed",
                   "epoch_changed",
                   "credential_revoked",
+                  "credential_unbound",
                   "credential_scope_changed",
                   "permission_insufficient",
                   "authentication_changed"
@@ -1683,6 +1685,7 @@
                   "line_changed",
                   "epoch_changed",
                   "credential_revoked",
+                  "credential_unbound",
                   "credential_scope_changed",
                   "permission_insufficient",
                   "authentication_changed"
@@ -68370,8 +68373,15 @@
           "json_name": "actor_id",
           "required": true,
           "schema": {
-            "title": "Actor Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
           }
         },
         "actor_id_source": {
@@ -68381,7 +68391,8 @@
           "required": true,
           "schema": {
             "enum": [
-              "runtime_credential_label",
+              "runtime_credential",
+              "unbound_credential",
               "principal_claim",
               "local_operator"
             ],
@@ -68447,13 +68458,20 @@
           "json_name": "principal_registration_status",
           "required": true,
           "schema": {
-            "enum": [
-              "active",
-              "revoked",
-              "absent"
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "revoked",
+                  "absent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Principal Registration Status",
-            "type": "string"
+            "title": "Principal Registration Status"
           }
         },
         "tag": {
@@ -68523,12 +68541,20 @@
             "type": "array"
           },
           "actor_id": {
-            "title": "Actor Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
           },
           "actor_id_source": {
             "enum": [
-              "runtime_credential_label",
+              "runtime_credential",
+              "unbound_credential",
               "principal_claim",
               "local_operator"
             ],
@@ -68564,13 +68590,20 @@
             "type": "string"
           },
           "principal_registration_status": {
-            "enum": [
-              "active",
-              "revoked",
-              "absent"
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "revoked",
+                  "absent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Principal Registration Status",
-            "type": "string"
+            "title": "Principal Registration Status"
           },
           "tag": {
             "const": "playbill-whoami-v1",
@@ -87270,6 +87303,18 @@
                 "title": "Permission Mode",
                 "type": "string"
               },
+              "principal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Principal Id"
+              },
               "revoked_at": {
                 "anyOf": [
                   {
@@ -87386,6 +87431,26 @@
             "type": "string"
           }
         },
+        "principal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "principal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Principal Id"
+          }
+        },
         "revoked_at": {
           "default": null,
           "default_json_serializable": true,
@@ -87446,6 +87511,18 @@
             ],
             "title": "Permission Mode",
             "type": "string"
+          },
+          "principal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Principal Id"
           },
           "revoked_at": {
             "anyOf": [
@@ -87551,6 +87628,18 @@
                 ],
                 "title": "Permission Mode",
                 "type": "string"
+              },
+              "principal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Principal Id"
               },
               "revoked_at": {
                 "anyOf": [

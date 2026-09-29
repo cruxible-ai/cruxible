@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from cruxible_client import contracts
 from cruxible_core.runtime.permissions import PermissionMode, check_permission
 from cruxible_core.server.auth import get_current_auth_context
+from cruxible_core.server.credential_minting import mint_principal_credential
 from cruxible_core.server.credentials import (
     RuntimeCredentialRecord,
     get_runtime_credential_store,
@@ -37,6 +38,7 @@ def _record_to_contract(
     return contracts.RuntimeCredentialMetadata(
         credential_id=record.credential_id,
         instance_id=record.instance_id,
+        principal_id=record.principal_id,
         label=record.label,
         permission_mode=_credential_permission_mode(record.permission_mode),
         created_at=record.created_at,
@@ -54,13 +56,13 @@ async def create_runtime_credential(
     req: RuntimeCredentialCreateRequest,
 ) -> contracts.RuntimeCredentialResult:
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
-    auth_context = get_current_auth_context()
-    store = get_runtime_credential_store()
-    created = store.create_credential(
+    created = mint_principal_credential(
         instance_id=resolved_instance_id,
-        label=req.label,
+        principal_id=req.principal_id,
         permission_mode=PermissionMode[req.permission_mode.upper()],
-        created_by=auth_context.credential_id if auth_context else None,
+        label=req.label,
+        principal_proof=req.principal_proof,
+        auth_context=get_current_auth_context(),
     )
     return contracts.RuntimeCredentialResult(
         credential=_record_to_contract(created.record),

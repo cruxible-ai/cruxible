@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client import contracts
+from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProofV1
 from cruxible_core.server.playbill_request_models import (  # noqa: F401
     PlaybillApprovalChallengeRequest,
     PlaybillApprovalRequest,
@@ -34,5 +35,9 @@ class BootstrapClaimRequest(_StrictHostRequest):
 
 
 class RuntimeCredentialCreateRequest(_StrictHostRequest):
-    label: str = Field(min_length=1)
-    permission_mode: contracts.RuntimeCredentialPermissionMode = "admin"
+    # The principal the credential acts as; minting needs its authority.
+    principal_id: str = Field(min_length=1, max_length=128)
+    permission_mode: contracts.RuntimeCredentialPermissionMode
+    # A description only (default: the principal ID); it never decides who acts.
+    label: str | None = Field(default=None, min_length=1, max_length=256)
+    principal_proof: RuntimeCredentialPrincipalProofV1 | None = None

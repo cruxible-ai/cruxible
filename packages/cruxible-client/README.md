@@ -4909,12 +4909,21 @@ HTTP: `POST f'/api/v1/{instance_id}/runtime/bootstrap/claim'`.
 create_runtime_credential(
     instance_id: str,
     *,
-    label: str,
-    permission_mode: contracts.RuntimeCredentialPermissionMode = 'admin',
+    principal_id: str,
+    permission_mode: contracts.RuntimeCredentialPermissionMode,
+    label: str | None = None,
+    principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
 ) -> contracts.RuntimeCredentialResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/runtime/credentials'`.
+
+Mints a credential that acts as `principal_id`. The daemon refuses unless the
+principal is registered and active and the request carries its authority:
+either the request already acts as that principal, or `principal_proof` is its
+single-use consent signed with its registered key
+(`cruxible_client.authoring.signing.sign_runtime_credential_mint`). An admin
+credential alone is never enough. `label` is a description only.
 
 <a id="api-cruxibleclient-list-runtime-credentials"></a>
 

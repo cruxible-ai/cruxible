@@ -60,6 +60,7 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallRequestV1,
     PlaybillProviderInstallResultV1,
 )
+from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProofV1
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.errors import (
     ConfigError,
@@ -349,13 +350,28 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        label: str,
-        permission_mode: contracts.RuntimeCredentialPermissionMode = "admin",
+        principal_id: str,
+        permission_mode: contracts.RuntimeCredentialPermissionMode,
+        label: str | None = None,
+        principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
     ) -> contracts.RuntimeCredentialResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/runtime/credentials",
-            json={"label": label, "permission_mode": permission_mode},
-        )
+        """Mint a credential that acts as ``principal_id``.
+
+        The daemon refuses unless the principal is active and this request
+        carries its authority: the request already acts as that principal, or
+        ``principal_proof`` is the principal's signed consent. ``label`` is a
+        description only.
+        """
+
+        body: dict[str, object] = {
+            "principal_id": principal_id,
+            "permission_mode": permission_mode,
+        }
+        if label is not None:
+            body["label"] = label
+        if principal_proof is not None:
+            body["principal_proof"] = principal_proof.model_dump(mode="json")
+        response = self._client.post(f"/api/v1/{instance_id}/runtime/credentials", json=body)
         return self._parse_model(response, contracts.RuntimeCredentialResult)
 
     def list_runtime_credentials(self, instance_id: str) -> contracts.RuntimeCredentialListResult:

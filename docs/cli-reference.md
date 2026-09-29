@@ -72,7 +72,7 @@ Manage runtime bearer credentials:
 
 ~~~text
 cruxible credential claim-bootstrap [--secret-file PATH] [--json]
-cruxible credential mint --label LABEL --mode TIER [--json]
+cruxible credential mint --principal-id ID --mode TIER [--key-dir DIR] [--label TEXT] [--json]
 cruxible credential list [--json]
 cruxible credential rotate
 cruxible credential revoke
@@ -86,8 +86,27 @@ refuses only a transport chosen for that invocation (`--server-url`,
 exactly one has a directory under `<state-root>/instances`, that instance is the
 target; otherwise pass `--instance-id`.
 
-These credentials authorize transport operations. They are distinct from
-Playbill signing principals.
+These credentials authorize transport operations. Each one acts as exactly one
+Playbill principal, stored with the credential; the label is a description and
+never decides who acts. `credential mint` refuses unless that principal is
+registered and active (`playbill.identity.principal_absent` /
+`principal_revoked`), and it needs the principal's own authority, not just an
+admin credential: either the request already acts as that principal, or
+`--key-dir` signs the principal's single-use consent with its registered key
+(`runtime_credential.principal_authority_required`,
+`principal_proof_invalid`, `principal_proof_replayed`). Revoking a principal
+revokes every credential that acts as it: the next request with one is refused
+with `playbill.identity.principal_revoked` and the rows are marked revoked.
+Rotation keeps the principal.
+
+The bootstrap claim and `recover-admin` mint unbound operator credentials: they
+carry transport authority (host, init, credentials, daemon lifecycle) but act as
+no principal, so they cannot author (`playbill.identity.credential_unbound`).
+`playbill init` under such a credential designates the owner it names.
+Credentials minted before credentials named a principal are migrated as
+unbound, never rebound from their label; repair each by minting a bound one with
+`cruxible credential mint --principal-id ID --key-dir DIR --mode TIER`, then
+revoking the old one.
 
 `credential mint --mode` picks a cumulative tier. `read_only` reads only.
 `governed_write` also proposes and authors, but cannot submit approvals or

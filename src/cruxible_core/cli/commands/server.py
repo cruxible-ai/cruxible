@@ -533,7 +533,7 @@ def _echo_instance_scoped_status(
         click.echo(f"  Reason: {host.reason.code}: {host.reason.detail}")
     if identity is not None:
         click.echo(
-            f"Actor: {identity.actor_id} ({identity.credential_permission_mode}, "
+            f"Actor: {identity.actor_id or 'none'} ({identity.credential_permission_mode}, "
             f"principal {identity.principal_registration_status})"
         )
 

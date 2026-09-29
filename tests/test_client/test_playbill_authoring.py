@@ -299,7 +299,7 @@ def test_client_whoami_and_proposal_list_use_read_routes_and_status_query() -> N
                     "tag": "playbill-whoami-v1",
                     "actor_id": "owner",
                     "credential_label": "owner",
-                    "actor_id_source": "runtime_credential_label",
+                    "actor_id_source": "runtime_credential",
                     "authenticated": True,
                     "credential_permission_mode": "governed_write",
                     "principal_registration_status": "active",
@@ -321,7 +321,7 @@ def test_client_whoami_and_proposal_list_use_read_routes_and_status_query() -> N
     identity = client.playbill_whoami("inst")
     proposals = client.list_playbill_proposals("inst", status="open")
 
-    assert identity.actor_id_source == "runtime_credential_label"
+    assert identity.actor_id_source == "runtime_credential"
     assert proposals.status_filter == "open"
     assert [item.method for item in captured] == ["GET", "GET"]
     assert dict(captured[1].url.params) == {"status": "open"}

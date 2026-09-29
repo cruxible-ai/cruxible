@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-29:identity-batch",
-    "surface_digest": "sha256:8d0429315264904ca54f0c0a7370bdb4b1af321b0bdafd4cca7940af27730482"
+    "surface_digest": "sha256:13ecacdb57e4f06535232062f9a63ec4615a8a957541fd5a41a62bdfdc8bd905"
   },
   "surface": {
     "cli_leaves": [
@@ -1668,7 +1668,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.line_dispatch.LineArmV1",
-        "response_schema_digest": "sha256:d8bc303ba0b3ae2a5f7de61aa27e7a32b314555b87c75c3645ae5e84e2e5ecb7"
+        "response_schema_digest": "sha256:719af098d8857f829af7de8c605e4f94fa0055c0c510b5173e9f2cecd8581ce0"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.arm_line",
@@ -1680,7 +1680,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.line_dispatch.LineArmV1",
-        "response_schema_digest": "sha256:d8bc303ba0b3ae2a5f7de61aa27e7a32b314555b87c75c3645ae5e84e2e5ecb7"
+        "response_schema_digest": "sha256:719af098d8857f829af7de8c605e4f94fa0055c0c510b5173e9f2cecd8581ce0"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.check_line_trigger",
@@ -1704,7 +1704,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.line_dispatch.LineArmV1",
-        "response_schema_digest": "sha256:d8bc303ba0b3ae2a5f7de61aa27e7a32b314555b87c75c3645ae5e84e2e5ecb7"
+        "response_schema_digest": "sha256:719af098d8857f829af7de8c605e4f94fa0055c0c510b5173e9f2cecd8581ce0"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.dispatch_line",
@@ -2268,7 +2268,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.PlaybillWhoAmI",
-        "response_schema_digest": "sha256:d010f9f0815bdd383127f47b2a438e43317863ce79dddc583daf604866c4945c"
+        "response_schema_digest": "sha256:d948eb5bf6f1384826167a32563cf31a08375a081a989fbadaf7a10a320c95a2"
       }
     ],
     "mcp_facade_operations": [
@@ -2875,7 +2875,7 @@
         ],
         "input_schema_digest": "sha256:2d6dedd8050513141bcd4e6d104e430975e75f71fce89fc58926727fe84890f0",
         "name": "cruxible_playbill_line_arm",
-        "output_schema_digest": "sha256:a5fcc4c6c29914a69808182fb898b84de2d83edf43296714221bae3b90a3f175",
+        "output_schema_digest": "sha256:8ffb6dd5efdbd50c03dd0f7b2443d91cfc8f5bab150ea89d5969cd32393c12ac",
         "permission": "GOVERNED_WRITE"
       },
       {
@@ -2895,7 +2895,7 @@
         ],
         "input_schema_digest": "sha256:1e37d3f35b940580dd662da1acec8016d424071c529c0cbe3a1b6d4718536797",
         "name": "cruxible_playbill_line_disarm",
-        "output_schema_digest": "sha256:a5fcc4c6c29914a69808182fb898b84de2d83edf43296714221bae3b90a3f175",
+        "output_schema_digest": "sha256:8ffb6dd5efdbd50c03dd0f7b2443d91cfc8f5bab150ea89d5969cd32393c12ac",
         "permission": "GOVERNED_WRITE"
       },
       {
@@ -2935,7 +2935,7 @@
         ],
         "input_schema_digest": "sha256:177f5fcbc1c1526a03d26d20630dff35c7866f0421b49efb56d778ff6d7c0bef",
         "name": "cruxible_playbill_line_status",
-        "output_schema_digest": "sha256:a5fcc4c6c29914a69808182fb898b84de2d83edf43296714221bae3b90a3f175",
+        "output_schema_digest": "sha256:8ffb6dd5efdbd50c03dd0f7b2443d91cfc8f5bab150ea89d5969cd32393c12ac",
         "permission": "READ_ONLY"
       },
       {
@@ -3348,7 +3348,7 @@
         ],
         "input_schema_digest": "sha256:261c174fea6b795ad265b220123da232265eeaab274ba31f45a82718ebc8f5e9",
         "name": "cruxible_playbill_whoami",
-        "output_schema_digest": "sha256:23cf24b542d6a28976d246614091eb0308737e329a7fe75b25cac2dad02b935e",
+        "output_schema_digest": "sha256:dc2ef2e105ea4ed7543516948f31ae950145a6a29b524304e31be2ddf012cd84",
         "permission": "READ_ONLY"
       },
       {
@@ -3370,7 +3370,7 @@
         ],
         "input_schema_digest": "sha256:99d0490133578d67317d5885bb4e59121f2c6efce091358dfcb03d3542792925",
         "name": "cruxible_server_info",
-        "output_schema_digest": "sha256:5dc5b180af0a570557ea734d7bce799da7993e7918d947e3a71f386d587933f8",
+        "output_schema_digest": "sha256:8ff3f4190c3de0bcebf1cbd7254eb6f5a49379e6b83029a1192645993ebd466f",
         "permission": "READ_ONLY"
       }
     ]

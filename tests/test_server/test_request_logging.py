@@ -106,11 +106,13 @@ def _runtime_credential_headers(
     instance_id: str,
     permission_mode: PermissionMode,
 ) -> tuple[dict[str, str], str]:
+    label = f"{permission_mode.name.lower()}_credential"
     created = get_runtime_credential_store().create_credential(
         instance_id=instance_id,
-        label=f"{permission_mode.name.lower()}_credential",
+        label=label,
         permission_mode=permission_mode,
         created_by="test",
+        principal_id=label,
     )
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
@@ -224,6 +226,7 @@ def test_playbill_write_logs_credential_actor_and_operation(
     event = _runtime_request_events(request_log_buffer)[-1]
     assert event["credential_id"] == credential_id
     assert event["credential_label"] == "admin_credential"
+    assert event["principal_id"] == "admin_credential"
     assert str(event["operation_id"]).startswith("op_")
 
 

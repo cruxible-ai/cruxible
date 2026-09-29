@@ -568,7 +568,7 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
             return contracts.PlaybillWhoAmI(
                 actor_id="owner",
                 credential_label="owner",
-                actor_id_source="runtime_credential_label",
+                actor_id_source="runtime_credential",
                 authenticated=True,
                 credential_permission_mode="governed_write",
                 principal_registration_status="active",
@@ -616,7 +616,7 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
     proposals = runner.invoke(cli, [*base, "proposal", "list", "--status", "open"])
 
     assert identity.exit_code == proposals.exit_code == 0
-    assert "Actor ID comes from credential label: owner" in identity.output
+    assert "Actor ID is the principal this bearer credential is bound to" in identity.output
     assert "governed_write" in identity.output
     assert "open  -  sha256:" in proposals.output
     assert calls == ["whoami:inst_authoring", "proposals:inst_authoring:open"]

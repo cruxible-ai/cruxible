@@ -115,7 +115,7 @@ def test_whoami_binds_transport_identity_to_current_principal_registry(tmp_path:
         instance,
         actor_id="owner",
         credential_label="owner",
-        actor_id_source="runtime_credential_label",
+        actor_id_source="runtime_credential",
         authenticated=True,
         permission_mode=PermissionMode.GOVERNED_WRITE,
     )
@@ -220,7 +220,7 @@ def test_proposal_selector_resolves_full_prefix_and_current_target_ref(
     assert "cruxible playbill proposal list" in str(historical.value)
 
 
-def test_runtime_whoami_uses_the_runtime_credential_label_as_actor_id(
+def test_runtime_whoami_uses_the_runtime_credential_as_actor_id(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
@@ -251,7 +251,7 @@ def test_runtime_whoami_uses_the_runtime_credential_label_as_actor_id(
     result = playbill_api.playbill_whoami(instance.descriptor.instance_id)
 
     assert result.actor_id == result.credential_label == "owner"
-    assert result.actor_id_source == "runtime_credential_label"
+    assert result.actor_id_source == "runtime_credential"
     assert result.credential_permission_mode == "read_only"
 
 

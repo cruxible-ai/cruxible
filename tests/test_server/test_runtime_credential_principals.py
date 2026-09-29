@@ -1,0 +1,300 @@
+"""A bearer credential acts as exactly one principal, minted only with its authority."""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from cruxible_client.authoring.signing import (
+    LocalEd25519ApprovalSigner,
+    sign_runtime_credential_mint,
+)
+from cruxible_client.contracts.attestations import ApprovalStatement
+from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_core.governance.keys import generate_client_principal_key
+from cruxible_core.runtime.permissions import PermissionMode
+from cruxible_core.server.credentials import (
+    RuntimeCredentialStore,
+    get_runtime_credential_store,
+)
+
+
+def _owner_key(private_key_path: Path) -> Path:
+    # The conftest owner custody sits beside the reviewer custody it yields.
+    return private_key_path.parent.parent / "owner-custody" / "operator.ed25519"
+
+
+def _bearer(principal_id: str | None, instance_id: str, mode: PermissionMode) -> str:
+    created = get_runtime_credential_store().create_credential(
+        instance_id=instance_id,
+        label=f"{principal_id or 'unbound'}-token",
+        permission_mode=mode,
+        principal_id=principal_id,
+    )
+    return created.token
+
+
+def _mint(client: TestClient, instance_id: str, token: str, **body: object) -> object:
+    return client.post(
+        f"/api/v1/{instance_id}/runtime/credentials",
+        json=body,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def test_an_admin_token_alone_cannot_mint_in_another_principals_name(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance_id, _reviewer_key = playbill_http
+    unbound_admin = _bearer(None, instance_id, PermissionMode.ADMIN)
+    operator_admin = _bearer("operator", instance_id, PermissionMode.ADMIN)
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+
+    for token in (unbound_admin, operator_admin):
+        refused = _mint(
+            client, instance_id, token, principal_id="reviewer", permission_mode="governed_write"
+        )
+        assert refused.status_code == 403  # type: ignore[attr-defined]
+        body = refused.json()  # type: ignore[attr-defined]
+        assert body["error_code"] == "runtime_credential.principal_authority_required"
+        assert (
+            "cruxible credential mint --principal-id reviewer --key-dir DIR --mode governed_write"
+            in body["message"]
+        )
+        assert body["repair"]["operation"] == "credential.mint"
+
+    # A request that already acts as the principal carries its authority.
+    own = _mint(
+        client, instance_id, operator_admin, principal_id="operator", permission_mode="read_only"
+    )
+    assert own.status_code == 200, own.text  # type: ignore[attr-defined]
+    assert own.json()["credential"]["principal_id"] == "operator"  # type: ignore[attr-defined]
+
+
+def test_the_principals_signed_consent_mints_once_and_the_credential_acts_as_it(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance_id, reviewer_key = playbill_http
+    admin = _bearer(None, instance_id, PermissionMode.ADMIN)
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    proof = sign_runtime_credential_mint(
+        instance_id=instance_id,
+        principal_id="reviewer",
+        permission_mode="governed_write",
+        label="reviewer agent",
+        private_key_path=reviewer_key,
+        forbidden_roots=(),
+    )
+    body = {
+        "principal_id": "reviewer",
+        "permission_mode": "governed_write",
+        "label": "reviewer agent",
+        "principal_proof": proof.model_dump(mode="json"),
+    }
+
+    minted = _mint(client, instance_id, admin, **body)
+    replayed = _mint(client, instance_id, admin, **body)
+
+    assert minted.status_code == 200, minted.text  # type: ignore[attr-defined]
+    credential = minted.json()  # type: ignore[attr-defined]
+    assert credential["credential"]["principal_id"] == "reviewer"
+    assert credential["credential"]["label"] == "reviewer agent"
+    assert replayed.status_code == 409  # type: ignore[attr-defined]
+    assert replayed.json()["error_code"] == "runtime_credential.principal_proof_replayed"  # type: ignore[attr-defined]
+
+    who = client.get(
+        f"/api/v1/{instance_id}/playbill/whoami",
+        headers={"Authorization": f"Bearer {credential['token']}"},
+    ).json()
+    assert who["actor_id"] == "reviewer"
+    assert who["actor_id_source"] == "runtime_credential"
+    assert who["credential_label"] == "reviewer agent"
+    assert who["authenticated"] is True
+
+
+def test_a_consent_signed_by_another_key_or_for_other_terms_is_refused(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client, instance_id, reviewer_key = playbill_http
+    admin = _bearer(None, instance_id, PermissionMode.ADMIN)
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    stranger = generate_client_principal_key(
+        tmp_path / "stranger", principal_id="reviewer", kind="ordinary", forbidden_roots=()
+    )
+    forged = sign_runtime_credential_mint(
+        instance_id=instance_id,
+        principal_id="reviewer",
+        permission_mode="admin",
+        label="reviewer",
+        private_key_path=stranger.private_key_path,
+        forbidden_roots=(),
+    )
+    narrower = sign_runtime_credential_mint(
+        instance_id=instance_id,
+        principal_id="reviewer",
+        permission_mode="read_only",
+        label="reviewer",
+        private_key_path=reviewer_key,
+        forbidden_roots=(),
+    )
+
+    wrong_key = _mint(
+        client,
+        instance_id,
+        admin,
+        principal_id="reviewer",
+        permission_mode="admin",
+        principal_proof=forged.model_dump(mode="json"),
+    )
+    wider_terms = _mint(
+        client,
+        instance_id,
+        admin,
+        principal_id="reviewer",
+        permission_mode="admin",
+        principal_proof=narrower.model_dump(mode="json"),
+    )
+
+    for refused in (wrong_key, wider_terms):
+        assert refused.status_code == 403  # type: ignore[attr-defined]
+        assert (
+            refused.json()["error_code"]  # type: ignore[attr-defined]
+            == "runtime_credential.principal_proof_invalid"
+        )
+
+
+def test_minting_for_an_unregistered_principal_names_principal_add(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance_id, _reviewer_key = playbill_http
+    admin = _bearer("operator", instance_id, PermissionMode.ADMIN)
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+
+    refused = _mint(
+        client, instance_id, admin, principal_id="ghost", permission_mode="governed_write"
+    )
+
+    assert refused.status_code == 403  # type: ignore[attr-defined]
+    assert refused.json()["error_code"] == "playbill.identity.principal_absent"  # type: ignore[attr-defined]
+    assert refused.json()["repair"]["operation"] == "playbill.principal.add"  # type: ignore[attr-defined]
+
+
+def test_an_unbound_credential_keeps_transport_authority_but_cannot_author(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance_id, _reviewer_key = playbill_http
+    unbound = _bearer(None, instance_id, PermissionMode.ADMIN)
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    headers = {"Authorization": f"Bearer {unbound}"}
+
+    listed = client.get(f"/api/v1/{instance_id}/playbill/principals", headers=headers)
+    who = client.get(f"/api/v1/{instance_id}/playbill/whoami", headers=headers).json()
+    refused = client.post(
+        f"/api/v1/{instance_id}/playbill/proposals/sha256:{'0' * 64}/withdraw",
+        json={"reason": "unbound"},
+        headers=headers,
+    )
+
+    assert listed.status_code == 200, listed.text
+    assert who["actor_id"] is None
+    assert who["actor_id_source"] == "unbound_credential"
+    assert who["principal_registration_status"] is None
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error_code"] == "playbill.identity.credential_unbound"
+    assert "cruxible credential mint --principal-id ID --key-dir DIR" in refused.json()["message"]
+
+
+def test_revoking_a_principal_revokes_its_credentials(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance_id, reviewer_key = playbill_http
+    reviewer_token = _bearer("reviewer", instance_id, PermissionMode.GOVERNED_WRITE)
+    listing = client.get(f"/api/v1/{instance_id}/playbill/principals").json()
+    reviewer = next(
+        PrincipalRecord.model_validate(item)
+        for item in listing["principals"]
+        if item["principal_id"] == "reviewer"
+    )
+    proposed = client.post(
+        f"/api/v1/{instance_id}/playbill/principals/proposals",
+        json={
+            "principal": reviewer.model_copy(update={"status": "revoked"}).model_dump(mode="json"),
+            "proposal_name": "revoke-reviewer",
+        },
+    )
+    assert proposed.status_code == 200, proposed.text
+    proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
+    challenge = client.post(
+        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
+        json={"signer_id": "operator"},
+    ).json()
+    signer = LocalEd25519ApprovalSigner.open(
+        signer_id="operator",
+        private_key_path=_owner_key(reviewer_key),
+        expected_public_key=challenge["signer_principal"]["public_key"],
+        forbidden_roots=(),
+    )
+    attestation = signer.sign(ApprovalStatement.model_validate(challenge["statement"]))
+    approved = client.post(
+        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals",
+        json={"attestation": attestation.model_dump(mode="json")},
+    )
+    assert approved.status_code == 200, approved.text
+    activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
+    assert activated.status_code == 200, activated.text
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+
+    refused = client.get(
+        f"/api/v1/{instance_id}/playbill/whoami",
+        headers={"Authorization": f"Bearer {reviewer_token}"},
+    )
+
+    assert refused.status_code == 403
+    assert refused.json()["error_code"] == "playbill.identity.principal_revoked"
+    (record,) = [
+        item
+        for item in get_runtime_credential_store().list_for_instance(instance_id)
+        if item.principal_id == "reviewer"
+    ]
+    assert record.revoked_at is not None
+
+
+def test_credentials_minted_before_principal_binding_stay_unbound(tmp_path: Path) -> None:
+    db_path = tmp_path / "runtime_credentials.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE runtime_credentials (
+                credential_id TEXT PRIMARY KEY,
+                instance_id TEXT NOT NULL,
+                label TEXT NOT NULL,
+                permission_mode TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                created_by TEXT,
+                revoked_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO runtime_credentials VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("rcred_legacy", "inst_a", "manager", "admin", "hash", "2026-09-01", None, None),
+        )
+
+    store = RuntimeCredentialStore(db_path)
+
+    record = store.get("rcred_legacy")
+    assert record is not None
+    # Never silently rebound from its label, even though a principal "manager" may exist.
+    assert record.label == "manager"
+    assert record.principal_id is None

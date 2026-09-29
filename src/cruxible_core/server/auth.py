@@ -12,6 +12,7 @@ from typing import Any, Literal
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from cruxible_client.contracts.errors import PlaybillBootstrapError
 from cruxible_client.contracts.principals import (
     PRINCIPAL_ID_ENV,
     PRINCIPAL_ID_HEADER,
@@ -25,12 +26,16 @@ from cruxible_core.runtime.permissions import (
     request_instance_scope,
     request_permission_scope,
 )
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
     is_origin_allowed,
     is_server_auth_enabled,
 )
-from cruxible_core.server.credentials import get_runtime_credential_store
+from cruxible_core.server.credentials import (
+    RuntimeCredentialRecord,
+    get_runtime_credential_store,
+)
 from cruxible_core.server.errors import ErrorResponse, error_to_response
 from cruxible_core.server.request_logging import log_runtime_request
 from cruxible_core.server.route_paths import (
@@ -46,6 +51,7 @@ from cruxible_core.server.route_paths import (
     api_v1_path,
     route_template_matches,
 )
+from cruxible_core.service.identity import principal_refusal
 
 _AUTH_CONTEXT: contextvars.ContextVar["ResolvedAuthContext | None"] = contextvars.ContextVar(
     "cruxible_auth_context",
@@ -177,6 +183,28 @@ def _identity_refusal_response(request: Request, refusal: PrincipalRefusedError)
         error_type=refusal.__class__.__name__,
     )
     return response
+
+
+def _bound_principal_refusal(credential: RuntimeCredentialRecord) -> PrincipalRefusedError | None:
+    """Refuse, and revoke, a credential whose principal is no longer active.
+
+    Revoking a principal revokes every credential that acts as it. The accepted
+    registry is the authority, so this is checked on use rather than trusted to
+    a sweep: the first request after the revocation lands revokes the rows.
+    """
+
+    if credential.principal_id is None:
+        return None
+    try:
+        instance = get_playbill_manager().get(credential.instance_id)
+    except PlaybillBootstrapError:
+        return None
+    refusal = principal_refusal(instance, credential.principal_id, configured=True)
+    if refusal is not None:
+        get_runtime_credential_store().revoke_credentials_of_principal(
+            instance_id=credential.instance_id, principal_id=credential.principal_id
+        )
+    return refusal
 
 
 def _principal_claim_refusal(request: Request) -> PrincipalRefusedError | None:
@@ -379,6 +407,9 @@ async def token_auth_middleware(
         elif auth_enabled:
             runtime_credential = get_runtime_credential_store().authenticate(bearer_token)
             if runtime_credential is not None:
+                standing_refusal = _bound_principal_refusal(runtime_credential)
+                if standing_refusal is not None:
+                    return _identity_refusal_response(request, standing_refusal)
                 resolved_context = ResolvedAuthContext(
                     credential_id=runtime_credential.credential_id,
                     credential_label=runtime_credential.label,
@@ -387,7 +418,7 @@ async def token_auth_middleware(
                     role=runtime_credential.permission_mode.name.lower(),
                     effective_permission_mode=runtime_credential.permission_mode,
                     created_by=runtime_credential.created_by,
-                    principal_id=runtime_credential.label,
+                    principal_id=runtime_credential.principal_id,
                 )
             else:
                 return _unauthorized_request_response(request)

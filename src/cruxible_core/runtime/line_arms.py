@@ -32,6 +32,7 @@ from cruxible_core.server.actor_identity import (
 from cruxible_core.server.auth import get_current_auth_context
 from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.server.credentials import get_runtime_credential_store
+from cruxible_core.service.identity import credential_unbound_refusal
 from cruxible_core.service.procedures.line_dispatch import (
     LineArmAuthorityLost,
     LineArmSegmentEnded,
@@ -54,6 +55,10 @@ def current_arm_principal() -> LineArmPrincipalV1:
     auth = get_current_auth_context()
     if auth is not None and auth.credential_type == "runtime_credential":
         assert auth.credential_id is not None and auth.credential_label is not None
+        if auth.principal_id is None:
+            raise credential_unbound_refusal(
+                credential_id=auth.credential_id, credential_label=auth.credential_label
+            )
         return LineArmPrincipalV1(
             kind="runtime_credential",
             credential_id=auth.credential_id,
@@ -108,9 +113,14 @@ def arm_authority(
             "permission_insufficient",
             f"The arming credential's permission {mode.name} no longer permits dispatch.",
         )
+    if record.principal_id is None:
+        raise LineArmAuthorityLost(
+            "credential_unbound",
+            "The arming credential acts as no principal; rearm with a principal-bound one.",
+        )
     actor = GovernedActorContext(
         actor_type="service_account",
-        actor_id=record.label,
+        actor_id=record.principal_id,
         org_id=record.instance_id,
         operation_id=new_id("op", length=16, separator="_"),
         timestamp=now,

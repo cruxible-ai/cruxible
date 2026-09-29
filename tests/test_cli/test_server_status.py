@@ -328,7 +328,7 @@ def test_status_answers_an_instance_scoped_token_with_its_own_host(
             return contracts.PlaybillWhoAmI(
                 actor_id="agent",
                 credential_label="agent",
-                actor_id_source="runtime_credential_label",
+                actor_id_source="runtime_credential",
                 authenticated=True,
                 credential_permission_mode="admin",
                 principal_registration_status="active",

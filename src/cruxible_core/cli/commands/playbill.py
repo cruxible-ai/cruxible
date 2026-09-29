@@ -1964,9 +1964,17 @@ def whoami(output_json: bool) -> None:
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(f"Actor: {result.actor_id}")
-    if result.actor_id_source == "runtime_credential_label":
-        click.echo(f"Actor ID comes from credential label: {result.credential_label}")
+    click.echo(f"Actor: {result.actor_id or 'none (this credential acts as no principal)'}")
+    if result.actor_id_source == "runtime_credential":
+        click.echo(
+            f"Actor ID is the principal this bearer credential is bound to "
+            f"(credential: {result.credential_label})"
+        )
+    elif result.actor_id_source == "unbound_credential":
+        click.echo(
+            f"Bearer credential {result.credential_label} is bound to no principal: it keeps "
+            "its transport authority but cannot author"
+        )
     elif result.actor_id_source == "principal_claim":
         click.echo("Actor ID comes from the configured principal ID (CRUXIBLE_PRINCIPAL_ID)")
     else:
@@ -1977,7 +1985,7 @@ def whoami(output_json: bool) -> None:
             "process of this OS user is equally trusted."
         )
     click.echo(f"Credential permission mode: {result.credential_permission_mode}")
-    click.echo(f"Principal registration: {result.principal_registration_status}")
+    click.echo(f"Principal registration: {result.principal_registration_status or 'none'}")
     click.echo(f"Active principals: {', '.join(result.active_principal_ids) or 'none'}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 

@@ -82,6 +82,7 @@ def _credential(**update):  # type: ignore[no-untyped-def]
         permission_mode=PermissionMode.GOVERNED_WRITE,
         token_hash="unused",
         created_at="2026-09-01T00:00:00Z",
+        principal_id="line-operator",
     )
     return record if not update else record.__class__(**{**record.__dict__, **update})
 
@@ -885,3 +886,20 @@ def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
     stopped = disarmed.model_copy(update={"outcome": None})
     assert repeat.model_copy(update={"outcome": None}) == stopped
     assert service_line_status(instance, name) == stopped
+
+
+def test_an_unbound_arming_credential_stops_the_arm(tmp_path, monkeypatch):
+    instance, _line, procedure, start = _armed_world(tmp_path, principal=CREDENTIAL)
+    _credential_store(
+        monkeypatch, _credential(instance_id=instance.descriptor.instance_id, principal_id=None)
+    )
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
+
+    result = dispatch_armed_line(
+        _manager(instance), instance.descriptor.instance_id, arm, now=start + timedelta(seconds=3)
+    )
+
+    assert result is None
+    assert _admissions(instance) == 0

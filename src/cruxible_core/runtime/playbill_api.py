@@ -163,6 +163,7 @@ from cruxible_core.runtime.permissions import (
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.actor_identity import local_operator_actor_context
 from cruxible_core.server.auth import (
+    ResolvedAuthContext,
     get_current_auth_context,
     set_current_operation_id,
 )
@@ -262,6 +263,7 @@ from cruxible_core.service.evidence.source_catalog import (
     service_propose_playbill_source_bundle,
 )
 from cruxible_core.service.floor.floor import MANIFEST_PATH, service_export_playbill_floor
+from cruxible_core.service.identity import credential_unbound_refusal
 from cruxible_core.service.kits import (
     service_add_kit,
     service_build_kit,
@@ -384,11 +386,29 @@ def _actor_context() -> GovernedActorContext | None:
     return actor
 
 
+def _unbound_credential() -> ResolvedAuthContext | None:
+    """The request's credential when it acts as no principal, else None."""
+
+    auth_context = get_current_auth_context()
+    if (
+        auth_context is not None
+        and auth_context.credential_type == "runtime_credential"
+        and auth_context.principal_id is None
+    ):
+        return auth_context
+    return None
+
+
 def _actor_id() -> str:
     """Use credential-derived request identity at every Playbill write boundary."""
 
     actor = _actor_context()
     if actor is None:
+        unbound = _unbound_credential()
+        if unbound is not None:
+            raise credential_unbound_refusal(
+                credential_id=unbound.credential_id, credential_label=unbound.credential_label
+            )
         raise AuthenticationError("Playbill writes require an authenticated actor identity")
     return actor.actor_id
 
@@ -459,7 +479,11 @@ def playbill_init(
         # typo, and finding it after bootstrap would leave a live instance whose
         # only repair is a verb they have not been told about yet.
         validate_mirror_url(mirror_url)
-    actor_id = _actor_id()
+    # An unbound operator credential (the bootstrap claim) designates the owner:
+    # it is the operator, and it acts as no principal. Every other caller must
+    # itself be one of the owners it names.
+    operator_designates = _unbound_credential() is not None
+    actor_id = None if operator_designates else _actor_id()
     if not principals:
         raise PlaybillBootstrapError("bootstrap requires at least one client principal")
     ordinary = {
@@ -467,7 +491,7 @@ def playbill_init(
         for item in principals
         if item.status == "active" and item.kind == "ordinary"
     }
-    if actor_id not in ordinary:
+    if actor_id is not None and actor_id not in ordinary:
         owners = ", ".join(sorted(ordinary)) or "none"
         raise PrincipalRefusedError(
             "playbill.identity.init_owner_mismatch",
@@ -895,13 +919,13 @@ def playbill_withdraw_proposal(
 def playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
     check_permission("cruxible_playbill_read", instance_id=instance_id)
     auth_context = get_current_auth_context()
+    actor_id: str | None
     credential_label: str | None
     actor_id_source: WhoAmIActorIdSource
     if auth_context is not None and auth_context.credential_type == "runtime_credential":
-        assert auth_context.principal_id is not None
         actor_id = auth_context.principal_id
         credential_label = auth_context.credential_label
-        actor_id_source = "runtime_credential_label"
+        actor_id_source = "runtime_credential" if actor_id is not None else "unbound_credential"
     elif auth_context is not None and auth_context.credential_type == "principal_claim":
         assert auth_context.principal_id is not None
         actor_id = auth_context.principal_id

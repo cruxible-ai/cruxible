@@ -32,6 +32,7 @@ from cruxible_core.service.authoring.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
 )
+from cruxible_core.service.identity import principal_standing
 from cruxible_core.service.list_pages import (
     decode_list_cursor,
     encode_list_cursor,
@@ -42,9 +43,14 @@ from cruxible_core.service.list_pages import (
 ProposalInventoryStatus = Literal["open", "settled", "incomplete"]
 ProposalIncompleteReason = Literal["missing_admission", "missing_evaluation", "missing_candidate"]
 ProposalTerminalReason = Literal["accepted", "refused", "stale", "withdrawn"]
-#: Where the actor ID came from. ``principal_claim`` is an auth-off daemon's
-#: configured principal ID: a claim of identity, not authentication.
-WhoAmIActorIdSource = Literal["runtime_credential_label", "principal_claim", "local_operator"]
+#: Where the actor ID came from. ``runtime_credential`` is the principal the
+#: bearer credential is bound to; ``unbound_credential`` is a credential that
+#: acts as no principal (no actor ID); ``principal_claim`` is an auth-off
+#: daemon's configured principal ID, a claim of identity, not authentication.
+WhoAmIActorIdSource = Literal[
+    "runtime_credential", "unbound_credential", "principal_claim", "local_operator"
+]
+_CREDENTIAL_SOURCES = frozenset({"runtime_credential", "unbound_credential"})
 PrincipalRegistrationStatus = Literal["active", "revoked", "absent"]
 CredentialPermissionMode = Literal["read_only", "governed_write", "graph_write", "admin"]
 
@@ -119,26 +125,28 @@ class PlaybillProposalSelectorResultV1(_StrictOperationalReadModel):
 
 class PlaybillWhoAmIV1(_StrictOperationalReadModel):
     tag: Literal["playbill-whoami-v1"] = "playbill-whoami-v1"
-    actor_id: str
+    # None only for an unbound credential, which acts as no principal.
+    actor_id: str | None
+    # The credential's description; never the source of the actor ID.
     credential_label: str | None
     actor_id_source: WhoAmIActorIdSource
     # False when no bearer credential backs the identity: an auth-off daemon
     # trusts every process of its OS user equally, so the actor ID is a claim.
     authenticated: bool
     credential_permission_mode: CredentialPermissionMode
-    principal_registration_status: PrincipalRegistrationStatus
+    # None when the request names no principal (an unbound credential).
+    principal_registration_status: PrincipalRegistrationStatus | None
     active_principal_ids: tuple[str, ...]
     coordinate: PlaybillAcceptedCoordinate
 
     @model_validator(mode="after")
     def _credential_binding(self) -> "PlaybillWhoAmIV1":
-        if (
-            self.actor_id_source == "runtime_credential_label"
-            and self.credential_label != self.actor_id
-        ):
-            raise ValueError("runtime credential label must equal the governed actor id")
-        if (self.actor_id_source == "runtime_credential_label") != self.authenticated:
+        if (self.actor_id_source in _CREDENTIAL_SOURCES) != self.authenticated:
             raise ValueError("only a runtime credential authenticates the actor")
+        if (self.actor_id_source == "unbound_credential") != (self.actor_id is None):
+            raise ValueError("exactly an unbound credential names no actor")
+        if (self.actor_id is None) != (self.principal_registration_status is None):
+            raise ValueError("a registration status belongs to a named actor")
         return self
 
 
@@ -739,7 +747,7 @@ def service_withdraw_playbill_proposal(
 def service_playbill_whoami(
     instance: PlaybillInstance,
     *,
-    actor_id: str,
+    actor_id: str | None,
     credential_label: str | None,
     actor_id_source: WhoAmIActorIdSource,
     authenticated: bool,
@@ -755,8 +763,9 @@ def service_playbill_whoami(
             key=lambda item: item.encode("utf-8"),
         )
     )
-    matched = next((item for item in principals if item.principal_id == actor_id), None)
-    registration: PrincipalRegistrationStatus = "absent" if matched is None else matched.status
+    registration: PrincipalRegistrationStatus | None = (
+        None if actor_id is None else principal_standing(instance, actor_id)
+    )
     return PlaybillWhoAmIV1(
         actor_id=actor_id,
         credential_label=credential_label,
