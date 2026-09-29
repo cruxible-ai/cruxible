@@ -20,6 +20,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
+    AcceptedCaptureContract,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
@@ -502,6 +503,7 @@ def materialize_playbill_claim_view(
             ),
             law=law,
             bodies=bodies,
+            coordinate=coordinate,
         ),
         statement=claim_statement_card(parsed),
     )
@@ -620,6 +622,24 @@ def _claim_admission_tree(
         return {path: projection.typed.member_bytes(path) for path in wanted}
 
 
+def _superseded_contract(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate | None,
+    digest: str,
+) -> AcceptedCaptureContract | None:
+    """A CaptureContract version a successor replaced, read from accepted history.
+
+    A Claim keeps the contract version its evidence was captured under, while
+    the tree holds only the current version of each contract identity.
+    """
+
+    if coordinate is None:
+        return None
+    return instance.accepted_capture_contract_version(
+        AcceptedCoordinate.from_internal(coordinate), digest
+    )
+
+
 def _claim_admission_accounts(
     instance: PlaybillInstance,
     *,
@@ -627,6 +647,7 @@ def _claim_admission_accounts(
     tree: Mapping[str, bytes],
     law: ClaimLawEvidenceAny,
     bodies: ContentAddressedBodyStore | None = None,
+    coordinate: AcceptedProjectionCoordinate | None = None,
 ) -> tuple[CaptureAdmissionAccountV1, ...]:
     from cruxible_core.evidence.attestation_verification import _capture_contracts
 
@@ -643,7 +664,9 @@ def _claim_admission_accounts(
                 access=BodyAccessContext(principal_id="playbill-service", can_read_body=True),
             )
         )
-        contract = contracts.get(envelope.capture_contract_digest)
+        contract = contracts.get(envelope.capture_contract_digest) or _superseded_contract(
+            instance, coordinate, envelope.capture_contract_digest
+        )
         if contract is None:
             raise ProposalIntegrityError("accepted Claim CaptureContract no longer resolves")
         if isinstance(citation, ClaimCitationV1) and citation.role == "copy":
@@ -929,7 +952,9 @@ def service_explain_playbill_claim(
                 access_class="instance",
             )
         )
-        contract = contracts.get(envelope.capture_contract_digest)
+        contract = contracts.get(envelope.capture_contract_digest) or _superseded_contract(
+            instance, coordinate, envelope.capture_contract_digest
+        )
         if contract is None:
             raise ProposalIntegrityError("accepted Claim CaptureContract no longer resolves")
         logical_source = getattr(envelope.source, "source_identity", None)

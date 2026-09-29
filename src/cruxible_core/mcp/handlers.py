@@ -48,6 +48,11 @@ from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
+from cruxible_client.contracts.get_reads import (
+    PlaybillByteRangeV1,
+    PlaybillGetRequestV1,
+    PlaybillGetResultV1,
+)
 from cruxible_client.contracts.governance import governance_identifier
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
@@ -1549,6 +1554,43 @@ def handle_playbill_claim_values(
         lambda client: client.read_playbill_claim_values(instance_id, request=request),
         lambda: playbill_api.playbill_read_claim_values(instance_id, request=request),
         operation_name="cruxible_playbill_claim_values",
+    )
+
+
+def handle_playbill_get(
+    instance_id: str,
+    *,
+    ref: str,
+    detail: str = "summary",
+    range: PlaybillByteRangeV1 | None = None,
+    at: contracts.PlaybillAcceptedCoordinate | str | None = None,
+    evaluation_time: str | None = None,
+) -> PlaybillGetResultV1:
+    try:
+        request = PlaybillGetRequestV1.model_validate(
+            {
+                "ref": ref,
+                "detail": detail,
+                "range": range,
+                "at": at,
+                "evaluation_time": evaluation_time,
+                "surface": "mcp",
+            }
+        )
+    except ValidationError as exc:
+        raise DataValidationError(
+            "Invalid get request; example: "
+            '{"ref": "CLM-0123abcd", "detail": "evidence"} or '
+            '{"ref": "Document:design", "detail": "body", "range": {"start": 0, "end": 4096}}',
+            errors=[
+                f"$.{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in exc.errors(include_url=False)
+            ],
+        ) from exc
+    return _dispatch_remote_or_local(
+        lambda client: client.playbill_get(instance_id, request=request),
+        lambda: playbill_api.playbill_get(instance_id, request=request),
+        operation_name="cruxible_playbill_get",
     )
 
 

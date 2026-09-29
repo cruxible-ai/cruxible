@@ -28,6 +28,9 @@ class RefKind(str, Enum):
     QUERY = "query"
     SOURCE = "source"
     SLOT = "slot"
+    DOCUMENT = "document"
+    CAPTURE_CONTRACT = "capture_contract"
+    PROPOSAL = "proposal"
 
 
 @runtime_checkable

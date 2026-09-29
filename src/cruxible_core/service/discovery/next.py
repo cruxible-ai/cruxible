@@ -1410,6 +1410,113 @@ def _apply_holds(
     return tuple(kept), held
 
 
+def _claim_rows(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    expiring_within: CanonicalDurationV1,
+    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...],
+    claims: tuple[ClaimArtifactAny, ...] | None,
+    resolution_statuses: Mapping[str, str] | None,
+    verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
+    access_profile: CoverageAccessProfileV1 | None = None,
+    facts_reader: _AcceptedQueryFactsRead | None = None,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Every row family ``next`` builds about Claims, which are the rows a hold can park.
+
+    ``next`` and ``claim_unsure_holds`` both assemble a Claim's rows here, so a
+    family added for one reaches the other.
+    """
+
+    return (
+        *_claim_items(
+            instance,
+            coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+            evaluation_time=evaluation_time,
+            expiring_within=expiring_within,
+            door_events=door_events,
+            verdicts_by_identity=verdicts_by_identity,
+            claims=claims,
+            resolution_statuses=resolution_statuses,
+            access_profile=access_profile,
+        ),
+        *_claim_attestation_door_items(
+            instance,
+            coordinate=coordinate,
+            door_events=door_events,
+            evaluation_time=evaluation_time,
+            access_profile=access_profile,
+        ),
+        *_claim_dependency_items(
+            instance,
+            coordinate=coordinate,
+            evaluation_time=evaluation_time,
+            access_profile=access_profile,
+            facts_reader=facts_reader,
+        ),
+    )
+
+
+def claim_unsure_holds(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    claims: tuple[ClaimArtifactAny, ...],
+    evaluation_time: datetime,
+    resolution_statuses: Mapping[str, str] | None = None,
+) -> frozenset[str]:
+    """The Claims an ``unsure`` hold parks right now, decided exactly as ``next`` decides.
+
+    The rows are ``next``'s own Claim rows (``_claim_rows``) for these Claims, and
+    a Claim is held when ``_Holds.covers`` parks one of them: a new contender, a
+    revised input, newer evidence or a further expiry the attester never saw ends
+    the hold here exactly as it returns the row to the queue.
+    """
+
+    live = tuple(claim for claim in claims if claim.lifecycle.state == "live")
+    if not live:
+        return frozenset()
+    store = instance.claim_attestation_evidence_store()
+    head = store.head()
+    door_events = store.fold_events(at_head=head)
+    holds = _Holds(
+        instance,
+        coordinate=coordinate,
+        claims=live,
+        door_events=door_events,
+        door_history=None if head is None else (lambda: store.events(at_head=head)),
+        evaluation_time=evaluation_time,
+    )
+    if not holds:
+        return frozenset()
+    rows = _claim_rows(
+        instance,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time,
+        expiring_within=CanonicalDurationV1(microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS),
+        door_events=door_events,
+        claims=live,
+        resolution_statuses=resolution_statuses,
+    )
+    identities = {claim.identity.qualified for claim in live}
+    held: set[str] = set()
+    for item in rows:
+        members: tuple[PlaybillNextItemV1 | PlaybillNextFindingV1, ...] = (item, *item.findings)
+        for row in members:
+            if not holds.covers(row):
+                continue
+            # The Claims ``covers`` decided over: a conflict's contenders, else the
+            # row's subject. A stale dependency's upstream Claims are not held.
+            named = {row.subject_identity}
+            arguments = row.repair.arguments if isinstance(row.repair.arguments, Mapping) else {}
+            contenders = arguments.get("claim_ids")
+            if isinstance(contenders, list):
+                named.update(str(contender) for contender in contenders)
+            held.update(named & identities)
+    return frozenset(held)
+
+
 def _row_of(finding: PlaybillNextFindingV1) -> PlaybillNextItemV1:
     return _item(
         severity=finding.severity,
@@ -2323,12 +2430,12 @@ def _claim_dependency_items(
     *,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
-    access_profile: CoverageAccessProfileV1,
+    access_profile: CoverageAccessProfileV1 | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Coalesce stale recorded backing-input edges through the existing impact walker."""
 
-    if not access_profile.permits("instance"):
+    if access_profile is not None and not access_profile.permits("instance"):
         return ()
     facts = (
         build_accepted_query_facts(instance, coordinate=coordinate, include_retired=True)
@@ -4002,9 +4109,9 @@ def service_playbill_next(
         instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile
     )
     found = (
-        *_claim_items(
+        *_claim_rows(
             instance,
-            coordinate=public_coordinate,
+            coordinate=coordinate,
             evaluation_time=request.evaluation_time,
             expiring_within=request.expiring_within,
             door_events=door_events,
@@ -4012,13 +4119,7 @@ def service_playbill_next(
             claims=parsed_claims,
             resolution_statuses=resolution_statuses,
             access_profile=request.access_profile,
-        ),
-        *_claim_attestation_door_items(
-            instance,
-            coordinate=coordinate,
-            door_events=door_events,
-            evaluation_time=request.evaluation_time,
-            access_profile=request.access_profile,
+            facts_reader=facts_reader,
         ),
         *workspace_items,
         *_projection_items(
@@ -4030,13 +4131,6 @@ def service_playbill_next(
             verdicts_by_identity=verdicts_by_identity,
             facts_reader=facts_reader,
             resolution_statuses=resolution_statuses,
-        ),
-        *_claim_dependency_items(
-            instance,
-            coordinate=coordinate,
-            evaluation_time=request.evaluation_time,
-            access_profile=request.access_profile,
-            facts_reader=facts_reader,
         ),
         *_document_items(
             instance,
@@ -4406,6 +4500,7 @@ def _page_of(
 
 __all__ = [
     "DEFAULT_EXPIRING_WITHIN_MICROSECONDS",
+    "claim_unsure_holds",
     "NEXT_ITEM_ID_DOMAIN",
     "NEXT_RESULT_DIGEST_DOMAIN",
     "NEXT_RESULT_V2_DIGEST_DOMAIN",

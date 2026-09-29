@@ -16,6 +16,7 @@ from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, Captur
 from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendResultV1
 from cruxible_client.contracts.claim_reads import ClaimValuesResultV1
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
+from cruxible_client.contracts.get_reads import PlaybillByteRangeV1, PlaybillGetResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -810,6 +811,44 @@ def register_tools(
             subject_kind=subject_kind,
             predicates=predicates,
             subject_ids=subject_ids,
+            evaluation_time=evaluation_time,
+        )
+
+    @_tool
+    def cruxible_playbill_get(
+        instance_id: InstanceId = None,
+        *,
+        ref: Annotated[
+            str,
+            Field(
+                description=(
+                    "Any reference you have seen: CLM-… (or a unique prefix), kind/id, "
+                    "a predicate, ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, "
+                    "an artifact path, or a proposal id or prefix."
+                )
+            ),
+        ],
+        detail: Literal["summary", "evidence", "why", "history", "proof", "body"] = "summary",
+        range: Annotated[
+            PlaybillByteRangeV1 | None,
+            Field(description='Byte range [start, end) of a Document body; detail="body" only.'),
+        ] = None,
+        at: Annotated[
+            contracts.PlaybillAcceptedCoordinate | str | None,
+            Field(description="Accepted coordinate or git oid to read at; default current head."),
+        ] = None,
+        evaluation_time: Annotated[
+            str | None,
+            Field(description="ISO-8601 instant verdicts are evaluated at; default now."),
+        ] = None,
+    ) -> PlaybillGetResultV1:
+        """Read one governed thing by reference, values first."""
+        return handlers.handle_playbill_get(
+            require_instance_id(instance_id),
+            ref=ref,
+            detail=detail,
+            range=range,
+            at=at,
             evaluation_time=evaluation_time,
         )
 

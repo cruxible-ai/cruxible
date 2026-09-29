@@ -3509,6 +3509,167 @@ def _emit_retirement_context(context: Mapping[str, Any]) -> None:
         )
 
 
+@playbill_group.command("get")
+@click.argument("ref")
+@click.option(
+    "--detail",
+    type=click.Choice(["summary", "evidence", "why", "history", "proof", "body"]),
+    default="summary",
+    show_default=True,
+    help="How deep to read the one thing REF names.",
+)
+@click.option(
+    "--range",
+    "byte_range",
+    default=None,
+    help="Document body bytes start:end (with --detail body).",
+)
+@click.option("--at", "at_oid", default=None, help="Accepted git oid to read at; default head.")
+@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@json_option
+@handle_errors
+def get_by_ref(
+    ref: str,
+    detail: str,
+    byte_range: str | None,
+    at_oid: str | None,
+    evaluation_time: str | None,
+    output_json: bool,
+) -> None:
+    """Read one governed thing by reference, values first.
+
+    REF is any reference form: CLM-... (or a unique prefix), kind/id, a predicate,
+    ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, an artifact
+    path, or a proposal id or prefix.
+    """
+
+    from cruxible_client.contracts.get_reads import PlaybillByteRangeV1, PlaybillGetRequestV1
+
+    try:
+        request = PlaybillGetRequestV1.model_validate(
+            {
+                "ref": ref,
+                "detail": detail,
+                "range": None if byte_range is None else PlaybillByteRangeV1.parse(byte_range),
+                "at": at_oid,
+                "evaluation_time": evaluation_time,
+                "surface": "cli",
+            }
+        )
+    except (ValidationError, ValueError) as exc:
+        errors = _model_field_errors(exc) if isinstance(exc, ValidationError) else [str(exc)]
+        raise click.UsageError(
+            "; ".join(errors) + " (example: cruxible playbill get Document:design "
+            "--detail body --range 0:4096)"
+        ) from None
+    result = _server_call(
+        lambda client, instance_id: client.playbill_get(instance_id, request=request),
+        command_name="playbill get",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    _emit_get_text(result)
+
+
+def _get_value_text(value: object, *, width: int = 120) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    text = printable(text)
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def _emit_get_text(result: Any) -> None:
+    """Values first, per kind; ``--json`` carries the whole structured result."""
+
+    if result.card is not None:
+        card = result.card.model_dump(mode="json")
+        nexts = card.pop("next", [])
+        if result.kind == "claim":
+            click.echo(f"{card['subject']}  {card['predicate']} = {_get_value_text(card['value'])}")
+            click.echo(
+                f"{card['claim']}  verdict={card['verdict']} status={card['status']} "
+                f"revision={card['revision']}"
+                + (f" accepted={card['accepted']}" if card.get("accepted") else "")
+            )
+            for contender in card.get("contenders", []):
+                click.echo(
+                    f"  contender {contender['claim']} = {_get_value_text(contender['value'])} "
+                    f"[{contender['verdict']}]"
+                )
+        elif result.kind == "subject":
+            click.echo(
+                f"{card['subject']}  ({card['lifecycle']}, {card['incoming_count']} incoming)"
+            )
+            rows = card["claims"]
+            width = max((len(row["predicate"]) for row in rows), default=0)
+            for row in rows:
+                flags = f"  [{', '.join(row['flags'])}]" if row["flags"] else ""
+                click.echo(
+                    f"  {row['predicate'].ljust(width)}  {_get_value_text(row['value'])}{flags}"
+                )
+        else:
+            for key, value in card.items():
+                if value in (None, [], {}):
+                    continue
+                if isinstance(value, list) and all(isinstance(item, dict) for item in value):
+                    click.echo(f"{key}:")
+                    for item in value:
+                        click.echo("  " + "  ".join(str(part) for part in item.values()))
+                    continue
+                if isinstance(value, dict):
+                    value = "  ".join(
+                        f"{name}={', '.join(map(str, part)) if isinstance(part, list) else part}"
+                        for name, part in value.items()
+                    )
+                if isinstance(value, list):
+                    # Names are never cut: a truncated name is not a usable reference.
+                    click.echo(f"{key}: {printable(', '.join(map(str, value)))}")
+                    continue
+                click.echo(f"{key}: {_get_value_text(value, width=200)}")
+        if card.get("flags"):
+            click.echo(f"flags: {', '.join(card['flags'])}")
+        for step in nexts:
+            click.echo(f"next: {step}")
+        return
+    if result.evidence is not None:
+        for capture in result.evidence.captures:
+            click.echo(
+                f"capture {capture.capture}  {capture.contract} v{capture.version}  "
+                f"source={capture.source}  observed={capture.observed_at.isoformat()}  "
+                f"{capture.role}{' admitted' if capture.admitted else ' not admitted'}"
+            )
+        for attestation in result.evidence.attestations:
+            click.echo(
+                f"attestation {attestation.stance} by {attestation.principal} "
+                f"at {attestation.at.isoformat()}{'' if attestation.current else ' (not current)'}"
+            )
+        if result.evidence.rationale:
+            click.echo(f"rationale: {printable(result.evidence.rationale)}")
+        return
+    if result.history is not None:
+        for revision in result.history.revisions:
+            value = (
+                "" if revision.value is None else f"  = {_get_value_text(revision.value, width=80)}"
+            )
+            click.echo(
+                f"rev {revision.revision}  seq {revision.sequence}  {revision.accepted}  "
+                f"by {revision.actor or '-'}{value}"
+            )
+        return
+    if result.body is not None:
+        body = result.body
+        click.echo(body.text if body.text is not None else body.content_base64 or "", nl=False)
+        if body.range is not None and body.range.end < body.size:
+            following = min(body.size, 2 * body.range.end - body.range.start)
+            click.echo(
+                f"\n(bytes {body.range.start}:{body.range.end} of {body.size}; next: "
+                f"--range {body.range.end}:{following})",
+                err=True,
+            )
+        return
+    _emit_json(result.why if result.why is not None else result.proof)
+
+
 @playbill_group.group("block")
 def block_group() -> None:
     """Maintain local declarations without rendering or replacing authored prose."""

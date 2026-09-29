@@ -178,6 +178,12 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV2,
     ProjectionCurrencyPolicy,
 )
+from cruxible_client.contracts.get_reads import (
+    PlaybillByteRangeV1,
+    PlaybillGetDetail,
+    PlaybillGetRequestV1,
+    PlaybillGetResultV1,
+)
 from cruxible_client.contracts.line_dispatch import (
     LineTriggerCheckRequestV1,
     LineTriggerCheckResultV1,
@@ -322,6 +328,18 @@ def _enum(value: _EnumT | str, kind: type[_EnumT], *, label: str) -> _EnumT:
             raise ValueError(f"{label} must be one of: {admissible}") from None
     raise TypeError(f"{label} must be a {kind.__name__} or one of its string values")
 
+
+# The kind a daemon-resolved ``get`` reference names, as the SDK's RefKind.
+_GET_REF_KINDS: Mapping[str, RefKind] = {
+    "claim": RefKind.CLAIM,
+    "subject": RefKind.SUBJECT,
+    "claim_type": RefKind.CLAIM_TYPE,
+    "procedure": RefKind.PROCEDURE,
+    "query": RefKind.QUERY,
+    "document": RefKind.DOCUMENT,
+    "capture_contract": RefKind.CAPTURE_CONTRACT,
+    "proposal": RefKind.PROPOSAL,
+}
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {
     RefKind.SUBJECT: "Subject",
@@ -3075,107 +3093,112 @@ class Playbill:
         )
         return ProcedureRun(self, result)
 
-    def get(self, ref: str | TypedRef) -> KnowledgeCard:
-        if isinstance(ref, TypedRef):
-            self._read_at(ref.coordinate)
-        if isinstance(ref, SubjectRef):
-            kind, identifier = _subject_parts(ref.address)
-            subject_view = self._client.get_playbill_subject(
-                self._instance_id,
-                kind,
-                identifier,
-                at=_api_coordinate(ref.coordinate),
-            )
-            return KnowledgeCard(
-                RefKind.SUBJECT,
-                ref.address,
-                _coordinate(subject_view.coordinate),
-                subject_view,
-            )
-        if isinstance(ref, ClaimTypeRef):
-            claim_type_view = self._client.get_playbill_claim_type(
-                self._instance_id, ref.address, at=_api_coordinate(ref.coordinate)
-            )
-            return KnowledgeCard(
-                RefKind.CLAIM_TYPE,
-                ref.address,
-                _coordinate(claim_type_view.coordinate),
-                claim_type_view,
-            )
-        if isinstance(ref, ClaimRef):
-            claim_view = self._client.get_playbill_claim(
-                self._instance_id,
-                ref.address,
-                at=_api_coordinate(ref.coordinate),
-                evaluation_time=self._evaluation_time(),
-            )
-            return KnowledgeCard(
-                RefKind.CLAIM,
-                ref.address,
-                _coordinate(claim_view.coordinate),
-                claim_view,
-            )
-        if isinstance(ref, QueryRef):
-            query_view = self._client.get_playbill_query_definition(
-                self._instance_id, ref.address, at=_api_coordinate(ref.coordinate)
-            )
-            return KnowledgeCard(
-                RefKind.QUERY,
-                ref.address,
-                _coordinate(query_view.coordinate),
-                query_view,
-            )
-        if isinstance(ref, ProcedureRef):
-            return KnowledgeCard(
-                RefKind.PROCEDURE,
-                ref.address,
-                ref.coordinate,
-                self.at(ref.coordinate).search(
-                    query=ref.address, kinds=("procedure",), statuses=()
-                ),
-            )
+    def get(
+        self,
+        ref: str | TypedRef,
+        *,
+        detail: PlaybillGetDetail = "summary",
+        range: tuple[int, int] | str | None = None,
+    ) -> KnowledgeCard:
+        """Read one governed thing by reference, resolved directly by the daemon.
+
+        ``ref`` is a typed ref or any string form an agent sees: ``CLM-…`` or a
+        unique prefix, ``kind/id``, a predicate, ``ClaimType:``/``Document:``/
+        ``Procedure:``/``query:``/``CaptureContract:<name>``, an artifact path,
+        or a proposal id. A wrong or ambiguous name refuses with the nearest
+        names. A Claim summary is a ``ClaimView``; other summaries are the
+        values-first card; other details carry that detail's payload.
+        """
+
         if isinstance(ref, SourceRef):
-            context = self._client.playbill_source_context(self._instance_id)
-            if _coordinate(context.accepted_coordinate) != ref.coordinate:
-                raise ValueError(
-                    "source context no longer matches the explicit reference coordinate"
-                )
-            matches = [item for item in context.documents if item.get("source_id") == ref.address]
-            if len(matches) != 1:
-                raise ValueError(f"source {ref.address!r} did not resolve uniquely")
-            return KnowledgeCard(
-                RefKind.SOURCE,
-                ref.address,
-                _coordinate(context.accepted_coordinate),
-                matches[0],
-            )
-        if not isinstance(ref, str):
-            raise ReferenceKindError("unsupported typed reference")
-        page = self.search(
-            query=ref,
-            kinds=("claim", "procedure"),
-            statuses=(),
-        )
-        exact = [
-            row
-            for row in page.rows
-            if ref
-            in {
-                row.get("identity"),
-                row.get("name"),
-                str(row.get("identity", "")).removeprefix("Claim:"),
+            return self._source_card(ref)
+        coordinate: AcceptedCoordinate | None = None
+        if isinstance(ref, str):
+            text = ref
+        else:
+            coordinate = ref.coordinate
+            prefixes = {
+                RefKind.SUBJECT: "",
+                RefKind.CLAIM: "",
+                RefKind.CLAIM_TYPE: "ClaimType:",
+                RefKind.PROCEDURE: "Procedure:",
+                RefKind.QUERY: "query:",
             }
-        ]
-        if len(exact) != 1:
-            raise ValueError(f"literal reference {ref!r} resolved to {len(exact)} exact rows")
-        row_kind = exact[0].get("kind")
-        card_kind = RefKind.PROCEDURE if row_kind == "procedure" else RefKind.CLAIM
-        identity = (
-            str(exact[0].get("identity", ref)).removeprefix("Claim:")
-            if card_kind is RefKind.CLAIM
-            else ref
+            if ref.kind not in prefixes:
+                raise ReferenceKindError(f"get does not read {ref.kind.value} references")
+            text = prefixes[ref.kind] + ref.address
+        window: PlaybillByteRangeV1 | None = None
+        if isinstance(range, str):
+            window = PlaybillByteRangeV1.parse(range)
+        elif range is not None:
+            window = PlaybillByteRangeV1(start=range[0], end=range[1])
+        claim_summary = detail == "summary" and (
+            (not isinstance(ref, str) and ref.kind is RefKind.CLAIM)
+            or (isinstance(ref, str) and ref.removeprefix("Claim:").startswith("CLM-"))
         )
-        return KnowledgeCard(card_kind, identity, page.coordinate, exact[0])
+        result = self._get(text, "proof" if claim_summary else detail, window, coordinate)
+        if detail == "summary" and result.kind == "claim" and not claim_summary:
+            # The reference resolved to a Claim only on the daemon; read its
+            # envelope at the same coordinate for the typed view.
+            result = self._get(result.ref, "proof", None, _coordinate(result.coordinate))
+        kind = _GET_REF_KINDS[result.kind]
+        identity = (
+            result.ref
+            if result.kind in {"claim", "subject", "proposal"}
+            else result.ref.split(":", 1)[1]
+        )
+        if result.kind == "proposal":
+            identity = result.ref.removeprefix("Proposal:")
+        value: object
+        if result.kind == "claim" and result.detail == "proof":
+            view = api.PlaybillClaimViewV2.model_validate(result.proof)
+            value = self._typed_claim_view(view, identity) if detail == "summary" else view
+        elif result.card is not None:
+            value = result.card
+        else:
+            value = next(
+                item
+                for item in (result.evidence, result.history, result.body, result.why, result.proof)
+                if item is not None
+            )
+        return KnowledgeCard(kind, identity, _coordinate(result.coordinate), value)
+
+    def _get(
+        self,
+        ref: str,
+        detail: PlaybillGetDetail,
+        window: PlaybillByteRangeV1 | None,
+        coordinate: AcceptedCoordinate | None,
+    ) -> PlaybillGetResultV1:
+        requested = self._read_at(coordinate)
+        result = self._client.playbill_get(
+            self._instance_id,
+            request=PlaybillGetRequestV1(
+                ref=ref,
+                detail=detail,
+                range=window,
+                at=requested,
+                evaluation_time=datetime.fromisoformat(self._evaluation_time()),
+                surface="sdk",
+            ),
+        )
+        self._observe_read(_coordinate(result.coordinate), expected=requested)
+        return result
+
+    def _source_card(self, ref: SourceRef) -> KnowledgeCard:
+        self._read_at(ref.coordinate)
+        context = self._client.playbill_source_context(self._instance_id)
+        if _coordinate(context.accepted_coordinate) != ref.coordinate:
+            raise ValueError("source context no longer matches the explicit reference coordinate")
+        matches = [item for item in context.documents if item.get("source_id") == ref.address]
+        if len(matches) != 1:
+            raise ValueError(f"source {ref.address!r} did not resolve uniquely")
+        return KnowledgeCard(
+            RefKind.SOURCE,
+            ref.address,
+            _coordinate(context.accepted_coordinate),
+            matches[0],
+        )
 
     def search(
         self,
