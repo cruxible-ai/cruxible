@@ -170,6 +170,7 @@ def claim_resolution_statuses(
     evaluation_time: datetime,
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     read_context: ClaimVerdictReadContext | None = None,
+    time_boundaries: set[datetime] | None = None,
 ) -> dict[str, SearchStatus]:
     """Derive each Claim's resolution status at one accepted coordinate.
 
@@ -202,6 +203,8 @@ def claim_resolution_statuses(
     if remembered is not None:
         memoized_statuses, memoized_verdicts, interval = remembered
         if interval_holds(interval, evaluation_time=evaluation_time):
+            if time_boundaries is not None:
+                time_boundaries.update(bound for bound in interval if bound is not None)
             if verdicts_by_identity is not None:
                 verdicts_by_identity.update(
                     {
@@ -305,7 +308,9 @@ def claim_resolution_statuses(
                 evaluated_at=evaluation_time,
                 claims=tuple(group),
                 verdicts_by_identity=verdicts,
-                time_boundaries=group_boundaries if remember else None,
+                time_boundaries=group_boundaries
+                if remember or time_boundaries is not None
+                else None,
                 read_context=read_context,
             )
         finally:
@@ -368,6 +373,8 @@ def claim_resolution_statuses(
             ),
             capacity=MEMO_CAPACITY,
         )
+    if time_boundaries is not None:
+        time_boundaries.update(boundaries)
     return statuses
 
 

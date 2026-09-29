@@ -120,6 +120,7 @@ from cruxible_core.service.claims.claims import (
     _claim_law_evidence_by_artifact_index,
     service_list_playbill_claims,
 )
+from cruxible_core.service.claims.verdict_memo import invariance_interval
 from cruxible_core.service.discovery.query import (
     _AcceptedQueryFactsRead,
     build_accepted_query_facts,
@@ -127,6 +128,7 @@ from cruxible_core.service.discovery.query import (
 from cruxible_core.service.discovery.search import claim_resolution_statuses
 from cruxible_core.service.evidence.evidence import (
     ClaimVerdictReadContext,
+    _record_verdict_time_boundaries,
     accepted_claim_attestations,
     service_evaluate_playbill_claim_verdict,
 )
@@ -1417,6 +1419,7 @@ class _Holds:
         ]
         | None = None,
         evaluation_time: datetime,
+        time_boundaries: set[datetime] | None = None,
     ) -> None:
         self._instance = instance
         self._coordinate = coordinate
@@ -1436,6 +1439,23 @@ class _Holds:
         # principal's hold, and one made after the evaluation time does not.
         def eligible(statement: ClaimAttestationStatementV2) -> tuple[str, str] | None:
             identity = statement.claim_identity.qualified
+            if time_boundaries is not None:
+                time_boundaries.add(statement.attested_at)
+                if statement.valid_until is not None:
+                    time_boundaries.add(statement.valid_until)
+                if statement.stance == "unsure" and identity in self._claims:
+                    time_boundaries.add(
+                        self._lapses(
+                            identity,
+                            _UnsureHold(
+                                referent=AcceptedCoordinate.model_validate(
+                                    statement.referent_coordinate.model_dump(mode="json")
+                                ),
+                                attested_at=statement.attested_at,
+                                valid_until=statement.valid_until,
+                            ),
+                        )
+                    )
             if (
                 statement.attestation_basis != "examined_existing"
                 or statement.attested_at > evaluation_time
@@ -1595,8 +1615,126 @@ class _Holds:
         return hold.attested_at + self._hold_for[predicate]
 
 
+def _hold_key(row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> str:
+    return typed_digest(
+        Sha256Value,
+        "next-hold-row-v1",
+        row.model_dump(
+            mode="json",
+            include={"reason", "subject_identity", "related_identities", "detail", "repair"},
+        ),
+    ).tagged
+
+
+class _StoredHolds(_StrictNextModel):
+    covered: frozenset[str]
+
+    def __bool__(self) -> bool:
+        return bool(self.covered)
+
+    def covers(self, row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> bool:
+        return _hold_key(row) in self.covered
+
+
+class _StoredClaimQueue(_StrictNextModel):
+    rows: tuple[PlaybillNextItemV1, ...]
+    holds: _StoredHolds
+    held_claims: frozenset[str]
+    valid_from: datetime | None
+    valid_until: datetime | None
+
+
+def _hold_members(
+    item: PlaybillNextItemV1,
+) -> tuple[PlaybillNextItemV1 | PlaybillNextFindingV1, ...]:
+    return (item, *item.findings)
+
+
+def _held_claims(
+    rows: tuple[PlaybillNextItemV1, ...], holds: _Holds | _StoredHolds, identities: set[str]
+) -> frozenset[str]:
+    held: set[str] = set()
+    for item in rows:
+        for row in _hold_members(item):
+            if not holds.covers(row):
+                continue
+            named = {row.subject_identity}
+            arguments = row.repair.arguments if isinstance(row.repair.arguments, Mapping) else {}
+            contenders = arguments.get("claim_ids")
+            if isinstance(contenders, list):
+                named.update(str(contender) for contender in contenders)
+            held.update(named & identities)
+    return frozenset(held)
+
+
+def build_stored_claim_queue(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    attestation_head: str | None,
+    evaluation_time: datetime,
+) -> _StoredClaimQueue:
+    """Materialize only Claim rows and hold coverage, before caller presentation.
+
+    Each family contributes its comparisons to the invariance interval. Hold
+    coverage is fixed on that interval too, so serving it needs no history reads.
+    A V1 queue has no door observations; the worker retains both wire versions.
+    """
+
+    boundaries: set[datetime] = set()
+    context = ClaimVerdictReadContext(instance, coordinate)
+    claims = context.claims()
+    verdicts: dict[str, ClaimVerdictResultAny] = {}
+    statuses = claim_resolution_statuses(
+        instance,
+        claims=claims,
+        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        evaluation_time=evaluation_time,
+        verdicts_by_identity=verdicts,
+        read_context=context,
+        time_boundaries=boundaries,
+    )
+    store = instance.claim_attestation_evidence_store()
+    events = () if attestation_head is None else store.fold_events(at_head=attestation_head)
+    rows = _claim_rows(
+        instance,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time,
+        expiring_within=CanonicalDurationV1(microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS),
+        door_events=events,
+        claims=claims,
+        resolution_statuses=statuses,
+        verdicts_by_identity=verdicts,
+        facts_reader=_AcceptedQueryFactsRead(instance, coordinate=coordinate),
+        time_boundaries=boundaries,
+    )
+    holds = _Holds(
+        instance,
+        coordinate=coordinate,
+        claims=claims,
+        door_events=events,
+        door_history=None
+        if attestation_head is None
+        else lambda: store.events(at_head=attestation_head),
+        evaluation_time=evaluation_time,
+        time_boundaries=boundaries,
+    )
+    lower, upper = invariance_interval(boundaries, evaluation_time=evaluation_time)
+    return _StoredClaimQueue(
+        rows=rows,
+        holds=_StoredHolds(
+            covered=frozenset(
+                _hold_key(row) for item in rows for row in _hold_members(item) if holds.covers(row)
+            )
+        ),
+        held_claims=_held_claims(rows, holds, {claim.identity.qualified for claim in claims}),
+        valid_from=lower,
+        valid_until=upper,
+    )
+
+
 def _apply_holds(
-    items: tuple[PlaybillNextItemV1, ...], holds: _Holds
+    items: tuple[PlaybillNextItemV1, ...], holds: _Holds | _StoredHolds
 ) -> tuple[tuple[PlaybillNextItemV1, ...], int]:
     """Park the rows an ``unsure`` hold covers; a finding it doesn't cover stays."""
 
@@ -1632,6 +1770,7 @@ def _claim_rows(
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     access_profile: CoverageAccessProfileV1 | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
+    time_boundaries: set[datetime] | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Every row family ``next`` builds about Claims, which are the rows a hold can park.
 
@@ -1644,6 +1783,7 @@ def _claim_rows(
             instance,
             coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
             evaluation_time=evaluation_time,
+            time_boundaries=time_boundaries,
             expiring_within=expiring_within,
             door_events=door_events,
             verdicts_by_identity=verdicts_by_identity,
@@ -1656,12 +1796,14 @@ def _claim_rows(
             coordinate=coordinate,
             door_events=door_events,
             evaluation_time=evaluation_time,
+            time_boundaries=time_boundaries,
             access_profile=access_profile,
         ),
         *_claim_dependency_items(
             instance,
             coordinate=coordinate,
             evaluation_time=evaluation_time,
+            time_boundaries=time_boundaries,
             access_profile=access_profile,
             claims=claims,
             facts_reader=facts_reader,
@@ -1690,6 +1832,13 @@ def claim_unsure_holds(
         return frozenset()
     store = instance.claim_attestation_evidence_store()
     head = store.head()
+    from cruxible_core.consumers.next_queue import stored_claim_queue
+
+    stored = stored_claim_queue(
+        instance, coordinate=coordinate, door_head=head, evaluation_time=evaluation_time, version=2
+    )
+    if stored is not None:
+        return stored.held_claims & {claim.identity.qualified for claim in live}
     door_events = store.fold_events(at_head=head)
     holds = _Holds(
         instance,
@@ -1710,22 +1859,7 @@ def claim_unsure_holds(
         claims=live,
         resolution_statuses=resolution_statuses,
     )
-    identities = {claim.identity.qualified for claim in live}
-    held: set[str] = set()
-    for item in rows:
-        members: tuple[PlaybillNextItemV1 | PlaybillNextFindingV1, ...] = (item, *item.findings)
-        for row in members:
-            if not holds.covers(row):
-                continue
-            # The Claims ``covers`` decided over: a conflict's contenders, else the
-            # row's subject. A stale dependency's upstream Claims are not held.
-            named = {row.subject_identity}
-            arguments = row.repair.arguments if isinstance(row.repair.arguments, Mapping) else {}
-            contenders = arguments.get("claim_ids")
-            if isinstance(contenders, list):
-                named.update(str(contender) for contender in contenders)
-            held.update(named & identities)
-    return frozenset(held)
+    return _held_claims(rows, holds, {claim.identity.qualified for claim in live})
 
 
 def _row_of(finding: PlaybillNextFindingV1) -> PlaybillNextItemV1:
@@ -1800,6 +1934,7 @@ def _claim_attestation_threshold_items(
     claims: tuple[ClaimArtifactAny, ...],
     law_evidence: Mapping[str, ClaimLawEvidenceAny],
     door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
+    time_boundaries: set[datetime] | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Emit v4 queue consequences from current independent attestation components."""
 
@@ -1843,6 +1978,15 @@ def _claim_attestation_threshold_items(
             previous = latest_door_by_principal.get(principal_id)
             if previous is None or event.sequence > previous[0].sequence:
                 latest_door_by_principal[principal_id] = (event, payload)
+        if time_boundaries is not None:
+            for item in current:
+                time_boundaries.add(item.statement.observed_at)
+                if item.statement.valid_until is not None:
+                    time_boundaries.add(item.statement.valid_until)
+            for _event, payload in exact_door:
+                time_boundaries.add(payload.attestation.statement.attested_at)
+                if payload.attestation.statement.valid_until is not None:
+                    time_boundaries.add(payload.attestation.statement.valid_until)
         superseded_accepted = frozenset(latest_door_by_principal)
         for rule in policy.rules:
             if rule.minimum_independent_control_components == 0:
@@ -1947,6 +2091,7 @@ def _claim_items(
     claims: tuple[ClaimArtifactAny, ...] | None = None,
     resolution_statuses: Mapping[str, str] | None = None,
     access_profile: CoverageAccessProfileV1 | None = None,
+    time_boundaries: set[datetime] | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     # Claims are instance material: a caller not permitted to see it is told
     # nothing about them -- no identities, values, or verdicts -- exactly as the
@@ -1984,6 +2129,7 @@ def _claim_items(
             evaluation_time=evaluation_time,
             claims=claims,
             law_evidence=law_evidence,
+            time_boundaries=time_boundaries,
             door_events=door_events,
         )
     )
@@ -2041,10 +2187,17 @@ def _claim_items(
                     instance,
                     claim_identity=claim.identity.qualified,
                     evaluation_time=evaluation_time,
+                    time_boundaries=time_boundaries,
                     at=coordinate,
                 ).verdict
                 if verdicts_by_identity is not None:
                     verdicts_by_identity[claim.identity.qualified] = verdict
+            if time_boundaries is not None and isinstance(verdict, ClaimVerdictResultV2):
+                for expiration in verdict.freshness_expirations:
+                    time_boundaries.add(expiration.expires_at)
+                    time_boundaries.add(
+                        expiration.expires_at - timedelta(microseconds=expiring_within.microseconds)
+                    )
             if verdict.verdict == "stale_evidence":
                 expirations = (
                     verdict.freshness_expirations
@@ -2504,6 +2657,7 @@ def _claim_attestation_door_items(
     door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...],
     evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1 | None = None,
+    time_boundaries: set[datetime] | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Fold new-capture memberships against immutable acceptance-time accounts.
 
@@ -2556,6 +2710,10 @@ def _claim_attestation_door_items(
         statement = envelope.statement
         if statement.attestation_basis != "new_capture":
             continue
+        if time_boundaries is not None:
+            time_boundaries.add(statement.attested_at)
+            if statement.valid_until is not None:
+                time_boundaries.add(statement.valid_until)
         if statement.attested_at > evaluation_time or (
             statement.valid_until is not None and evaluation_time >= statement.valid_until
         ):
@@ -2654,6 +2812,7 @@ def _claim_dependency_items(
     access_profile: CoverageAccessProfileV1 | None = None,
     claims: tuple[ClaimArtifactAny, ...] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
+    time_boundaries: set[datetime] | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Coalesce stale recorded backing-input edges through the existing impact walker."""
 
@@ -2669,6 +2828,15 @@ def _claim_dependency_items(
         if facts_reader is None
         else facts_reader.build(include_retired=True)
     )
+    if time_boundaries is not None:
+        for row in facts.claims:
+            _record_verdict_time_boundaries(
+                time_boundaries,
+                rule=row.rule,
+                claim=row.accepted.claim,
+                captures=row.captures,
+                attestations=row.attestations,
+            )
     subjects = {subject.path: subject for subject in facts.subjects}
     providers = {provider.identity.qualified: provider for provider in facts.providers}
     visible_rows = tuple(
@@ -4379,7 +4547,7 @@ class _CallerView:
 
 
 def _caller_queue(
-    found: Iterable[PlaybillNextItemV1], caller: _CallerView, holds: _Holds | None
+    found: Iterable[PlaybillNextItemV1], caller: _CallerView, holds: _Holds | _StoredHolds | None
 ) -> tuple[tuple[PlaybillNextItemV1, ...], int, int]:
     """The caller's queue from every row found: filtered, held, grouped and rendered.
 
@@ -4424,6 +4592,20 @@ def _next_queue(
         store = instance.claim_attestation_evidence_store()
         attestation_head = request.at_attestation_head_digest or store.head()
         door_events = store.fold_events(at_head=attestation_head)
+    from cruxible_core.consumers.next_queue import stored_claim_queue
+
+    stored = None
+    if (
+        request.expiring_within.microseconds == DEFAULT_EXPIRING_WITHIN_MICROSECONDS
+        and request.access_profile.permits("instance")
+    ):
+        stored = stored_claim_queue(
+            instance,
+            coordinate=coordinate,
+            door_head=attestation_head or instance.claim_attestation_evidence_store().head(),
+            evaluation_time=request.evaluation_time,
+            version=2 if isinstance(request, PlaybillNextRequestV2) else 1,
+        )
     # One request evaluates a Claim's verdict at exactly one coordinate and one
     # evaluation time, so the folds that need it share the result instead of
     # each walking all 740 Claims. The map dies with the request.
@@ -4440,30 +4622,31 @@ def _next_queue(
     facts_reader = _AcceptedQueryFactsRead(instance, coordinate=coordinate)
     parsed_claims: tuple[ClaimArtifactAny, ...] | None = None
     resolution_statuses: Mapping[str, str] | None = None
-    try:
-        parsed_claims = (
-            read_context.claims()
-            if read_context is not None
-            else tuple(
-                _claim_from_view(view)
-                for view in service_list_playbill_claims(
-                    instance, at=public_coordinate, include_retired=True
-                ).claims
+    if stored is None:
+        try:
+            parsed_claims = (
+                read_context.claims()
+                if read_context is not None
+                else tuple(
+                    _claim_from_view(view)
+                    for view in service_list_playbill_claims(
+                        instance, at=public_coordinate, include_retired=True
+                    ).claims
+                )
             )
-        )
-        resolution_statuses = claim_resolution_statuses(
-            instance,
-            claims=parsed_claims,
-            at=public_coordinate,
-            evaluation_time=request.evaluation_time,
-            verdicts_by_identity=verdicts_by_identity,
-            read_context=read_context,
-        )
-    except PlaybillError:
-        # A queue is a read of whatever resolves. If the population cannot be
-        # resolved as a whole -- a missing ClaimType, an unreadable store --
-        # each fold falls back to deriving what it needs and reporting on it.
-        verdicts_by_identity.clear()
+            resolution_statuses = claim_resolution_statuses(
+                instance,
+                claims=parsed_claims,
+                at=public_coordinate,
+                evaluation_time=request.evaluation_time,
+                verdicts_by_identity=verdicts_by_identity,
+                read_context=read_context,
+            )
+        except PlaybillError:
+            # A queue is a read of whatever resolves. If the population cannot be
+            # resolved as a whole -- a missing ClaimType, an unreadable store --
+            # each fold falls back to deriving what it needs and reporting on it.
+            verdicts_by_identity.clear()
     workspace_domains, workspace_items = _workspace_items(
         instance,
         coordinate=public_coordinate,
@@ -4483,17 +4666,21 @@ def _next_queue(
         instance, evaluation_time=request.evaluation_time, access_profile=request.access_profile
     )
     found = (
-        *_claim_rows(
-            instance,
-            coordinate=coordinate,
-            evaluation_time=request.evaluation_time,
-            expiring_within=request.expiring_within,
-            door_events=door_events,
-            verdicts_by_identity=verdicts_by_identity,
-            claims=parsed_claims,
-            resolution_statuses=resolution_statuses,
-            access_profile=request.access_profile,
-            facts_reader=facts_reader,
+        *(
+            stored.rows
+            if stored is not None
+            else _claim_rows(
+                instance,
+                coordinate=coordinate,
+                evaluation_time=request.evaluation_time,
+                expiring_within=request.expiring_within,
+                door_events=door_events,
+                verdicts_by_identity=verdicts_by_identity,
+                claims=parsed_claims,
+                resolution_statuses=resolution_statuses,
+                access_profile=request.access_profile,
+                facts_reader=facts_reader,
+            )
         ),
         *workspace_items,
         *_projection_items(
@@ -4545,10 +4732,12 @@ def _next_queue(
         caller_rung=caller_rung,
     )
     holds = (
-        _Holds(
+        stored.holds
+        if stored is not None
+        else _Holds(
             instance,
             coordinate=coordinate,
-            claims=parsed_claims,
+            claims=parsed_claims or (),
             door_events=door_events,
             door_history=(
                 None
@@ -4559,7 +4748,8 @@ def _next_queue(
             ),
             evaluation_time=request.evaluation_time,
         )
-        if parsed_claims is not None and request.access_profile.permits("instance")
+        if (stored is not None or parsed_claims is not None)
+        and request.access_profile.permits("instance")
         else None
     )
     items, hidden, held = _caller_queue(found, caller, holds)
@@ -4596,9 +4786,9 @@ def summarize_playbill_next(
     """Count the queue and return its first three rows plus one optional matched row.
 
     Matches search the same first maximum-size page orient previously read.
-    Every request re-reads mutable inputs; no queue or evidence observation is
-    cached here. Population reads use accepted Claim bytes, avoiding public
-    projection-card construction only to parse those cards back into Claims.
+    Current Claim rows use the worker projection while its coordinate, door
+    head and validity interval match. Other inputs are observed per request;
+    an unavailable or behind worker falls back to the live fold.
     """
 
     if request.cursor is not None or request.since_result_digest is not None:

@@ -28,9 +28,10 @@ _log = structlog.get_logger(__name__)
 def consumer_kinds() -> tuple[ConsumerKind, ...]:
     from cruxible_core.consumers.evidence import EVIDENCE_AVAILABILITY
     from cruxible_core.consumers.lines import LINE_ARMS
+    from cruxible_core.consumers.next_queue import NEXT_QUEUE
     from cruxible_core.consumers.predictions import PREDICTION_SETTLEMENT
 
-    return (LINE_ARMS, EVIDENCE_AVAILABILITY, PREDICTION_SETTLEMENT)
+    return (LINE_ARMS, EVIDENCE_AVAILABILITY, PREDICTION_SETTLEMENT, NEXT_QUEUE)
 
 
 def consumer_health(instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
