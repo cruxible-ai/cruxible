@@ -483,3 +483,53 @@ def test_query_reserves_no_digest_row_key() -> None:
     assert RESERVED_FIELD_NAMES == frozenset(
         {"subject_id", "subject", "kind", "predicate", "claim", "flags"}
     )
+
+
+def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
+    from cruxible_client.contracts.get_reads import (
+        GET_SUMMARY_TEXT_MAX_CHARS,
+        PlaybillGetTruncatedTextV1,
+    )
+    from tests.core_support._claim_authoring_support import service_propose_playbill_claim
+    from tests.core_support._knowledge_loop_support import activate, authoring, subject_shell
+    from tests.test_claims.test_claims import _claim_type
+
+    note = _claim_type().model_copy(update={"literal_schema": {"type": "string"}})
+    instance, owner = seed_claims(tmp_path, claim_type_override=note)
+    long_note = "a long literal note " * 40
+    activate(
+        instance,
+        owner,
+        service_propose_playbill_claim(
+            instance,
+            authoring=authoring("wi-44", long_note, with_claim_type=False).model_copy(
+                update={"subject_shell": subject_shell("wi-44")}
+            ),
+            actor_id="owner",
+            proposal_name="long-note",
+            timestamp="2026-08-16T20:10:00.000000Z",
+        ),
+    )
+    cut = PlaybillGetTruncatedTextV1(
+        value=long_note[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_note)
+    )
+
+    rows = {
+        row["subject_id"]: row
+        for row in _exact_query(instance, kind=SUBJECT_KIND, select=["status"]).rows
+    }
+    assert rows["wi-44"]["status"] == cut and rows["wi-42"]["status"] == "ready"
+    (found,) = _exact_query(instance, contains="long literal note").rows
+    assert found["value"] == cut
+    spec = QueryDefinitionSpecV1.model_validate(
+        {**work_item_query("project.notes").model_dump(mode="json"), "pins": []}
+    )
+    by_id = {row["item_id"]: row for row in _exact_query(instance, spec=spec).rows}
+    assert by_id["wi-44"]["status"] == cut
+
+    # get agrees: the card is cut the same way, evidence reads it whole.
+    card = _exact_get(instance, f"{SUBJECT_KIND}/wi-44").card
+    assert isinstance(card, PlaybillGetSubjectCardV1) and card.claims[0].value == cut
+    assert isinstance(card.claims[0].claim, str)
+    evidence = _exact_get(instance, card.claims[0].claim, detail="evidence").evidence
+    assert evidence is not None and evidence.value == long_note

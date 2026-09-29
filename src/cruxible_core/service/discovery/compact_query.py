@@ -856,10 +856,10 @@ class _RowRenderer:
 def _exact_values(
     content: ExactContentReader, slot: Sequence[LiveValue], digests: Sequence[object]
 ) -> list[object]:
-    """Exact-content values (distinct digests) as a card shows them: text, cut when long."""
+    """Exact-content values (distinct digests) as their text, or the marker in its place."""
 
     spans = {item.value: item.span for item in slot}
-    return [summary_value(content.value(str(digest), spans.get(digest))) for digest in digests]
+    return [content.value(str(digest), spans.get(digest)) for digest in digests]
 
 
 def _searchable(item: LiveValue, content: ExactContentReader) -> str | None:
@@ -1216,7 +1216,7 @@ def _contains_everywhere(
                 "claim": item.identity.removeprefix("Claim:"),
             }
             if item.exact:
-                row["value"] = summary_value(content.value(str(item.value), item.span))
+                row["value"] = content.value(str(item.value), item.span)
             rows.append({**row, "flags": ordered_flags(marks)})
         return rows
 
@@ -2053,7 +2053,12 @@ def service_playbill_query(
     )
     start = 0 if continuation is None else list(answer.keys).index(continuation.last_key) + 1
     last_key = answer.keys[start + len(page) - 1] if page else None
-    rows = answer.render(page)
+    # Every row is bounded by get's card rule: a string over 500 characters is
+    # cut to {value, truncated, length}; get(detail="evidence") reads it whole.
+    rows = [
+        {key: value if key == "flags" else summary_value(value) for key, value in row.items()}
+        for row in answer.render(page)
+    ]
     next_cursor = None
     if truncated and last_key is not None:
         next_cursor = encode_list_cursor(

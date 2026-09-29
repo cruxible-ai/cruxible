@@ -55600,7 +55600,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One page of a ``query`` answer: values first, flags per row.",
+        "description": "One page of a ``query`` answer: values first, flags per row.\n\nRows are bounded by ``get``'s card rule: a string value over 500 characters\nis cut to ``{value, truncated: true, length}`` (``get(detail=\"evidence\")``\nreads it whole), and an exact-content value is its text, or a typed marker\nwhen it cannot be shown as text.",
         "properties": {
           "capped": {
             "default": [],
