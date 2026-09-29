@@ -880,6 +880,10 @@ def _tool_rung(tool: str) -> int:
     return int(TOOL_PERMISSIONS[tool]) - 1
 
 
+#: The most contenders a contest row offers a keep-one option for.
+_MAX_CONTEST_OPTIONS = 8
+
+
 def _restated_set(values: Mapping[str, object]) -> dict[str, object] | None:
     """The set call a `playbill.set` repair names, from its arguments, or None."""
 
@@ -2193,21 +2197,37 @@ def _claim_items(
                 subject_identity=subject,
                 related_identities=identities,
                 detail=detail,
-                # The runnable resolution keeps one contender and retires the
-                # others in one change set; which one to keep is the caller's
-                # choice (the first by ID here), and distinct qualifiers remain
-                # the authoring alternative.
-                repair=PlaybillNextRepairV1(
-                    operation="playbill.write",
-                    target=subject,
-                    required_change="revise_claims_into_distinct_qualifiers",
-                    arguments={
-                        **arguments,
-                        "changes": [
-                            {"op": "retire", "target": identity.removeprefix("Claim:")}
-                            for identity in identities[1:]
-                        ],
-                    },
+                # No contender is picked here: that decision is the caller's. The
+                # row offers one runnable option per contender -- keep it, retire
+                # the others, as one write -- and leaves `because` to the caller.
+                # A contest wider than the row's bound keeps the authoring door.
+                repair=(
+                    PlaybillNextRepairV1(
+                        operation="playbill.write",
+                        target=subject,
+                        required_change="revise_claims_into_distinct_qualifiers",
+                        arguments={
+                            **arguments,
+                            "options": [
+                                {
+                                    "keep": keep.removeprefix("Claim:"),
+                                    "changes": [
+                                        {"op": "retire", "target": other.removeprefix("Claim:")}
+                                        for other in identities
+                                        if other != keep
+                                    ],
+                                }
+                                for keep in identities
+                            ],
+                        },
+                    )
+                    if len(identities) <= _MAX_CONTEST_OPTIONS
+                    else PlaybillNextRepairV1(
+                        operation="playbill.authoring.create",
+                        target=subject,
+                        required_change="revise_claims_into_distinct_qualifiers",
+                        arguments=arguments,
+                    )
                 ),
             )
         else:

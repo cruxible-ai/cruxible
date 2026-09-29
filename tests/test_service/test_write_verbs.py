@@ -563,3 +563,51 @@ def test_an_unaccepted_read_coordinate_refuses_as_an_outcome(instance: PlaybillI
     outcome = _write(instance, _set(WI1, "status", "ready"), at="f" * 40)
     assert outcome.status == "refused"
     assert _refusal(outcome).code == "playbill.read.coordinate_not_accepted"
+
+
+def test_a_contest_row_offers_one_keep_option_per_contender_and_picks_none(
+    instance: PlaybillInstance,
+) -> None:
+    """The next row names no winner: each option keeps one contender and retires the rest."""
+
+    from datetime import UTC, datetime
+
+    from cruxible_client.contracts.captures import CanonicalDurationV1
+    from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+    from cruxible_core.indexes.projection import AcceptedCoordinate
+    from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
+
+    first = _write(instance, _set(WI1, "status", "ready")).changes[0].claim
+    second = _write(instance, _set(WI1, "status", "blocked", contend=True)).changes[0].claim
+
+    def conflict_rows() -> list[Any]:
+        request = PlaybillNextRequestV1(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            evaluation_time=datetime.now(UTC),
+            access_profile=CoverageAccessProfileV1(
+                profile_id="write-contest", permitted_access_classes=("instance", "public")
+            ),
+            expiring_within=CanonicalDurationV1(microseconds=604_800_000_000),
+        )
+        return [
+            item
+            for item in service_playbill_next(instance, request=request).items
+            if item.reason == "claim_conflicted"
+        ]
+
+    (row,) = conflict_rows()
+    repair = row.repair
+    assert repair.operation == "playbill.write"
+    assert repair.command is None  # no single command: the choice is the caller's
+    assert "changes" not in repair.arguments
+    options = {item["keep"]: item["changes"] for item in repair.arguments["options"]}
+    assert options == {
+        first: [{"op": "retire", "target": second}],
+        second: [{"op": "retire", "target": first}],
+    }
+
+    # Each option is a runnable write; running one resolves the contest.
+    outcome = _write(instance, *options[second], because="The later reading is right.")
+    assert outcome.status == "accepted", outcome
+    assert conflict_rows() == []
+    assert _values(instance, WI1, "status") == ["blocked"]
