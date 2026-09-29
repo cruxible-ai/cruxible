@@ -1,9 +1,10 @@
-"""Keep the expensive Claim portion of next current by following two log heads.
+"""Keep next's expensive Claim rows current as their accepted inputs change.
 
-This findings projection is disposable. Matching records a new accepted/door
-pair, and one bounded worker folds it before moving the serving cursor. Time
-bounds come from the fold, never from polling a clock: crossing a bound makes
-reads compute live until another log change causes a recomputation.
+This findings projection is disposable. Matching follows the accepted and door
+heads plus CAS availability, and one bounded worker folds each new target
+before moving the serving cursor. Time bounds come from the fold, never from
+polling a clock: crossing a bound makes reads compute live until another input
+change causes a recomputation.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 _SCHEMA = """
 CREATE TABLE progress (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
- target_coordinate TEXT NOT NULL, target_door TEXT NOT NULL,
+ target_coordinate TEXT NOT NULL, target_door TEXT NOT NULL, target_fingerprint TEXT,
  coordinate TEXT, door TEXT, generation INTEGER NOT NULL DEFAULT 0,
  checked_at TEXT, input_fingerprint TEXT, v1 TEXT, v2 TEXT,
  last_error TEXT, last_error_at TEXT
@@ -90,18 +91,21 @@ class NextQueueConsumers:
             instance.accepted_coordinate()
         ).model_dump_json()
         door = instance.claim_attestation_evidence_store().head()
+        fingerprint = verdict_input_fingerprint(instance)
         with _STATE.open(instance) as connection:
             assert connection is not None
             targets = connection.execute(
-                "SELECT target_coordinate,target_door FROM progress"
+                "SELECT target_coordinate,target_door,target_fingerprint FROM progress"
             ).fetchone()
-            if targets == (coordinate, door):
+            if targets == (coordinate, door, fingerprint):
                 return
             connection.execute(
-                "INSERT INTO progress(singleton,target_coordinate,target_door) VALUES (1,?,?) "
+                "INSERT INTO progress(singleton,target_coordinate,target_door,target_fingerprint) "
+                "VALUES (1,?,?,?) "
                 "ON CONFLICT(singleton) DO UPDATE SET "
-                "target_coordinate=excluded.target_coordinate,target_door=excluded.target_door",
-                (coordinate, door),
+                "target_coordinate=excluded.target_coordinate,target_door=excluded.target_door,"
+                "target_fingerprint=excluded.target_fingerprint",
+                (coordinate, door, fingerprint),
             )
 
     def due(self, instance: Any, *, now: datetime) -> Iterable[ConsumerWork]:
@@ -109,8 +113,9 @@ class NextQueueConsumers:
             if connection is None:
                 return ()
             row = connection.execute(
-                "SELECT target_coordinate,target_door FROM progress "
-                "WHERE coordinate IS NULL OR coordinate!=target_coordinate OR door!=target_door"
+                "SELECT target_coordinate,target_door,target_fingerprint FROM progress "
+                "WHERE coordinate IS NOT target_coordinate OR door IS NOT target_door "
+                "OR input_fingerprint IS NOT target_fingerprint"
             ).fetchone()
         return () if row is None else (ConsumerWork(key="queue", item=row),)
 
@@ -127,6 +132,12 @@ class NextQueueConsumers:
         )
         try:
             fingerprint = verdict_input_fingerprint(instance)
+            if fingerprint != work.item[2]:
+                # Matching will pick up the availability change on its next pass.
+                return
+            # Both wire versions are served. V1 ignores door observations, so
+            # keeping both ready avoids read-triggered work or a full live fold.
+            # Their resolution derivation shares the existing verdict memo.
             v1 = build_stored_claim_queue(
                 instance, coordinate=coordinate, attestation_head=None, evaluation_time=now
             )
@@ -134,7 +145,7 @@ class NextQueueConsumers:
                 instance, coordinate=coordinate, attestation_head=work.item[1], evaluation_time=now
             )
             if fingerprint != verdict_input_fingerprint(instance):
-                # Inputs moved during the fold. Leave this pair due to be rebuilt.
+                # Inputs moved during the fold. Matching will record their new target.
                 return
             with instance.accepted_history_reader(at=public) as history:
                 generation = history.sequence
@@ -144,7 +155,8 @@ class NextQueueConsumers:
                     "UPDATE progress SET coordinate=?,door=?,generation=?,checked_at=?,"
                     "input_fingerprint=?,v1=?,v2=?,last_error=NULL,last_error_at=NULL",
                     (
-                        *work.item,
+                        work.item[0],
+                        work.item[1],
                         generation,
                         format_datetime(now),
                         fingerprint,
@@ -166,13 +178,14 @@ class NextQueueConsumers:
             if connection is None:
                 return ()
             row = connection.execute(
-                "SELECT coordinate,door,generation,last_error FROM progress"
+                "SELECT coordinate,door,generation,last_error,input_fingerprint FROM progress"
             ).fetchone()
         if row is None:
             return ()
-        coordinate, door, generation, error = row
+        coordinate, door, generation, error, fingerprint = row
         head = AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump_json()
         door_head = instance.claim_attestation_evidence_store().head()
+        inputs_changed = fingerprint != verdict_input_fingerprint(instance)
         with instance.accepted_history_reader() as history:
             behind = max(0, history.sequence - generation)
         return (
@@ -181,12 +194,17 @@ class NextQueueConsumers:
                 consumer_id="consumer:next",
                 state="stalled"
                 if error is not None
-                else ("lagging" if coordinate != head or door != door_head else "running"),
+                else (
+                    "lagging"
+                    if coordinate != head or door != door_head or inputs_changed
+                    else "running"
+                ),
                 detail={
                     "generation": generation,
                     "generations_behind": behind,
                     "attestation_head_digest": door,
                     "attestations_behind": door != door_head,
+                    "inputs_changed": inputs_changed,
                     "last_error": error,
                 },
                 repair=(

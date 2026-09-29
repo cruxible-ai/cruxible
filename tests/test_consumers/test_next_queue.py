@@ -397,12 +397,31 @@ def test_library_reads_create_no_worker_state_and_disabled_worker_is_not_served(
     assert _stored(instance, EVALUATION_TIME) is None
 
 
-def test_mutable_replay_inputs_disable_reuse(tmp_path: Path) -> None:
+def test_cas_movement_recomputes_without_an_accepted_or_door_change(tmp_path: Path) -> None:
     instance, _owner = _freshness_world(tmp_path)
     _drain(instance)
     assert _stored(instance, EVALUATION_TIME) is not None
+    coordinate = instance.accepted_coordinate()
+    door = instance.claim_attestation_evidence_store().head()
     instance.body_store().store(b"new material")
     assert _stored(instance, EVALUATION_TIME) is None
+    (health,) = WORKER.health(instance, now=EVALUATION_TIME)
+    assert health.state == "lagging" and health.detail["inputs_changed"]
+    assert instance.accepted_coordinate() == coordinate
+    assert instance.claim_attestation_evidence_store().head() == door
+    _drain(instance)
+    assert _stored(instance, EVALUATION_TIME) is not None
+    assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
+    with patch(
+        "cruxible_core.service.discovery.next._claim_rows", side_effect=AssertionError("live")
+    ):
+        service_playbill_next(
+            instance,
+            request=PlaybillNextRequestV2(
+                evaluation_time=EVALUATION_TIME,
+                access_profile=_access(),
+            ),
+        )
 
 
 def test_a_failed_fold_stays_due_and_reports_a_repair(tmp_path: Path) -> None:
@@ -490,3 +509,25 @@ def test_unchanged_targets_match_without_a_write_transaction(
         WORKER.match(instance, now=EVALUATION_TIME + timedelta(seconds=tick), daemon_id="restart")
     assert statements
     assert all(statement.lstrip().split()[0] == "SELECT" for statement in statements)
+
+
+def test_a_cas_change_during_a_fold_is_not_published_under_the_previous_target(
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.service.discovery import next as next_module
+
+    instance, _owner = seed_claims(tmp_path)
+    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
+    (work,) = WORKER.due(instance, now=EVALUATION_TIME)
+    original = next_module.build_stored_claim_queue
+
+    def moved(*args, **kwargs):  # type: ignore[no-untyped-def]
+        snapshot = original(*args, **kwargs)
+        instance.body_store().store(b"material landed during fold")
+        return snapshot
+
+    with patch.object(next_module, "build_stored_claim_queue", moved):
+        WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
+    assert _stored(instance, EVALUATION_TIME) is None
+    _drain(instance)
+    assert _stored(instance, EVALUATION_TIME) is not None
