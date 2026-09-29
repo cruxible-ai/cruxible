@@ -49,7 +49,11 @@ from cruxible_client.contracts.kits import (
     kit_artifact_path_allowed,
     kit_receipt_document_id,
 )
-from cruxible_core.claims.artifact_references import move_references, referenced_digests
+from cruxible_core.claims.artifact_references import (
+    move_references,
+    referenced_digests,
+    referenced_identities,
+)
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
     ClaimTypeMigrationError,
@@ -119,7 +123,7 @@ def _dependency_order(
         (state.identity.kind, state.identity.name): path for path, state in states.items()
     }
 
-    def dependencies(path: str) -> tuple[str, ...]:
+    def exact(path: str) -> set[str]:
         found = set()
         for pin in states[path].pins:
             target = by_digest.get(pin.artifact_digest) or by_identity.get(
@@ -131,7 +135,29 @@ def _dependency_order(
             if text in by_digest:
                 found.add(by_digest[text])
         found.discard(path)
-        return tuple(sorted(found))
+        return found
+
+    def named(path: str) -> set[str]:
+        # Identity references decide what travels with a definition, never the
+        # order: nothing re-pins them, so they cannot form a remapping cycle.
+        found = {
+            target
+            for identity in referenced_identities(path, payloads[path])
+            if (target := by_identity.get(identity)) is not None
+        }
+        found.discard(path)
+        return found
+
+    # Membership first, through both kinds of reference; then order that set by
+    # exact dependencies alone, so an identity reference can never close a cycle.
+    members: set[str] = set()
+    pending = sorted(within if within is not None else states, reverse=True)
+    while pending:
+        path = pending.pop()
+        if path in members:
+            continue
+        members.add(path)
+        pending.extend(sorted(exact(path) | named(path), reverse=True))
 
     done: set[str] = set()
     visiting: set[str] = set()
@@ -142,14 +168,14 @@ def _dependency_order(
         if path in visiting:
             raise DataValidationError(f"definitions pin each other in a cycle through {path}")
         visiting.add(path)
-        pinned = dependencies(path)
-        for dependency in pinned:
+        ordered = exact(path)
+        for dependency in sorted(ordered):
             yield from visit(dependency)
         visiting.discard(path)
         done.add(path)
-        yield path, pinned
+        yield path, tuple(sorted(ordered | named(path)))
 
-    for path in sorted(within if within is not None else states):
+    for path in sorted(members):
         yield from visit(path)
 
 
