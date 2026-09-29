@@ -118,7 +118,6 @@ from cruxible_core.service.claims.claims import (
     _claim_from_view,
     _claim_law_evidence,
     _claim_law_evidence_by_artifact_index,
-    _claim_law_evidence_index,
     service_list_playbill_claims,
 )
 from cruxible_core.service.discovery.query import (
@@ -1664,6 +1663,7 @@ def _claim_rows(
             coordinate=coordinate,
             evaluation_time=evaluation_time,
             access_profile=access_profile,
+            claims=claims,
             facts_reader=facts_reader,
         ),
     )
@@ -1782,6 +1782,14 @@ def _resolve_coordinate(
         raise PlaybillNextCoordinateNotAccepted(
             f"{PlaybillNextCoordinateNotAccepted.code}: coordinate is not accepted"
         ) from exc
+
+
+def _claim_threshold_evidence(
+    instance: PlaybillInstance, *, at: AcceptedProjectionCoordinate
+) -> Mapping[str, ClaimLawEvidenceAny]:
+    """A lazy law-evidence map; only threshold-bearing Claims need these records."""
+
+    return ClaimVerdictReadContext(instance, at).history().law_evidence
 
 
 def _claim_attestation_threshold_items(
@@ -1966,7 +1974,9 @@ def _claim_items(
         generation_root=coordinate.generation_root,
         compiler_digest=coordinate.compiler_digest,
     )
-    law_evidence = _claim_law_evidence_index(instance, at=internal)
+    # The threshold fold reads evidence only for types with a consequence policy.
+    # Materializing the whole historical map here costs one read per Claim.
+    law_evidence = _claim_threshold_evidence(instance, at=internal)
     items = list(
         _claim_attestation_threshold_items(
             instance,
@@ -2642,12 +2652,18 @@ def _claim_dependency_items(
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1 | None = None,
+    claims: tuple[ClaimArtifactAny, ...] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Coalesce stale recorded backing-input edges through the existing impact walker."""
 
     if access_profile is not None and not access_profile.permits("instance"):
         return ()
+    # No consumed Claim inputs means there can be no stale dependency edge.
+    # Check the accepted population before building replay/visibility facts.
+    if claims is not None and not any(claim.backing.input_claim_digests for claim in claims):
+        return ()
+
     facts = (
         build_accepted_query_facts(instance, coordinate=coordinate, include_retired=True)
         if facts_reader is None
@@ -4377,29 +4393,29 @@ def _caller_queue(
     return tuple(sorted(caller.render(_group_items(kept)), key=_item_sort_key)), hidden, held
 
 
-def service_playbill_next(
+@dataclass(frozen=True)
+class _NextQueue:
+    coordinate: AcceptedProjectionCoordinate
+    attestation_head: str | None
+    observed: tuple[NextDomain, ...]
+    unobserved: tuple[NextDomain, ...]
+    consumer_healths: tuple[ConsumerHealth, ...]
+    caller: _CallerView
+    items: tuple[PlaybillNextItemV1, ...]
+    hidden: int
+    held: int
+
+
+def _next_queue(
     instance: PlaybillInstance,
     *,
     request: PlaybillNextRequestAny,
-    provider_lane: ProviderLaneStatusV1 | None = None,
-    consumers_running: bool = False,
-    caller_principal_id: str | None = None,
-    caller_rung: int | None = None,
-) -> PlaybillNextResultV1 | PlaybillNextResultV2:
-    """Fold accepted state and explicit client observations into one repair queue.
+    caller_principal_id: str | None,
+    caller_rung: int | None,
+    read_context: ClaimVerdictReadContext | None = None,
+) -> _NextQueue:
+    """The single fold for full next and its bounded attention summary."""
 
-    `caller_principal_id` is the daemon's authenticated caller, passed beside
-    the request rather than inside it so no request can name someone else.
-    `caller_rung` is that caller's permission tier (``PermissionMode.value -
-    1``): a row whose repair is a settle, Line dispatch or Line arm the tier
-    cannot perform is left out and counted in ``status.hidden``, as is one whose
-    MCP tool the request's ``caller_tools`` does not list. ``None`` is an
-    in-process caller that holds every tier.
-    """
-
-    continuation = None if request.cursor is None else _continuation_of(request.cursor)
-    if continuation is not None:
-        request = _continued(request, continuation)
     coordinate = _resolve_coordinate(instance, request.at)
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
     attestation_head: str | None = None
@@ -4425,11 +4441,15 @@ def service_playbill_next(
     parsed_claims: tuple[ClaimArtifactAny, ...] | None = None
     resolution_statuses: Mapping[str, str] | None = None
     try:
-        parsed_claims = tuple(
-            _claim_from_view(view)
-            for view in service_list_playbill_claims(
-                instance, at=public_coordinate, include_retired=True
-            ).claims
+        parsed_claims = (
+            read_context.claims()
+            if read_context is not None
+            else tuple(
+                _claim_from_view(view)
+                for view in service_list_playbill_claims(
+                    instance, at=public_coordinate, include_retired=True
+                ).claims
+            )
         )
         resolution_statuses = claim_resolution_statuses(
             instance,
@@ -4437,6 +4457,7 @@ def service_playbill_next(
             at=public_coordinate,
             evaluation_time=request.evaluation_time,
             verdicts_by_identity=verdicts_by_identity,
+            read_context=read_context,
         )
     except PlaybillError:
         # A queue is a read of whatever resolves. If the population cannot be
@@ -4542,6 +4563,95 @@ def service_playbill_next(
         else None
     )
     items, hidden, held = _caller_queue(found, caller, holds)
+    return _NextQueue(
+        coordinate,
+        attestation_head,
+        observed,
+        unobserved,
+        consumer_healths,
+        caller,
+        items,
+        hidden,
+        held,
+    )
+
+
+@dataclass(frozen=True)
+class PlaybillNextSummary:
+    """A bounded view of the same grouped queue, without health, paging or digest work."""
+
+    items: tuple[PlaybillNextItemV1, ...]
+    total_items: int
+    matching_item: PlaybillNextItemV1 | None
+
+
+def summarize_playbill_next(
+    instance: PlaybillInstance,
+    *,
+    request: PlaybillNextRequestV2,
+    caller_principal_id: str | None = None,
+    caller_rung: int | None = None,
+    match: Callable[[PlaybillNextItemV1], bool] | None = None,
+) -> PlaybillNextSummary:
+    """Count the queue and return its first three rows plus one optional matched row.
+
+    Matches search the same first maximum-size page orient previously read.
+    Every request re-reads mutable inputs; no queue or evidence observation is
+    cached here. Population reads use accepted Claim bytes, avoiding public
+    projection-card construction only to parse those cards back into Claims.
+    """
+
+    if request.cursor is not None or request.since_result_digest is not None:
+        raise ValueError("a next summary reads the current queue, not a page or delta")
+    coordinate = _resolve_coordinate(instance, request.at)
+    request = request.model_copy(update={"at": AcceptedCoordinate.from_internal(coordinate)})
+    queue = _next_queue(
+        instance,
+        request=request,
+        caller_principal_id=caller_principal_id,
+        caller_rung=caller_rung,
+        read_context=ClaimVerdictReadContext(instance, coordinate),
+    )
+    matching = (
+        None
+        if match is None
+        else next((item for item in queue.items[:PLAYBILL_NEXT_MAX_LIMIT] if match(item)), None)
+    )
+    return PlaybillNextSummary(queue.items[:3], len(queue.items), matching)
+
+
+def service_playbill_next(
+    instance: PlaybillInstance,
+    *,
+    request: PlaybillNextRequestAny,
+    provider_lane: ProviderLaneStatusV1 | None = None,
+    consumers_running: bool = False,
+    caller_principal_id: str | None = None,
+    caller_rung: int | None = None,
+) -> PlaybillNextResultV1 | PlaybillNextResultV2:
+    """Fold accepted state and explicit client observations into one repair queue.
+
+    `caller_principal_id` is the daemon's authenticated caller, passed beside
+    the request rather than inside it so no request can name someone else.
+    `caller_rung` is that caller's permission tier (``PermissionMode.value -
+    1``): a row whose repair is a settle, Line dispatch or Line arm the tier
+    cannot perform is left out and counted in ``status.hidden``, as is one whose
+    MCP tool the request's ``caller_tools`` does not list. ``None`` is an
+    in-process caller that holds every tier.
+    """
+
+    continuation = None if request.cursor is None else _continuation_of(request.cursor)
+    if continuation is not None:
+        request = _continued(request, continuation)
+    queue = _next_queue(
+        instance, request=request, caller_principal_id=caller_principal_id, caller_rung=caller_rung
+    )
+    coordinate = queue.coordinate
+    public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    attestation_head = queue.attestation_head
+    observed, unobserved = queue.observed, queue.unobserved
+    consumer_healths, caller = queue.consumer_healths, queue.caller
+    items, hidden, held = queue.items, queue.hidden, queue.held
     terminal = instance.descriptor.decommissioned
     status = PlaybillNextStatusV1(
         blocking=terminal is not None,

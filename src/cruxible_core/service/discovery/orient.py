@@ -8,8 +8,9 @@ surface. ``orient(kind=K)`` widens one kind to every predicate in full plus a
 few sample Subject IDs; ``orient(section=S)`` pages one artifact family.
 
 Everything here is read from the accepted index at one coordinate. The
-attention summary is the existing ``next`` service's answer, called rather than
-re-derived, and evidence is named by CaptureContract identity: v6 rules name
+attention summary uses the existing ``next`` service's queue fold, without
+building health facets, a result digest or a continuation page. Evidence is
+named by CaptureContract identity: v6 rules name
 contracts by reference, and a v5 rule's digests are resolved through accepted
 state, so a digest is shown only when no accepted contract carries it.
 """
@@ -19,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -60,7 +62,7 @@ from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.next import (
     PlaybillNextItemV1,
     PlaybillNextRequestV2,
-    service_playbill_next,
+    summarize_playbill_next,
 )
 from cruxible_core.service.list_pages import (
     ListContinuation,
@@ -355,17 +357,29 @@ def _kind_row(state: _State, kind: str) -> PlaybillOrientKindV1:
         ),
         key=lambda item: item.name,
     )
-    shared = {item.evidence for item in predicates}
-    evidence: tuple[str, ...] = ()
-    if len(shared) == 1 and len(predicates) > 1:
-        # Every predicate admits the same contracts: name them once, on the kind.
-        (evidence,) = shared
-        predicates = [item.model_copy(update={"evidence": ()}) for item in predicates]
+    evidence, hoisted = _hoist_evidence(predicates)
     return PlaybillOrientKindV1(
         kind=kind,
         subjects=state.subjects_by_kind.get(kind, 0),
         evidence=evidence,
-        predicates=tuple(predicates),
+        predicates=hoisted,
+    )
+
+
+def _hoist_evidence(
+    predicates: Sequence[PlaybillOrientPredicateV1],
+) -> tuple[tuple[str, ...], tuple[PlaybillOrientPredicateV1, ...]]:
+    """Name the modal set once; ties use byte order, independent of input order."""
+
+    counts = Counter(item.evidence for item in predicates if item.evidence is not None)
+    evidence = min(
+        counts,
+        key=lambda value: (-counts[value], tuple(name.encode("utf-8") for name in value)),
+        default=(),
+    )
+    return evidence, tuple(
+        item.model_copy(update={"evidence": None}) if item.evidence == evidence else item
+        for item in predicates
     )
 
 
@@ -494,8 +508,9 @@ def _attention(
     evaluation_time: datetime,
     state: _State,
     caller: OrientCaller | None,
-    provider_lane: contracts.ProviderLaneStatusV1 | None,
-    consumers_running: bool,
+    caller_rung: int | None,
+    surface: PlaybillOrientSurface,
+    caller_tools: tuple[str, ...] | None,
 ) -> tuple[PlaybillOrientAttentionV1, bool]:
     notes: list[str] = []
     terminal = instance.descriptor.decommissioned
@@ -505,26 +520,29 @@ def _attention(
             "reads serve, every write is refused"
         )
     items: tuple[PlaybillNextItemV1, ...] = ()
+    reused: PlaybillNextItemV1 | None = None
     total = 0
     try:
-        queue = service_playbill_next(
+        queue = summarize_playbill_next(
             instance,
             request=PlaybillNextRequestV2(
                 at=AcceptedCoordinate.from_internal(coordinate),
                 evaluation_time=evaluation_time,
                 access_profile=_NEXT_PROFILE,
                 limit=contracts.PLAYBILL_NEXT_MAX_LIMIT,
+                caller_surface=surface,
+                caller_tools=caller_tools,
             ),
-            provider_lane=provider_lane,
-            consumers_running=consumers_running,
             caller_principal_id=None if caller is None else caller.actor_id,
+            caller_rung=caller_rung,
+            match=lambda item: _upgrade_hint((item,)) is not None,
         )
         items, total = queue.items, queue.total_items
+        reused = queue.matching_item
     except PlaybillError as exc:
         code = getattr(exc, "error_code", None) or getattr(exc, "code", None)
         notes.append(f"the next queue could not be read: {code or type(exc).__name__}")
     upgrade = False
-    reused = _upgrade_hint(items)
     if reused is not None:
         notes.append(_line(reused))
         upgrade = True
@@ -660,10 +678,17 @@ def service_playbill_orient(
     evaluation_time: datetime | None = None,
     surface: PlaybillOrientSurface = "cli",
     caller: OrientCaller | None = None,
+    caller_rung: int | None = None,
+    caller_tools: tuple[str, ...] | None = None,
     provider_lane: contracts.ProviderLaneStatusV1 | None = None,
     consumers_running: bool = False,
 ) -> PlaybillOrientResultV1:
-    """Answer one orient read at one accepted coordinate."""
+    """Answer one orient read at one accepted coordinate.
+
+    The runtime supplies its effective authenticated ``caller_rung``, just as
+    for next; ``None`` is an unrestricted in-process read. ``surface`` and
+    ``caller_tools`` select that same caller's repair view for attention.
+    """
 
     if kind is not None and section is not None:
         raise _request_invalid(
@@ -754,8 +779,9 @@ def service_playbill_orient(
         evaluation_time=moment,
         state=state,
         caller=caller,
-        provider_lane=provider_lane,
-        consumers_running=consumers_running,
+        caller_rung=caller_rung,
+        surface=surface,
+        caller_tools=caller_tools,
     )
     focus = max(kinds_page, key=lambda row: (row.subjects, len(row.predicates)), default=None)
     if focus is not None:
@@ -836,10 +862,12 @@ def _kind_detail(
         ),
         key=lambda item: item.name,
     )
+    evidence, hoisted = _hoist_evidence(predicates)
     return PlaybillOrientKindDetailV1(
         kind=kind,
         subjects=state.subjects_by_kind.get(kind, 0),
-        predicates=tuple(predicates),
+        evidence=evidence,
+        predicates=hoisted,
         sample_subject_ids=samples,
     )
 

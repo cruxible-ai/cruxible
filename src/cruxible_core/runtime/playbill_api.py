@@ -913,6 +913,7 @@ def playbill_orient(
     at: AcceptedCoordinate | str | None = None,
     evaluation_time: datetime | None = None,
     surface: PlaybillOrientSurface = "cli",
+    caller_tools: tuple[str, ...] | None = None,
 ) -> PlaybillOrientResultV1:
     """The orient map; the caller is whoever ``whoami`` resolves the transport to."""
 
@@ -933,6 +934,8 @@ def playbill_orient(
         at=at,
         evaluation_time=evaluation_time,
         surface=surface,
+        caller_rung=get_current_mode().value - 1,
+        caller_tools=caller_tools,
         caller=(
             None
             if identity is None

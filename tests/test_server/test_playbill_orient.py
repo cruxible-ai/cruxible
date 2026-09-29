@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
+
+from cruxible_core.runtime.permissions import PermissionMode
 
 
 def test_http_orient_answers_the_map_rendered_for_the_requested_surface(
@@ -61,3 +64,96 @@ def test_http_orient_refusals_are_coded(
     assert stale.json()["error_code"] == "playbill.list.cursor_mismatch"
 
     assert client.get(url, params={"section": "nothing"}).status_code == 422
+
+
+@pytest.mark.parametrize("surface", ["cli", "sdk", "mcp"])
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        (PermissionMode.READ_ONLY, 0),
+        (PermissionMode.GOVERNED_WRITE, 1),
+        (PermissionMode.GRAPH_WRITE, 2),
+    ],
+)
+def test_orient_attention_matches_next_for_the_effective_caller(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+    mode: PermissionMode,
+    expected: int,
+) -> None:
+    _assert_attention_parity(playbill_http, monkeypatch, mode, surface, None, expected)
+
+
+@pytest.mark.parametrize(
+    ("tools", "expected"),
+    [((), 0), (("cruxible_playbill_settle",), 1), (("cruxible_playbill_approve",), 1)],
+)
+def test_orient_attention_matches_next_for_an_mcp_profile_missing_a_tool(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tools: tuple[str, ...],
+    expected: int,
+) -> None:
+    _assert_attention_parity(
+        playbill_http, monkeypatch, PermissionMode.GRAPH_WRITE, "mcp", tools, expected
+    )
+
+
+def _assert_attention_parity(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    mode: PermissionMode,
+    surface: str,
+    tools: tuple[str, ...] | None,
+    expected: int,
+) -> None:
+    from cruxible_core.runtime import permissions
+    from cruxible_core.service.discovery import next as next_module
+    from tests.test_integration.test_next_caller_view import _approval_row
+
+    client, instance_id, _key = playbill_http
+    prediction = next_module._item(
+        severity="repair",
+        reason="prediction_settleable",
+        subject_identity="PredictionContract:window",
+        detail={},
+        repair=next_module.PlaybillNextRepairV1(
+            operation="playbill.settle",
+            target="PredictionContract:window",
+            required_change="settle_the_window",
+            arguments={"prediction_id": "window"},
+        ),
+    )
+    # Feed both row families into the real shared fold. A credential cannot
+    # raise this process ceiling, so both routes must use the effective tier.
+    monkeypatch.setattr(next_module, "_prediction_items", lambda *a, **kw: (prediction,))
+    monkeypatch.setattr(next_module, "_approval_items", lambda *a, **kw: (_approval_row(),))
+    monkeypatch.setattr(permissions, "_cached_mode", mode)
+    when = "2026-09-29T00:00:00Z"
+    params: dict[str, str | list[str]] = {"surface": surface, "evaluation_time": when}
+    if tools is not None:
+        params["caller_tools"] = list(tools) or [""]
+    orient = client.get(f"/api/v1/{instance_id}/playbill/orient", params=params)
+    assert orient.status_code == 200, orient.text
+    queue = client.post(
+        f"/api/v1/{instance_id}/playbill/next",
+        json={
+            "evaluation_time": when,
+            "access_profile": {
+                "profile_id": "orient",
+                "permitted_access_classes": ["instance", "public"],
+            },
+            "caller_surface": surface,
+            "caller_tools": tools,
+        },
+    )
+    assert queue.status_code == 200, queue.text
+    attention = orient.json()["attention"]
+    result = queue.json()
+    assert attention["next_items"] == result["total_items"] == expected
+    assert attention["top"] == [
+        f"{item['severity']} {item['reason']}: {item['subject_identity']}"
+        for item in result["items"][:3]
+    ]
+    assert result["status"].get("hidden", 0) == 2 - expected

@@ -63,7 +63,8 @@ def test_default_orient_names_each_kind_with_its_predicates_as_values(seeded) ->
     assert (predicate.cardinality, predicate.type) == ("one", "enum")
     assert predicate.members == ("blocked", "done", "ready")
     # Evidence is named by contract identity; the digest the v5 rule carries is not shown.
-    assert predicate.evidence == ("playbill.foreign-source.fixture.work-items",)
+    assert kind.evidence == ("playbill.foreign-source.fixture.work-items",)
+    assert predicate.evidence is None
     assert result.artifacts is not None
     assert (result.artifacts.claim_types, result.artifacts.queries) == (1, 2)
     assert [item.name for item in result.queries or ()] == [QUERY_NAME, "project.work_items_b"]
@@ -107,8 +108,10 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
     )
     monkeypatch.setattr(
         orient_module,
-        "service_playbill_next",
-        lambda *args, **kwargs: SimpleNamespace(items=(other, item), total_items=7),
+        "summarize_playbill_next",
+        lambda *args, **kwargs: SimpleNamespace(
+            items=(other, item), total_items=7, matching_item=item
+        ),
     )
 
     attention = service_playbill_orient(seeded, caller=OWNER).attention
@@ -327,7 +330,7 @@ def test_kinds_name_shared_evidence_once(seeded) -> None:  # type: ignore[no-unt
 
     shared = orient_module._kind_row(state, SUBJECT_KIND)
     assert shared.evidence == ("feed",)
-    assert [item.evidence for item in shared.predicates] == [(), ()]
+    assert [item.evidence for item in shared.predicates] == [None, None]
     assert "evidence" not in shared.model_dump(mode="json")["predicates"][0]
 
     differing = orient_module._kind_row(
@@ -335,7 +338,7 @@ def test_kinds_name_shared_evidence_once(seeded) -> None:  # type: ignore[no-unt
         SUBJECT_KIND,
     )
     assert differing.evidence == ()
-    assert [item.evidence for item in differing.predicates] == [(), ("feed",)]
+    assert [item.evidence for item in differing.predicates] == [None, ("feed",)]
 
 
 def test_every_advertised_field_name_resolves_back_to_its_predicate() -> None:
@@ -588,3 +591,109 @@ def test_orient_without_interfaces_counts_none_and_suggests_no_section(
     assert not any("interfaces" in line for line in result.next)
     empty = service_playbill_orient(instance, section="interfaces")
     assert empty.interfaces == () and empty.next == ()
+
+
+def test_modal_evidence_hoists_in_both_views_and_round_trips_empty_exceptions(
+    seeded,  # type: ignore[no-untyped-def]
+) -> None:
+    from cruxible_client.contracts.orient import PlaybillOrientKindV1
+
+    evidence = (("feed-a", "feed-b"), ("feed-a", "feed-b"), (), ("other",))
+    types = tuple(
+        _claim_type().model_copy(
+            update={
+                "identity": ArtifactIdentity(kind="ClaimType", name=f"{SUBJECT_KIND}.p{i}"),
+                "predicate": f"{SUBJECT_KIND}.p{i}",
+            }
+        )
+        for i in range(len(evidence))
+    )
+    state = orient_module._State(
+        claim_types=types,
+        subjects_by_kind={SUBJECT_KIND: 2},
+        evidence={item.predicate: value for item, value in zip(types, evidence, strict=True)},
+        digest_named=0,
+        procedures=(),
+        documents=(),
+        queries=(),
+    )
+    for row in (
+        orient_module._kind_row(state, SUBJECT_KIND),
+        orient_module._kind_detail(seeded, seeded.accepted_coordinate(), state, SUBJECT_KIND),
+    ):
+        assert row.evidence == evidence[0]
+        assert [item.evidence for item in row.predicates] == [None, None, (), ("other",)]
+        wire = row.model_dump(mode="json")
+        assert "evidence" not in wire["predicates"][0]
+        assert wire["predicates"][2]["evidence"] == []
+        restored = type(row).model_validate_json(row.model_dump_json())
+        assert (
+            tuple(
+                restored.evidence if item.evidence is None else item.evidence
+                for item in restored.predicates
+            )
+            == evidence
+        )
+        # Inheritance has the same typed meaning in the compact model.
+        assert (
+            PlaybillOrientKindV1.model_validate(
+                {key: value for key, value in wire.items() if key != "sample_subject_ids"}
+            )
+            .predicates[0]
+            .evidence
+            is None
+        )
+
+
+def test_modal_evidence_ties_are_independent_of_predicate_order() -> None:
+    from cruxible_client.contracts.orient import PlaybillOrientPredicateV1
+
+    rows = tuple(
+        PlaybillOrientPredicateV1(
+            name=str(i), predicate=str(i), cardinality="one", type="string", evidence=value
+        )
+        for i, value in enumerate((("z",), ("a",)))
+    )
+    assert orient_module._hoist_evidence(rows)[0] == ("a",)
+    assert orient_module._hoist_evidence(tuple(reversed(rows)))[0] == ("a",)
+    assert orient_module._hoist_evidence(()) == ((), ())
+
+
+def test_attention_summary_preserves_complete_orient_bytes(
+    seeded,  # type: ignore[no-untyped-def]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_core.service.claims.claims import _claim_law_evidence_index
+    from cruxible_core.service.discovery import next as next_module
+    from cruxible_core.service.discovery.next import PlaybillNextSummary, service_playbill_next
+
+    moment = datetime(2026, 9, 29, tzinfo=UTC)
+    optimized = service_playbill_orient(seeded, caller=OWNER, evaluation_time=moment)
+    dependency_fold = next_module._claim_dependency_items
+
+    def original_dependencies(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs.pop("claims", None)
+        return dependency_fold(*args, **kwargs)
+
+    def full_queue(instance, *, request, caller_principal_id, caller_rung, match):  # type: ignore[no-untyped-def]
+        result = service_playbill_next(
+            instance,
+            request=request,
+            caller_principal_id=caller_principal_id,
+            caller_rung=caller_rung,
+        )
+        matching = next((item for item in result.items if match(item)), None)
+        return PlaybillNextSummary(result.items, result.total_items, matching)
+
+    # The previous path constructed public Claim cards, all dependency facts,
+    # the entire law-evidence map, health facets and a digested next page.
+    monkeypatch.setattr(next_module, "_claim_dependency_items", original_dependencies)
+    monkeypatch.setattr(next_module, "_claim_threshold_evidence", _claim_law_evidence_index)
+    monkeypatch.setattr(orient_module, "summarize_playbill_next", full_queue)
+    previous = service_playbill_orient(seeded, caller=OWNER, evaluation_time=moment)
+    assert canonical_bytes(optimized.model_dump(mode="json")) == canonical_bytes(
+        previous.model_dump(mode="json")
+    )

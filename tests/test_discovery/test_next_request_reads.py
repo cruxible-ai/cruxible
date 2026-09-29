@@ -24,7 +24,10 @@ from tests.test_query.test_query_execution_service import _instance_with_query
 
 
 def _uncached_folds(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Exercise the existing standalone helpers without their request-local inputs."""
+    """Exercise the previous eager folds without their request-local inputs."""
+    from cruxible_core.service.claims.claims import _claim_law_evidence_index
+
+    monkeypatch.setattr(playbill_next, "_claim_threshold_evidence", _claim_law_evidence_index)
     for name in (
         "_claim_items",
         "_citation_commitments",
@@ -233,3 +236,98 @@ def test_persistent_population_failure_retains_the_standalone_refusal(
     with pytest.raises(ProjectionIntegrityError) as uncached:
         playbill_next.service_playbill_next(instance, request=request)
     assert str(optimized.value) == str(uncached.value)
+
+
+def test_summary_matches_next_with_mutable_observations_and_retirement(tmp_path: Path) -> None:
+    instance, _owner = _instance_with_query(tmp_path)
+    for request in (
+        _rich_request(instance),
+        _request(instance, backing=(_claim_backing(instance),)),
+    ):
+        request = playbill_next.PlaybillNextRequestV2(**request.model_dump(exclude={"tag"}))
+        for missing in (False, True, False):
+            source = b"status: ready"
+            if missing:
+                assert instance.body_store().erase(
+                    instance.body_store().digest_bytes(source).tagged
+                )
+            else:
+                instance.body_store().store(source)
+            full = playbill_next.service_playbill_next(instance, request=request)
+            summary = playbill_next.summarize_playbill_next(instance, request=request)
+            assert summary.items == full.items[:3]
+            assert summary.total_items == full.total_items
+
+    from tests.core_support._published_world import published_world, retire_claim
+
+    (tmp_path / "retired").mkdir()
+    retired_instance, owner, claim_id = published_world(tmp_path / "retired")
+    retire_claim(retired_instance, owner, claim_id)
+    request = request.model_copy(
+        update={
+            "at": playbill_next.AcceptedCoordinate.from_internal(
+                retired_instance.accepted_coordinate()
+            ),
+            "workspace_observation": None,
+        }
+    )
+    full = playbill_next.service_playbill_next(retired_instance, request=request)
+    summary = playbill_next.summarize_playbill_next(retired_instance, request=request)
+    assert summary.items == full.items[:3]
+    assert summary.total_items == full.total_items
+
+
+def test_summary_bounds_rows_and_preserves_first_page_matching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    instance, _owner = _instance_with_query(tmp_path)
+    request = playbill_next.PlaybillNextRequestV2(
+        **_rich_request(instance).model_dump(exclude={"tag"})
+    )
+    queue = playbill_next._next_queue(
+        instance, request=request, caller_principal_id=None, caller_rung=None
+    )
+    template = queue.items[0]
+    items = tuple(
+        template.model_copy(update={"subject_identity": str(i)})
+        for i in range(playbill_next.PLAYBILL_NEXT_MAX_LIMIT + 1)
+    )
+    monkeypatch.setattr(playbill_next, "_next_queue", lambda *a, **kw: replace(queue, items=items))
+    summary = playbill_next.summarize_playbill_next(
+        instance, request=request, match=lambda item: item.subject_identity == "5"
+    )
+    assert summary.items == items[:3]
+    assert summary.total_items == len(items)
+    assert summary.matching_item == items[5]
+    assert (
+        playbill_next.summarize_playbill_next(
+            instance, request=request, match=lambda item: item == items[-1]
+        ).matching_item
+        is None
+    )
+
+
+def test_summary_avoids_cards_health_and_unneeded_dependency_facts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner = _instance_with_query(tmp_path)
+    original = _request(instance, backing=(_claim_backing(instance),))
+    request = playbill_next.PlaybillNextRequestV2(
+        **{**original.model_dump(exclude={"tag"}), "workspace_observation": None}
+    )
+    full = playbill_next.service_playbill_next(instance, request=request)
+
+    def unwanted(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("summary constructed an unused card, fact, health facet or law account")
+
+    monkeypatch.setattr(playbill_next, "service_list_playbill_claims", unwanted)
+    monkeypatch.setattr(playbill_next, "_compiler_health", unwanted)
+    monkeypatch.setattr(playbill_next._AcceptedQueryFactsRead, "build", unwanted)
+    from cruxible_core.service.evidence.evidence import _IndexedClaimLawEvidence
+
+    monkeypatch.setattr(_IndexedClaimLawEvidence, "__getitem__", unwanted)
+    summary = playbill_next.summarize_playbill_next(instance, request=request)
+    assert summary.items == full.items[:3]
+    assert summary.total_items == full.total_items

@@ -812,6 +812,9 @@ def handle_playbill_orient(
 ) -> contracts.PlaybillOrientResultV1:
     """The orient map, with its follow-up calls rendered as MCP tool calls."""
 
+    from cruxible_core.mcp.curation import session_tool_names
+
+    tools = tuple(sorted(session_tool_names()))
     return _dispatch_remote_or_local(
         lambda client: client.orient_playbill(
             instance_id,
@@ -822,6 +825,7 @@ def handle_playbill_orient(
             at=at,
             evaluation_time=evaluation_time,
             surface="mcp",
+            caller_tools=tools,
         ),
         lambda: playbill_api.playbill_orient(
             instance_id,
@@ -834,6 +838,7 @@ def handle_playbill_orient(
             else AcceptedCoordinate.model_validate(_json(at)),
             evaluation_time=parse_datetime(evaluation_time),
             surface="mcp",
+            caller_tools=tools,
         ),
         operation_name="cruxible_playbill_orient",
     )

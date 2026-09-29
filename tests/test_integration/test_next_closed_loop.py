@@ -1107,6 +1107,17 @@ def _claim_dependency_stale(root: Path, monkeypatch: pytest.MonkeyPatch) -> None
             frozenset(),
         )
 
+    # This fixture supplies synthetic dependency facts over an empty ledger.
+    # Keep the dependency fold's population consistent with those facts too.
+    from cruxible_core.service.discovery import next as next_module
+
+    dependency_rows = next_module._claim_dependency_items
+
+    def dependencies(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs["claims"] = tuple(row.accepted.claim for row in facts().claims)
+        return dependency_rows(*args, **kwargs)
+
+    monkeypatch.setattr(next_module, "_claim_dependency_items", dependencies)
     monkeypatch.setattr("cruxible_core.service.discovery.next._AcceptedQueryFactsRead.build", facts)
     monkeypatch.setattr("cruxible_core.service.discovery.next._bounded_claim_lineages", lineages)
     row = _row(instance, "claim_dependency_stale", _request(instance))

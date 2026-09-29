@@ -68,6 +68,9 @@ class PlaybillOrientPredicateV1(_StrictOrientModel):
     ``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.
     ``evidence`` names the CaptureContracts the ClaimType admits; a digest that
     names no accepted contract shows as ``unresolved:<short digest>``.
+    ``None`` (omitted on the wire) inherits the kind's evidence set; an empty
+    tuple (``[]`` on the wire) explicitly admits no contracts. Standalone
+    descriptors always carry an explicit set.
     """
 
     name: str
@@ -78,7 +81,7 @@ class PlaybillOrientPredicateV1(_StrictOrientModel):
         default=None, exclude_if=_is_none
     )
     description: str | None = Field(default=None, exclude_if=_is_none)
-    evidence: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
+    evidence: tuple[str, ...] | None = Field(default=None, exclude_if=_is_none)
     # Full descriptors (``orient(kind=...)`` and the claim_types section) only.
     subject_kinds: tuple[str, ...] | None = Field(default=None, exclude_if=_is_none)
     roles: tuple[str, ...] | None = Field(default=None, exclude_if=_is_none)
@@ -89,9 +92,9 @@ class PlaybillOrientPredicateV1(_StrictOrientModel):
 class PlaybillOrientKindV1(_StrictOrientModel):
     """One Subject kind: how many live Subjects it has and its predicates.
 
-    When every predicate of the kind admits the same CaptureContracts, the
-    compact map names them once here as ``evidence`` and the predicates leave
-    theirs out; otherwise each predicate carries its own.
+    The most common admitted CaptureContract set is named once as ``evidence``.
+    Predicates inheriting it omit their evidence; exceptions carry their own
+    set, including an explicit empty list when no contracts are admitted.
     """
 
     kind: str

@@ -83,3 +83,28 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
     coordinate = schema["$defs"]["PlaybillAcceptedCoordinate"]
     assert coordinate["additionalProperties"] is False
     assert set(coordinate["properties"]) >= {"git_oid", "semantic_root"}
+
+
+@pytest.mark.parametrize("remote", [False, True])
+@pytest.mark.parametrize("tools", [(), ("cruxible_playbill_orient", "cruxible_playbill_settle")])
+def test_mcp_orient_forwards_the_advertised_tools(
+    monkeypatch: pytest.MonkeyPatch, remote: bool, tools: tuple[str, ...]
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def orient_stub(instance_id: str, **values: Any) -> contracts.PlaybillOrientResultV1:
+        seen.update(values)
+        return _answer()
+
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        handlers,
+        "_get_client",
+        lambda: SimpleNamespace(orient_playbill=orient_stub) if remote else None,
+    )
+    monkeypatch.setattr(handlers.playbill_api, "playbill_orient", orient_stub)
+    monkeypatch.setattr("cruxible_core.mcp.curation.session_tool_names", lambda: set(tools))
+    handlers.handle_playbill_orient("inst")
+    assert seen["caller_tools"] == tuple(sorted(tools))
+    assert seen["surface"] == "mcp"

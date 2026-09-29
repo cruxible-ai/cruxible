@@ -564,6 +564,7 @@ class CruxibleClient:
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | str | None = None,
         evaluation_time: str | None = None,
         surface: contracts.PlaybillOrientSurface = "sdk",
+        caller_tools: Sequence[str] | None = None,
     ) -> contracts.PlaybillOrientResultV1:
         """The orient map: kinds, artifacts, you, attention and next calls for ``surface``.
 
@@ -575,6 +576,9 @@ class CruxibleClient:
             {"at": at} if isinstance(at, str) else dict(self._playbill_coordinate_params(at))
         )
         params["surface"] = surface
+        if caller_tools is not None:
+            # An empty value preserves an explicitly empty profile on a GET.
+            params["caller_tools"] = list(caller_tools) or [""]
         for name, value in (
             ("kind", kind),
             ("section", section),

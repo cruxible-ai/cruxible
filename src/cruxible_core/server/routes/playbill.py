@@ -369,6 +369,12 @@ async def orient(
     compiler_digest: str | None = None,
     evaluation_time: datetime | None = None,
     surface: contracts.PlaybillOrientSurface = "cli",
+    caller_tools: list[str] | None = Query(
+        default=None,
+        description=(
+            "Advertised MCP repair tools; repeat for each tool, or send an empty value for none."
+        ),
+    ),
 ) -> contracts.PlaybillOrientResultV1:
     coordinate = _coordinate(git_oid, semantic_root, generation_root, compiler_digest)
     if at is not None and coordinate is not None:
@@ -382,6 +388,7 @@ async def orient(
         at=at if at is not None else coordinate,
         evaluation_time=evaluation_time,
         surface=surface,
+        caller_tools=None if caller_tools is None else tuple(name for name in caller_tools if name),
     )
 
 

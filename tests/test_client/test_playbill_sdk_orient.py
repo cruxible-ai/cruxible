@@ -52,3 +52,25 @@ def test_sdk_orient_reads_the_map_for_the_sdk_surface(tmp_path: Path) -> None:
     pinned.orient(section="queries", limit=5)
     assert client.orient_calls[-1]["at"] == _COORDINATE
     assert client.orient_calls[-1]["section"] == "queries"
+
+
+def test_orient_transport_preserves_omitted_empty_and_nonempty_tool_profiles() -> None:
+    import httpx
+
+    from tests.test_client.test_playbill_next import _client
+
+    captured: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200, json=_OrientClient().orient_playbill("inst").model_dump(mode="json")
+        )
+
+    client = _client(handle)
+    for tools in (None, (), ("cruxible_playbill_settle",)):
+        client.orient_playbill("inst", surface="mcp", caller_tools=tools)
+        if tools is None:
+            assert "caller_tools" not in captured[-1].url.params
+        else:
+            assert captured[-1].url.params.get_list("caller_tools") == (list(tools) or [""])
