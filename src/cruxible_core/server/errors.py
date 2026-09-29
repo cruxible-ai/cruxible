@@ -59,6 +59,7 @@ from cruxible_core.service.discovery.curation import PlaybillCurationError
 from cruxible_core.service.discovery.next import PlaybillNextError
 from cruxible_core.service.discovery.since import PlaybillSinceError
 from cruxible_core.service.procedures.procedure_runs import ProcedureSurfaceError
+from cruxible_core.service.read_refusals import ReadRefusalError
 from cruxible_core.service.refusals import (
     ALL_SERVED_REFUSAL_CODES,
     repair_for_refusal,
@@ -163,6 +164,10 @@ def _repair_for_error(exc: CoreError) -> ServedRepairV1:
 def _status_for_error(exc: CoreError) -> int:
     if isinstance(exc, BuildCapacityError):
         return 503
+    if isinstance(exc, ReadRefusalError):
+        # A read refusal is a request fault with its own coded status: an
+        # unknown name is 404, an ambiguous one 409, anything else 400.
+        return exc.http_status
     if isinstance(exc, ProcedureSurfaceError):
         # A served Procedure/Line surface refusal is a request fault the caller
         # can repair, never a daemon fault: the class declares its own 4xx so
@@ -277,6 +282,8 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["selector"] = exc.selector
         context["accepted_forms"] = list(exc.accepted_forms)
         context["repair_commands"] = list(exc.repair_commands)
+    if isinstance(exc, ReadRefusalError):
+        context.update(exc.context)
     if isinstance(exc, ClaimTypeNotFoundError):
         context["predicate"] = exc.predicate
         context["nearest"] = list(exc.nearest)

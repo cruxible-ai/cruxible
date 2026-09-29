@@ -43,6 +43,8 @@ def test_http_orient_refusals_are_coded(
     missing = client.get(url, params={"kind": "project.nothing"})
     assert missing.status_code == 404, missing.text
     assert missing.json()["error_code"] == "playbill.orient.kind_not_found"
+    assert missing.json()["context"]["kind"] == "project.nothing"
+    assert missing.json()["repair"]["operation"] == "playbill.orient"
 
     both = client.get(url, params={"kind": "project.nothing", "section": "queries"})
     assert both.status_code == 400, both.text

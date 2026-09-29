@@ -14,13 +14,9 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV3,
 )
 from cruxible_core.service.discovery import orient as orient_module
-from cruxible_core.service.discovery.orient import (
-    OrientCaller,
-    PlaybillOrientKindNotFound,
-    PlaybillOrientRequestInvalid,
-    service_playbill_orient,
-)
+from cruxible_core.service.discovery.orient import OrientCaller, service_playbill_orient
 from cruxible_core.service.list_pages import PlaybillListCursorMismatch
+from cruxible_core.service.read_refusals import ReadRefusalError
 from tests.core_support._candidate_support import submit_query_definition_candidate
 from tests.core_support._knowledge_loop_support import (
     PREDICATE,
@@ -184,18 +180,21 @@ def test_orient_kind_reads_every_predicate_in_full_with_sample_subjects(seeded) 
 
 
 def test_a_wrong_kind_is_refused_with_the_nearest_kinds(seeded) -> None:  # type: ignore[no-untyped-def]
-    with pytest.raises(PlaybillOrientKindNotFound) as refused:
+    with pytest.raises(ReadRefusalError) as refused:
         service_playbill_orient(seeded, kind="project.work_itm")
 
-    assert refused.value.nearest == (SUBJECT_KIND,)
-    assert "playbill.orient.kind_not_found" in str(refused.value)
+    assert refused.value.error_code == "playbill.orient.kind_not_found"
+    assert refused.value.http_status == 404
+    assert refused.value.candidates == (SUBJECT_KIND,)
+    assert refused.value.repair is not None and refused.value.repair.operation == "playbill.orient"
     assert SUBJECT_KIND in str(refused.value)
 
 
 def test_kind_and_section_are_one_view_each(seeded) -> None:  # type: ignore[no-untyped-def]
-    with pytest.raises(PlaybillOrientRequestInvalid, match="not both"):
+    with pytest.raises(ReadRefusalError, match="not both") as both:
         service_playbill_orient(seeded, kind=SUBJECT_KIND, section="queries")
-    with pytest.raises(PlaybillOrientRequestInvalid, match="takes no cursor"):
+    assert both.value.error_code == "playbill.orient.request_invalid"
+    with pytest.raises(ReadRefusalError, match="takes no cursor"):
         service_playbill_orient(seeded, kind=SUBJECT_KIND, cursor="c")
 
 

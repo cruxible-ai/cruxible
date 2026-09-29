@@ -27,11 +27,7 @@ from typing import Any, Literal
 
 from cruxible_client import contracts
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.errors import (
-    PlaybillError,
-    PlaybillFormatError,
-    SubjectNotFoundError,
-)
+from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.orient import (
     PLAYBILL_ORIENT_ATTENTION_TOP,
     PLAYBILL_ORIENT_DEFAULT_LIMIT,
@@ -56,10 +52,10 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV3,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.claims.claim_types import nearest_names
 from cruxible_core.service.discovery.next import (
     PlaybillNextItemV1,
     PlaybillNextRequestV2,
@@ -74,6 +70,7 @@ from cruxible_core.service.list_pages import (
     page_after_boundary,
 )
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
+from cruxible_core.service.read_refusals import ReadRefusalError, nearest
 
 _LIST = "orient"
 _NEXT_PROFILE = CoverageAccessProfileV1(
@@ -82,25 +79,24 @@ _NEXT_PROFILE = CoverageAccessProfileV1(
 _UPGRADE_MARKERS = ("evidence_rules_upgrade", "upgrade-evidence-rules", "evidence-rules")
 
 
-class PlaybillOrientRequestInvalid(PlaybillFormatError):
-    """An orient request names parts that cannot be answered together."""
+def _request_invalid(message: str) -> ReadRefusalError:
+    return ReadRefusalError(
+        "playbill.orient.request_invalid",
+        message,
+        repair=RepairOperationV1(operation="playbill.orient"),
+    )
 
-    error_code = "playbill.orient.request_invalid"
 
-
-class PlaybillOrientKindNotFound(SubjectNotFoundError):
-    """No accepted Subject or ClaimType names this kind; names the nearest kinds."""
-
-    error_code = "playbill.orient.kind_not_found"
-
-    def __init__(self, kind: str, *, nearest: tuple[str, ...]) -> None:
-        self.kind = kind
-        self.nearest = nearest
-        hint = f"; nearest: {', '.join(nearest)}" if nearest else ""
-        super().__init__(
-            f"{self.error_code}: no accepted Subject or ClaimType has kind {kind!r}{hint}; "
-            "run orient without a kind to list every kind"
-        )
+def _kind_not_found(kind: str, known: Iterable[str]) -> ReadRefusalError:
+    return ReadRefusalError(
+        "playbill.orient.kind_not_found",
+        f"no accepted Subject or ClaimType has kind {kind!r}",
+        http_status=404,
+        candidates=nearest(kind, known),
+        repair=RepairOperationV1(operation="playbill.orient"),
+        repair_line="Use one of these kinds; orient without a kind lists every kind",
+        context={"kind": kind},
+    )
 
 
 @dataclass(frozen=True)
@@ -643,15 +639,12 @@ def service_playbill_orient(
     """Answer one orient read at one accepted coordinate."""
 
     if kind is not None and section is not None:
-        raise PlaybillOrientRequestInvalid(
-            f"{PlaybillOrientRequestInvalid.error_code}: pass kind or section, not both; "
-            "orient(kind=K) reads one kind, orient(section=S) pages one artifact family"
+        raise _request_invalid(
+            "pass kind or section, not both; orient(kind=K) reads one kind, "
+            "orient(section=S) pages one artifact family"
         )
     if kind is not None and cursor is not None:
-        raise PlaybillOrientRequestInvalid(
-            f"{PlaybillOrientRequestInvalid.error_code}: orient(kind=K) is one page and "
-            "takes no cursor; drop the cursor"
-        )
+        raise _request_invalid("orient(kind=K) is one page and takes no cursor; drop the cursor")
     view = section or ("kind" if kind is not None else "kinds")
     continuation, at = _continuation(cursor, view=view, at=at)
     coordinate = _resolve(instance, at)
@@ -778,7 +771,7 @@ def _kind_detail(
 ) -> PlaybillOrientKindDetailV1:
     known = _kind_names(state)
     if kind not in known:
-        raise PlaybillOrientKindNotFound(kind, nearest=nearest_names(kind, known))
+        raise _kind_not_found(kind, known)
     of_kind = [item for item in state.claim_types if kind in item.allowed_subject_kinds]
     names = _short_names((item.predicate for item in of_kind), kind)
     prefix = f"subjects/{kind}/"
@@ -856,8 +849,6 @@ def _section_rows(
 
 __all__ = [
     "OrientCaller",
-    "PlaybillOrientKindNotFound",
-    "PlaybillOrientRequestInvalid",
     "render_orient_call",
     "service_playbill_orient",
 ]
