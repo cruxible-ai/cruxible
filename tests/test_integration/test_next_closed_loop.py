@@ -142,12 +142,14 @@ RepairCase = Callable[[Path, pytest.MonkeyPatch], None]
 ClosedLoopKey = tuple[str, str | None]
 
 EXPECTED_OPERATIONS = {
-    "claim_conflicted": "playbill.authoring.create",
-    "claim_uncovered": "playbill.authoring.bind",
-    "claim_stale_evidence": "playbill.authoring.bind",
-    "citation_drifted": "playbill.authoring.bind",
-    "citation_source_unobserved": "playbill.authoring.bind",
-    "evidence_expiring": "playbill.authoring.bind",
+    # A contest is resolved by retiring all but one contender in one write.
+    "claim_conflicted": "playbill.write",
+    # Stating a Claim again on new evidence is the default-profile set verb.
+    "claim_uncovered": "playbill.set",
+    "claim_stale_evidence": "playbill.set",
+    "citation_drifted": "playbill.set",
+    "citation_source_unobserved": "playbill.set",
+    "evidence_expiring": "playbill.set",
     "floor_invalid": "playbill.floor.export",
     "projection_dirty": "playbill.block.repin",
     # Nothing renders a block, so no sync converges one: a drifted block is
@@ -159,7 +161,7 @@ EXPECTED_OPERATIONS = {
     # demands it; a marker the page has mangled is repaired by restoring it.
     "projection_marker_invalid": frozenset({"playbill.block.repin", "playbill.block.depublish"}),
     "claim_dependency_stale": "playbill.authoring.create",
-    "claim_attestation_threshold_met": "playbill.authoring.create",
+    "claim_attestation_threshold_met": "playbill.set",
     "claim_contradicting_evidence_available": "playbill.authoring.create",
     "claim_new_evidence_supporting": "playbill.authoring.create",
     "claim_new_evidence_unreviewed": "playbill.authoring.create",

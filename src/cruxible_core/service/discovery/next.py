@@ -60,6 +60,7 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactV3,
     ClaimLawEvidenceAny,
     LiteralClaimObject,
+    SubjectClaimObject,
     _is_claim_type_rederivation,
     claim_artifact_digest,
     claim_citation_references,
@@ -785,6 +786,8 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.authoring.create": "playbill authoring create",
     "playbill.authoring.bind": "playbill authoring bind",
     "playbill.claim.retire": "playbill retire",
+    "playbill.set": "playbill set",
+    "playbill.write": "playbill write",
     "playbill.floor.export": "playbill floor export",
     "playbill.block.depublish": "playbill block depublish",
     "playbill.block.repin": "playbill block repin",
@@ -851,6 +854,8 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "playbill.authoring.create": "cruxible_playbill_authoring_create",
     "playbill.authoring.bind": "cruxible_playbill_authoring_bind",
     "playbill.claim.retire": "cruxible_playbill_retire",
+    "playbill.set": "cruxible_playbill_set",
+    "playbill.write": "cruxible_playbill_write",
     "playbill.floor.export": "cruxible_playbill_floor_export",
     "playbill.block.depublish": "cruxible_playbill_block_depublish",
     "playbill.block.repin": None,
@@ -873,6 +878,123 @@ def _tool_rung(tool: str) -> int:
     from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
 
     return int(TOOL_PERMISSIONS[tool]) - 1
+
+
+def _restated_set(values: Mapping[str, object]) -> dict[str, object] | None:
+    """The set call a `playbill.set` repair names, from its arguments, or None."""
+
+    subject, field, value = values.get("subject"), values.get("field"), values.get("value")
+    if not isinstance(subject, str) or not isinstance(field, str):
+        return None
+    if not isinstance(value, str | int | bool):
+        return None
+    restated: dict[str, object] = {"subject": subject, "field": field, "value": value}
+    role = values.get("role")
+    if isinstance(role, str):
+        restated["role"] = role
+    capture = values.get("capture_digest")
+    if isinstance(capture, str):
+        restated["evidence"] = {"kind": "capture", "capture": capture}
+    return restated
+
+
+def _write_changes(values: Mapping[str, object]) -> list[dict[str, object]]:
+    changes = values.get("changes")
+    if not isinstance(changes, list | tuple):
+        return []
+    return [dict(item) for item in changes if isinstance(item, Mapping)]
+
+
+def _cli_scalar(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _claim_set_arguments(
+    claim: ClaimArtifactAny, claim_type: ClaimType | None
+) -> dict[str, object] | None:
+    """The `set` that restates one live Claim, or None where `set` cannot say it.
+
+    A repair that asks for a Claim to be stated again -- on new evidence, or as
+    an acknowledgement -- is the `set` verb on its Subject and field, which the
+    default profile serves. It cannot restate a qualified Claim, a derivation
+    (only its Procedure produces one), a many-valued field (`set` replaces one
+    value), or an exact-content or structured value (no scalar to pass); those
+    keep their authoring repair.
+    """
+
+    statement = claim.statement
+    if claim_type is None or claim_type.cardinality != "one":
+        return None
+    if statement.qualifier is not None or statement.role == "derivation":
+        return None
+    obj = statement.object
+    value: object
+    if isinstance(obj, LiteralClaimObject) and isinstance(obj.value, str | int | bool):
+        value = obj.value
+    elif isinstance(obj, SubjectClaimObject):
+        value = obj.address.artifact_path.removeprefix("subjects/").removesuffix(".json")
+    else:
+        return None
+    return {
+        "subject": statement.subject.artifact_path.removeprefix("subjects/").removesuffix(".json"),
+        "field": statement.predicate,
+        "value": value,
+        "role": statement.role,
+    }
+
+
+def _claim_type_at(
+    instance: PlaybillInstance, git_oid: str, predicate: str, memo: dict[str, ClaimType | None]
+) -> ClaimType | None:
+    if predicate not in memo:
+        path = claim_type_path(predicate)
+        content = instance.blob_at(git_oid, path)
+        memo[predicate] = None if content is None else parse_claim_type(content, path=path)
+    return memo[predicate]
+
+
+def _live_claim_set_arguments(
+    instance: PlaybillInstance, git_oid: str, claim_id: str, memo: dict[str, ClaimType | None]
+) -> dict[str, object] | None:
+    """`_claim_set_arguments` for a Claim named by ID, when it is live at ``git_oid``."""
+
+    path = claim_path(claim_id)
+    content = instance.blob_at(git_oid, path)
+    if content is None:
+        return None
+    claim = parse_claim(content, path=path)
+    if claim.lifecycle.state != "live":
+        return None
+    return _claim_set_arguments(
+        claim, _claim_type_at(instance, git_oid, claim.statement.predicate, memo)
+    )
+
+
+def _restating_repair(
+    fallback: NextRepairOperation,
+    *,
+    target: str,
+    required_change: str,
+    arguments: Mapping[str, object],
+    set_arguments: Mapping[str, object] | None,
+) -> PlaybillNextRepairV1:
+    """A repair through `set` when it can restate the Claim, else its authoring door."""
+
+    if set_arguments is None:
+        return PlaybillNextRepairV1(
+            operation=fallback,
+            target=target,
+            required_change=required_change,
+            arguments=dict(arguments),
+        )
+    return PlaybillNextRepairV1(
+        operation="playbill.set",
+        target=target,
+        required_change=required_change,
+        arguments={**arguments, **set_arguments},
+    )
 
 
 def _mcp_call(tool: str, **arguments: object) -> str:
@@ -924,6 +1046,11 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
     if operation == "playbill.claim.retire" and text("claim_id"):
         # Why it ends is the retirer's to say: `because` is the argument left to add.
         return _mcp_call("cruxible_playbill_retire", target=text("claim_id"))
+    if operation == "playbill.set" and (restated := _restated_set(values)) is not None:
+        # `because` (and the file evidence a recapture needs) is the caller's to add.
+        return _mcp_call("cruxible_playbill_set", **restated)
+    if operation == "playbill.write" and (changes := _write_changes(values)):
+        return _mcp_call("cruxible_playbill_write", changes=changes)
     return None
 
 
@@ -992,6 +1119,14 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         return f"{handle}.approve(reviewed={handle}.review())"
     if operation == "playbill.claim.retire" and (claim := text("claim_id")):
         return _sdk_call("playbill.retire", claim)
+    if operation == "playbill.set" and (restated := _restated_set(values)) is not None:
+        subject, field, value = (restated.pop(key) for key in ("subject", "field", "value"))
+        return _sdk_call("playbill.set", subject, field, value, **restated)
+    if operation == "playbill.write":
+        changes = _write_changes(values)
+        if len(changes) == 1 and changes[0].get("op") == "retire":
+            return _sdk_call("playbill.retire", changes[0]["target"])
+        return None
     if operation == "playbill.block.repin" and (source := text("source_id")):
         block = text("block_id")
         if block is None:
@@ -1093,6 +1228,24 @@ def _repair_command(
         if not isinstance(proposal_id, str) or not isinstance(signer_id, str):
             return None
         parts.extend([shlex.quote(proposal_id), "--signer-id", shlex.quote(signer_id)])
+    elif operation == "playbill.set":
+        restated = _restated_set(values)
+        if restated is None:
+            return None
+        parts.extend(
+            shlex.quote(_cli_scalar(restated[key])) for key in ("subject", "field", "value")
+        )
+        role = restated.get("role")
+        if isinstance(role, str):
+            parts.extend(["--role", shlex.quote(role)])
+        evidence = restated.get("evidence")
+        if isinstance(evidence, Mapping) and isinstance(evidence.get("capture"), str):
+            parts.extend(["--capture", shlex.quote(str(evidence["capture"]))])
+    elif operation == "playbill.write":
+        changes = _write_changes(values)
+        if len(changes) != 1 or changes[0].get("op") != "retire":
+            return None
+        return f"cruxible playbill retire {shlex.quote(str(changes[0]['target']))}"
     elif operation == "playbill.claim.retire":
         # Why it ends is the retirer's to say: `--because` is the operand left to add.
         claim_id = values.get("claim_id")
@@ -1124,7 +1277,11 @@ def _item(
     # Composed here rather than at each emitting site: a row whose command was
     # forgotten would be indistinguishable from one that has no command.
     command = _repair_command(repair.operation, arguments=repair.arguments, surface=surface)
-    example = _ATTESTATION_REPAIR_EXAMPLES.get(repair.required_change)
+    example = (
+        _ATTESTATION_REPAIR_EXAMPLES.get(repair.required_change)
+        if repair.operation == "playbill.authoring.create"
+        else None
+    )
     if example is not None and isinstance(repair.arguments, Mapping):
         claim_id = repair.arguments.get("claim_id")
         capture_digest = repair.arguments.get("capture_digest")
@@ -1924,14 +2081,29 @@ def _claim_attestation_threshold_items(
                         ),
                         "attestation_digests": list(attestation_digests),
                     },
-                    repair=PlaybillNextRepairV1(
-                        operation="playbill.authoring.create",
-                        target=claim.identity.qualified,
-                        required_change="resolve_attestation_threshold",
-                        arguments={
-                            "claim_id": claim.identity.name,
-                            "rule_id": rule.rule_id,
-                        },
+                    # Enough independent contradiction retires the Claim; any
+                    # other threshold is resolved by stating it again.
+                    repair=(
+                        PlaybillNextRepairV1(
+                            operation="playbill.claim.retire",
+                            target=claim.identity.qualified,
+                            required_change="resolve_attestation_threshold",
+                            arguments={
+                                "claim_id": claim.identity.name,
+                                "rule_id": rule.rule_id,
+                            },
+                        )
+                        if rule.stance == "contradict"
+                        else _restating_repair(
+                            "playbill.authoring.create",
+                            target=claim.identity.qualified,
+                            required_change="resolve_attestation_threshold",
+                            arguments={
+                                "claim_id": claim.identity.name,
+                                "rule_id": rule.rule_id,
+                            },
+                            set_arguments=_claim_set_arguments(claim, claim_type),
+                        )
                     ),
                 )
             )
@@ -1976,6 +2148,7 @@ def _claim_items(
         generation_root=coordinate.generation_root,
         compiler_digest=coordinate.compiler_digest,
     )
+    claim_types: dict[str, ClaimType | None] = {}
     # The threshold fold reads evidence only for types with a consequence policy.
     # Materializing the whole historical map here costs one read per Claim.
     law_evidence = _claim_threshold_evidence(instance, at=internal)
@@ -2020,11 +2193,21 @@ def _claim_items(
                 subject_identity=subject,
                 related_identities=identities,
                 detail=detail,
+                # The runnable resolution keeps one contender and retires the
+                # others in one change set; which one to keep is the caller's
+                # choice (the first by ID here), and distinct qualifiers remain
+                # the authoring alternative.
                 repair=PlaybillNextRepairV1(
-                    operation="playbill.authoring.create",
+                    operation="playbill.write",
                     target=subject,
                     required_change="revise_claims_into_distinct_qualifiers",
-                    arguments=arguments,
+                    arguments={
+                        **arguments,
+                        "changes": [
+                            {"op": "retire", "target": identity.removeprefix("Claim:")}
+                            for identity in identities[1:]
+                        ],
+                    },
                 ),
             )
         else:
@@ -2069,11 +2252,20 @@ def _claim_items(
                             "predicate": claim.statement.predicate,
                             "verdict": verdict.verdict,
                         },
-                        repair=PlaybillNextRepairV1(
-                            operation="playbill.authoring.bind",
+                        repair=_restating_repair(
+                            "playbill.authoring.bind",
                             target=claim.identity.qualified,
                             required_change="recapture_expired_evidence",
                             arguments={"claim_id": claim.identity.name},
+                            set_arguments=_claim_set_arguments(
+                                claim,
+                                _claim_type_at(
+                                    instance,
+                                    internal.git_oid,
+                                    claim.statement.predicate,
+                                    claim_types,
+                                ),
+                            ),
                         ),
                     )
                 )
@@ -2108,11 +2300,20 @@ def _claim_items(
                                 "expirations": [item.model_dump(mode="json") for item in expiring],
                                 "predicate": claim.statement.predicate,
                             },
-                            repair=PlaybillNextRepairV1(
-                                operation="playbill.authoring.bind",
+                            repair=_restating_repair(
+                                "playbill.authoring.bind",
                                 target=claim.identity.qualified,
                                 required_change="recapture_expiring_evidence",
                                 arguments={"claim_id": claim.identity.name},
+                                set_arguments=_claim_set_arguments(
+                                    claim,
+                                    _claim_type_at(
+                                        instance,
+                                        internal.git_oid,
+                                        claim.statement.predicate,
+                                        claim_types,
+                                    ),
+                                ),
                             ),
                         )
                     )
@@ -2135,11 +2336,17 @@ def _claim_items(
                             "mismatched rules commonly leave a Claim uncovered."
                         ),
                     },
-                    repair=PlaybillNextRepairV1(
-                        operation="playbill.authoring.bind",
+                    repair=_restating_repair(
+                        "playbill.authoring.bind",
                         target=claim.identity.qualified,
                         required_change="add_admissible_evidence",
                         arguments={"claim_id": claim.identity.name},
+                        set_arguments=_claim_set_arguments(
+                            claim,
+                            _claim_type_at(
+                                instance, internal.git_oid, claim.statement.predicate, claim_types
+                            ),
+                        ),
                     ),
                 )
             )
@@ -2186,6 +2393,8 @@ class _CitationCommitment:
     original_end: int | None = None
     whole_source: bool = False
     lineage_note: CitationLineageNote | None = None
+    # The `set` that restates the citing Claim, as sorted items, when it can.
+    set_arguments: tuple[tuple[str, object], ...] | None = None
 
 
 def _whole_source_selection(envelope: object) -> bool:
@@ -2256,6 +2465,7 @@ def _citation_commitments(
     store = instance.body_store()
     access = BodyAccessContext(principal_id="playbill-next", can_read_body=True)
     result: dict[str, _CitationCommitment] = {}
+    citation_claim_types: dict[str, ClaimType | None] = {}
     facts = (
         build_accepted_query_facts(instance, coordinate=internal_coordinate)
         if facts_reader is None
@@ -2335,6 +2545,22 @@ def _citation_commitments(
                     original_end=None if selection_span is None else selection_span[1],
                     whole_source=_whole_source_selection(envelope),
                     lineage_note=lineage_note,
+                    set_arguments=(
+                        None
+                        if (
+                            restated := _claim_set_arguments(
+                                claim,
+                                _claim_type_at(
+                                    instance,
+                                    internal_coordinate.git_oid,
+                                    claim.statement.predicate,
+                                    citation_claim_types,
+                                ),
+                            )
+                        )
+                        is None
+                        else tuple(sorted(restated.items()))
+                    ),
                 )
     except Exception as exc:
         raise PlaybillNextAcceptedStateInvalid(
@@ -2516,6 +2742,7 @@ def _claim_attestation_door_items(
 
     if access_profile is not None and not access_profile.permits("instance"):
         return ()
+    door_claim_types: dict[str, ClaimType | None] = {}
 
     from cruxible_client.contracts.claim_attestations import claim_attestation_v2_envelope_digest
 
@@ -2634,14 +2861,19 @@ def _claim_attestation_door_items(
                         "current_at_append": current_at_append,
                         "lineage_status": lineage_status,
                     },
-                    repair=PlaybillNextRepairV1(
-                        operation="playbill.authoring.create",
+                    # Each door example revises the Claim citing this Capture as
+                    # evidence: the `set` of its field with capture evidence.
+                    repair=_restating_repair(
+                        "playbill.authoring.create",
                         target=statement.claim_identity.qualified,
                         required_change=required_change,
                         arguments={
                             "claim_id": claim_id,
                             "capture_digest": capture_digest,
                         },
+                        set_arguments=_live_claim_set_arguments(
+                            instance, coordinate.git_oid, claim_id, door_claim_types
+                        ),
                     ),
                 )
             )
@@ -2928,8 +3160,8 @@ def _citation_unobserved_item(
             **lineage_detail,
             **collapsed_detail,
         },
-        repair=PlaybillNextRepairV1(
-            operation="playbill.authoring.bind",
+        repair=_restating_repair(
+            "playbill.authoring.bind",
             target=commitment.claim_identity,
             required_change="observe_cited_source",
             arguments={
@@ -2937,6 +3169,13 @@ def _citation_unobserved_item(
                 "citation_id": commitment.citation_id,
                 "source_id": source_id,
             },
+            # A row standing for a whole defective source scan restates no one
+            # Claim: the scan is what has to be observed again.
+            set_arguments=(
+                None
+                if commitment.set_arguments is None or source_scan_notes
+                else dict(commitment.set_arguments)
+            ),
         ),
     )
 
@@ -2999,23 +3238,30 @@ def _citation_drift_item(
         subject_identity=commitment.claim_identity,
         related_identities=(commitment.citation_id,),
         detail=detail,
-        repair=PlaybillNextRepairV1(
-            operation="playbill.claim.retire" if gone else "playbill.authoring.bind",
-            target=commitment.claim_identity,
-            required_change=(
-                "retire_claim_with_attribution" if gone else "adjudicate_citation_drift"
-            ),
-            arguments={
-                "claim_id": commitment.claim_identity.removeprefix("Claim:"),
-                **(
-                    {"expected_coordinate": coordinate.model_dump(mode="json")}
-                    if gone
-                    else {
-                        "citation_id": commitment.citation_id,
-                        **({} if source_id is None else {"source_id": source_id}),
-                    }
+        repair=(
+            PlaybillNextRepairV1(
+                operation="playbill.claim.retire",
+                target=commitment.claim_identity,
+                required_change="retire_claim_with_attribution",
+                arguments={
+                    "claim_id": commitment.claim_identity.removeprefix("Claim:"),
+                    "expected_coordinate": coordinate.model_dump(mode="json"),
+                },
+            )
+            if gone
+            else _restating_repair(
+                "playbill.authoring.bind",
+                target=commitment.claim_identity,
+                required_change="adjudicate_citation_drift",
+                arguments={
+                    "claim_id": commitment.claim_identity.removeprefix("Claim:"),
+                    "citation_id": commitment.citation_id,
+                    **({} if source_id is None else {"source_id": source_id}),
+                },
+                set_arguments=(
+                    None if commitment.set_arguments is None else dict(commitment.set_arguments)
                 ),
-            },
+            )
         ),
     )
 

@@ -317,6 +317,8 @@ PlaybillNextRepairOperation: TypeAlias = Literal[
     "playbill.authoring.create",
     "playbill.authoring.bind",
     "playbill.claim.retire",
+    "playbill.set",
+    "playbill.write",
     "playbill.floor.export",
     "playbill.block.depublish",
     "playbill.block.repin",
