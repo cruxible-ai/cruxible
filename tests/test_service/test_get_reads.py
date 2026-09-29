@@ -275,6 +275,8 @@ def test_wrong_names_refuse_with_the_nearest_names(world: dict[str, Any]) -> Non
     assert "project.work_item/wi-42" in subject.candidates
     assert predicate.candidates[0] == f"ClaimType:{PREDICATE}"
     assert kind.candidates == ("project.work_item",)
+    # A typo in a short name still finds the predicate by its last segment.
+    assert f"ClaimType:{PREDICATE}" in _refusal(instance, "statu").candidates
     assert unknown.candidates == () and unknown.repair is not None
     assert unknown.repair.operation == "playbill.orient"
 

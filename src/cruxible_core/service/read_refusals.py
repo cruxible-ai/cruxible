@@ -9,6 +9,7 @@ that only sees prose still sees the repair.
 from __future__ import annotations
 
 import difflib
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -48,12 +49,25 @@ class ReadRefusalError(CoreError):
 
 
 def nearest(value: str, names: Iterable[str], *, limit: int = 5) -> tuple[str, ...]:
-    """The accepted names a mistyped or shortened one most likely meant."""
+    """The accepted names a mistyped or shortened one most likely meant.
+
+    A name matches on its whole spelling or on its last segment, so a typo in a
+    short predicate (``adoption_stat``) still finds ``dev.roadmap_item.adoption_state``.
+    """
 
     ordered = sorted(set(names))
-    by_leaf = [name for name in ordered if name.endswith(f".{value}") or name.endswith(f"/{value}")]
+    by_leaf: dict[str, list[str]] = {}
+    for name in ordered:
+        leaf = re.split(r"[./:]", name)[-1]
+        by_leaf.setdefault(leaf, []).append(name)
+    exact_leaf = [name for name in ordered if re.split(r"[./:]", name)[-1] == value]
     close = difflib.get_close_matches(value, ordered, n=limit, cutoff=0.6)
-    return tuple(dict.fromkeys([*by_leaf, *close]))[:limit]
+    close_leaf = [
+        name
+        for leaf in difflib.get_close_matches(value, list(by_leaf), n=limit, cutoff=0.7)
+        for name in by_leaf[leaf]
+    ]
+    return tuple(dict.fromkeys([*exact_leaf, *close, *close_leaf]))[:limit]
 
 
 __all__ = ["ReadRefusalError", "nearest"]
