@@ -1600,7 +1600,8 @@ last check:
 
 Because those rows are what a worker last observed, `status.consumers` says how
 current that observation is: `current`, `lagging` (a worker is behind on
-generations or has an unfinished fired sweep/retry event; this facet asks for
+generations or has not finished earlier sweep/retry work before another fire;
+this facet asks for
 attention), `stalled` (already a `consumer_stalled` row), or `not_running` when
 no consumer loop is running, as in a library read. There, worker rows stand as
 of each worker's last pass. `detail.workers` lists each built-in worker's state

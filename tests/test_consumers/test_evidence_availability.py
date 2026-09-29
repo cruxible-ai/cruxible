@@ -268,7 +268,11 @@ def test_no_sweep_or_clock_lag_without_a_fired_event(tmp_path: Path) -> None:
     assert health.state == "running" and health.detail["sweep_completed_at"] is None
     evaluate_triggers(instance, now=NOW, config=TriggerOperationalConfigV1())
     (health,) = WORKER.health(instance, now=NOW)
-    assert health.state == "lagging" and health.detail["sweep_in_progress"]
+    assert health.state == "running" and health.detail["sweep_in_progress"]
+    evaluate_triggers(instance, now=NOW + SWEEP_INTERVAL, config=TriggerOperationalConfigV1())
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "lagging"
+    _drain(instance, now=NOW)
     _drain(instance, now=NOW)
     (health,) = WORKER.health(instance, now=NOW + timedelta(days=100))
     assert health.state == "running"
@@ -293,9 +297,11 @@ def test_sweep_resumes_a_fired_event_at_its_logged_time(
     (work,) = WORKER.due(instance, now=NOW)
     WORKER.run(manager, "instance", work, now=NOW + timedelta(days=100))
     (health,) = WORKER.health(instance, now=NOW)
-    assert health.state == "lagging" and health.detail["sweep_position"] == 0
+    assert health.state == "running" and health.detail["sweep_position"] == 0
     # A restart continues this event, even if another one has fired meanwhile.
     evaluate_triggers(instance, now=NOW + SWEEP_INTERVAL, config=TriggerOperationalConfigV1())
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "lagging"
     for _ in range(4):
         for work in WORKER.due(instance, now=NOW):
             WORKER.run(manager, "instance", work, now=NOW + timedelta(days=100))

@@ -48,7 +48,7 @@ from cruxible_core.consumers.protocol import (
 )
 from cruxible_core.consumers.state import DisposableState
 from cruxible_core.server.config import get_disabled_consumers
-from cruxible_core.triggers.journal import latest_sequence, trigger_events
+from cruxible_core.triggers.journal import trigger_events
 
 #: Captures one unit of work checks before yielding.
 CHECK_BATCH = 256
@@ -381,8 +381,9 @@ class EvidenceAvailabilityConsumers:
         failing = error is not None
         with instance.accepted_history_reader() as history:
             behind = history.sequence - generation
-        sweep_pending = latest_sequence(instance, name="evidence.sweep") > sequence
-        lagging = behind > GENERATION_BATCH or sweep_pending
+        sweeps = trigger_events(instance, after=sequence, name="evidence.sweep", limit=2)
+        sweep_pending = bool(sweeps)
+        lagging = behind > GENERATION_BATCH or len(sweeps) > 1
         return (
             ConsumerHealth(
                 kind=self.name,

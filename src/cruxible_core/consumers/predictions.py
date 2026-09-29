@@ -53,7 +53,7 @@ from cruxible_core.consumers.protocol import (
 )
 from cruxible_core.consumers.state import DisposableState
 from cruxible_core.server.config import get_disabled_consumers
-from cruxible_core.triggers.journal import latest_sequence, trigger_events
+from cruxible_core.triggers.journal import trigger_events
 
 if TYPE_CHECKING:
     from cruxible_core.procedures.resolution import ResolutionContractActivationV3
@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS progress (
  generation INTEGER NOT NULL, backfill_after TEXT, index_generation TEXT,
  capture_head INTEGER NOT NULL DEFAULT 0, resolution_ordinal INTEGER NOT NULL DEFAULT 0,
  trigger_sequence INTEGER NOT NULL DEFAULT 0,
+ retry_completed_sequence INTEGER NOT NULL DEFAULT 0,
  last_error TEXT, last_error_at TEXT
 ) STRICT;
 CREATE TABLE IF NOT EXISTS pending (identity TEXT PRIMARY KEY, generation INTEGER NOT NULL) STRICT;
@@ -441,6 +442,10 @@ class PredictionSettlementConsumers:
                 )
             if events:
                 connection.execute("UPDATE progress SET trigger_sequence=?", (events[-1].sequence,))
+            connection.execute(
+                "UPDATE progress SET retry_completed_sequence=trigger_sequence "
+                "WHERE NOT EXISTS (SELECT 1 FROM retries)"
+            )
             connection.execute(
                 "UPDATE progress SET generation=?,index_generation=?,capture_head=?,"
                 "resolution_ordinal=?",
@@ -824,13 +829,18 @@ class PredictionSettlementConsumers:
                     connection, contract.identity, windows, unbound, found, now=now
                 )
 
+            connection.execute(
+                "UPDATE progress SET retry_completed_sequence=trigger_sequence "
+                "WHERE NOT EXISTS (SELECT 1 FROM retries)"
+            )
+
     def health(self, instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
         with _STATE.open(instance, create=False) as connection:
             if connection is None:
                 return ()
             row = connection.execute(
                 "SELECT generation,backfill_after,capture_head,resolution_ordinal,last_error,"
-                "last_error_at,trigger_sequence FROM progress"
+                "last_error_at,trigger_sequence,retry_completed_sequence FROM progress"
             ).fetchone()
             if row is None:
                 return ()
@@ -844,15 +854,15 @@ class PredictionSettlementConsumers:
             error,
             error_at,
             trigger_sequence,
+            retry_completed_sequence,
         ) = row
         failing = error is not None
         with instance.accepted_history_reader() as history:
             behind = history.sequence - generation
-        retry_pending = (
-            latest_sequence(instance, name="prediction.anchor_retry") > trigger_sequence
-            or tally["retries"] > 0
+        outstanding = trigger_events(
+            instance, after=retry_completed_sequence, name="prediction.anchor_retry", limit=2
         )
-        lagging = behind > GENERATION_BATCH or retry_pending
+        lagging = behind > GENERATION_BATCH or len(outstanding) > 1
         return (
             ConsumerHealth(
                 kind=self.name,
@@ -869,6 +879,7 @@ class PredictionSettlementConsumers:
                     "open_windows": tally["open"],
                     "resolved_windows": tally["resolved"],
                     "anchor_retry_position": trigger_sequence,
+                    "completed_anchor_retry_position": retry_completed_sequence,
                     "pending_anchor_retries": tally["retries"],
                     "unbindable_anchors": tally["unbindable"],
                     "last_error": error,

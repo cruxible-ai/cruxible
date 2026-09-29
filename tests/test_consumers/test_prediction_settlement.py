@@ -666,6 +666,14 @@ def test_retry_health_reports_unprocessed_events_and_backlog(
     assert health.state == "running"
     evaluate_triggers(instance, now=FIXED_CLOSES, config=TriggerOperationalConfigV1())
     (health,) = WORKER.health(instance, now=FIXED_CLOSES)
+    assert health.state == "running"
+    WORKER.match(instance, now=FIXED_CLOSES, daemon_id="restart")
+    (health,) = WORKER.health(instance, now=FIXED_CLOSES)
+    assert health.state == "running" and health.detail["pending_anchor_retries"] == 1
+    evaluate_triggers(
+        instance, now=FIXED_CLOSES + timedelta(hours=1), config=TriggerOperationalConfigV1()
+    )
+    (health,) = WORKER.health(instance, now=FIXED_CLOSES)
     assert health.state == "lagging"
     WORKER.match(instance, now=FIXED_CLOSES, daemon_id="restart")
     (health,) = WORKER.health(instance, now=FIXED_CLOSES)
@@ -727,3 +735,18 @@ def test_a_new_retry_event_during_an_attempt_remains_queued(
     assert tuple(WORKER.due(instance, now=fired_at))
     drain(instance, now=fired_at)
     assert len(attempts) == 2 and not tuple(WORKER.due(instance, now=fired_at))
+
+
+def test_retry_events_with_no_anchors_complete_without_worker_backlog(tmp_path: Path) -> None:
+    instance, _owner, _capture, _contract = fixed_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    for hour in (1, 2):
+        at = served.PREDICTED_AT + timedelta(hours=hour)
+        evaluate_triggers(instance, now=at, config=TriggerOperationalConfigV1())
+        WORKER.match(instance, now=at, daemon_id="daemon")
+        (health,) = WORKER.health(instance, now=at)
+        assert health.state == "running"
+        assert (
+            health.detail["completed_anchor_retry_position"]
+            == health.detail["anchor_retry_position"]
+        )
