@@ -3588,7 +3588,7 @@ def _get_value_text(value: object, *, width: int = 120) -> str:
     if isinstance(value, dict) and value.get("truncated") is True and "length" in value:
         # A summary card cut this string; --detail evidence reads it whole.
         shown = _get_value_text(value.get("value", ""), width=width - 24)
-        return f"{shown.removesuffix('…')}… ({value['length']} chars)"
+        return f"{shown.removesuffix('…')}… ({value['length']} chars; --detail evidence for all)"
     if isinstance(value, list) and any(
         isinstance(item, dict) and ("truncated" in item or "exact_content" in item)
         for item in value
@@ -3678,12 +3678,16 @@ def _emit_get_text(result: Any) -> None:
     if result.history is not None:
         for revision in result.history.revisions:
             value = (
-                "" if revision.value is None else f"  = {_get_value_text(revision.value, width=80)}"
+                ""
+                if revision.value is None
+                else f"  = {_get_value_text(revision.model_dump(mode='json')['value'], width=80)}"
             )
             click.echo(
                 f"rev {revision.revision}  seq {revision.sequence}  {revision.accepted}  "
                 f"by {revision.actor or '-'}{value}"
             )
+            for step in revision.next:
+                click.echo(f"next: {step}")
         return
     if result.body is not None:
         body = result.body

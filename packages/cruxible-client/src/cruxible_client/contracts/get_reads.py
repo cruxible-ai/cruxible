@@ -352,6 +352,8 @@ class PlaybillGetRevisionV1(_StrictGetModel):
     value: Any = Field(default=None, exclude_if=_omit_none)
     content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     digest: str = Field(description="Artifact digest prefix of this revision.")
+    # Read a cut value in full at this revision's accepted generation.
+    next: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
 class PlaybillGetHistoryV1(_StrictGetModel):

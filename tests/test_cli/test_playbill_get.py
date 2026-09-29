@@ -256,7 +256,7 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     as_json = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "dev.roadmap_item/x", "--json"])
 
     assert summary.exit_code == 0, summary.output
-    assert "(900 chars)" in summary.output
+    assert "(900 chars; --detail evidence for all)" in summary.output
     payload = json.loads(as_json.output)
     assert payload["card"]["claims"][0]["value"]["truncated"] is True
     assert payload["coordinate"] == {"git_oid": "1" * 12, "generation": 7}
