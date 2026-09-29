@@ -173,6 +173,7 @@ from cruxible_core.governance.keys import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
+from cruxible_core.server.config import get_runtime_bearer_token
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequestV1,
     ProcedureBindRequestV1,
@@ -937,7 +938,14 @@ def create_host(
 
 @playbill_group.command("init")
 @click.option("--key-dir", required=True, help="Client custody directory outside the workspace.")
-@click.option("--principal-id", default="bootstrap-admin", show_default=True)
+@click.option(
+    "--principal-id",
+    default=None,
+    help=(
+        "Owner principal ID this init makes you (default: CRUXIBLE_PRINCIPAL_ID or the "
+        "global --principal-id)."
+    ),
+)
 @click.option(
     "--reviewer-key-dir",
     default=None,
@@ -982,7 +990,7 @@ def create_host(
 @handle_errors
 def init_playbill(
     key_dir: str,
-    principal_id: str,
+    principal_id: str | None,
     reviewer_key_dir: str | None,
     require_independent_approval: bool,
     recovery_key_dir: str | None,
@@ -994,7 +1002,11 @@ def init_playbill(
     mirror_url: str | None,
     output_json: bool,
 ) -> None:
-    """Create client custody and bootstrap the governed approval policy."""
+    """Make you the owner: create client custody and bootstrap the approval policy.
+
+    With daemon auth off, the owner principal ID is the identity this process
+    claims for the init request; no bootstrap secret is needed.
+    """
 
     git_workspace = (
         _explicit_git_workspace_root(workspace_path)
@@ -1019,6 +1031,24 @@ def init_playbill(
             replace=replace,
             **config_transport,
         )
+    configured = _root_ctx_obj().get("principal_id")
+    if principal_id is None:
+        principal_id = configured
+    if principal_id is None:
+        raise click.UsageError(
+            "playbill init needs the owner principal ID; repair: "
+            "`cruxible playbill init --principal-id ID --key-dir DIR`"
+        )
+    if configured is not None and configured != principal_id:
+        raise click.UsageError(
+            f"--principal-id {principal_id} disagrees with the configured principal "
+            f"{configured} (CRUXIBLE_PRINCIPAL_ID or the global --principal-id); repair: "
+            "pass one principal ID"
+        )
+    if get_runtime_bearer_token() is None:
+        # Auth off: the init request claims the owner it creates. With a bearer
+        # credential the credential decides who acts, so no claim is sent.
+        _root_ctx_obj()["principal_id"] = principal_id
     workspace = git_workspace
     specifications: list[tuple[Path, str, PrincipalKind]] = [
         (Path(key_dir).expanduser(), principal_id, "ordinary")
@@ -1074,6 +1104,13 @@ def init_playbill(
         click.echo(f"Workspace ref failure: {result.workspace_advertisement.failure_code}")
     click.echo(f"Owner public key: {owner.principal.public_key}")
     click.echo(f"Owner private key retained locally at: {owner.private_key_path}")
+    click.echo(f"Owner principal: {principal_id}")
+    if get_runtime_bearer_token() is None:
+        click.echo(
+            f"Next: export CRUXIBLE_PRINCIPAL_ID={principal_id} so later commands act as "
+            "the owner (a claim of identity; with daemon auth off every process of this "
+            "OS user is equally trusted)."
+        )
     if reviewer is not None:
         click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
         click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
@@ -1930,8 +1967,15 @@ def whoami(output_json: bool) -> None:
     click.echo(f"Actor: {result.actor_id}")
     if result.actor_id_source == "runtime_credential_label":
         click.echo(f"Actor ID comes from credential label: {result.credential_label}")
+    elif result.actor_id_source == "principal_claim":
+        click.echo("Actor ID comes from the configured principal ID (CRUXIBLE_PRINCIPAL_ID)")
     else:
-        click.echo("Actor ID comes from the local operator identity")
+        click.echo("Actor ID comes from the local operator identity (no principal configured)")
+    if not result.authenticated:
+        click.echo(
+            "Identity is a claim, not authentication: daemon auth is off, so every "
+            "process of this OS user is equally trusted."
+        )
     click.echo(f"Credential permission mode: {result.credential_permission_mode}")
     click.echo(f"Principal registration: {result.principal_registration_status}")
     click.echo(f"Active principals: {', '.join(result.active_principal_ids) or 'none'}")
@@ -2160,21 +2204,23 @@ def list_principals(output_json: bool) -> None:
     help="Closed principal kind; daemon is instance-owned.",
 )
 @click.option("--key-dir", required=True)
-@click.option("--name", "proposal_name", required=True)
+@click.option(
+    "--name", "proposal_name", default=None, help="Proposal name (default: add-PRINCIPAL_ID)."
+)
 @json_option
 @handle_errors
 def add_principal(
     principal_id: str,
     kind: str,
     key_dir: str,
-    proposal_name: str,
+    proposal_name: str | None,
     output_json: bool,
 ) -> None:
     """Generate a client-held key and propose principal registration."""
 
     principal_kind = cast(PrincipalKind, kind)
     try:
-        ref_name = canonical_proposal_ref_name(proposal_name)
+        ref_name = canonical_proposal_ref_name(proposal_name or f"add-{principal_id}")
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="--name") from exc
 

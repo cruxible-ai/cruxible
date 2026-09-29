@@ -684,8 +684,9 @@ def test_http_whoami_and_proposal_inventory_are_typed_reads(
     seen: list[tuple[str, str | None]] = []
     who = contracts.PlaybillWhoAmI(
         actor_id="operator",
-        credential_label="operator",
+        credential_label=None,
         actor_id_source="local_operator",
+        authenticated=False,
         credential_permission_mode="admin",
         principal_registration_status="active",
         active_principal_ids=["daemon", "operator"],

@@ -42,7 +42,9 @@ from cruxible_core.service.list_pages import (
 ProposalInventoryStatus = Literal["open", "settled", "incomplete"]
 ProposalIncompleteReason = Literal["missing_admission", "missing_evaluation", "missing_candidate"]
 ProposalTerminalReason = Literal["accepted", "refused", "stale", "withdrawn"]
-WhoAmIActorIdSource = Literal["runtime_credential_label", "local_operator"]
+#: Where the actor ID came from. ``principal_claim`` is an auth-off daemon's
+#: configured principal ID: a claim of identity, not authentication.
+WhoAmIActorIdSource = Literal["runtime_credential_label", "principal_claim", "local_operator"]
 PrincipalRegistrationStatus = Literal["active", "revoked", "absent"]
 CredentialPermissionMode = Literal["read_only", "governed_write", "graph_write", "admin"]
 
@@ -118,8 +120,11 @@ class PlaybillProposalSelectorResultV1(_StrictOperationalReadModel):
 class PlaybillWhoAmIV1(_StrictOperationalReadModel):
     tag: Literal["playbill-whoami-v1"] = "playbill-whoami-v1"
     actor_id: str
-    credential_label: str
+    credential_label: str | None
     actor_id_source: WhoAmIActorIdSource
+    # False when no bearer credential backs the identity: an auth-off daemon
+    # trusts every process of its OS user equally, so the actor ID is a claim.
+    authenticated: bool
     credential_permission_mode: CredentialPermissionMode
     principal_registration_status: PrincipalRegistrationStatus
     active_principal_ids: tuple[str, ...]
@@ -132,6 +137,8 @@ class PlaybillWhoAmIV1(_StrictOperationalReadModel):
             and self.credential_label != self.actor_id
         ):
             raise ValueError("runtime credential label must equal the governed actor id")
+        if (self.actor_id_source == "runtime_credential_label") != self.authenticated:
+            raise ValueError("only a runtime credential authenticates the actor")
         return self
 
 
@@ -733,8 +740,9 @@ def service_playbill_whoami(
     instance: PlaybillInstance,
     *,
     actor_id: str,
-    credential_label: str,
+    credential_label: str | None,
     actor_id_source: WhoAmIActorIdSource,
+    authenticated: bool,
     permission_mode: PermissionMode,
 ) -> PlaybillWhoAmIV1:
     """Explain the transport-derived actor and its accepted principal status."""
@@ -753,6 +761,7 @@ def service_playbill_whoami(
         actor_id=actor_id,
         credential_label=credential_label,
         actor_id_source=actor_id_source,
+        authenticated=authenticated,
         credential_permission_mode=cast(CredentialPermissionMode, permission_mode.name.lower()),
         principal_registration_status=registration,
         active_principal_ids=active,

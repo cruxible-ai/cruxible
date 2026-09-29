@@ -14,6 +14,19 @@ from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.types import PrincipalRecord
 
 _PRINCIPAL_PATH_RE = re.compile(r"^principals/([a-z][a-z0-9_.-]{0,127})\.json$")
+_PRINCIPAL_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+
+#: The principal a client acts as, sent on every request. With daemon auth off
+#: it is a claim of identity, not authentication: every process of the same OS
+#: user is equally trusted. With auth on it must equal the credential's principal.
+PRINCIPAL_ID_HEADER = "X-Cruxible-Principal-Id"
+PRINCIPAL_ID_ENV = "CRUXIBLE_PRINCIPAL_ID"
+
+
+def is_canonical_principal_id(value: str) -> bool:
+    """Whether ``value`` is a principal ID a registry could hold."""
+
+    return _PRINCIPAL_ID_RE.fullmatch(value) is not None
 
 
 class PrincipalRegistrySnapshot(BaseModel):

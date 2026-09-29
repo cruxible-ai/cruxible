@@ -672,8 +672,11 @@ class PlaybillWhoAmI(BaseModel):
 
     tag: Literal["playbill-whoami-v1"] = "playbill-whoami-v1"
     actor_id: str
-    credential_label: str
-    actor_id_source: Literal["runtime_credential_label", "local_operator"]
+    credential_label: str | None
+    actor_id_source: Literal["runtime_credential_label", "principal_claim", "local_operator"]
+    # False when no bearer credential backs the identity: an auth-off daemon
+    # trusts every process of its OS user equally, so the actor ID is a claim.
+    authenticated: bool
     credential_permission_mode: Literal["read_only", "governed_write", "graph_write", "admin"]
     principal_registration_status: Literal["active", "revoked", "absent"]
     active_principal_ids: list[str]

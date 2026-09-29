@@ -569,6 +569,7 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
                 actor_id="owner",
                 credential_label="owner",
                 actor_id_source="runtime_credential_label",
+                authenticated=True,
                 credential_permission_mode="governed_write",
                 principal_registration_status="active",
                 active_principal_ids=["daemon", "owner"],

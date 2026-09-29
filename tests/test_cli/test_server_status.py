@@ -329,6 +329,7 @@ def test_status_answers_an_instance_scoped_token_with_its_own_host(
                 actor_id="agent",
                 credential_label="agent",
                 actor_id_source="runtime_credential_label",
+                authenticated=True,
                 credential_permission_mode="admin",
                 principal_registration_status="active",
                 active_principal_ids=["agent"],

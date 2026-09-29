@@ -8,6 +8,7 @@ The public CLI has four top-level command groups.
 --server-url TEXT
 --server-socket TEXT
 --instance-id TEXT
+--principal-id TEXT
 --no-workspace
 --json-compact
 --version
@@ -25,6 +26,19 @@ exactly one of `server_url` or `server_socket`; its root must agree with the roo
 of `.playbill/sources.yaml` when both exist. The global context is only a
 fallback, its remembered instance remains bound to the transport on which it
 was selected, and entering one workspace never retargets another.
+
+`--principal-id` (or `CRUXIBLE_PRINCIPAL_ID`) names the principal this process
+acts as; the CLI, SDK (`Playbill.connect(principal_id=...)`) and MCP server all
+send it with every request. The daemon checks that it names a registered, active
+principal on the instance and attributes the work to it; an unregistered or
+revoked ID is refused (`playbill.identity.principal_absent` /
+`principal_revoked`) with the command that repairs it, except by `whoami` and
+`orient`, which explain the refusal. With daemon auth off the principal ID is a
+claim of identity, not authentication: every process of the same OS user is
+equally trusted and could claim any principal. With auth on the bearer
+credential decides who acts, and a principal ID that disagrees with it is refused
+(`playbill.identity.principal_claim_mismatch`). Approvals are unaffected either
+way: they are signed with the principal's private key.
 
 `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180) bounds how long a client waits for a
 daemon that has accepted a request. An SDK `Playbill.connect()` reads only the
@@ -342,7 +356,7 @@ those blocks (`playbill block depublish`) or retire their backing Claims first.
 
 ~~~text
 cruxible playbill init --key-dir DIR
-  [--principal-id ID]
+  --principal-id ID
   [--reviewer-key-dir DIR]
   [--require-independent-approval]
   [--recovery-key-dir DIR]
@@ -352,6 +366,13 @@ cruxible playbill init --key-dir DIR
   [--object-format sha1|sha256]
   [--mirror-url URL]
 ~~~
+
+Makes you the owner under `--principal-id` (default: the configured
+`CRUXIBLE_PRINCIPAL_ID` / global `--principal-id`; they must agree). On an
+auth-off daemon the init request claims that principal, so no bootstrap secret
+is needed; set `CRUXIBLE_PRINCIPAL_ID` to it afterwards so later commands act as
+the owner. An init whose caller is not one of the owner principals it names is
+refused with `playbill.identity.init_owner_mismatch`.
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
 ledger with its public principal record. A missing `--key-dir` is created with
@@ -2061,7 +2082,7 @@ ledger](#playbill-ledger) for what the mirror carries and how to get its URL.
 
 ~~~text
 cruxible playbill principal list
-cruxible playbill principal add PRINCIPAL_ID --kind ordinary --key-dir DIR --name NAME
+cruxible playbill principal add PRINCIPAL_ID --key-dir DIR [--kind ordinary] [--name NAME]
 cruxible playbill principal rotate ...
 cruxible playbill principal revoke ...
 cruxible playbill principal recover ...

@@ -95,7 +95,7 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.query.definitions import query_definition_path
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
-from cruxible_client.contracts.repairs import hand_edit_repair
+from cruxible_client.contracts.repairs import RepairOperationV1, hand_edit_repair
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.temporal import format_datetime, utc_now
@@ -124,6 +124,7 @@ from cruxible_core.errors import (
     AuthenticationError,
     ConfigError,
     DataValidationError,
+    PrincipalRefusedError,
     RequestRefusedError,
 )
 from cruxible_core.exhaust.consumption import (
@@ -298,6 +299,7 @@ from cruxible_core.service.procedures.provider_installation import (
 )
 from cruxible_core.service.proposals.proposals import (
     ProposalInventoryStatus,
+    WhoAmIActorIdSource,
     service_list_playbill_proposals,
     service_playbill_proposal_status,
     service_playbill_whoami,
@@ -356,13 +358,15 @@ _CLAIM_RETIRE_RESPONSE: TypeAdapter[contracts.PlaybillClaimRetireResponse] = Typ
 
 
 def _credential_actor_context() -> GovernedActorContext | None:
+    """The request's principal: a credential's, or an auth-off daemon's claim."""
+
     auth_context = get_current_auth_context()
-    if auth_context is None or auth_context.credential_type != "runtime_credential":
+    if auth_context is None or auth_context.principal_id is None:
         return None
     try:
         return GovernedActorContext(
             actor_type="service_account",
-            actor_id=auth_context.principal_label,
+            actor_id=auth_context.principal_id,
             org_id=auth_context.instance_scope or "local",
             operation_id=new_id("op", length=16, separator="_"),
             timestamp=utc_now(),
@@ -464,8 +468,17 @@ def playbill_init(
         if item.status == "active" and item.kind == "ordinary"
     }
     if actor_id not in ordinary:
-        raise AuthenticationError(
-            "Playbill bootstrap requires an ordinary principal matching authenticated identity"
+        owners = ", ".join(sorted(ordinary)) or "none"
+        raise PrincipalRefusedError(
+            "playbill.identity.init_owner_mismatch",
+            f"init makes the process that runs it an owner, but this process acts as "
+            f"{actor_id!r} and the owner principals named are: {owners}; repair: "
+            "`cruxible playbill init --principal-id ID --key-dir DIR` makes you the owner "
+            "under ID (with daemon auth off no bootstrap secret is needed)",
+            repair=RepairOperationV1(
+                operation="playbill.init",
+                arguments={"principal_id": actor_id},
+            ),
         )
     registry = get_registry()
     attached_for_init = False
@@ -882,22 +895,31 @@ def playbill_withdraw_proposal(
 def playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
     check_permission("cruxible_playbill_read", instance_id=instance_id)
     auth_context = get_current_auth_context()
+    credential_label: str | None
+    actor_id_source: WhoAmIActorIdSource
     if auth_context is not None and auth_context.credential_type == "runtime_credential":
-        actor_id = auth_context.principal_label
-        credential_label = auth_context.principal_label
+        assert auth_context.principal_id is not None
+        actor_id = auth_context.principal_id
+        credential_label = auth_context.credential_label
         actor_id_source = "runtime_credential_label"
+    elif auth_context is not None and auth_context.credential_type == "principal_claim":
+        assert auth_context.principal_id is not None
+        actor_id = auth_context.principal_id
+        credential_label = None
+        actor_id_source = "principal_claim"
     else:
         actor = _actor_context()
         if actor is None:
             raise AuthenticationError("Playbill identity requires an authenticated actor")
         actor_id = actor.actor_id
-        credential_label = actor.actor_id
+        credential_label = None
         actor_id_source = "local_operator"
     result = service_playbill_whoami(
         get_playbill_manager().get(instance_id),
         actor_id=actor_id,
         credential_label=credential_label,
-        actor_id_source=cast(Any, actor_id_source),
+        actor_id_source=actor_id_source,
+        authenticated=auth_context is not None and auth_context.authenticated,
         permission_mode=get_current_mode(),
     )
     return contracts.PlaybillWhoAmI.model_validate(result.model_dump(mode="json"))

@@ -68382,10 +68382,21 @@
           "schema": {
             "enum": [
               "runtime_credential_label",
+              "principal_claim",
               "local_operator"
             ],
             "title": "Actor Id Source",
             "type": "string"
+          }
+        },
+        "authenticated": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "authenticated",
+          "required": true,
+          "schema": {
+            "title": "Authenticated",
+            "type": "boolean"
           }
         },
         "coordinate": {
@@ -68403,8 +68414,15 @@
           "json_name": "credential_label",
           "required": true,
           "schema": {
-            "title": "Credential Label",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Label"
           }
         },
         "credential_permission_mode": {
@@ -68511,17 +68529,29 @@
           "actor_id_source": {
             "enum": [
               "runtime_credential_label",
+              "principal_claim",
               "local_operator"
             ],
             "title": "Actor Id Source",
             "type": "string"
           },
+          "authenticated": {
+            "title": "Authenticated",
+            "type": "boolean"
+          },
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           },
           "credential_label": {
-            "title": "Credential Label",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Label"
           },
           "credential_permission_mode": {
             "enum": [
@@ -68553,6 +68583,7 @@
           "actor_id",
           "credential_label",
           "actor_id_source",
+          "authenticated",
           "credential_permission_mode",
           "principal_registration_status",
           "active_principal_ids",
@@ -68565,6 +68596,7 @@
         "active_principal_ids",
         "actor_id",
         "actor_id_source",
+        "authenticated",
         "coordinate",
         "credential_label",
         "credential_permission_mode",

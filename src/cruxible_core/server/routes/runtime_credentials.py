@@ -60,7 +60,7 @@ async def create_runtime_credential(
         instance_id=resolved_instance_id,
         label=req.label,
         permission_mode=PermissionMode[req.permission_mode.upper()],
-        created_by=auth_context.principal_id if auth_context else None,
+        created_by=auth_context.credential_id if auth_context else None,
     )
     return contracts.RuntimeCredentialResult(
         credential=_record_to_contract(created.record),
@@ -114,7 +114,7 @@ async def rotate_runtime_credential(
     created = store.rotate_credential(
         instance_id=resolved_instance_id,
         credential_id=credential_id,
-        rotated_by=auth_context.principal_id if auth_context else None,
+        rotated_by=auth_context.credential_id if auth_context else None,
     )
     return contracts.RuntimeCredentialResult(
         credential=_record_to_contract(created.record),

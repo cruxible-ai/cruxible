@@ -53,13 +53,18 @@ def current_arm_principal() -> LineArmPrincipalV1:
 
     auth = get_current_auth_context()
     if auth is not None and auth.credential_type == "runtime_credential":
+        assert auth.credential_id is not None and auth.credential_label is not None
         return LineArmPrincipalV1(
             kind="runtime_credential",
-            credential_id=auth.principal_id,
-            label=auth.principal_label,
+            credential_id=auth.credential_id,
+            label=auth.credential_label,
         )
-    if auth is None and not is_server_auth_enabled():
-        return LineArmPrincipalV1(kind="local_operator", label=LOCAL_OPERATOR_ACTOR_ID)
+    if not is_server_auth_enabled() and (auth is None or auth.credential_type == "principal_claim"):
+        # Auth off: the arm dispatches as the principal this request claims, or
+        # as the local operator when it claims none.
+        label = LOCAL_OPERATOR_ACTOR_ID if auth is None else auth.principal_id
+        assert label is not None
+        return LineArmPrincipalV1(kind="local_operator", label=label)
     raise AuthenticationError(
         "Arming a Line requires a runtime credential the daemon can recheck before each run"
     )
@@ -82,7 +87,10 @@ def arm_authority(
                 "permission_insufficient",
                 f"The daemon's permission mode {mode.name} no longer permits dispatch.",
             )
-        return local_operator_actor_context(), mode.value - 1
+        actor = local_operator_actor_context()
+        if principal.label != LOCAL_OPERATOR_ACTOR_ID:
+            actor = actor.model_copy(update={"actor_id": principal.label})
+        return actor, mode.value - 1
     assert principal.credential_id is not None
     record = get_runtime_credential_store().get(principal.credential_id)
     if record is None or record.revoked_at is not None:

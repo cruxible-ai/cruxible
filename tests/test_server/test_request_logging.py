@@ -141,8 +141,8 @@ def test_successful_runtime_request_logs_principal_and_instance(
     assert event["method"] == "GET"
     assert event["route"] == "/api/v1/{instance_id}/runtime/credentials"
     assert event["status"] == 200
-    assert event["principal_id"] == credential_id
-    assert event["principal_label"] == "admin_credential"
+    assert event["credential_id"] == credential_id
+    assert event["credential_label"] == "admin_credential"
     assert event["credential_type"] == "runtime_credential"
     assert event["role"] == "admin"
     assert event["instance_scope"] == instance_id
@@ -176,8 +176,8 @@ def test_denied_runtime_request_logs_status_and_error_type(
     assert event["route"] == "/api/v1/{instance_id}/playbill/bodies"
     assert event["status"] == 403
     assert event["error_type"] == "PermissionDeniedError"
-    assert event["principal_id"] == credential_id
-    assert event["principal_label"] == "read_only_credential"
+    assert event["credential_id"] == credential_id
+    assert event["credential_label"] == "read_only_credential"
     assert event["credential_type"] == "runtime_credential"
     assert event["instance_id"] == instance_id
 
@@ -222,8 +222,8 @@ def test_playbill_write_logs_credential_actor_and_operation(
 
     assert response.status_code == 200
     event = _runtime_request_events(request_log_buffer)[-1]
-    assert event["principal_id"] == credential_id
-    assert event["principal_label"] == "admin_credential"
+    assert event["credential_id"] == credential_id
+    assert event["credential_label"] == "admin_credential"
     assert str(event["operation_id"]).startswith("op_")
 
 
@@ -299,8 +299,8 @@ def test_activation_receipt_and_request_log_name_the_credential_actor(
     assert activated.json()["activated_by"] == "admin_credential"
     event = _runtime_request_events(request_log_buffer)[-1]
     assert event["route"] == "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate"
-    assert event["principal_id"] == credential_id
-    assert event["principal_label"] == "admin_credential"
+    assert event["credential_id"] == credential_id
+    assert event["credential_label"] == "admin_credential"
     assert str(event["operation_id"]).startswith("op_")
 
 
@@ -346,8 +346,8 @@ def test_bootstrap_secret_runtime_request_log_does_not_include_secret(
     event = _runtime_request_events(request_log_buffer)[-1]
     assert event["route"] == "/api/v1/runtime/instances"
     assert event["status"] == 200
-    assert event["principal_id"] == "runtime_bootstrap"
-    assert event["principal_label"] == "runtime_bootstrap"
+    assert event["credential_id"] == "runtime_bootstrap"
+    assert event["credential_label"] == "runtime_bootstrap"
     assert event["credential_type"] == "runtime_bootstrap"
 
 
@@ -391,7 +391,8 @@ def test_configure_request_logging_writes_to_default_durable_log(
     assert payload["method"] == "GET"
     assert payload["route"] == "/api/v1/test-log"
     assert payload["status"] == 204
-    assert payload["principal_id"] == "anonymous"
+    assert payload["credential_id"] == "anonymous"
+    assert payload["principal_id"] is None
 
 
 def test_rotating_file_log_sink_rotates_when_limit_is_exceeded(tmp_path: Path) -> None:

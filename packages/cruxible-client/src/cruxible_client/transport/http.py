@@ -45,6 +45,11 @@ from cruxible_client.contracts.kits import (
     PlaybillKitRemoveRequestV1,
     PlaybillKitStatusV1,
 )
+from cruxible_client.contracts.principals import (
+    PRINCIPAL_ID_ENV,
+    PRINCIPAL_ID_HEADER,
+    is_canonical_principal_id,
+)
 from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourcePreviewRequestV1,
     ProcedureSourcePreviewV1,
@@ -71,6 +76,26 @@ _CLAIM_TYPE_MIGRATION_RESPONSE: TypeAdapter[contracts.PlaybillClaimTypeMigration
 _CLAIM_RETIRE_RESPONSE: TypeAdapter[contracts.PlaybillClaimRetireResponse] = TypeAdapter(
     contracts.PlaybillClaimRetireResponse
 )
+
+
+def validate_principal_id(principal_id: str) -> str:
+    """Refuse a principal ID no registry could hold, before it reaches the wire."""
+
+    if not is_canonical_principal_id(principal_id):
+        raise ConfigError(
+            f"principal ID {principal_id!r} is not a canonical lowercase identifier "
+            "(a letter, then up to 127 of a-z 0-9 . _ -); repair: set "
+            f"{PRINCIPAL_ID_ENV} or --principal-id to a registered principal ID"
+        )
+    return principal_id
+
+
+def configured_principal_id(environ: Mapping[str, str] | None = None) -> str | None:
+    """The principal ID this process is configured to act as, if any."""
+
+    env = os.environ if environ is None else environ
+    raw = (env.get(PRINCIPAL_ID_ENV) or "").strip()
+    return validate_principal_id(raw) if raw else None
 
 
 # The per-request budget an ordinary call is given.
@@ -138,10 +163,14 @@ class CruxibleClient:
         base_url: str | None = None,
         socket_path: str | None = None,
         token: str | None = None,
+        principal_id: str | None = None,
     ) -> None:
         if bool(base_url) == bool(socket_path):
             raise ConfigError("Configure exactly one of base_url or socket_path for CruxibleClient")
         headers = {"Authorization": f"Bearer {token}"} if token else {}
+        if principal_id is not None:
+            headers[PRINCIPAL_ID_HEADER] = validate_principal_id(principal_id)
+        self.principal_id = principal_id
         if socket_path is not None:
             target = f"unix:{socket_path}"
             raw_client = httpx.Client(

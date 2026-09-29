@@ -175,7 +175,10 @@ def _get_client() -> CruxibleClient | None:
     if isinstance(client, CruxibleClient):
         return client
     client = CruxibleClient(
-        base_url=server_url, socket_path=server_socket, token=get_runtime_bearer_token()
+        base_url=server_url,
+        socket_path=server_socket,
+        token=get_runtime_bearer_token(),
+        principal_id=obj.get("principal_id"),
     )
     try:
         client_compatibility.check_daemon_compatibility(client)

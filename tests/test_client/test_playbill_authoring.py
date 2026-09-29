@@ -300,6 +300,7 @@ def test_client_whoami_and_proposal_list_use_read_routes_and_status_query() -> N
                     "actor_id": "owner",
                     "credential_label": "owner",
                     "actor_id_source": "runtime_credential_label",
+                    "authenticated": True,
                     "credential_permission_mode": "governed_write",
                     "principal_registration_status": "active",
                     "active_principal_ids": ["daemon", "owner"],

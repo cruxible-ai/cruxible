@@ -7,11 +7,18 @@ import hmac
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from cruxible_client.contracts.principals import (
+    PRINCIPAL_ID_ENV,
+    PRINCIPAL_ID_HEADER,
+    is_canonical_principal_id,
+)
+from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_core.errors import PrincipalRefusedError
 from cruxible_core.runtime.permissions import (
     PermissionMode,
     clamp_to_capability_ceiling,
@@ -24,7 +31,7 @@ from cruxible_core.server.config import (
     is_server_auth_enabled,
 )
 from cruxible_core.server.credentials import get_runtime_credential_store
-from cruxible_core.server.errors import ErrorResponse
+from cruxible_core.server.errors import ErrorResponse, error_to_response
 from cruxible_core.server.request_logging import log_runtime_request
 from cruxible_core.server.route_paths import (
     HEALTH_PATH,
@@ -108,15 +115,33 @@ def _request_has_body(request: Request) -> bool:
         return True
 
 
+CredentialType = Literal["runtime_bootstrap", "runtime_credential", "principal_claim"]
+
+
 @dataclass(frozen=True)
 class ResolvedAuthContext:
-    principal_id: str
-    principal_label: str
-    credential_type: str
+    """Who a request is: its credential (if any) and the principal it acts as.
+
+    ``credential_id``/``credential_label`` describe the bearer credential; a
+    principal claim on an auth-off daemon carries none. ``principal_id`` is the
+    governed principal the request acts as, or None when the request names
+    none (the runtime bootstrap operator).
+    """
+
+    credential_id: str | None
+    credential_label: str | None
+    credential_type: CredentialType
     instance_scope: str | None
     role: str | None
     effective_permission_mode: PermissionMode | None
     created_by: str | None = None
+    principal_id: str | None = None
+
+    @property
+    def authenticated(self) -> bool:
+        """Whether a bearer credential backs this identity, not only a claim."""
+
+        return self.credential_type != "principal_claim"
 
 
 def get_current_auth_context() -> ResolvedAuthContext | None:
@@ -139,6 +164,33 @@ def _unauthorized_response(message: str = "Unauthorized") -> JSONResponse:
             error_type="AuthenticationError",
             message=message,
         ).model_dump(mode="json"),
+    )
+
+
+def _identity_refusal_response(request: Request, refusal: PrincipalRefusedError) -> JSONResponse:
+    status, body = error_to_response(refusal)
+    response = JSONResponse(status_code=status, content=body.model_dump(mode="json"))
+    log_runtime_request(
+        request,
+        status=response.status_code,
+        auth_context=None,
+        error_type=refusal.__class__.__name__,
+    )
+    return response
+
+
+def _principal_claim_refusal(request: Request) -> PrincipalRefusedError | None:
+    """Refuse a principal claim no registry could hold, before it names anyone."""
+
+    raw = request.headers.get(PRINCIPAL_ID_HEADER)
+    if raw is None or is_canonical_principal_id(raw.strip()):
+        return None
+    return PrincipalRefusedError(
+        "playbill.identity.principal_claim_invalid",
+        f"the configured principal ID {raw.strip()!r} is not a canonical lowercase "
+        "identifier (a letter, then up to 127 of a-z 0-9 . _ -); repair: set "
+        f"{PRINCIPAL_ID_ENV} or --principal-id to a registered principal ID",
+        repair=RepairOperationV1(operation="playbill.principal.list"),
     )
 
 
@@ -216,8 +268,8 @@ def _is_server_operation_request(request: Request) -> bool:
 def _runtime_bootstrap_operator_context() -> ResolvedAuthContext:
     """Build the unscoped (``instance_scope=None``) runtime bootstrap operator context."""
     return ResolvedAuthContext(
-        principal_id="runtime_bootstrap",
-        principal_label="runtime_bootstrap",
+        credential_id="runtime_bootstrap",
+        credential_label="runtime_bootstrap",
         credential_type="runtime_bootstrap",
         instance_scope=None,
         role="admin",
@@ -328,19 +380,58 @@ async def token_auth_middleware(
             runtime_credential = get_runtime_credential_store().authenticate(bearer_token)
             if runtime_credential is not None:
                 resolved_context = ResolvedAuthContext(
-                    principal_id=runtime_credential.credential_id,
-                    principal_label=runtime_credential.label,
+                    credential_id=runtime_credential.credential_id,
+                    credential_label=runtime_credential.label,
                     credential_type="runtime_credential",
                     instance_scope=runtime_credential.instance_id,
                     role=runtime_credential.permission_mode.name.lower(),
                     effective_permission_mode=runtime_credential.permission_mode,
                     created_by=runtime_credential.created_by,
+                    principal_id=runtime_credential.label,
                 )
             else:
                 return _unauthorized_request_response(request)
 
     if bearer_token is None and auth_enabled:
         return _unauthorized_request_response(request, MISSING_BEARER_CREDENTIAL_MESSAGE)
+    claim_refusal = _principal_claim_refusal(request)
+    if claim_refusal is not None:
+        return _identity_refusal_response(request, claim_refusal)
+    claimed = request.headers.get(PRINCIPAL_ID_HEADER)
+    if claimed is not None:
+        claimed = claimed.strip()
+        if not auth_enabled:
+            # Auth off: the claim IS the identity. Every process of this OS user
+            # is equally trusted, so this names who acts; it proves nothing.
+            resolved_context = ResolvedAuthContext(
+                credential_id=None,
+                credential_label=None,
+                credential_type="principal_claim",
+                instance_scope=None,
+                role=None,
+                effective_permission_mode=None,
+                principal_id=claimed,
+            )
+        elif (
+            resolved_context is not None
+            and resolved_context.credential_type == "runtime_credential"
+            and resolved_context.principal_id != claimed
+        ):
+            # Auth on: the credential decides who acts. A claim may only repeat it.
+            return _identity_refusal_response(
+                request,
+                PrincipalRefusedError(
+                    "playbill.identity.principal_claim_mismatch",
+                    f"the configured principal ID {claimed!r} is not the principal this "
+                    "bearer credential acts as "
+                    f"({resolved_context.principal_id or 'none'}); repair: unset "
+                    f"{PRINCIPAL_ID_ENV} (or --principal-id), or use the credential "
+                    "minted for that principal",
+                    repair=RepairOperationV1(operation="playbill.whoami"),
+                ),
+            )
+        # The runtime bootstrap operator acts as no principal; a claim sent
+        # alongside its daemon-wide operations is ignored, not honored.
     if request.headers.get(EFFECTIVE_PERMISSION_MODE_HEADER) is not None and (
         resolved_context is None or resolved_context.credential_type != "runtime_credential"
     ):

@@ -39,16 +39,24 @@ instance. When run inside a Git worktree, the local socket also lets the daemon
 attach that exact workspace before initialization:
 
 ~~~bash
-uv run cruxible playbill host create --instance-id playbill-demo
+uv run cruxible playbill host create --instance-id inst_demo
 ~~~
 
-Initialize Playbill and generate an owner key outside the repository:
+Initialize Playbill and make yourself the owner, with a key generated outside
+the repository. The principal ID is yours to choose:
 
 ~~~bash
 uv run cruxible playbill init \
   --key-dir /tmp/cruxible-playbill-owner \
-  --principal-id bootstrap-admin
+  --principal-id me
+export CRUXIBLE_PRINCIPAL_ID=me
 ~~~
+
+Every later command, SDK session and MCP server sends `CRUXIBLE_PRINCIPAL_ID`,
+and the daemon attributes the work to that principal after checking it is
+registered and active. With auth off this is a claim of identity, not
+authentication: every process of your OS user is equally trusted. Approvals
+are still signed with the principal's private key.
 
 The private key remains in its client custody directory; the daemon receives
 only its public ordinary-principal record. Local key directories provide

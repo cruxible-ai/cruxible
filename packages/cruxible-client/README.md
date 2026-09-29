@@ -105,6 +105,7 @@ checks run.
 | Setting | Default / behavior |
 |---|---|
 | `CRUXIBLE_SERVER_BEARER_TOKEN` | Used when `token` is omitted; never creates a principal or grants rights. |
+| `CRUXIBLE_PRINCIPAL_ID` | Used when `principal_id` is omitted; the daemon checks it is a registered, active principal and attributes the session to it. |
 | `CRUXIBLE_CLI_CONTEXT_PATH` | Otherwise `~/.cruxible/client-context.json`. |
 | `CRUXIBLE_CLIENT_TIMEOUT_S` | Ordinary HTTP read/write timeout: 180 seconds; connect/pool: 5 seconds. |
 | Default access profile | `sdk-default`, classes `("instance", "public")`, disclose restricted existence `True`. |
@@ -127,6 +128,7 @@ connect(
     target: str | None = None,
     instance: str | None = None,
     token: SecretStr | None = None,
+    principal_id: str | None = None,
     workspace: Path | None = None,
     access_profile: AccessProfile | None = None,
     at: AcceptedCoordinate | api.PlaybillAcceptedCoordinate | None = None,
@@ -143,6 +145,7 @@ Opens a transport, checks client/daemon contract compatibility, resolves context
 | `target` | `None` | Explicit HTTP(S) endpoint or unix:/absolute/socket. It does not select an arbitrary local instance directory. |
 | `instance` | `None` | Daemon instance ID. Omission uses resolved workspace/client context. |
 | `token` | `None` | Bearer credential as SecretStr; otherwise CRUXIBLE_SERVER_BEARER_TOKEN. |
+| `principal_id` | `None` | Principal this session acts as; otherwise CRUXIBLE_PRINCIPAL_ID. With daemon auth off it is a claim of identity, not authentication; with auth on it must equal the credential's principal. |
 | `workspace` | `None` | Client workspace root for source selection, projections, and configured floors. |
 | `access_profile` | `None` | Declared access classes and disclosure preference; server authorization remains authoritative. |
 | `at` | `None` | Explicit accepted coordinate. Omission follows the live/pinned object semantics stated above. |
@@ -4656,8 +4659,9 @@ Import: `cruxible_client.contracts.authoring.inputs.AuthoringInputError`. [Sourc
 ## Lower-level HTTP client
 
 `CruxibleClient` is synchronous, exported from `cruxible_client`. Construct
-with exactly one of base_url or socket_path and an optional explicit bearer
-token; unlike Playbill.connect, this constructor does not resolve workspace
+with exactly one of base_url or socket_path, an optional explicit bearer
+token, and an optional principal ID sent as `X-Cruxible-Principal-Id` (with
+daemon auth off it is a claim of identity, not authentication); unlike Playbill.connect, this constructor does not resolve workspace
 context or perform the SDK compatibility/orientation workflow. Use a context
 manager or close(). Public methods below retain explicit instance IDs and
 typed request/response contracts. A method whose signature takes `request`
@@ -4673,7 +4677,7 @@ responses can raise validation errors; ambiguous transport completion must be
 checked before retrying a write.
 
 ```text
-CruxibleClient(*, base_url: str | None=None, socket_path: str | None=None, token: str | None=None) -> None
+CruxibleClient(*, base_url: str | None=None, socket_path: str | None=None, token: str | None=None, principal_id: str | None=None) -> None
 ```
 
 <a id="api-cruxibleclient-close"></a>

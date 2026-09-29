@@ -46,6 +46,12 @@ server never reads remembered CLI context. With none of these, the call fails an
 names `CRUXIBLE_INSTANCE_ID`. `cruxible_playbill_whoami` returns the instance it resolved together
 with the caller's identity there.
 
+`CRUXIBLE_PRINCIPAL_ID` in the same `env` block names the principal the MCP
+server acts as; it is sent with every request, and the daemon checks it is a
+registered, active principal before attributing work to it. With daemon auth off
+it is a claim of identity, not authentication (`authenticated: false` in
+`whoami`): every process of the same OS user is equally trusted.
+
 `CRUXIBLE_MCP_WORKSPACE_ROOT` selects the client-owned workspace for tools that
 read or write local files. The stdio MCP process is the client-side adapter; the
 workspace defaults to its working directory.
