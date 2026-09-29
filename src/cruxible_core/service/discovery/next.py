@@ -4058,28 +4058,49 @@ class _CallerView:
             return False
         return self.caller_rung is None or self.caller_rung >= self._required_rung(repair)
 
+    def _render(self, row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> PlaybillNextItemV1:
+        """One row or nested finding as a standalone row, its repair for this surface."""
+
+        return _item(
+            severity=row.severity,
+            reason=row.reason,
+            subject_identity=row.subject_identity,
+            related_identities=row.related_identities,
+            detail=row.detail,
+            repair=row.repair.model_copy(update={"command": None}),
+            surface=self.surface,
+        )
+
     def items(
         self, found: Iterable[PlaybillNextItemV1]
     ) -> tuple[tuple[PlaybillNextItemV1, ...], int]:
-        """Drop rows this caller cannot repair, counting them; render the rest for it."""
+        """Drop rows and findings this caller cannot repair, counting each; render the rest.
 
+        A row's nested findings are work in their own right, so each is judged
+        and rendered on its own. A finding the caller cannot repair is counted
+        in ``hidden``; one it can repair stays inside its row, or stands as its
+        own row when the row that carried it is hidden.
+        """
+
+        rerender = self.surface not in {None, "cli"}
         kept: list[PlaybillNextItemV1] = []
         hidden = 0
         for item in found:
+            runnable = [finding for finding in item.findings if self.can_run(finding.repair)]
+            hidden += len(item.findings) - len(runnable)
             if not self.can_run(item.repair):
                 hidden += 1
-                continue
-            if self.surface == "mcp":
-                item = _item(
-                    severity=item.severity,
-                    reason=item.reason,
-                    subject_identity=item.subject_identity,
-                    related_identities=item.related_identities,
-                    detail=item.detail,
-                    repair=item.repair.model_copy(update={"command": None}),
-                    surface=self.surface,
+                kept.extend(
+                    self._render(finding) if rerender else _row_of(finding) for finding in runnable
                 )
-            kept.append(item)
+                continue
+            if not rerender and len(runnable) == len(item.findings):
+                kept.append(item)
+                continue
+            # Rebuilt, never copied: the item id digests the findings it carries.
+            head = self._render(item) if rerender else item.model_copy(update={"findings": ()})
+            rest = [self._render(finding) if rerender else _row_of(finding) for finding in runnable]
+            kept.append(_with_findings(head, rest))
         return tuple(kept), hidden
 
     def health(self, health: PlaybillNextHealthV1) -> PlaybillNextHealthV1:
