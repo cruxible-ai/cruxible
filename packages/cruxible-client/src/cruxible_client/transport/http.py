@@ -567,7 +567,8 @@ class CruxibleClient:
     ) -> contracts.PlaybillOrientResultV1:
         """The orient map: kinds, artifacts, you, attention and next calls for ``surface``.
 
-        ``at`` is an accepted coordinate or one accepted generation's Git OID.
+        ``at`` is an accepted coordinate or one accepted generation's Git OID, or a
+        unique prefix of it of at least 12 hex characters.
         ``kind`` reads one kind in full; ``section`` pages one artifact family.
         """
         params: dict[str, Any] = (

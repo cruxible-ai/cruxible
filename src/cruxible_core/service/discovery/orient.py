@@ -591,6 +591,7 @@ def _you(caller: OrientCaller | None, *, instance: PlaybillInstance) -> Playbill
 
 
 def _continuation(
+    instance: PlaybillInstance,
     cursor: str | None,
     *,
     view: str,
@@ -600,7 +601,10 @@ def _continuation(
         return None, at
     continuation = decode_list_cursor(cursor, list_name=_LIST, selection={"view": view})
     pinned = AcceptedCoordinate.model_validate(continuation.coordinate)
-    if at is not None and (at != pinned.git_oid if isinstance(at, str) else at != pinned):
+    if (
+        at is not None
+        and AcceptedCoordinate.from_internal(resolve_read_coordinate(instance, at)) != pinned
+    ):
         raise PlaybillListCursorMismatch(
             f"{PlaybillListCursorMismatch.error_code}: the cursor continues a different "
             "coordinate; orient again without a cursor"
@@ -669,7 +673,7 @@ def service_playbill_orient(
     if kind is not None and cursor is not None:
         raise _request_invalid("orient(kind=K) is one page and takes no cursor; drop the cursor")
     view = section or ("kind" if kind is not None else "kinds")
-    continuation, at = _continuation(cursor, view=view, at=at)
+    continuation, at = _continuation(instance, cursor, view=view, at=at)
     coordinate = resolve_read_coordinate(instance, at)
     served = AcceptedCoordinate.from_internal(coordinate)
     moment = (evaluation_time or datetime.now(UTC)).astimezone(UTC)

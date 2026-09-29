@@ -132,7 +132,6 @@ from cruxible_core.service.list_pages import (
     page_after_boundary,
 )
 from cruxible_core.service.read_refusals import nearest, resolve_read_coordinate
-from cruxible_core.storage.cas import BodyAccessContext
 
 LIST_NAME = "query"
 COMPACT_QUERY_MAX_RESULTS = 5000
@@ -2009,12 +2008,10 @@ def service_playbill_query(
     instance: PlaybillInstance,
     *,
     request: PlaybillQueryRequestV1,
-    content_access: BodyAccessContext | None = None,
 ) -> PlaybillQueryResult:
     """Answer one ``query`` call: one page of values, flags and paging.
 
-    ``content_access`` reads exact-content values as text; without body access
-    they show as a ``withheld`` marker with their digest.
+    Exact-content values read as their text, for every caller.
     """
 
     mode = _mode(request)
@@ -2055,7 +2052,7 @@ def service_playbill_query(
         )
     coordinate = resolve_read_coordinate(instance, at)
     vocabulary = load_query_vocabulary(instance, coordinate)
-    content = ExactContentReader(instance, content_access)
+    content = ExactContentReader(instance)
     if mode == "named":
         answer = _named_answer(
             instance, coordinate, vocabulary, request, evaluation_time, content=content

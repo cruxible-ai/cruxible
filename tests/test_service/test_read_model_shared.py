@@ -360,13 +360,10 @@ def _exact_get(
     )
 
 
-def _exact_query(
-    instance: Any, access: BodyAccessContext | None = _ACCESS, **fields: Any
-) -> PlaybillQueryResult:
+def _exact_query(instance: Any, **fields: Any) -> PlaybillQueryResult:
     return service_playbill_query(
         instance,
         request=PlaybillQueryRequestV1.model_validate({"evaluation_time": _WHEN, **fields}),
-        content_access=access,
     )
 
 
@@ -464,24 +461,26 @@ def test_contains_matches_exact_content_text_never_its_digest(
     assert _exact_query(instance, contains=ruling.digest.split(":")[1][:16]).rows == ()
 
 
-def test_a_caller_who_may_not_read_bodies_sees_exact_content_withheld(
+def test_a_caller_who_may_not_read_bodies_still_reads_exact_content_as_text(
     exact_world: tuple[Any, dict[str, Any]],
 ) -> None:
-    from cruxible_client.contracts.get_reads import PlaybillExactContentRefV1
+    """Ruling exact-content-read-only: the value is a Claim value, not a body read."""
 
     instance, seeded = exact_world
     ruling = seeded["wi-42"]
+    text = _RULING.decode()
     reader = BodyAccessContext(principal_id="reader", can_read_body=False)
-    withheld = PlaybillExactContentRefV1(
-        exact_content="withheld", content_digest=ruling.digest, length=len(_RULING)
-    )
 
     card = _exact_get(instance, ruling.claim_id, access=reader).card
     assert isinstance(card, PlaybillGetClaimCardV1)
-    assert (card.value, card.content_digest) == (withheld, ruling.digest)
-    rows = _exact_query(instance, None, kind=EXACT_KIND, select=["status"]).rows
-    assert {row["subject"]: row["status"] for row in rows}[ruling.subject] == withheld
-    assert _exact_query(instance, None, contains="exactly as written").rows == ()
+    assert (card.value, card.content_digest) == (text, ruling.digest)
+    history = _exact_get(instance, ruling.claim_id, access=reader, detail="history").history
+    assert history is not None
+    assert [item.value for item in history.revisions] == [text]
+    rows = _exact_query(instance, kind=EXACT_KIND, select=["status"]).rows
+    assert {row["subject"]: row["status"] for row in rows}[ruling.subject] == text
+    (found,) = _exact_query(instance, contains="exactly as written").rows
+    assert found["claim"] == ruling.claim_id
 
 
 def test_query_reserves_no_digest_row_key() -> None:
@@ -725,3 +724,138 @@ def test_competing_exact_content_follows_conflict_behavior_as_literals_do(
         assert exact == ("refused", "playbill.query.claim_conflict")
     else:
         assert exact == [(None, ["contested"])]
+
+
+def test_the_compact_coordinate_a_get_prints_is_a_valid_at_for_every_verb(
+    instance: Any,
+) -> None:
+    """Ruling at-accepts-oid-prefix: the 12-hex git oid a read prints can be passed back."""
+
+    history = instance.accepted_history()
+    earlier = history[-2]
+    compact = service_playbill_get(
+        instance,
+        request=PlaybillGetRequestV1(
+            ref=f"ClaimType:{PREDICATE}", at=earlier.oid, evaluation_time=_WHEN
+        ),
+        access=_ACCESS,
+    ).coordinate.git_oid
+    assert len(compact) == 12 and earlier.oid.startswith(compact)
+    assert instance.accepted_coordinate().git_oid != earlier.oid
+
+    again = service_playbill_get(
+        instance,
+        request=PlaybillGetRequestV1(
+            ref=f"ClaimType:{PREDICATE}", at=compact, evaluation_time=_WHEN
+        ),
+        access=_ACCESS,
+    )
+    assert again.coordinate.git_oid == compact
+    queried = service_playbill_query(
+        instance,
+        request=PlaybillQueryRequestV1.model_validate(
+            {"kind": "ClaimType", "at": compact, "evaluation_time": EVALUATION_TIME}
+        ),
+    )
+    assert queried.receipt.coordinate.git_oid == earlier.oid
+    oriented = service_playbill_orient(instance, at=compact)
+    assert (oriented.coordinate.git_oid, oriented.generation) == (earlier.oid, earlier.sequence)
+    # A longer prefix and the full oid name the same generation.
+    assert service_playbill_orient(instance, at=earlier.oid[:20]).generation == earlier.sequence
+    assert service_playbill_orient(instance, at=earlier.oid).generation == earlier.sequence
+    assert service_playbill_orient(instance, at=oriented.coordinate).generation == earlier.sequence
+
+
+def test_a_short_unknown_or_ambiguous_at_refuses_with_a_coded_read_refusal(
+    instance: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.errors import ReadRefusalError
+
+    head = instance.accepted_history()[-1]
+
+    def refusal(at: str) -> ReadRefusalError:
+        with pytest.raises(ReadRefusalError) as refused:
+            service_playbill_orient(instance, at=at)
+        # get and query refuse the same way: one resolver serves all three verbs.
+        for read in (
+            lambda: service_playbill_get(
+                instance,
+                request=PlaybillGetRequestV1(ref=f"ClaimType:{PREDICATE}", at=at),
+                access=_ACCESS,
+            ),
+            lambda: service_playbill_query(
+                instance,
+                request=PlaybillQueryRequestV1.model_validate({"kind": "ClaimType", "at": at}),
+            ),
+        ):
+            with pytest.raises(ReadRefusalError) as same:
+                read()
+            assert same.value.error_code == refused.value.error_code
+        assert refused.value.context["field_path"] == "at"
+        return refused.value
+
+    short = refusal(head.oid[:11])
+    assert short.error_code == "playbill.read.coordinate_prefix_too_short"
+    assert short.http_status == 400 and "at least 12" in str(short)
+
+    # One hex digit off: nothing starts with it, and a full accepted oid is named.
+    typo = head.oid[:11] + ("0" if head.oid[11] != "0" else "1")
+    unknown = refusal(typo)
+    assert unknown.error_code == "playbill.read.coordinate_not_accepted"
+    assert unknown.http_status == 404
+    assert head.oid in unknown.candidates
+
+    unrelated = refusal("0" * 12)
+    accepted = {generation.oid for generation in instance.accepted_history()}
+    assert unrelated.error_code == "playbill.read.coordinate_not_accepted"
+    assert 0 < len(unrelated.candidates) <= 5
+    assert set(unrelated.candidates) <= accepted
+
+    # Two accepted generations sharing a 12-hex prefix: a git collision the
+    # fixture fakes rather than brute-forcing a real collision.
+    twin_oid = head.oid[:12] + ("0" * 28 if head.oid[12:40] != "0" * 28 else "1" * 28)
+    twin = SimpleNamespace(oid=twin_oid, sequence=head.sequence + 1)
+    real = instance.accepted_history()
+    monkeypatch.setattr(instance, "accepted_history", lambda: (*real, twin))
+    ambiguous = refusal(head.oid[:12])
+    assert ambiguous.error_code == "playbill.read.coordinate_ambiguous"
+    assert ambiguous.http_status == 409
+    assert set(ambiguous.candidates) == {head.oid, twin_oid}
+    assert ambiguous.context["matches"] == 2
+    # The full oid still tells them apart.
+    assert service_playbill_orient(instance, at=head.oid).generation == head.sequence
+
+    # Refusals stay bounded even when more than five accepted oids match.
+    twins = tuple(SimpleNamespace(oid=head.oid[:12] + f"{index:028x}") for index in range(8))
+    monkeypatch.setattr(instance, "accepted_history", lambda: (*real, *twins))
+    bounded = refusal(head.oid[:12])
+    assert len(bounded.candidates) == 5
+    assert bounded.context["matches"] == 9
+    assert set(bounded.candidates) <= {item.oid for item in (*real, *twins)}
+
+
+def test_overlong_oid_is_not_misreported_as_too_short(instance: Any) -> None:
+    from cruxible_client.contracts.errors import ReadRefusalError
+
+    with pytest.raises(ReadRefusalError) as refused:
+        service_playbill_orient(instance, at="a" * 65)
+    assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+
+
+def test_an_oid_outside_accepted_history_cannot_resolve(
+    instance: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.errors import ReadRefusalError
+    from cruxible_core.service.read_refusals import resolve_read_coordinate
+
+    head = instance.accepted_history()[-1]
+    # The real Git object and coordinate still exist, but it is not accepted.
+    earlier_history = instance.accepted_history()[:-1]
+    monkeypatch.setattr(instance, "accepted_history", lambda: earlier_history)
+    assert instance.coordinate_for_oid(head.oid).git_oid == head.oid
+    for at in (head.oid, head.oid[:12]):
+        with pytest.raises(ReadRefusalError) as refused:
+            resolve_read_coordinate(instance, at)
+        assert refused.value.error_code == "playbill.read.coordinate_not_accepted"

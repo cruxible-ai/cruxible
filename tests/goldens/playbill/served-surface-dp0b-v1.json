@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-29:rm-followups:procedures-batch:rm-additions",
-    "surface_digest": "sha256:2388db4297ad6eec6d74d9aa622b462d0323926313ef7832e6fba4f69b47b689"
+    "register_entry": "2026-09-29:rm-at-readonly",
+    "surface_digest": "sha256:c297fdedaaa81370d8818fddd10234d9a974c3cac544d93e656581ea68c48730"
   },
   "surface": {
     "cli_leaves": [
@@ -2134,7 +2134,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/query",
         "request_model": "cruxible_client.contracts.compact_query.PlaybillQueryRequestV1",
-        "request_schema_digest": "sha256:65fdaf10663b6cee874b74f875b63dff533bd963f821e98cade05d34106b4b8a",
+        "request_schema_digest": "sha256:6526d08e2c83ffcd3486aadf627529daf2e359e718039063b458fd410adb35f7",
         "response_model": "cruxible_client.contracts.compact_query.PlaybillQueryResult",
         "response_schema_digest": "sha256:754b2ebe020bb4787a1f16a62763798e32866120690b212b02ac9caab6cc74c4"
       },
@@ -2733,7 +2733,7 @@
         "facade_operations": [
           "playbill_get"
         ],
-        "input_schema_digest": "sha256:0b886fe1a0090b69e3bc4470e7a5ade3eb508edaf7228fab4ff28aa1cc6a4775",
+        "input_schema_digest": "sha256:4bac4061247a90e2911ea9f1b344d14b7197357d30fac8d392d79e052ecb9af6",
         "name": "cruxible_playbill_get",
         "output_schema_digest": "sha256:685ef7cb96eb28cefa15579700adb53c9cadbdab4c8870969d5a8b8fe61a4b42",
         "permission": "READ_ONLY"
@@ -3015,7 +3015,7 @@
         "facade_operations": [
           "playbill_orient"
         ],
-        "input_schema_digest": "sha256:c6e6babc5f3640b118092f34ee2da7b3222aa28b1253ddf9902eedf5df04bafb",
+        "input_schema_digest": "sha256:02c2e583bf993d421f16e7fff53e73da1ed97becc23fb664e03a515dcda3ae64",
         "name": "cruxible_playbill_orient",
         "output_schema_digest": "sha256:37162bf50fdcf2abec4ded29a3b7d0c0361e86bec33a7660cd44660c57acae86",
         "permission": "READ_ONLY"

@@ -357,8 +357,11 @@ async def orient(
     cursor: str | None = Query(default=None, max_length=4096),
     at: str | None = Query(
         default=None,
-        pattern=r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
-        description="An accepted generation's Git OID; the four coordinate fields also pin one.",
+        pattern=r"^[0-9a-f]{1,64}$",
+        description=(
+            "An accepted generation's Git OID, or a unique prefix of at least 12 hex "
+            "characters; the four coordinate fields also pin one."
+        ),
     ),
     git_oid: str | None = None,
     semantic_root: str | None = None,

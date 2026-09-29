@@ -206,7 +206,7 @@ def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
                 "subject": "legal.case/c",
                 "subject_id": "c",
                 "ruling": PlaybillExactContentRefV1(
-                    exact_content="withheld", content_digest=digest, length=40
+                    exact_content="unavailable", content_digest=digest, length=40
                 ),
                 "flags": [],
             },
@@ -223,4 +223,4 @@ def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
 
     assert "Affirmed." in table
     assert "Reversed Reversed" in table and "…" in table
-    assert "<withheld: needs body read 40 bytes sha256:cdcdcdcdcdcd>" in table
+    assert "<unavailable 40 bytes sha256:cdcdcdcdcdcd>" in table

@@ -211,7 +211,13 @@ def test_a_section_pages_compact_rows_with_a_bound_cursor(seeded) -> None:  # ty
         f"cruxible playbill get query:{QUERY_NAME}",
         f"cruxible playbill orient --section queries --cursor {first.next_cursor}",
     )
-    second = service_playbill_orient(seeded, section="queries", limit=1, cursor=first.next_cursor)
+    second = service_playbill_orient(
+        seeded,
+        section="queries",
+        limit=1,
+        cursor=first.next_cursor,
+        at=first.coordinate.git_oid[:12],
+    )
     assert [row.name for row in (*(first.queries or ()), *(second.queries or ()))] == [
         row.name for row in whole.queries or ()
     ]

@@ -243,7 +243,10 @@ class PlaybillQueryRequestV1(BaseModel):
     params: dict[str, QueryScalar] | None = None
     at: AcceptedCoordinate | str | None = Field(
         default=None,
-        description="An accepted coordinate or a git oid; the default is the current head.",
+        description=(
+            "An accepted coordinate or a git oid (a unique prefix of 12+ hex characters is "
+            "enough); the default is the current head."
+        ),
     )
     evaluation_time: datetime | None = Field(
         default=None, description="ISO-8601 instant; the default is now."

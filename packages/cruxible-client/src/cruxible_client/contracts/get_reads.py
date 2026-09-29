@@ -43,7 +43,8 @@ GET_SUMMARY_TEXT_MAX_CHARS = 500
 GET_HISTORY_DEFAULT_LIMIT = 20
 GET_HISTORY_MAX_LIMIT = 200
 
-_GIT_OID = r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+# A git oid or a prefix of one; the read resolves it (at least 12 hex, unique).
+_GIT_OID = r"^[0-9a-f]{1,64}$"
 
 # Which details apply to which kind of reference.
 GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
@@ -115,7 +116,10 @@ class PlaybillGetRequestV1(_StrictGetModel):
         cls, value: PlaybillAcceptedCoordinate | str | None
     ) -> PlaybillAcceptedCoordinate | str | None:
         if isinstance(value, str) and not re.fullmatch(_GIT_OID, value):
-            raise ValueError("at must be an accepted coordinate or a full lowercase git oid")
+            raise ValueError(
+                "at must be an accepted coordinate or a lowercase hex git oid "
+                "(a unique prefix of at least 12 characters)"
+            )
         return value
 
     @field_validator("evaluation_time")
@@ -164,11 +168,12 @@ class PlaybillExactContentRefV1(_StrictGetModel):
 
     An exact-content value reads as its UTF-8 text wherever a value is shown.
     This marker stands in for the text when there is none to show: the bytes are
-    not UTF-8 text (``binary``), the caller may not read bodies (``withheld``),
-    or the store no longer holds them (``unavailable``). It never raises.
+    not UTF-8 text (``binary``), or the store no longer holds them
+    (``unavailable``). It never raises. Every caller who may read a Claim reads
+    its exact-content value; nothing is withheld by permission.
     """
 
-    exact_content: Literal["binary", "withheld", "unavailable"]
+    exact_content: Literal["binary", "unavailable"]
     content_digest: str
     # The value's length in bytes, when it is known without reading the bytes
     # (the accepted span) or they were read.

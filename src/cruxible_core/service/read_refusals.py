@@ -51,17 +51,70 @@ def nearest(value: str, names: Iterable[str], *, limit: int = 5) -> tuple[str, .
     return tuple(dict.fromkeys([*exact_leaf, *close, *close_leaf]))[:limit]
 
 
+#: The shortest git-oid prefix ``at`` accepts: the compact coordinate every read prints.
+OID_PREFIX_MIN = 12
+_MAX_OID_CANDIDATES = 5
+_OID_PREFIX = re.compile(rf"[0-9a-f]{{{OID_PREFIX_MIN},64}}")
+_AT_REPAIR = "Omit at to read the current head, or pass an accepted git oid or a unique prefix"
+
+
+def _not_accepted(message: str, candidates: Iterable[str] = ()) -> ReadRefusalError:
+    return ReadRefusalError(
+        "playbill.read.coordinate_not_accepted",
+        f"at does not name an accepted generation of this instance ({message})",
+        http_status=404,
+        candidates=candidates,
+        repair_line=_AT_REPAIR,
+        context={"field_path": "at"},
+    )
+
+
+def _oid_for(instance: PlaybillInstance, at: str) -> str:
+    """The one accepted generation's oid that ``at`` (a full oid or a unique prefix) names."""
+
+    if not _OID_PREFIX.fullmatch(at):
+        if len(at) < OID_PREFIX_MIN and re.fullmatch(r"[0-9a-f]+", at):
+            raise ReadRefusalError(
+                "playbill.read.coordinate_prefix_too_short",
+                f"at {at!r} is {len(at)} hex characters; a git-oid prefix needs at least "
+                f"{OID_PREFIX_MIN}",
+                repair_line=f"Pass the {OID_PREFIX_MIN}-character coordinate a read printed",
+                context={"field_path": "at"},
+            )
+        raise _not_accepted("at must contain 12 to 64 lowercase hex characters")
+    oids = [generation.oid for generation in reversed(instance.accepted_history())]
+    matches = [oid for oid in oids if oid.startswith(at)]
+    if len(matches) > 1:
+        raise ReadRefusalError(
+            "playbill.read.coordinate_ambiguous",
+            f"at {at!r} is a prefix of {len(matches)} accepted generations' git oids",
+            http_status=409,
+            candidates=matches[:_MAX_OID_CANDIDATES],
+            repair_line="Pass one of them in full",
+            context={"field_path": "at", "matches": len(matches)},
+        )
+    if not matches:
+        close = difflib.get_close_matches(at, oids, n=_MAX_OID_CANDIDATES, cutoff=0)
+        raise _not_accepted(f"no accepted git oid starts with {at}", close)
+    return matches[0]
+
+
 def resolve_read_coordinate(
     instance: PlaybillInstance,
     at: ClientCoordinate | AcceptedCoordinate | str | None,
 ) -> AcceptedProjectionCoordinate:
-    """The accepted coordinate a read names: head, an exact coordinate, or a git oid."""
+    """The accepted coordinate a read names: head, an exact coordinate, or a git oid.
+
+    A git oid may be shortened to a unique prefix of at least ``OID_PREFIX_MIN``
+    hex characters, so the compact coordinate a read prints can be passed back.
+    Prefixes resolve against accepted generations only.
+    """
 
     if at is None:
         return instance.accepted_coordinate()
     try:
         if isinstance(at, str):
-            return instance.coordinate_for_oid(at)
+            return instance.coordinate_for_oid(_oid_for(instance, at))
         return instance.resolve_accepted_coordinate(
             git_oid=at.git_oid,
             semantic_root=at.semantic_root,
@@ -69,13 +122,7 @@ def resolve_read_coordinate(
             compiler_digest=at.compiler_digest,
         )
     except PlaybillError as exc:
-        raise ReadRefusalError(
-            "playbill.read.coordinate_not_accepted",
-            f"at does not name an accepted generation of this instance ({exc})",
-            http_status=404,
-            repair_line="Omit at to read the current head, or pass a git oid from history",
-            context={"field_path": "at"},
-        ) from exc
+        raise _not_accepted(str(exc)) from exc
 
 
-__all__ = ["ReadRefusalError", "nearest", "resolve_read_coordinate"]
+__all__ = ["OID_PREFIX_MIN", "ReadRefusalError", "nearest", "resolve_read_coordinate"]

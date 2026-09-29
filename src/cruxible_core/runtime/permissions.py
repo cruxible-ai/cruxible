@@ -461,30 +461,6 @@ def check_permission(
         )
 
 
-def permits(tool_name: str) -> bool:
-    """Whether the current mode would pass ``check_permission(tool_name)``'s tier check.
-
-    For a read that shapes its answer by what the caller may see rather than
-    refusing: it neither raises nor logs a denial. The caller has already passed
-    its own operation's check, including the instance scope.
-    """
-    if tool_name not in PERMISSION_REQUIREMENTS:
-        raise ConfigError(f"Tool '{tool_name}' has no entry in permission requirements")
-    return get_current_mode() >= PERMISSION_REQUIREMENTS[tool_name]
-
-
-# The one gate on showing an exact-content Claim value as text on a read verb.
-# Today it is body-read permission (governed_write), the boundary Capture and
-# Document-body reads share; a caller below it sees a ``withheld`` marker.
-# Opening exact-content text to READ_ONLY is changing this one name.
-EXACT_CONTENT_TEXT_GATE = "cruxible_playbill_body_read"
-
-
-def may_read_exact_content() -> bool:
-    """Whether the current caller sees exact-content Claim values as text."""
-    return permits(EXACT_CONTENT_TEXT_GATE)
-
-
 def require_unscoped_operator(operation: str) -> None:
     """Require an unscoped operator credential for a daemon-wide operation.
 

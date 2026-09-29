@@ -301,7 +301,12 @@ def register_tools(
         ] = None,
         at: Annotated[
             str | contracts.PlaybillAcceptedCoordinate | None,
-            Field(description="An accepted coordinate, or one accepted generation's Git OID."),
+            Field(
+                description=(
+                    "An accepted coordinate, or one accepted generation's Git OID "
+                    "(a unique prefix of 12+ hex characters is enough)."
+                )
+            ),
         ] = None,
         evaluation_time: Annotated[
             str | None, Field(description="ISO-8601 instant; defaults to now.")
@@ -842,7 +847,12 @@ def register_tools(
         ] = None,
         at: Annotated[
             contracts.PlaybillAcceptedCoordinate | str | None,
-            Field(description="Accepted coordinate or git oid to read at; default current head."),
+            Field(
+                description=(
+                    "Accepted coordinate or git oid (or a unique 12+ hex prefix) to read at; "
+                    "default current head."
+                )
+            ),
         ] = None,
         evaluation_time: Annotated[
             str | None,
