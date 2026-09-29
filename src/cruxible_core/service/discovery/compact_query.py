@@ -27,7 +27,6 @@ listing it was cut from.
 
 from __future__ import annotations
 
-import json
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -49,6 +48,7 @@ from cruxible_client.contracts.compact_query import (
     QueryMode,
 )
 from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactV1,
     ProcedureArtifactV2,
@@ -680,7 +680,7 @@ def _member_key(value: object) -> tuple[str, object]:
     try:
         hash(value)
     except TypeError:
-        return ("json", json.dumps(value, sort_keys=True, separators=(",", ":"), default=repr))
+        return ("json", canonical_json(value, default=repr))
     return ("scalar", value)
 
 
