@@ -3611,8 +3611,21 @@ def _emit_get_text(result: Any) -> None:
             for key, value in card.items():
                 if value in (None, [], {}):
                     continue
-                shown = ", ".join(map(str, value)) if isinstance(value, list) else value
-                click.echo(f"{key}: {_get_value_text(shown, width=200)}")
+                if isinstance(value, list) and all(isinstance(item, dict) for item in value):
+                    click.echo(f"{key}:")
+                    for item in value:
+                        click.echo("  " + "  ".join(str(part) for part in item.values()))
+                    continue
+                if isinstance(value, dict):
+                    value = "  ".join(
+                        f"{name}={', '.join(map(str, part)) if isinstance(part, list) else part}"
+                        for name, part in value.items()
+                    )
+                if isinstance(value, list):
+                    # Names are never cut: a truncated name is not a usable reference.
+                    click.echo(f"{key}: {printable(', '.join(map(str, value)))}")
+                    continue
+                click.echo(f"{key}: {_get_value_text(value, width=200)}")
         if card.get("flags"):
             click.echo(f"flags: {', '.join(card['flags'])}")
         for step in nexts:

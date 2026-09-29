@@ -163,3 +163,35 @@ def test_a_malformed_range_is_a_usage_error_with_an_example(
     assert result.exit_code == 2
     assert "range must be start:end" in result.output
     assert "example: cruxible playbill get" in result.output
+
+
+def test_other_cards_print_names_whole_and_nested_rows_readably(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.get_reads import (
+        PlaybillGetProposalCardV1,
+        PlaybillGetProposalChangeV1,
+    )
+
+    _stub(
+        monkeypatch,
+        _result(
+            "proposal",
+            card=PlaybillGetProposalCardV1(
+                proposal="sha256:" + "1" * 64,
+                status="open",
+                verdict="candidate",
+                changes=(
+                    PlaybillGetProposalChangeV1(path="documents/design.json", change="create"),
+                ),
+                next=("cruxible playbill proposal review sha256:" + "1" * 64,),
+            ),
+        ),
+    )
+
+    result = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "sha256:11111111"])
+
+    assert result.exit_code == 0, result.output
+    assert "status: open" in result.output
+    assert "changes:\n  documents/design.json  create" in result.output
+    assert "next: cruxible playbill proposal review sha256:" in result.output
