@@ -31,6 +31,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Any, Literal, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
@@ -1735,18 +1736,28 @@ def _engine_answer(
                 if isinstance(value, str) and value.startswith("Subject:"):
                     value = value.removeprefix("Subject:")
                 out[_out(projected.name)] = value
+            states = {_out(projected.name): projected.state for projected in row.fields}
             for key, ref in exact_fields.items():
                 path = _subject_path_of(row, ref.binding)
-                slot: list[LiveValue] = []
-                if path is not None:
-                    ensure_values(
-                        renderer.values,
-                        instance,
-                        coordinate,
-                        paths=(path,),
-                        predicates=(ref.predicate,),
-                    )
-                    slot = renderer.values.slot(path, ref.predicate)
+                if path is None or states.get(key) not in {"present", "conflict"}:
+                    # The engine answered no value; the text never adds one.
+                    out[key] = None
+                    continue
+                ensure_values(
+                    renderer.values,
+                    instance,
+                    coordinate,
+                    paths=(path,),
+                    predicates=(ref.predicate,),
+                )
+                # Only the Claims the engine read for this field under the
+                # query's evaluation policy; never every live Claim in the slot.
+                selected = _engine_selected(row, ref)
+                slot = [
+                    item
+                    for item in renderer.values.slot(path, ref.predicate)
+                    if item.identity in selected
+                ]
                 shown = distinct(item.value for item in slot)
                 info = vocabulary.predicates[ref.predicate]
                 listed = info.cardinality == "many" or len(shown) > 1
@@ -1769,6 +1780,19 @@ def _engine_answer(
         render=render,
         capped=capped,
         notes=(*notes, *cap_notes),
+    )
+
+
+def _engine_selected(row: Any, ref: QueryClaimValueRefV1) -> frozenset[str]:
+    """The Claim identities the engine read for one projected claim-value field."""
+
+    subject = next(
+        (item.subject_identity for item in row.bindings if item.binding == ref.binding), None
+    )
+    return frozenset(
+        "Claim:" + PurePosixPath(item.claim_path).stem
+        for item in row.read_claims
+        if item.predicate == ref.predicate and item.subject_identity == subject
     )
 
 

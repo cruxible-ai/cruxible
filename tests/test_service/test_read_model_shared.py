@@ -542,3 +542,24 @@ def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
     assert evidence is not None and evidence.value == long_note
     history = _exact_get(instance, card.claims[0].claim, detail="history").history
     assert history is not None and [item.value for item in history.revisions] == [cut]
+
+
+def test_projected_exact_content_follows_the_engines_visibility_policy(
+    exact_world: tuple[Any, dict[str, Any]],
+) -> None:
+    """Regression (Codex F-001): text is shown only for Claims the engine selected.
+
+    Under visible_verdicts=["contradicted"] the engine answers no value for a
+    supported ruling, so the row shows none: the reader never adds a value.
+    """
+
+    instance, seeded = exact_world
+    declared = work_item_query("project.exact.contradicted").model_dump(mode="json")
+    declared["evaluation_policy"]["visible_verdicts"] = ["contradicted"]
+    rows = _exact_query(
+        instance, spec=QueryDefinitionSpecV1.model_validate({**declared, "pins": []})
+    ).rows
+
+    assert {row["item_id"]: row["status"] for row in rows} == {
+        claim.subject.split("/", 1)[1]: None for claim in seeded.values()
+    }
