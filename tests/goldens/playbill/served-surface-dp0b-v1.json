@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-29:procedures-batch",
-    "surface_digest": "sha256:ba513042d5e47e2b3aacd296038e20e9eb649210542e29dad1d688fd819fdbbb"
+    "surface_digest": "sha256:3a9d823c7538adbb304468864c10a05fab3e0756640e1de0f5ac3c4149753b60"
   },
   "surface": {
     "cli_leaves": [
@@ -1726,7 +1726,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/next",
         "request_model": "types.UnionType[cruxible_core.server.playbill_request_models.PlaybillNextRequest,cruxible_core.server.playbill_request_models.PlaybillNextRequestV2]",
-        "request_schema_digest": "sha256:bd2b14b359a49a7e41d83fdc901251529ea4a60e4b143c14409b95e05a091740",
+        "request_schema_digest": "sha256:7602d534d5d5906e784e86191c3653c24dd7cd85f2ec3684660610d445e52a5f",
         "response_model": "cruxible_client.contracts.PlaybillNextResult",
         "response_schema_digest": "sha256:08641ea8d3b65e067e945e26f3bc76f263df87265da8ef17eecd4bc621f20487"
       },

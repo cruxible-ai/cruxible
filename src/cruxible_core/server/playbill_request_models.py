@@ -287,6 +287,10 @@ class PlaybillNextRequest(_StrictPlaybillRequest):
     since_result_digest: str | None = None
     limit: int = Field(default=PLAYBILL_NEXT_DEFAULT_LIMIT, ge=1, le=PLAYBILL_NEXT_MAX_LIMIT)
     cursor: str | None = Field(default=None, max_length=2048)
+    # Who reads the queue: the surface a repair renders for, and the tools an
+    # MCP session advertises. The daemon supplies the caller's tier itself.
+    caller_surface: Literal["cli", "mcp", "sdk"] | None = None
+    caller_tools: tuple[str, ...] | None = None
 
 
 class PlaybillNextRequestV2(_StrictPlaybillRequest):
@@ -303,6 +307,8 @@ class PlaybillNextRequestV2(_StrictPlaybillRequest):
         default=None,
         pattern=r"^sha256:[0-9a-f]{64}$",
     )
+    caller_surface: Literal["cli", "mcp", "sdk"] | None = None
+    caller_tools: tuple[str, ...] | None = None
 
 
 class PlaybillCurationListRequest(_StrictPlaybillRequest):

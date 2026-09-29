@@ -449,3 +449,35 @@ def test_nearest_predicates_cover_typos_and_bare_leaf_names() -> None:
     )
     assert nearest_names("adoption_state", declared) == ("dev.roadmap_item.adoption_state",)
     assert nearest_names("zzz", declared) == ()
+
+
+def test_http_next_accepts_the_callers_surface_and_tools(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """The served door takes the caller view the MCP and SDK clients send."""
+
+    client, instance_id, _private_key = playbill_http
+    body = {
+        "tag": "playbill-next-request-v2",
+        "evaluation_time": "2026-08-26T16:00:00+00:00",
+        "access_profile": {
+            "tag": "playbill-coverage-access-profile-v1",
+            "profile_id": "test-next",
+            "permitted_access_classes": ["instance", "public"],
+            "disclose_restricted_existence": True,
+        },
+    }
+
+    for tag in ("playbill-next-request-v1", "playbill-next-request-v2"):
+        for view in (
+            {"caller_surface": "sdk"},
+            {"caller_surface": "mcp", "caller_tools": ["cruxible_playbill_next"]},
+        ):
+            response = client.post(
+                f"/api/v1/{instance_id}/playbill/next", json=body | {"tag": tag} | view
+            )
+            assert response.status_code == 200, response.text
+    unknown = client.post(
+        f"/api/v1/{instance_id}/playbill/next", json=body | {"caller_surface": "web"}
+    )
+    assert unknown.status_code == 422, unknown.text
