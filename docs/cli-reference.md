@@ -1704,6 +1704,46 @@ Audit reads do not create qualifying consumption touches or change governed
 state. Follow `next_cursor` only while its accepted coordinate, evaluation time,
 scope, and operational input head remain unchanged.
 
+## playbill set, retire and write
+
+~~~text
+cruxible playbill set SUBJECT FIELD VALUE --because TEXT
+  [--evidence-file PATH#ANCHOR | --capture DIGEST] [--role ROLE] [--contend]
+  [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
+cruxible playbill retire TARGET [FIELD] --because TEXT
+  [--reason was-rescinded|was-wrong|superseded] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
+cruxible playbill write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-accept]
+  [--at GIT_OID] [--json]
+cruxible playbill write --schema
+~~~
+
+`set` puts VALUE in FIELD of SUBJECT (`kind/id`). On a single-value field it
+replaces the live value: the Claim it revises is found for you. A Subject of a
+known kind that does not exist yet is added in the same change set; a
+Subject-valued VALUE must already exist. FIELD is a field of the kind as
+`orient` names it, or the full predicate. VALUE is text: an enum member, a
+number or `true`/`false` for such fields, a Subject as `kind/id`, or the text
+itself for exact content (which is also its own evidence). The default evidence
+is `--because` as self evidence; `--evidence-file` cites text found once in a
+catalogued workspace file, read on this side, and `--capture` an existing
+Capture. The write accepts in the same call when the approval policy and your
+tier allow it; otherwise it prints the eligible approvers and the approve
+command. `--no-accept` only proposes. `--dry-run` runs every check and writes
+nothing; pass its coordinate back as `--at` to refuse
+(`playbill.write.slot_changed`) if the field moved since. Each change prints
+before and after, its Claim and its verdict; a verdict other than `supported`
+prints a warning with its repair.
+
+`retire` ends one live Claim, named by ID or by SUBJECT FIELD when that field
+holds one value; the Claims that depend on it retire with it. `write` applies a
+FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":
+[...]}`, or a bare list with `--because`, each change
+`{"op": "set" | "add", "subject", "field", "value"}` or
+`{"op": "retire", "target"}`. `add` puts one more value in a many-valued field;
+two adds on one field land in one change set. `--schema` prints what FILE
+holds. A refusal prints its code, the nearest valid names and the repair, and
+exits 1.
+
 ## playbill get
 
 ~~~text

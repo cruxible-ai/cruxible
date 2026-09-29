@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 from pydantic import SecretStr, TypeAdapter
 
@@ -89,6 +89,7 @@ from cruxible_client.authoring.workspace import (
     observe_playbill_next_workspace_with_coverage,
     refresh_workspace_floor,
 )
+from cruxible_client.authoring.write_evidence import observe_changes
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyV1,
 )
@@ -180,6 +181,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV2,
     ProjectionCurrencyPolicy,
 )
+from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.get_reads import (
     PlaybillByteRangeV1,
     PlaybillExactContentRefV1,
@@ -227,6 +229,22 @@ from cruxible_client.contracts.resolution_contracts import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
+from cruxible_client.contracts.write import (
+    AddChange,
+    Change,
+    ClaimValue,
+    Evidence,
+    PlaybillRetireRequestV1,
+    PlaybillSetRequestV1,
+    PlaybillWriteRequestV1,
+    RetireChange,
+    SetChange,
+    WriteAccept,
+    WriteOutcome,
+    WriteRetireReason,
+    WriteRole,
+)
+from cruxible_client.contracts.write import SlotRef as WriteSlotRef
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 
@@ -1202,6 +1220,136 @@ class ChangeSetDraft:
         )
 
 
+class _Unset(Enum):
+    TOKEN = "unset"
+
+
+_UNSET = _Unset.TOKEN
+WriteAt = AcceptedCoordinate | api.PlaybillAcceptedCoordinate | str | None
+
+
+def _write_subject(subject: str | SubjectRef) -> str:
+    return subject.address if isinstance(subject, SubjectRef) else subject
+
+
+def _write_field(field_name: str | ClaimTypeRef) -> str:
+    return field_name.address if isinstance(field_name, ClaimTypeRef) else field_name
+
+
+def _write_value(value: ClaimValue | SubjectRef | LiteralValue) -> ClaimValue:
+    if isinstance(value, SubjectRef):
+        return value.address
+    if isinstance(value, LiteralValue):
+        if not isinstance(value.value, bool | int | float | str):
+            raise ValueError("the write verbs take a scalar value; this literal is structured")
+        return value.value
+    return value
+
+
+def _write_target(target: str | ClaimRef | WriteSlotRef) -> str | WriteSlotRef:
+    if isinstance(target, ClaimRef):
+        return target.address
+    return target
+
+
+class WriteBatch:
+    """Changes that are written together, as one change set: ``pb.changes(because=...)``.
+
+    ``set`` replaces a single-value field, ``add`` puts one more value in a
+    many-valued field, and ``retire`` ends one live Claim; ``write()`` sends them
+    all and returns the outcome, raising ``WriteRefusalError`` on a refusal.
+    """
+
+    def __init__(self, playbill: Playbill, *, because: str) -> None:
+        self._playbill = playbill
+        self.because = because
+        self.changes: list[Change] = []
+
+    def set(
+        self,
+        subject: str | SubjectRef,
+        field: str | ClaimTypeRef,
+        value: ClaimValue | SubjectRef | LiteralValue,
+        *,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+    ) -> WriteBatch:
+        self.changes.append(
+            SetChange(
+                subject=_write_subject(subject),
+                field=_write_field(field),
+                value=_write_value(value),
+                evidence=evidence,
+                role=role,
+                contend=contend,
+            )
+        )
+        return self
+
+    def add(
+        self,
+        subject: str | SubjectRef,
+        field: str | ClaimTypeRef,
+        value: ClaimValue | SubjectRef | LiteralValue,
+        *,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+    ) -> WriteBatch:
+        self.changes.append(
+            AddChange(
+                subject=_write_subject(subject),
+                field=_write_field(field),
+                value=_write_value(value),
+                evidence=evidence,
+                role=role,
+            )
+        )
+        return self
+
+    def retire(
+        self,
+        target: str | ClaimRef | WriteSlotRef,
+        *,
+        because: str | None = None,
+        reason: WriteRetireReason = "was-rescinded",
+    ) -> WriteBatch:
+        self.changes.append(
+            RetireChange(target=_write_target(target), because=because, reason=reason)
+        )
+        return self
+
+    def write(
+        self,
+        *,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        if not self.changes:
+            raise ValueError("a write needs at least one change")
+        return self._playbill._write(
+            PlaybillWriteRequestV1(
+                because=self.because,
+                changes=tuple(self.changes),
+                dry_run=dry_run,
+                accept=accept,
+                at=self._playbill._write_at(at),
+                surface="sdk",
+                full_coordinate=True,
+            )
+        )
+
+    def __repr__(self) -> str:
+        spelled = ", ".join(
+            f"{item.op} {getattr(item, 'subject', '')} {getattr(item, 'field', '')}".strip()
+            if not isinstance(item, RetireChange)
+            else f"retire {item.target}"
+            for item in self.changes
+        )
+        return f"WriteBatch(because={self.because!r}, changes=[{spelled}])"
+
+
 @dataclass(frozen=True)
 class SubjectDraft(_IntentDraft):
     shell: SubjectShell
@@ -1241,6 +1389,11 @@ class Intent:
             playbill._instance_id, intent_id
         ).intent
         return cls(playbill, draft, raw, preflight=result)
+
+    def __repr__(self) -> str:
+        status = self._candidate_status
+        state = "unknown" if status is None else status.state
+        return f"Intent({self._raw.get('intent_id')!r}, state={state!r})"
 
     @property
     def intent_id(self) -> str:
@@ -1463,6 +1616,13 @@ class Proposal:
     def review(self) -> ReviewedProposal:
         """Fetch an immutable full review; inspect its details before approving."""
         return review_proposal(self._playbill, self.proposal_id)
+
+    def accept(self) -> api.PlaybillActivationReceipt:
+        """Accept this proposal once its approvals are in: ``Playbill.accept`` by handle."""
+        return self._playbill.accept(self.proposal_id)
+
+    def __repr__(self) -> str:
+        return f"Proposal({self.proposal_id!r})"
 
     def approve(
         self, *, signer: ApprovalSigner, reviewed: ReviewedProposal
@@ -2244,8 +2404,20 @@ class Playbill:
             claim_type_envelopes=tuple(view.envelope for view in listing.claim_types),
         )
 
-    def changes(self, *, rationale: str | None = None) -> ChangeSetDraft:
+    @overload
+    def changes(self, *, because: str) -> WriteBatch: ...
+
+    @overload
+    def changes(self, *, rationale: str | None = None) -> ChangeSetDraft: ...
+
+    def changes(
+        self, *, rationale: str | None = None, because: str | None = None
+    ) -> ChangeSetDraft | WriteBatch:
         """Open one changeset that any mix of members can be authored into.
+
+        ``changes(because=...)`` opens the typed write batch instead:
+        ``.set(...)``, ``.add(...)`` and ``.retire(...)`` changes, sent together by
+        ``.write()``. ``changes(rationale=...)`` is the full authoring changeset.
 
         `pb.claim(...)` still authors exactly one Claim. This is the same
         authoring surface for an intent that carries more than one: it lowers
@@ -2254,7 +2426,124 @@ class Playbill:
         current daemon admission still checks whether its inputs are stale.
         """
 
+        if because is not None:
+            if rationale is not None:
+                raise ValueError(
+                    "pass because (a write batch) or rationale (a changeset), not both"
+                )
+            return WriteBatch(self, because=because)
         return ChangeSetDraft(self.at(self.coordinate), rationale)
+
+    # -- the write verbs -------------------------------------------------------
+
+    def _write_at(self, at: WriteAt | _Unset) -> api.PlaybillAcceptedCoordinate | str | None:
+        """The read coordinate a write names: by default this context's own."""
+
+        if isinstance(at, _Unset):
+            return None if self._coordinate is None else _api_coordinate(self.coordinate)
+        if at is None or isinstance(at, str):
+            return at
+        return api.PlaybillAcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+
+    def _write(self, request: PlaybillWriteRequestV1) -> WriteOutcome:
+        """Send one write and answer its outcome, or raise its refusal."""
+
+        request = request.model_copy(
+            update={"changes": observe_changes(request.changes, workspace=self._workspace)}
+        )
+        outcome = self._client.playbill_write(self._instance_id, request=request)
+        return self._written(outcome)
+
+    def _written(self, outcome: WriteOutcome) -> WriteOutcome:
+        pinned = outcome.accepted_coordinate
+        if outcome.status == "accepted" and pinned is not None:
+            self._observe_read(_coordinate(pinned), expected=None)
+        if not outcome.refused:
+            return outcome
+        refusal = outcome.refusal
+        if refusal is not None and refusal.code == "playbill.write.slot_changed" and pinned:
+            # The refusal showed the value the slot holds now; setting again
+            # replaces that value, which is its repair.
+            self._observe_read(_coordinate(pinned), expected=None)
+        raise WriteRefusalError(
+            "playbill.write.refused" if refusal is None else refusal.code,
+            "the write refused" if refusal is None else refusal.message,
+            change=None if refusal is None else refusal.change,
+            candidates=() if refusal is None else refusal.candidates,
+            repair_line=None if refusal is None else refusal.repair,
+            field_path=None if refusal is None else refusal.field_path,
+            outcome=outcome,
+        )
+
+    def set(
+        self,
+        subject: str | SubjectRef,
+        field: str | ClaimTypeRef,
+        value: ClaimValue | SubjectRef | LiteralValue,
+        *,
+        because: str,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        """Put one value in one field of one Subject, replacing the live value.
+
+        The Claim it replaces is found for you, and a missing Subject of a known
+        kind is added. It accepts in the same call when policy lets you
+        (``accept="never"`` only proposes); ``dry_run`` checks everything and
+        writes nothing. By default it refuses when the field changed since this
+        context's coordinate. A refusal raises ``WriteRefusalError``; check
+        ``outcome.warnings`` for a verdict that is not supported.
+        """
+
+        request = PlaybillSetRequestV1(
+            subject=_write_subject(subject),
+            field=_write_field(field),
+            value=_write_value(value),
+            because=because,
+            evidence=evidence,
+            role=role,
+            contend=contend,
+            dry_run=dry_run,
+            accept=accept,
+            at=self._write_at(at),
+            surface="sdk",
+            full_coordinate=True,
+        )
+        if request.evidence is not None:
+            (change,) = observe_changes((request.change(),), workspace=self._workspace)
+            request = request.model_copy(update={"evidence": cast(SetChange, change).evidence})
+        return self._written(self._client.playbill_set(self._instance_id, request=request))
+
+    def retire(
+        self,
+        target: str | ClaimRef | WriteSlotRef,
+        *,
+        because: str,
+        reason: WriteRetireReason = "was-rescinded",
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        """End one live Claim, named by ID or ``SlotRef(subject=..., field=...)``.
+
+        Claims that depend on it retire with it, in one change set.
+        """
+
+        request = PlaybillRetireRequestV1(
+            target=_write_target(target),
+            because=because,
+            reason=reason,
+            dry_run=dry_run,
+            accept=accept,
+            at=self._write_at(at),
+            surface="sdk",
+            full_coordinate=True,
+        )
+        return self._written(self._client.playbill_retire(self._instance_id, request=request))
 
     def claim(
         self,

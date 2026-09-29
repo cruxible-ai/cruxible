@@ -67,8 +67,24 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.compact_query import CompactQuery
     from cruxible_client.authoring.sdk import ClaimView, Playbill, SubjectDraft
     from cruxible_client.contracts.claim_reads import ClaimValueV1
+    from cruxible_client.contracts.write import (
+        Change,
+        Evidence,
+        WriteAccept,
+        WriteOutcome,
+        WriteRetireReason,
+        WriteRole,
+    )
 
 _SEGMENT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def _write_value(value: object) -> Any:
+    if isinstance(value, SubjectRef):
+        return value.address
+    if isinstance(value, LiteralValue):
+        return value.value
+    return value
 
 
 class WorldStructureError(PlaybillSdkError):
@@ -112,11 +128,14 @@ CLAIM_TYPE_MEMBERS = frozenset(
 
 SUBJECT_MEMBERS = frozenset(
     {
+        "add",
         "address",
         "claims",
         "coordinate",
         "explain",
         "kind",
+        "retire",
+        "set",
         "subject_id",
         "subject_kind",
     }
@@ -373,6 +392,92 @@ class WorldSubject(SubjectRef):
         self._world._assert_current()
         return self._world._playbill.explain(self)
 
+    def set(
+        self,
+        /,
+        *,
+        because: str,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        **fields: object,
+    ) -> WriteOutcome:
+        """Set single-value fields of this Subject, by leaf: ``set(status="done", because=...)``.
+
+        Every field set here is one change of one change set. The names are
+        checked against this World before the wire; a leaf that is a Python
+        keyword takes one trailing underscore (``class_``). References from this
+        World stay valid after it: the next write is checked from this World's
+        coordinate plus its own writes, so only a slot someone else moved refuses.
+        """
+
+        from cruxible_client.contracts.write import SetChange
+
+        changes = [
+            SetChange(
+                subject=self.address,
+                field=self._world._write_field(self.subject_kind, name),
+                value=_write_value(value),
+                evidence=evidence,
+                role=role,
+                contend=contend,
+            )
+            for name, value in fields.items()
+        ]
+        return self._world._write(changes, because=because, dry_run=dry_run, accept=accept)
+
+    def add(
+        self,
+        /,
+        *,
+        because: str,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        **fields: object,
+    ) -> WriteOutcome:
+        """Add one more value to many-valued fields of this Subject, by leaf."""
+
+        from cruxible_client.contracts.write import AddChange
+
+        changes = [
+            AddChange(
+                subject=self.address,
+                field=self._world._write_field(self.subject_kind, name),
+                value=_write_value(value),
+                evidence=evidence,
+                role=role,
+            )
+            for name, value in fields.items()
+        ]
+        return self._world._write(changes, because=because, dry_run=dry_run, accept=accept)
+
+    def retire(
+        self,
+        field: str | ClaimTypeRef,
+        /,
+        *,
+        because: str,
+        reason: WriteRetireReason = "was-rescinded",
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+    ) -> WriteOutcome:
+        """Retire the one live value of a field of this Subject."""
+
+        from cruxible_client.contracts.write import RetireChange, SlotRef
+
+        name = field.address if isinstance(field, ClaimTypeRef) else field
+        predicate = (
+            name
+            if "." in name and self._world._node_at(name) is not None
+            else self._world._write_field(self.subject_kind, name)
+        )
+        change = RetireChange(target=SlotRef(subject=self.address, field=predicate), reason=reason)
+        return self._world._write([change], because=because, dry_run=dry_run, accept=accept)
+
     def __getitem__(self, predicate: str | ClaimTypeRef) -> tuple[ClaimView, ...]:
         """Read the live Claims under one predicate, named in full or by leaf."""
 
@@ -545,6 +650,7 @@ class World:
     __slots__ = (
         "_claim_cache",
         "_coordinate",
+        "_write_basis",
         "_playbill",
         "_root",
         "_row_cache",
@@ -571,6 +677,9 @@ class World:
         self._claim_cache: dict[tuple[str, str | None], tuple[ClaimView, ...]] = {}
         self._view_cache: dict[str, ClaimView] = {}
         self.unstructured_predicates = unstructured_predicates
+        # The coordinate this World's writes are checked from: its own, advanced
+        # past each of its own accepted writes while no one else wrote between.
+        self._write_basis = coordinate.git_oid
 
     @property
     def coordinate(self) -> AcceptedCoordinate:
@@ -615,6 +724,55 @@ class World:
 
     def _assert_current(self) -> None:
         self._playbill._assert_coordinate(self._coordinate)
+
+    def _write_field(self, subject_kind: str, keyword_or_leaf: str) -> str:
+        """The full predicate one write keyword names for a kind, checked here."""
+
+        # The keyword escape (`class_`, `self_`) adds exactly one underscore to a
+        # leaf that could not be a keyword as it stands; no other leaf ends in one.
+        leaf = keyword_or_leaf[:-1] if keyword_or_leaf.endswith("_") else keyword_or_leaf
+        return self._predicate_for(subject_kind, leaf).address
+
+    def _write(
+        self,
+        changes: Sequence[Change],
+        *,
+        because: str,
+        dry_run: bool,
+        accept: WriteAccept,
+    ) -> WriteOutcome:
+        """Send this World's changes, checked from its write basis; keep references valid.
+
+        A World is a snapshot, so its references would go stale the moment its
+        own write moved the head. Instead its writes are checked from its
+        coordinate advanced past its own accepted writes -- as long as nothing
+        else was accepted in between -- so a field refuses only when someone
+        else changed it.
+        """
+
+        from cruxible_client.contracts.write import PlaybillWriteRequestV1
+
+        if not changes:
+            raise TypeError("a write needs at least one field=value")
+        outcome = self._playbill._write(
+            PlaybillWriteRequestV1(
+                because=because,
+                changes=tuple(changes),
+                dry_run=dry_run,
+                accept=accept,
+                at=self._write_basis,
+                surface="sdk",
+                full_coordinate=True,
+            )
+        )
+        base = outcome.base
+        if (
+            outcome.status == "accepted"
+            and base is not None
+            and self._write_basis[: len(base.git_oid)] == base.git_oid
+        ):
+            self._write_basis = outcome.coordinate.git_oid
+        return outcome
 
     def _materialize(self, node: _Node) -> KindNamespace | WorldClaimType:
         """Resolve one node to the object its accepted structure makes it.
