@@ -433,7 +433,7 @@ class PredictionSettlementConsumers:
                     "UPDATE contracts SET capture_generation=NULL,capture_ordinal=0,"
                     "scan_through=NULL,scan_cursor=NULL WHERE selector_digest IS NOT NULL"
                 )
-            if events or captures["ordinal"] != capture_head or known != generation:
+            if events or (known == generation and captures["ordinal"] > capture_head):
                 connection.execute(
                     "INSERT INTO retries SELECT identity,record_digest,? "
                     "FROM unbindable WHERE true "

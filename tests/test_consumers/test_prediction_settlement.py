@@ -750,3 +750,42 @@ def test_retry_events_with_no_anchors_complete_without_worker_backlog(tmp_path: 
             health.detail["completed_anchor_retry_position"]
             == health.detail["anchor_retry_position"]
         )
+
+
+def test_an_index_rebuild_does_not_queue_a_global_anchor_retry(tmp_path: Path) -> None:
+    from cruxible_core.service.procedures.procedure_runs import _journal
+
+    instance, _event, _restore = unbindable_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    journal, _ = _journal(instance)
+    journal.index.path.unlink()
+    WORKER.match(instance, now=served.PREDICTED_AT, daemon_id="daemon")
+    with predictions._STATE.open(instance) as connection:
+        assert connection is not None
+        assert connection.execute("SELECT count(*) FROM retries").fetchone() == (0,)
+    # Existing contracts rescan the rebuilt capture index through their own cursors.
+    assert [work.key for work in WORKER.due(instance, now=served.PREDICTED_AT)] == ["captures"]
+
+
+def test_an_accepted_generation_does_not_queue_an_anchor_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import nullcontext
+
+    instance, _event, _restore = unbindable_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    with instance.accepted_history_reader() as history:
+        next_generation = history.sequence + 1
+    monkeypatch.setattr(
+        instance,
+        "accepted_history_reader",
+        lambda: nullcontext(SimpleNamespace(sequence=next_generation, versions_at=lambda _: ())),
+    )
+    WORKER.match(instance, now=served.PREDICTED_AT, daemon_id="daemon")
+    with predictions._STATE.open(instance) as connection:
+        assert connection is not None
+        assert connection.execute("SELECT generation FROM progress").fetchone() == (
+            next_generation,
+        )
+        assert connection.execute("SELECT count(*) FROM retries").fetchone() == (0,)
+    assert not tuple(WORKER.due(instance, now=served.PREDICTED_AT))
