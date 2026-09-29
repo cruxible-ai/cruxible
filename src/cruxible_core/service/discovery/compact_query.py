@@ -1149,6 +1149,14 @@ def _compact_subject_query(
             },
         )
     keys = [tuple(row.get(binding) or "" for binding in bindings) for row in candidates]
+    if follows and not orderings:
+        # Rows about one Subject belong together: with no order_by, a follow
+        # answer sorts by the queried Subject, then each follow alias in request
+        # order (an unbound alias first). The key is the page key, so cursors
+        # continue this same total order.
+        order = sorted(range(len(keys)), key=keys.__getitem__)
+        candidates = [candidates[index] for index in order]
+        keys = [keys[index] for index in order]
     return _Answer(
         mode="inline",
         kind=plan.kind,

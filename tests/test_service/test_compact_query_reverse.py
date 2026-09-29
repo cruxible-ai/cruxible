@@ -183,6 +183,52 @@ def test_reverse_rows_page_by_cursor_once_each(instance: Any) -> None:
         )
 
 
+def test_follow_rows_sort_by_the_queried_subject_without_order_by(instance: Any) -> None:
+    def rows(result: Any, *aliases: str) -> list[tuple[Any, ...]]:
+        return [(row["subject_id"], *(row[alias] for alias in aliases)) for row in result.rows]
+
+    # Reverse: the alias `batch` sorts before `subject`, yet rows group by item.
+    assert rows(_query(instance, follow=[BATCH], select=["batch"]), "batch") == [
+        ("wi-42", f"{BATCH_KIND}/b-1"),
+        ("wi-42", f"{BATCH_KIND}/b-2"),
+        ("wi-43", f"{BATCH_KIND}/b-1"),
+    ]
+    # Forward, and mixed: the queried Subject first, then each alias in request
+    # order, an unbound alias before a bound one.
+    assert rows(
+        _query(instance, follow=[{"field": "parent", "as": "a_up"}], select=["a_up"]), "a_up"
+    ) == [("wi-42", None), ("wi-43", f"{SUBJECT_KIND}/wi-42")]
+    mixed = _query(
+        instance,
+        follow=[
+            {"field": "governs", "as": "decision", "direction": "reverse"},
+            BATCH,
+        ],
+        select=["decision", "batch"],
+    )
+    assert rows(mixed, "decision", "batch") == [
+        ("wi-42", None, f"{BATCH_KIND}/b-1"),
+        ("wi-42", None, f"{BATCH_KIND}/b-2"),
+        ("wi-43", "project.decision/d-1", f"{BATCH_KIND}/b-1"),
+    ]
+    # Every page continues the same order.
+    paged: list[tuple[Any, ...]] = []
+    cursor = None
+    while True:
+        page = _query(
+            instance,
+            follow=[{"field": "governs", "as": "decision", "direction": "reverse"}, BATCH],
+            select=["decision", "batch"],
+            limit=1,
+            cursor=cursor,
+        )
+        paged.extend(rows(page, "decision", "batch"))
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    assert paged == rows(mixed, "decision", "batch")
+
+
 def test_order_by_groups_reverse_rows_by_subject(instance: Any) -> None:
     result = _query(instance, follow=[BATCH], select=["batch"], order_by=["subject_id"])
 
