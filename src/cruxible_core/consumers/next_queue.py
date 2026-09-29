@@ -4,7 +4,9 @@ This findings projection is disposable. Matching follows the accepted and door
 heads plus CAS availability, and one bounded worker folds each new target
 before moving the serving cursor. Time bounds come from the fold, never from
 polling a clock: crossing a bound makes reads compute live until another input
-change causes a recomputation.
+change causes a recomputation. A failed target remains stalled until an input
+changes or the operator rebuilds this disposable state, avoiding endless folds
+of the same broken inputs.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ CREATE TABLE progress (
  target_coordinate TEXT NOT NULL, target_door TEXT NOT NULL, target_fingerprint TEXT,
  coordinate TEXT, door TEXT, generation INTEGER NOT NULL DEFAULT 0,
  checked_at TEXT, input_fingerprint TEXT, v1 TEXT, v2 TEXT,
+ failed_coordinate TEXT, failed_door TEXT, failed_fingerprint TEXT,
  last_error TEXT, last_error_at TEXT
 ) STRICT;
 """
@@ -114,8 +117,10 @@ class NextQueueConsumers:
                 return ()
             row = connection.execute(
                 "SELECT target_coordinate,target_door,target_fingerprint FROM progress "
-                "WHERE coordinate IS NOT target_coordinate OR door IS NOT target_door "
-                "OR input_fingerprint IS NOT target_fingerprint"
+                "WHERE (coordinate IS NOT target_coordinate OR door IS NOT target_door "
+                "OR input_fingerprint IS NOT target_fingerprint) "
+                "AND (failed_coordinate IS NULL OR failed_coordinate IS NOT target_coordinate "
+                "OR failed_door IS NOT target_door OR failed_fingerprint IS NOT target_fingerprint)"
             ).fetchone()
         return () if row is None else (ConsumerWork(key="queue", item=row),)
 
@@ -123,14 +128,14 @@ class NextQueueConsumers:
         from cruxible_core.service.discovery.next import build_stored_claim_queue
 
         instance = manager.get(instance_id)
-        public = AcceptedCoordinate.model_validate_json(work.item[0])
-        coordinate = instance.resolve_accepted_coordinate(
-            git_oid=public.git_oid,
-            semantic_root=public.semantic_root,
-            generation_root=public.generation_root,
-            compiler_digest=public.compiler_digest,
-        )
         try:
+            public = AcceptedCoordinate.model_validate_json(work.item[0])
+            coordinate = instance.resolve_accepted_coordinate(
+                git_oid=public.git_oid,
+                semantic_root=public.semantic_root,
+                generation_root=public.generation_root,
+                compiler_digest=public.compiler_digest,
+            )
             fingerprint = verdict_input_fingerprint(instance)
             if fingerprint != work.item[2]:
                 # Matching will pick up the availability change on its next pass.
@@ -153,7 +158,8 @@ class NextQueueConsumers:
                 assert connection is not None
                 connection.execute(
                     "UPDATE progress SET coordinate=?,door=?,generation=?,checked_at=?,"
-                    "input_fingerprint=?,v1=?,v2=?,last_error=NULL,last_error_at=NULL",
+                    "input_fingerprint=?,v1=?,v2=?,failed_coordinate=NULL,failed_door=NULL,"
+                    "failed_fingerprint=NULL,last_error=NULL,last_error_at=NULL",
                     (
                         work.item[0],
                         work.item[1],
@@ -168,8 +174,9 @@ class NextQueueConsumers:
             with _STATE.open(instance) as connection:
                 assert connection is not None
                 connection.execute(
-                    "UPDATE progress SET last_error=?,last_error_at=?",
-                    (f"{type(exc).__name__}: {exc}", format_datetime(now)),
+                    "UPDATE progress SET failed_coordinate=?,failed_door=?,failed_fingerprint=?,"
+                    "last_error=?,last_error_at=?",
+                    (*work.item, f"{type(exc).__name__}: {exc}", format_datetime(now)),
                 )
             raise
 
@@ -210,7 +217,7 @@ class NextQueueConsumers:
                 repair=(
                     ConsumerRepair(
                         operation="hand_edit",
-                        required_change="resolve_the_worker_error_then_restart_the_daemon",
+                        required_change="resolve_the_worker_error_then_rebuild_the_next_queue_state",
                         arguments={},
                     )
                     if error is not None

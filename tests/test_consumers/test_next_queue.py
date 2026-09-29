@@ -424,19 +424,31 @@ def test_cas_movement_recomputes_without_an_accepted_or_door_change(tmp_path: Pa
         )
 
 
-def test_a_failed_fold_stays_due_and_reports_a_repair(tmp_path: Path) -> None:
-    instance, _owner = seed_claims(tmp_path)
+@pytest.mark.parametrize("changed", ("accepted", "door", "cas"))
+def test_a_failed_target_is_not_retried_until_an_input_changes(
+    tmp_path: Path, changed: str
+) -> None:
+    instance, owner = _freshness_world(tmp_path) if changed == "accepted" else seed_claims(tmp_path)
     WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
     manager = SimpleNamespace(get=lambda _id: instance)
     (work,) = WORKER.due(instance, now=EVALUATION_TIME)
     with patch(
         "cruxible_core.service.discovery.next.build_stored_claim_queue",
         side_effect=OSError("unreadable"),
-    ):
+    ) as fold:
         with pytest.raises(OSError, match="unreadable"):
             WORKER.run(manager, "instance", work, now=EVALUATION_TIME)
+        for days in (0, 1, 99):
+            _drain(instance, EVALUATION_TIME + timedelta(days=days))
+        WORKER.match(instance, now=EVALUATION_TIME, daemon_id="restart")
+        assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
+        assert fold.call_count == 1
     (health,) = WORKER.health(instance, now=EVALUATION_TIME)
     assert health.state == "stalled" and health.repair is not None
+    assert (
+        health.repair.required_change
+        == "resolve_the_worker_error_then_rebuild_the_next_queue_state"
+    )
     from cruxible_core.service.discovery.next import _consumer_stalled_items
 
     (row,) = _consumer_stalled_items((health,))
@@ -444,9 +456,18 @@ def test_a_failed_fold_stays_due_and_reports_a_repair(tmp_path: Path) -> None:
     with sqlite3.connect(consumer._STATE.path(instance)) as connection:
         connection.execute("UPDATE progress SET checked_at=?,last_error_at=?", ("later", "later"))
     assert _consumer_stalled_items(WORKER.health(instance, now=EVALUATION_TIME)) == (row,)
+    assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
+    if changed == "accepted":
+        _refresh_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
+    elif changed == "door":
+        _attest(instance, owner, _current_claim(instance), tmp_path, at=EVALUATION_TIME)
+    else:
+        instance.body_store().store(b"new input after failure")
+    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="restart")
     assert tuple(WORKER.due(instance, now=EVALUATION_TIME))
     _drain(instance)
     assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
+    assert _stored(instance, EVALUATION_TIME) is not None
 
 
 def test_a_new_target_is_not_lost_when_an_old_flight_finishes(tmp_path: Path) -> None:
@@ -531,3 +552,49 @@ def test_a_cas_change_during_a_fold_is_not_published_under_the_previous_target(
     assert _stored(instance, EVALUATION_TIME) is None
     _drain(instance)
     assert _stored(instance, EVALUATION_TIME) is not None
+
+
+def test_an_old_failure_does_not_suppress_a_newer_matched_target(tmp_path: Path) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
+    (old_work,) = WORKER.due(instance, now=EVALUATION_TIME)
+    instance.body_store().store(b"new target before old failure")
+    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
+    # An old coordinate failure can arrive after matching advanced the CAS target.
+    with patch.object(instance, "resolve_accepted_coordinate", side_effect=OSError("old failure")):
+        with pytest.raises(OSError, match="old failure"):
+            WORKER.run(
+                SimpleNamespace(get=lambda _id: instance),
+                "instance",
+                old_work,
+                now=EVALUATION_TIME,
+            )
+    assert tuple(WORKER.due(instance, now=EVALUATION_TIME))
+    _drain(instance)
+    assert _stored(instance, EVALUATION_TIME) is not None
+
+
+def test_orient_profile_reuses_inside_the_interval_and_falls_back_at_valid_until(
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.service.discovery import next as next_module
+    from cruxible_core.service.discovery.orient import _NEXT_PROFILE
+
+    instance, _owner = _freshness_world(tmp_path)
+    at = datetime.fromisoformat("2026-08-16T20:00:00+00:00")
+    assert set(_NEXT_PROFILE.permitted_access_classes) == {"instance", "public"}
+    _drain(instance, at)
+    snapshot = _stored(instance, at)
+    assert snapshot is not None and snapshot.valid_until is not None
+    request = PlaybillNextRequestV2(evaluation_time=at, access_profile=_NEXT_PROFILE)
+    with patch.object(next_module, "_claim_rows", side_effect=AssertionError("live")):
+        service_playbill_next(instance, request=request)
+        summarize_playbill_next(instance, request=request)
+    edge = request.model_copy(update={"evaluation_time": snapshot.valid_until})
+    assert _stored(instance, snapshot.valid_until) is None
+    with patch.object(next_module, "_claim_rows", wraps=next_module._claim_rows) as live:
+        served = service_playbill_next(instance, request=edge)
+        summarize_playbill_next(instance, request=edge)
+        assert live.call_count == 2
+    with patch.object(consumer, "stored_claim_queue", return_value=None):
+        assert served == service_playbill_next(instance, request=edge)
