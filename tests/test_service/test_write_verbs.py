@@ -26,7 +26,14 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring import write_verbs
 from cruxible_core.service.authoring.write_verbs import WriteCaller, service_playbill_write
 from cruxible_core.service.discovery.query_values import read_live_values
-from tests.core_support._write_support import KIND, OWNER, REPORTS, caller, seed_write_surface
+from tests.core_support._write_support import (
+    CLAIM_TYPES,
+    KIND,
+    OWNER,
+    REPORTS,
+    caller,
+    seed_write_surface,
+)
 
 WI1 = f"{KIND}/wi-1"
 WI2 = f"{KIND}/wi-2"
@@ -278,6 +285,23 @@ def test_self_evidence_a_field_does_not_admit_lands_uncovered_and_says_so(
 
     supported = _write(instance, _set(WI1, "status", "ready"))
     assert supported.changes[0].verdict == "supported" and supported.warnings == ()
+
+
+def test_evidence_required_waits_for_a_claim_type_flag(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unreachable until F19 adds the flag; the refusal it guards names the contracts."""
+
+    assert write_verbs.requires_captured_evidence(CLAIM_TYPES[-1]) is False
+    monkeypatch.setattr(write_verbs, "requires_captured_evidence", lambda _claim_type: True)
+    refusal = _refusal(_write(instance, _set(WI1, "measured", 3)))
+    assert refusal.code == "playbill.write.evidence_required"
+    assert REPORTS.identity.name in refusal.candidates
+    captured = _write(
+        instance,
+        _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "sha256:" + "a" * 64}),
+    )
+    assert _refusal(captured).code != "playbill.write.evidence_required"
 
 
 def test_file_evidence_must_be_observed_by_the_writer(instance: PlaybillInstance) -> None:

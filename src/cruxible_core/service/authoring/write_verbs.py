@@ -223,6 +223,20 @@ def _render_commit(surface: PlaybillReadSurface, git_oid: str) -> str:
     return f'Call it again with dry_run=false and at="{git_oid}"'
 
 
+def requires_captured_evidence(claim_type: ClaimType) -> bool:
+    """Whether a ClaimType refuses a write backed only by the writer's own words.
+
+    Decision b refuses such a write with ``playbill.write.evidence_required``.
+    No accepted ClaimType field says "captured evidence required" yet: a policy
+    that merely does not admit self evidence lets the write land ``uncovered``,
+    with a warning (R05). The flag arrives with the compiler revision (F19);
+    until then this answers False and the refusal is unreachable.
+    """
+
+    del claim_type
+    return False
+
+
 _INTEGER_TEXT = re.compile(r"-?(?:0|[1-9][0-9]*)")
 
 
@@ -623,6 +637,23 @@ class _Planner:
         else:
             text = evidence.self if isinstance(evidence, SelfEvidence) else self.request.because
             body = text.encode("utf-8")
+        if requires_captured_evidence(info.claim_type):
+            with self.instance.bind_accepted_projection(self.head) as projection:
+                admitted = CaptureContractNames(
+                    self.instance, self.head, connection=projection.typed.connection
+                ).admitted(info.claim_type)
+            raise _refuse(
+                "playbill.write.evidence_required",
+                f"{field_name} requires captured evidence ({', '.join(admitted)}); "
+                "your own words cannot back it",
+                change=index,
+                candidates=admitted,
+                repair=(
+                    "Pass evidence as a capture digest or file evidence captured under "
+                    f"{' or '.join(admitted)}"
+                ),
+                field_path=path,
+            )
         return SelfSourceBodyV1(content_base64=base64.b64encode(body).decode("ascii")), None
 
     # -- changes -----------------------------------------------------------------
@@ -1725,4 +1756,4 @@ def _requires_approval(computed: ComputedPreflight) -> bool:
     return bool(cast(Any, evaluation.candidate).approval_requirements)
 
 
-__all__ = ["WriteCaller", "service_playbill_write"]
+__all__ = ["WriteCaller", "requires_captured_evidence", "service_playbill_write"]
