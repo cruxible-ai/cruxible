@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from cruxible_client.contracts import PlaybillClaimViewV2
 from cruxible_client.contracts.get_reads import (
     PlaybillGetClaimTypeCardV1,
     PlaybillGetEvidenceV1,
+    PlaybillGetRequestV1,
     PlaybillGetSubjectCardV1,
 )
 from cruxible_client.errors import CoreError
@@ -242,3 +244,98 @@ def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
         json={"ref": "Document:design", "detail": "body", "range": {"start": 0, "end": 8}},
     )
     assert opened.status_code == 200, opened.text
+
+
+def test_the_compact_coordinate_passes_back_as_at_on_every_surface(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ruling at-accepts-oid-prefix, over HTTP, the SDK, MCP and the CLI."""
+
+    from click.testing import CliRunner
+
+    from cruxible_core.cli.main import cli
+    from cruxible_core.mcp import handlers
+
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
+    seed_claims_into(
+        instance,
+        GeneratedKeyMaterial(
+            principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
+        ),
+    )
+    earlier = instance.accepted_history()[-2]
+    get_url = f"/api/v1/{instance_id}/playbill/get"
+    ref = f"ClaimType:{PREDICATE}"
+
+    printed = client.post(get_url, json={"ref": ref, "at": earlier.oid})
+    assert printed.status_code == 200, printed.text
+    compact = printed.json()["coordinate"]["git_oid"]
+    assert len(compact) == 12 and earlier.oid.startswith(compact)
+
+    # HTTP: get, query and orient read at the compact coordinate.
+    again = client.post(get_url, json={"ref": ref, "at": compact})
+    assert again.status_code == 200, again.text
+    assert again.json()["coordinate"] == printed.json()["coordinate"]
+    queried = client.post(
+        f"/api/v1/{instance_id}/playbill/query", json={"kind": "ClaimType", "at": compact}
+    )
+    assert queried.status_code == 200, queried.text
+    assert queried.json()["receipt"]["coordinate"]["git_oid"] == earlier.oid
+    oriented = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"at": compact})
+    assert oriented.status_code == 200, oriented.text
+    assert oriented.json()["generation"] == earlier.sequence
+
+    # A too-short prefix is the resolver's coded refusal, not a request-shape fault.
+    short = client.post(get_url, json={"ref": ref, "at": compact[:8]})
+    assert short.status_code == 400, short.text
+    assert short.json()["error_code"] == "playbill.read.coordinate_prefix_too_short"
+    short_orient = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"at": compact[:8]})
+    assert short_orient.json()["error_code"] == "playbill.read.coordinate_prefix_too_short"
+    short_query = client.post(
+        f"/api/v1/{instance_id}/playbill/query", json={"kind": "ClaimType", "at": compact[:8]}
+    )
+    assert short_query.json()["error_code"] == "playbill.read.coordinate_prefix_too_short"
+
+    # SDK and MCP.
+    pb = _sdk(client, instance_id, tmp_path)
+    assert pb.query(kind="ClaimType", at=compact).page.receipt.coordinate.git_oid == earlier.oid
+    assert handlers.handle_playbill_get(instance_id, ref=ref, at=compact).coordinate.git_oid == (
+        compact
+    )
+    assert handlers.handle_playbill_orient(instance_id, at=compact).generation == earlier.sequence
+    assert (
+        handlers.handle_playbill_query(
+            instance_id, kind="ClaimType", at=compact
+        ).receipt.coordinate.git_oid
+        == earlier.oid
+    )
+
+    # CLI --at, over the daemon.
+    transport = CruxibleClient(base_url="http://testserver")
+    transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
+    assert (
+        transport.playbill_get(
+            instance_id, request=PlaybillGetRequestV1(ref=ref, at=compact)
+        ).coordinate.git_oid
+        == compact
+    )
+    assert transport.orient_playbill(instance_id, at=compact).generation == earlier.sequence
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
+    prefix = ["--server-url", "http://testserver", "--instance-id", instance_id]
+    as_json = CliRunner().invoke(cli, [*prefix, "playbill", "get", ref, "--at", compact, "--json"])
+    assert as_json.exit_code == 0, as_json.output
+    assert json.loads(as_json.output)["coordinate"]["git_oid"] == compact
+    queried_cli = CliRunner().invoke(
+        cli, [*prefix, "playbill", "query", "ClaimType", "--at", compact, "--json"]
+    )
+    assert queried_cli.exit_code == 0, queried_cli.output
+    assert json.loads(queried_cli.output)["receipt"]["coordinate"]["git_oid"] == earlier.oid
+    oriented_cli = CliRunner().invoke(
+        cli, [*prefix, "playbill", "orient", "--at", compact, "--json"]
+    )
+    assert oriented_cli.exit_code == 0, oriented_cli.output
+    assert json.loads(oriented_cli.output)["generation"] == earlier.sequence

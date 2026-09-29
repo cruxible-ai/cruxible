@@ -1255,6 +1255,7 @@ def _history(
 
 
 def _history_continuation(
+    instance: PlaybillInstance,
     request: PlaybillGetRequestV1,
 ) -> tuple[ListContinuation | None, ClientCoordinate | str | None]:
     """The page a history cursor continues, pinned to the coordinate it was cut at."""
@@ -1266,11 +1267,9 @@ def _history_continuation(
     )
     pinned = ClientCoordinate.model_validate(continuation.coordinate)
     at = request.at
-    if at is not None and (
-        at != pinned.git_oid
-        if isinstance(at, str)
-        else at.model_dump(mode="json") != pinned.model_dump(mode="json")
-    ):
+    if at is not None and AcceptedCoordinate.from_internal(
+        resolve_read_coordinate(instance, at)
+    ).model_dump(mode="json") != pinned.model_dump(mode="json"):
         raise PlaybillListCursorMismatch(
             f"{PlaybillListCursorMismatch.error_code}: the cursor continues a different "
             "coordinate; omit at to continue it, or read history again without a cursor"
@@ -1475,7 +1474,7 @@ def service_playbill_get(
     values, so every caller reads them as text.
     """
 
-    continuation, at = _history_continuation(request)
+    continuation, at = _history_continuation(instance, request)
     coordinate = resolve_read_coordinate(instance, at)
     evaluation_time = request.evaluation_time or utc_now()
     resolved = resolve_get_ref(instance, coordinate, request.ref, surface=request.surface)

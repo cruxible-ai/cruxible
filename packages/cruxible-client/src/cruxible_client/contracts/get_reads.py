@@ -43,7 +43,8 @@ GET_SUMMARY_TEXT_MAX_CHARS = 500
 GET_HISTORY_DEFAULT_LIMIT = 20
 GET_HISTORY_MAX_LIMIT = 200
 
-_GIT_OID = r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+# A git oid or a prefix of one; the read resolves it (at least 12 hex, unique).
+_GIT_OID = r"^[0-9a-f]{1,64}$"
 
 # Which details apply to which kind of reference.
 GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
@@ -115,7 +116,10 @@ class PlaybillGetRequestV1(_StrictGetModel):
         cls, value: PlaybillAcceptedCoordinate | str | None
     ) -> PlaybillAcceptedCoordinate | str | None:
         if isinstance(value, str) and not re.fullmatch(_GIT_OID, value):
-            raise ValueError("at must be an accepted coordinate or a full lowercase git oid")
+            raise ValueError(
+                "at must be an accepted coordinate or a lowercase hex git oid "
+                "(a unique prefix of at least 12 characters)"
+            )
         return value
 
     @field_validator("evaluation_time")

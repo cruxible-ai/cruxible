@@ -53848,7 +53848,7 @@
               }
             ],
             "default": null,
-            "description": "An accepted coordinate or a git oid; the default is the current head.",
+            "description": "An accepted coordinate or a git oid (a unique prefix of 12+ hex characters is enough); the default is the current head.",
             "title": "At"
           }
         },
@@ -55957,7 +55957,7 @@
               }
             ],
             "default": null,
-            "description": "An accepted coordinate or a git oid; the default is the current head.",
+            "description": "An accepted coordinate or a git oid (a unique prefix of 12+ hex characters is enough); the default is the current head.",
             "title": "At"
           },
           "contains": {

@@ -3518,7 +3518,12 @@ def _emit_retirement_context(context: Mapping[str, Any]) -> None:
     default=None,
     help="Document body bytes start:end (with --detail body).",
 )
-@click.option("--at", "at_oid", default=None, help="Accepted git oid to read at; default head.")
+@click.option(
+    "--at",
+    "at_oid",
+    default=None,
+    help="Accepted git oid, or a unique 12+ hex prefix, to read at; default head.",
+)
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @click.option(
     "--limit",
@@ -4053,7 +4058,12 @@ def _validation_problems(exc: ValidationError) -> str:
 )
 @click.option("--name", "query_name", default=None, help="Run an accepted named query.")
 @click.option("--param", "param_pairs", multiple=True, help="Named query parameter k=v.")
-@click.option("--at", "at_oid", default=None, help="Read at this accepted git oid.")
+@click.option(
+    "--at",
+    "at_oid",
+    default=None,
+    help="Read at this accepted git oid (or a unique 12+ hex prefix).",
+)
 @click.option("--evaluation-time", default=None, help="ISO-8601 instant; default now.")
 @json_option
 @click.pass_context
@@ -5576,7 +5586,12 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     show_default=True,
 )
 @click.option("--cursor", default=None, help="next_cursor from the previous page.")
-@click.option("--at", "at_oid", default=None, help="An accepted generation's Git OID.")
+@click.option(
+    "--at",
+    "at_oid",
+    default=None,
+    help="An accepted generation's Git OID or a unique 12+ hex prefix.",
+)
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @json_option
 @handle_errors

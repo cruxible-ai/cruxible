@@ -787,7 +787,9 @@ def test_history_pages_newest_first_with_a_bound_cursor(tmp_path: Path) -> None:
     pages: list[int] = []
     cursor: str | None = None
     while True:
-        page = _get(instance, first, detail="history", limit=1, cursor=cursor)
+        page = _get(
+            instance, first, detail="history", limit=1, cursor=cursor, at=whole.coordinate.git_oid
+        )
         assert page.history is not None and len(page.history.revisions) == 1
         pages.extend(item.sequence for item in page.history.revisions)
         if not page.truncated:
