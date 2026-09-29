@@ -855,8 +855,9 @@ def test_a_summary_names_its_coordinate_compactly_and_proof_in_full(
     assert asked.accepted_coordinate == proof.accepted_coordinate
 
 
+@pytest.mark.parametrize("long_value", ["x" * 300, "earlier note " * 100])
 def test_history_evidence_suggestions_read_the_cut_revision_not_the_latest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, long_value: str
 ) -> None:
     import shlex
 
@@ -867,7 +868,6 @@ def test_history_evidence_suggestions_read_the_cut_revision_not_the_latest(
     world.seed(_v6_type())
     claim = _observe(world, b"status: ready")
     _observe(world, b"status: done", revises=claim)
-    long_value = "earlier note " * 100
     monkeypatch.setattr(
         get_module,
         "_artifact_value",
@@ -884,3 +884,28 @@ def test_history_evidence_suggestions_read_the_cut_revision_not_the_latest(
     read = _get(world.instance, claim, detail="evidence", at=args[7]).evidence
     assert read is not None and read.value == long_value
     assert _get(world.instance, claim, detail="evidence").evidence.value == "done"
+
+
+@pytest.mark.parametrize(
+    "value", ["x" * 300, "line\n" * 30, {"note": "x" * 200}, ["x" * 70, "y" * 70]]
+)
+def test_cli_width_cuts_offer_evidence_without_changing_other_surfaces(
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    value: object,
+) -> None:
+    monkeypatch.setattr(get_module, "_claim_value", lambda _row: value)
+    monkeypatch.setattr(get_module, "_artifact_value", lambda _claim: value)
+    instance = world["instance"]
+    claim_id = world["claim"]
+    for surface in ("cli", "mcp", "sdk"):
+        subject = _get(instance, _SUBJECT, surface=surface).card
+        history = _get(instance, claim_id, detail="history", surface=surface).history
+        assert isinstance(subject, PlaybillGetSubjectCardV1)
+        assert history is not None
+        if surface == "cli":
+            assert subject.next[0] == f"cruxible playbill get {claim_id} --detail evidence"
+            assert history.revisions[0].next[0].startswith(subject.next[0] + " --at ")
+        else:
+            assert not any("evidence" in step for step in subject.next)
+            assert history.revisions[0].next == ()

@@ -39,6 +39,11 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.get_display import (
+    GET_CLI_HISTORY_VALUE_WIDTH,
+    GET_CLI_VALUE_WIDTH,
+    get_value_display,
+)
 from cruxible_client.contracts.get_reads import (
     GET_BODY_DEFAULT_MAX_BYTES,
     GET_DETAILS_BY_KIND,
@@ -512,10 +517,19 @@ def _render_get(
     return f"cruxible_playbill_get({', '.join(arguments)})"
 
 
-def _value_was_cut(value: object) -> bool:
+def _value_was_cut(
+    value: object,
+    *,
+    surface: PlaybillReadSurface,
+    width: int = GET_CLI_VALUE_WIDTH,
+) -> bool:
+    if surface == "cli":
+        return get_value_display(value, width=width).truncated
     if isinstance(value, PlaybillGetTruncatedTextV1):
         return True
-    return isinstance(value, list | tuple) and any(_value_was_cut(item) for item in value)
+    return isinstance(value, list | tuple) and any(
+        _value_was_cut(item, surface=surface, width=width) for item in value
+    )
 
 
 def _render_proposal_step(surface: PlaybillReadSurface, step: str, proposal_id: str) -> str:
@@ -676,7 +690,7 @@ def _claim_card(
             *(
                 _render_get(surface, item, "evidence")
                 for item, (value, _digest) in contender_values.items()
-                if _value_was_cut(summary_value(value))
+                if _value_was_cut(summary_value(value), surface=surface)
             ),
             _render_get(surface, name, "why"),
             _render_get(surface, _subject_ref(subject_path)),
@@ -745,7 +759,7 @@ def _subject_card(
             _shown(item.object, functools.partial(_claim_value, item), content) for item in shown
         ]
         for item, (value, _digest) in zip(shown, pairs, strict=True):
-            if _value_was_cut(summary_value(value)):
+            if _value_was_cut(summary_value(value), surface=surface):
                 evidence_steps.append(_render_get(surface, item.claim_id, "evidence"))
         values = [value for value, _digest in pairs]
         digests = tuple(digest for _value, digest in pairs if digest is not None)
@@ -755,12 +769,15 @@ def _subject_card(
             )
         listed = many or len(values) > 1
         claims_shown = tuple(item.claim_id for item in shown)
+        displayed_value = summary_value(values if listed else values[0])
+        if listed and surface == "cli" and _value_was_cut(displayed_value, surface=surface):
+            evidence_steps.extend(_render_get(surface, item, "evidence") for item in claims_shown)
         entries.append(
             PlaybillGetSubjectClaimV1(
                 predicate=short_field_name(predicate, kind, accepted_predicates),
                 qualifier=qualifier,
                 claim=claims_shown if listed else claims_shown[0],
-                value=summary_value(values if listed else values[0]),
+                value=displayed_value,
                 content_digest=(digests if listed else digests[0]) if digests else None,
                 flags=tuple(ordered_flags(marks)),
             )
@@ -1169,7 +1186,7 @@ def _revision(
                 ),
             ),
         )
-        if _value_was_cut(cut_value)
+        if _value_was_cut(cut_value, surface=surface, width=GET_CLI_HISTORY_VALUE_WIDTH)
         else (),
         content_digest=content_digest,
         digest=_short_digest(entry.digest),

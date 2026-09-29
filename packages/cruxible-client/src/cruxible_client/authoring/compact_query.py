@@ -35,6 +35,7 @@ from cruxible_client.contracts.compact_query import (
     QueryFilterV1,
     query_filter,
 )
+from cruxible_client.contracts.get_display import exact_content_marker_text
 from cruxible_client.contracts.temporal import format_datetime
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -125,22 +126,6 @@ class QueryResult:
 # -- the table ----------------------------------------------------------------------
 
 _CELL_WIDTH = 60
-
-
-def exact_content_marker_text(marker: Mapping[str, object]) -> str:
-    """An exact-content value shown by digest (binary, withheld or unavailable), in one line."""
-
-    digest = str(marker.get("content_digest", ""))
-    algorithm, _, hexdigest = digest.partition(":")
-    short = f"{algorithm}:{hexdigest[:12]}" if hexdigest else digest
-    length = marker.get("length")
-    size = f" {length} bytes" if isinstance(length, int) else ""
-    reason = {
-        "binary": "binary",
-        "withheld": "withheld: needs body read",
-        "unavailable": "unavailable",
-    }.get(str(marker.get("exact_content")), str(marker.get("exact_content")))
-    return f"<{reason}{size} {short}>"
 
 
 def _cell(value: object) -> str:
