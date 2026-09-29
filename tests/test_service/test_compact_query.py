@@ -621,3 +621,66 @@ def test_query_columns_use_the_shared_short_name(instance: Any) -> None:
     assert [column.name for column in by_full.columns] == ["status"]
     assert [row["status"] for row in by_full.rows] == ["ready", "blocked"]
     assert _query(instance, kind=SUBJECT_KIND).columns[0].name == "status"
+
+
+def _follow_vocabulary() -> QueryVocabulary:
+    parent = PredicateInfo(
+        predicate=f"{SUBJECT_KIND}.parent",
+        claim_type=cast(Any, None),
+        claim_type_digest="sha256:" + "0" * 64,
+        value_type="subject",
+        members=(),
+        cardinality="one",
+        subject_kinds=(SUBJECT_KIND,),
+        object_kinds=("project.batch",),
+    )
+    infos = [
+        parent,
+        _predicate_info(PREDICATE, SUBJECT_KIND),
+        _predicate_info(f"{SUBJECT_KIND}.flags", SUBJECT_KIND),
+        _predicate_info("value.flags", SUBJECT_KIND),
+        _predicate_info("project.batch.status", "project.batch"),
+    ]
+    return QueryVocabulary(
+        predicates={info.predicate: info for info in infos},
+        kinds=(SUBJECT_KIND, "project.batch"),
+    )
+
+
+def _columns(**fields: Any) -> list[tuple[str, str | None]]:
+    from cruxible_core.service.discovery.compact_query import _compact_columns, _CompactPlan
+
+    request = PlaybillQueryRequestV1.model_validate({"kind": SUBJECT_KIND, **fields})
+    _columns_, output, _notes = _compact_columns(
+        _CompactPlan(_follow_vocabulary(), request), request
+    )
+    keys = [column.name for column in output]
+    assert len(keys) == len(set(keys)), keys
+    return [(column.name, column.predicate) for column in output]
+
+
+def test_two_columns_never_share_a_row_key() -> None:
+    """Addendum 3: every column key maps to exactly one column."""
+
+    follow = [{"field": "parent", "as": "status"}]
+    # The alias keeps `status`; the predicate whose short name it took falls back.
+    assert _columns(follow=follow, select=[PREDICATE, "status"]) == [
+        (PREDICATE, PREDICATE),
+        ("status", f"{SUBJECT_KIND}.parent"),
+    ]
+    by_default = dict(_columns(follow=follow))
+    assert by_default["status"] == f"{SUBJECT_KIND}.parent"
+    assert by_default[PREDICATE] == PREDICATE
+    assert by_default[f"{SUBJECT_KIND}.flags"] == f"{SUBJECT_KIND}.flags"
+    assert by_default["value.flags"] == "value.flags"
+    # A follow field keeps its alias prefix and never meets a root column.
+    assert _columns(follow=follow, select=["status.status", PREDICATE]) == [
+        ("status.status", "project.batch.status"),
+        ("status", PREDICATE),
+    ]
+
+    # An alias escaped under value.flags meets the predicate value.flags, and
+    # neither has another name: refuse rather than serve one over the other.
+    with pytest.raises(PlaybillQueryRefused) as refused:
+        _columns(follow=[{"field": "parent", "as": "flags"}], select=["value.flags", "flags"])
+    assert refused.value.error_code == "playbill.query.column_collision"

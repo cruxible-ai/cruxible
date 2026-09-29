@@ -27,6 +27,7 @@ listing it was cut from.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -280,9 +281,67 @@ def _out(name: str) -> str:
     ``subject``, ``subject_id`` and ``flags`` are row metadata on every Subject
     row. A column named like one of them keeps its values under
     ``value.<name>`` instead of overwriting the metadata or losing its values.
+    ``_column_keys`` then makes the keys unique across the whole column set; a
+    projection needs no more, since its field names are distinct identifiers.
     """
 
     return f"value.{name}" if name in ROW_METADATA else name
+
+
+@dataclass(frozen=True)
+class _Wanted:
+    """One column asking for a row key: its identity and its names, best first."""
+
+    owner: tuple[str, ...]
+    names: tuple[str, ...]
+    item: _Field | _Follow
+
+
+def _column_keys(wanted: Sequence[_Wanted]) -> list[str]:
+    """Allocate every column's row key so no two distinct columns share one.
+
+    The whole key set is built first (read-model spec, Addendum 3): row
+    metadata is reserved, a column named like metadata moves under
+    ``value.<name>``, and a key two columns both want goes to neither; each
+    falls back to its next name (the full predicate). A column with no fallback
+    keeps the contested key if it is the only one without a fallback; any key
+    still taken refuses, so two distinct columns never read as one.
+    """
+
+    candidates = [tuple(dict.fromkeys(_out(name) for name in item.names)) for item in wanted]
+    wants = Counter(names[0] for names in candidates)
+    taken = set(ROW_METADATA)
+    keys: list[str | None] = [None] * len(wanted)
+    for index, names in enumerate(candidates):
+        if wants[names[0]] == 1:
+            keys[index] = names[0]
+            taken.add(names[0])
+    pending = [index for index, key in enumerate(keys) if key is None]
+    fixed = [index for index in pending if len(candidates[index]) == 1]
+    flexible = [index for index in pending if len(candidates[index]) > 1]
+    for index in fixed:
+        key = candidates[index][0]
+        if key in taken:
+            raise PlaybillQueryRefused(
+                "playbill.query.column_collision",
+                f"two columns would both be served as {key!r}",
+                repair="rename the follow alias, or select one of the two fields",
+                field_path="select",
+            )
+        keys[index] = key
+        taken.add(key)
+    for index in flexible:
+        key = next((name for name in candidates[index][1:] if name not in taken), None)
+        if key is None:
+            raise PlaybillQueryRefused(
+                "playbill.query.column_collision",
+                f"two columns would both be served as {candidates[index][0]!r}",
+                repair="rename the follow alias, or select one of the two fields",
+                field_path="select",
+            )
+        keys[index] = key
+        taken.add(key)
+    return [key for key in keys if key is not None]
 
 
 def _column(item: _Field | _Follow, *, name: str) -> PlaybillQueryColumnV1:
@@ -805,6 +864,58 @@ class _RowRenderer:
         return rendered
 
 
+def _compact_columns(
+    plan: _CompactPlan, request: PlaybillQueryRequestV1
+) -> tuple[list[_Column], list[PlaybillQueryColumnV1], tuple[str, ...]]:
+    """The columns a compact query serves, each under its own row key."""
+
+    wanted: dict[tuple[str, ...], _Wanted] = {}
+
+    def want(item: _Field | _Follow, names: tuple[str, ...]) -> None:
+        if isinstance(item, _Follow):
+            owner: tuple[str, ...] = ("follow", item.alias)
+        else:
+            owner = ("field", item.binding, item.predicate or SUBJECT_ID_FIELD)
+        wanted.setdefault(owner, _Wanted(owner=owner, names=names, item=item))
+
+    notes: tuple[str, ...] = ()
+    if request.select:
+        for index, name in enumerate(request.select):
+            if name in plan.follows:
+                want(plan.follows[name], (name,))
+                continue
+            resolved = plan.field(name, field_path=f"select[{index}]")
+            if resolved.binding == ROOT and isinstance(resolved.info, str):
+                continue
+            if isinstance(resolved.info, str):
+                want(resolved, (plan.column_name(resolved),))
+                continue
+            full = resolved.info.predicate
+            if resolved.binding != ROOT:
+                full = f"{resolved.binding}.{full}"
+            want(resolved, (plan.column_name(resolved), full))
+    else:
+        shown, notes = _default_columns(plan.vocabulary, plan.kind)
+        for info in shown:
+            name = plan.vocabulary.field_name(info, (plan.kind,))
+            want(
+                _Field(name=name, binding=ROOT, info=info, label=info.predicate),
+                (name, info.predicate),
+            )
+        for follow in plan.follows.values():
+            want(follow, (follow.alias,))
+    items = list(wanted.values())
+    columns: list[_Column] = []
+    output: list[PlaybillQueryColumnV1] = []
+    for item, key in zip(items, _column_keys(items), strict=True):
+        if isinstance(item.item, _Follow):
+            columns.append(_Column(name=key, binding=item.item.alias, field=None))
+        else:
+            columns.append(_Column(name=key, binding=item.item.binding, field=item.item))
+        output.append(_column(item.item, name=key))
+    return columns, output, notes
+
+
 def _compact_subject_query(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -845,32 +956,7 @@ def _compact_subject_query(
             )
         )
     kind_predicates = vocabulary.predicates_of(plan.kind)
-    columns: list[_Column] = []
-    output: list[PlaybillQueryColumnV1] = []
-    notes: tuple[str, ...] = ()
-    if request.select:
-        for index, name in enumerate(request.select):
-            if name in plan.follows:
-                follow = plan.follows[name]
-                columns.append(_Column(name=_out(name), binding=follow.alias, field=None))
-                output.append(_column(follow, name=_out(name)))
-                continue
-            resolved = plan.field(name, field_path=f"select[{index}]")
-            if resolved.binding == ROOT and isinstance(resolved.info, str):
-                continue
-            shown_name = _out(plan.column_name(resolved))
-            columns.append(_Column(name=shown_name, binding=resolved.binding, field=resolved))
-            output.append(_column(resolved, name=shown_name))
-    else:
-        shown, notes = _default_columns(vocabulary, plan.kind)
-        for info in shown:
-            name = vocabulary.field_name(info, (plan.kind,))
-            resolved = _Field(name=name, binding=ROOT, info=info, label=info.predicate)
-            columns.append(_Column(name=_out(name), binding=ROOT, field=resolved))
-            output.append(_column(resolved, name=_out(name)))
-        for alias, follow in plan.follows.items():
-            columns.append(_Column(name=_out(alias), binding=alias, field=None))
-            output.append(_column(follow, name=_out(alias)))
+    columns, output, notes = _compact_columns(plan, request)
 
     follows = tuple(plan.follows.values())
     path_shape = bool(follows)
@@ -1573,11 +1659,19 @@ def _engine_answer(
     ):
         kind = query.entry.subject_kinds[0]
         shown, notes = _default_columns(vocabulary, kind)
-        for info in shown:
-            name = vocabulary.field_name(info, (kind,))
-            resolved = _Field(name=name, binding=ROOT, info=info, label=info.predicate)
-            renderer_columns.append(_Column(name=_out(name), binding=ROOT, field=resolved))
-            output.append(_column(resolved, name=_out(name)))
+        wanted = [
+            _Wanted(
+                owner=(info.predicate,),
+                names=(name, info.predicate),
+                item=_Field(name=name, binding=ROOT, info=info, label=info.predicate),
+            )
+            for info in shown
+            for name in (vocabulary.field_name(info, (kind,)),)
+        ]
+        for item, key in zip(wanted, _column_keys(wanted), strict=True):
+            assert isinstance(item.item, _Field)
+            renderer_columns.append(_Column(name=key, binding=ROOT, field=item.item))
+            output.append(_column(item.item, name=key))
     renderer = _RowRenderer(
         instance=instance,
         coordinate=coordinate,
