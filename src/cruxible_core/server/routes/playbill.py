@@ -341,6 +341,47 @@ async def whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
 
 
 @router.get(
+    "/{instance_id}/playbill/orient",
+    response_model=contracts.PlaybillOrientResultV1,
+)
+async def orient(
+    instance_id: str,
+    kind: str | None = Query(default=None, max_length=256),
+    section: contracts.PlaybillOrientSection | None = None,
+    limit: int = Query(
+        default=contracts.PLAYBILL_ORIENT_DEFAULT_LIMIT,
+        ge=1,
+        le=contracts.PLAYBILL_ORIENT_MAX_LIMIT,
+    ),
+    cursor: str | None = Query(default=None, max_length=4096),
+    at: str | None = Query(
+        default=None,
+        pattern=r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+        description="An accepted generation's Git OID; the four coordinate fields also pin one.",
+    ),
+    git_oid: str | None = None,
+    semantic_root: str | None = None,
+    generation_root: str | None = None,
+    compiler_digest: str | None = None,
+    evaluation_time: datetime | None = None,
+    surface: contracts.PlaybillOrientSurface = "cli",
+) -> contracts.PlaybillOrientResultV1:
+    coordinate = _coordinate(git_oid, semantic_root, generation_root, compiler_digest)
+    if at is not None and coordinate is not None:
+        raise PlaybillFormatError("orient takes at or the four coordinate fields, not both")
+    return playbill_api.playbill_orient(
+        resolve_server_instance_id(instance_id),
+        kind=kind,
+        section=section,
+        limit=limit,
+        cursor=cursor,
+        at=at if at is not None else coordinate,
+        evaluation_time=evaluation_time,
+        surface=surface,
+    )
+
+
+@router.get(
     "/{instance_id}/playbill/proposals",
     response_model=contracts.PlaybillProposalList,
 )

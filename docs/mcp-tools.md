@@ -6,8 +6,9 @@ HTTP and CLI.
 `CRUXIBLE_MCP_PROFILE` takes two values. `default` (or unset) advertises the
 everyday agent loop:
 
-- orient and pick work: `cruxible_playbill_search` (its `orient` mode),
-  `cruxible_playbill_next`, and `cruxible_playbill_expand`;
+- orient and pick work: `cruxible_playbill_orient` (the map of accepted state),
+  `cruxible_playbill_search`, `cruxible_playbill_next`, and
+  `cruxible_playbill_expand`;
 - Claim, ClaimType, and Subject reads: `cruxible_playbill_claim_values` (a status
   table for one Subject kind), `cruxible_playbill_list_claims`,
   `cruxible_playbill_get_claim`, `cruxible_playbill_explain_claim`,
@@ -279,6 +280,7 @@ authority plane beside accepted state.
 | `cruxible_playbill_get_query_definition` | Read one entrypoint's contract | `READ_ONLY` |
 | `cruxible_playbill_run_query` | Execute an entrypoint with a replay receipt | `READ_ONLY` |
 | `cruxible_playbill_discover` | Find interfaces and Subjects by name | `READ_ONLY` |
+| `cruxible_playbill_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue, and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types` or `queries` (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_playbill_search` | Search, list, or orient over accepted state | `READ_ONLY` |
 | `cruxible_playbill_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
 | `cruxible_playbill_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible playbill next` does | `READ_ONLY` |

@@ -70,6 +70,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when an admitted Playbill candidate has satisfied any committed requirements and "
         "is ready to settle."
     ),
+    "cruxible_playbill_orient": (
+        "Use first, to see what an instance holds: each Subject kind with its count and "
+        "predicates (type, enum members, accepted evidence), artifact counts, named queries, "
+        "whether you can author, what needs attention, and runnable next calls. Pass kind for "
+        "one kind in full with sample Subject IDs, or section to page documents, procedures, "
+        "claim_types or queries."
+    ),
     "cruxible_playbill_whoami": (
         "Use when you need which instance this server acts on, who you are there, and "
         "the adapter and daemon versions."

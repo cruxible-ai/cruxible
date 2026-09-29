@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-09-28:rc-merge-identity-rules",
-    "surface_digest": "sha256:0a916354153fe548fc3d94963affeb1bb09a38f2b60ba50eada2c55d25b19b74"
+    "register_entry": "2026-09-28:rm-orient",
+    "surface_digest": "sha256:847099a2fad9248f1954874da0e13593b81e08352a6cbf3c52bef67b4236013e"
   },
   "surface": {
     "cli_leaves": [
@@ -929,6 +929,7 @@
       "playbill_list_subjects",
       "playbill_migrate_claim_type",
       "playbill_next",
+      "playbill_orient",
       "playbill_policies_in_force",
       "playbill_predict",
       "playbill_prediction_settle_example",
@@ -1733,6 +1734,18 @@
         "response_schema_digest": "sha256:3363026a8d0bf7f30b393b3567d4c6b73fc7e7ed9ecb4fb5b7146fcab4ec4c66"
       },
       {
+        "delegate": "cruxible_core.server.routes.playbill.orient",
+        "facade_operations": [
+          "playbill_orient"
+        ],
+        "method": "GET",
+        "path": "/api/v1/{instance_id}/playbill/orient",
+        "request_model": null,
+        "request_schema_digest": null,
+        "response_model": "cruxible_client.contracts.orient.PlaybillOrientResultV1",
+        "response_schema_digest": "sha256:df52446277b06c0658a85a4ed41f1b9d72317c41232e5ad4c582e239532f0fbf"
+      },
+      {
         "delegate": "cruxible_core.server.routes.playbill.list_policies_in_force",
         "facade_operations": [
           "playbill_policies_in_force"
@@ -2297,6 +2310,7 @@
       "playbill_list_subjects",
       "playbill_migrate_claim_type",
       "playbill_next",
+      "playbill_orient",
       "playbill_policies_in_force",
       "playbill_predict",
       "playbill_prepare_approval",
@@ -2961,6 +2975,16 @@
         "input_schema_digest": "sha256:dc41813e60a336c8a09b150a71f2bafaa2b9a1a9858cb7451793ba96fec71605",
         "name": "cruxible_playbill_next",
         "output_schema_digest": "sha256:68306950004b4b5fe5c04649b07a17efecb3372286d57c86c127015c79673c9f",
+        "permission": "READ_ONLY"
+      },
+      {
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_orient",
+        "facade_operations": [
+          "playbill_orient"
+        ],
+        "input_schema_digest": "sha256:bbc337dc8c6a2f6776c6f28338b88c39a39eb96989149848fe32a722bfccdad8",
+        "name": "cruxible_playbill_orient",
+        "output_schema_digest": "sha256:f7b9fcd5e19cfc2f3111e81e38047450e48d243c122404b6139824a945dd3555",
         "permission": "READ_ONLY"
       },
       {

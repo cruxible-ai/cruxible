@@ -552,6 +552,39 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/whoami")
         return self._parse_model(response, contracts.PlaybillWhoAmI)
 
+    def orient_playbill(
+        self,
+        instance_id: str,
+        *,
+        kind: str | None = None,
+        section: contracts.PlaybillOrientSection | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | str | None = None,
+        evaluation_time: str | None = None,
+        surface: contracts.PlaybillOrientSurface = "sdk",
+    ) -> contracts.PlaybillOrientResultV1:
+        """The orient map: kinds, artifacts, you, attention and next calls for ``surface``.
+
+        ``at`` is an accepted coordinate or one accepted generation's Git OID.
+        ``kind`` reads one kind in full; ``section`` pages one artifact family.
+        """
+        params: dict[str, Any] = (
+            {"at": at} if isinstance(at, str) else dict(self._playbill_coordinate_params(at))
+        )
+        params["surface"] = surface
+        for name, value in (
+            ("kind", kind),
+            ("section", section),
+            ("limit", limit),
+            ("cursor", cursor),
+            ("evaluation_time", evaluation_time),
+        ):
+            if value is not None:
+                params[name] = value
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/orient", params=params)
+        return self._parse_model(response, contracts.PlaybillOrientResultV1)
+
     def list_playbill_proposals(
         self,
         instance_id: str,
