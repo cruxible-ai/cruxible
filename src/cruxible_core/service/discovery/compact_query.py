@@ -47,6 +47,7 @@ from cruxible_client.contracts.compact_query import (
     QueryFlag,
     QueryMode,
 )
+from cruxible_client.contracts.get_reads import summary_value
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactV1,
@@ -91,6 +92,8 @@ from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.exact_content import ExactContentReader
+from cruxible_core.service.discovery.field_names import CONTENT_DIGESTS_FIELD
 from cruxible_core.service.discovery.query import evaluate_accepted_query
 from cruxible_core.service.discovery.query_values import (
     LiveValue,
@@ -129,6 +132,7 @@ from cruxible_core.service.list_pages import (
     page_after_boundary,
 )
 from cruxible_core.service.read_refusals import nearest, resolve_read_coordinate
+from cruxible_core.storage.cas import BodyAccessContext
 
 LIST_NAME = "query"
 COMPACT_QUERY_MAX_RESULTS = 5000
@@ -253,14 +257,15 @@ class _InlineFilter:
     value: object
 
 
-ROW_METADATA = frozenset({"subject", "subject_id", "flags"})
+ROW_METADATA = frozenset({"subject", "subject_id", "flags", CONTENT_DIGESTS_FIELD})
 
 
 def _out(name: str) -> str:
     """The row key a column's values are served under.
 
     ``subject``, ``subject_id`` and ``flags`` are row metadata on every Subject
-    row. A column named like one of them keeps its values under
+    row, and ``content_digests`` on a row with an exact-content column. A column
+    named like one of them keeps its values under
     ``value.<name>`` instead of overwriting the metadata or losing its values.
     ``_column_keys`` then makes the keys unique across the whole column set; a
     projection needs no more, since its field names are distinct identifiers.
@@ -772,6 +777,7 @@ class _RowRenderer:
     vocabulary: QueryVocabulary
     evaluation_time: datetime
     columns: Sequence[_Column]
+    content: ExactContentReader
     values: ValueIndex = field(default_factory=ValueIndex)
 
     def render(
@@ -822,6 +828,7 @@ class _RowRenderer:
                 "subject_id": label.split("/", 1)[1] if "/" in label else label,
             }
             row_flags: set[QueryFlag] = set(extra_flags[position]) if extra_flags else set()
+            digests: dict[str, object] = {}
             for column in self.columns:
                 path = row.get(column.binding)
                 if column.field is None:
@@ -837,13 +844,36 @@ class _RowRenderer:
                 for item in slot:
                     row_flags.update(flags.get(item.identity, ()))
                 row_flags.update(answer_flags(info.cardinality, len(values)))
-                if info.cardinality == "many" or len(values) > 1:
+                listed = info.cardinality == "many" or len(values) > 1
+                if info.value_type == "exact_content" and values:
+                    digests[column.name] = values if listed else values[0]
+                    values = _exact_values(self.content, slot, values)
+                if listed:
                     out[column.name] = values
                 else:
                     out[column.name] = values[0] if values else None
+            if digests:
+                out[CONTENT_DIGESTS_FIELD] = digests
             out["flags"] = ordered_flags(row_flags)
             rendered.append(out)
         return rendered
+
+
+def _exact_values(
+    content: ExactContentReader, slot: Sequence[LiveValue], digests: Sequence[object]
+) -> list[object]:
+    """Exact-content values (distinct digests) as a card shows them: text, cut when long."""
+
+    spans = {item.value: item.span for item in slot}
+    return [summary_value(content.value(str(digest), spans.get(digest))) for digest in digests]
+
+
+def _searchable(item: LiveValue, content: ExactContentReader) -> str | None:
+    """The text ``contains`` matches in a value: its string, or an exact value's text."""
+
+    if item.exact:
+        return content.text(str(item.value), item.span)
+    return item.value if isinstance(item.value, str) else None
 
 
 def _compact_columns(
@@ -904,6 +934,8 @@ def _compact_subject_query(
     vocabulary: QueryVocabulary,
     request: PlaybillQueryRequestV1,
     evaluation_time: datetime,
+    *,
+    content: ExactContentReader,
 ) -> _Answer:
     plan = _CompactPlan(vocabulary, request)
     checked = _checked_filters(plan, request.where)
@@ -1006,6 +1038,7 @@ def _compact_subject_query(
         vocabulary=vocabulary,
         evaluation_time=evaluation_time,
         columns=columns,
+        content=content,
     )
     if inline or request.contains is not None:
         candidates = _apply_inline(
@@ -1014,6 +1047,7 @@ def _compact_subject_query(
             renderer.values,
             candidates,
             inline,
+            content=content,
             contains=request.contains,
             kind_predicates=tuple(info.predicate for info in kind_predicates),
             cardinality_of={
@@ -1065,6 +1099,7 @@ def _apply_inline(
     candidates: list[dict[str, str | None]],
     inline: Sequence[_InlineFilter],
     *,
+    content: ExactContentReader,
     contains: str | None,
     kind_predicates: tuple[str, ...],
     cardinality_of: Mapping[str, str],
@@ -1114,8 +1149,8 @@ def _apply_inline(
         if matched and needle is not None:
             root = row.get(ROOT)
             matched = root is not None and any(
-                isinstance(value.value, str)
-                and needle in value.value.casefold()
+                (text := _searchable(value, content)) is not None
+                and needle in text.casefold()
                 and not _contested(
                     cardinality_of.get(value.predicate, "many"),
                     [mate.value for mate in values.slot(root, value.predicate)],
@@ -1136,13 +1171,15 @@ def _contains_everywhere(
     vocabulary: QueryVocabulary,
     request: PlaybillQueryRequestV1,
     evaluation_time: datetime,
+    *,
+    content: ExactContentReader,
 ) -> _Answer:
     assert request.contains is not None
     needle = request.contains.casefold()
     matches = [
         item
         for item in read_live_values(instance, coordinate, subject_paths=None, predicates=None)
-        if isinstance(item.value, str) and needle in item.value.casefold()
+        if (text := _searchable(item, content)) is not None and needle in text.casefold()
     ]
     matches.sort(key=lambda item: (item.subject_path, item.predicate, item.identity))
     spec_digest = typed_digest(
@@ -1176,17 +1213,18 @@ def _contains_everywhere(
                 marks.update(
                     answer_flags(info.cardinality, len(distinct(value.value for value in slot)))
                 )
-            rows.append(
-                {
-                    "subject": label,
-                    "subject_id": label.split("/", 1)[-1],
-                    "kind": label.split("/", 1)[0],
-                    "predicate": item.predicate,
-                    "value": item.value,
-                    "claim": item.identity.removeprefix("Claim:"),
-                    "flags": ordered_flags(marks),
-                }
-            )
+            row: dict[str, Any] = {
+                "subject": label,
+                "subject_id": label.split("/", 1)[-1],
+                "kind": label.split("/", 1)[0],
+                "predicate": item.predicate,
+                "value": item.value,
+                "claim": item.identity.removeprefix("Claim:"),
+            }
+            if item.exact:
+                row["value"] = summary_value(content.value(str(item.value), item.span))
+                row[CONTENT_DIGESTS_FIELD] = {"value": item.value}
+            rows.append({**row, "flags": ordered_flags(marks)})
         return rows
 
     return _Answer(
@@ -1614,6 +1652,7 @@ def _engine_answer(
     result: ClaimQueryResultV1,
     evaluation_time: datetime,
     mode: QueryMode,
+    content: ExactContentReader,
 ) -> _Answer:
     """Shape a governed evaluation's rows as values and flags."""
 
@@ -1653,7 +1692,19 @@ def _engine_answer(
         vocabulary=vocabulary,
         evaluation_time=evaluation_time,
         columns=renderer_columns,
+        content=content,
     )
+    # A projected exact-content field reads as text too, from the live values of
+    # the slot it projects, with its digests beside it.
+    exact_fields: dict[str, QueryClaimValueRefV1] = {}
+    if projection is not None:
+        for projected_field in projection.fields:
+            ref = projected_field.value
+            if not isinstance(ref, QueryClaimValueRefV1):
+                continue
+            info = vocabulary.predicates.get(ref.predicate)
+            if info is not None and info.value_type == "exact_content":
+                exact_fields[_out(projected_field.name)] = ref
     candidates = list(result.rows)
     keys = [
         (
@@ -1686,11 +1737,33 @@ def _engine_answer(
         rendered = renderer.render(bound, extra_flags=extra)
         for out, row in zip(rendered, rows, strict=True):
             flags = out.pop("flags")
+            digests = cast(dict[str, object], out.pop(CONTENT_DIGESTS_FIELD, {}))
             for projected in row.fields:
                 value = projected.value if projected.state == "present" else None
                 if isinstance(value, str) and value.startswith("Subject:"):
                     value = value.removeprefix("Subject:")
                 out[_out(projected.name)] = value
+            for key, ref in exact_fields.items():
+                path = _subject_path_of(row, ref.binding)
+                slot: list[LiveValue] = []
+                if path is not None:
+                    ensure_values(
+                        renderer.values,
+                        instance,
+                        coordinate,
+                        paths=(path,),
+                        predicates=(ref.predicate,),
+                    )
+                    slot = renderer.values.slot(path, ref.predicate)
+                shown = distinct(item.value for item in slot)
+                info = vocabulary.predicates[ref.predicate]
+                listed = info.cardinality == "many" or len(shown) > 1
+                if shown:
+                    digests[key] = shown if listed else shown[0]
+                values = _exact_values(content, slot, shown)
+                out[key] = values if listed else (values[0] if values else None)
+            if digests:
+                out[CONTENT_DIGESTS_FIELD] = digests
             out["flags"] = flags
         return rendered
 
@@ -1770,6 +1843,8 @@ def _named_answer(
     vocabulary: QueryVocabulary,
     request: PlaybillQueryRequestV1,
     evaluation_time: datetime,
+    *,
+    content: ExactContentReader,
 ) -> _Answer:
     from cruxible_core.service.discovery.query import service_run_playbill_query
 
@@ -1818,6 +1893,7 @@ def _named_answer(
         result=run.result,
         evaluation_time=evaluation_time,
         mode="named",
+        content=content,
     )
 
 
@@ -1827,6 +1903,8 @@ def _spec_answer(
     vocabulary: QueryVocabulary,
     request: PlaybillQueryRequestV1,
     evaluation_time: datetime,
+    *,
+    content: ExactContentReader,
 ) -> _Answer:
     assert request.spec is not None
     definition = _accepted(_pinned_spec(vocabulary, request.spec))
@@ -1865,6 +1943,7 @@ def _spec_answer(
         result=result,
         evaluation_time=evaluation_time,
         mode="spec",
+        content=content,
     )
 
 
@@ -1885,8 +1964,13 @@ def service_playbill_query(
     instance: PlaybillInstance,
     *,
     request: PlaybillQueryRequestV1,
+    content_access: BodyAccessContext | None = None,
 ) -> PlaybillQueryResult:
-    """Answer one ``query`` call: one page of values, flags and paging."""
+    """Answer one ``query`` call: one page of values, flags and paging.
+
+    ``content_access`` reads exact-content values as text; without body access
+    they show as a ``withheld`` marker with their digest.
+    """
 
     mode = _mode(request)
     selection = _selection(request, mode)
@@ -1926,10 +2010,15 @@ def service_playbill_query(
         )
     coordinate = resolve_read_coordinate(instance, at)
     vocabulary = load_query_vocabulary(instance, coordinate)
+    content = ExactContentReader(instance, content_access)
     if mode == "named":
-        answer = _named_answer(instance, coordinate, vocabulary, request, evaluation_time)
+        answer = _named_answer(
+            instance, coordinate, vocabulary, request, evaluation_time, content=content
+        )
     elif mode == "spec":
-        answer = _spec_answer(instance, coordinate, vocabulary, request, evaluation_time)
+        answer = _spec_answer(
+            instance, coordinate, vocabulary, request, evaluation_time, content=content
+        )
     elif request.kind in ARTIFACT_KINDS:
         if request.follow:
             raise query_refusal(
@@ -1956,9 +2045,13 @@ def service_playbill_query(
                 "where, select, follow and order_by need a kind",
                 repair="pass kind, or search values with contains alone",
             )
-        answer = _contains_everywhere(instance, coordinate, vocabulary, request, evaluation_time)
+        answer = _contains_everywhere(
+            instance, coordinate, vocabulary, request, evaluation_time, content=content
+        )
     else:
-        answer = _compact_subject_query(instance, coordinate, vocabulary, request, evaluation_time)
+        answer = _compact_subject_query(
+            instance, coordinate, vocabulary, request, evaluation_time, content=content
+        )
 
     served = AcceptedCoordinate.from_internal(coordinate)
     snapshot = list_snapshot([list(key) for key in answer.keys])

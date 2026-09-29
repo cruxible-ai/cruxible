@@ -9,7 +9,12 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping
 
-RESERVED_FIELD_NAMES = frozenset({"subject_id", "subject", "kind", "predicate", "claim", "flags"})
+CONTENT_DIGESTS_FIELD = "content_digests"
+"""The row key mapping each exact-content column to its values' digests."""
+
+RESERVED_FIELD_NAMES = frozenset(
+    {"subject_id", "subject", "kind", "predicate", "claim", "flags", CONTENT_DIGESTS_FIELD}
+)
 """Names the read verbs reserve: Subject fields and row metadata keys."""
 
 RESERVED_FIELD_PREFIX = "value."
@@ -87,6 +92,7 @@ def resolve_field_in(field: str, applicable: Mapping[str, Collection[str]]) -> t
 
 
 __all__ = [
+    "CONTENT_DIGESTS_FIELD",
     "RESERVED_FIELD_NAMES",
     "RESERVED_FIELD_PREFIX",
     "is_reserved_field_name",

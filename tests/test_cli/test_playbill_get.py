@@ -261,3 +261,49 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     assert payload["card"]["claims"][0]["value"]["truncated"] is True
     assert payload["coordinate"] == {"git_oid": "1" * 12, "generation": 7}
     assert "accepted_coordinate" not in payload
+
+
+def test_exact_content_prints_as_text_and_a_marker_says_why_when_it_cannot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_client.contracts.get_reads import (
+        PlaybillExactContentRefV1,
+        PlaybillGetEvidenceV1,
+    )
+
+    digest = "sha256:" + "ab" * 32
+    card = PlaybillGetSubjectCardV1(
+        subject="legal.case/c-1",
+        kind="legal.case",
+        lifecycle="live",
+        claims=(
+            PlaybillGetSubjectClaimV1(
+                predicate="ruling", claim="CLM-1", value="Affirmed.", content_digest=digest
+            ),
+            PlaybillGetSubjectClaimV1(
+                predicate="exhibit",
+                claim="CLM-2",
+                value=PlaybillExactContentRefV1(
+                    exact_content="binary", content_digest=digest, length=6
+                ),
+                content_digest=digest,
+            ),
+        ),
+        incoming_count=0,
+    )
+    _stub(monkeypatch, _result("subject", card=card))
+    text = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "legal.case/c-1"])
+
+    assert text.exit_code == 0, text.output
+    assert "  ruling   Affirmed." in text.output
+    assert "  exhibit  <binary 6 bytes sha256:abababababab>" in text.output
+
+    evidence = PlaybillGetEvidenceV1(
+        value="Affirmed, in full.", content_digest=digest, captures=(), attestations=()
+    )
+    _stub(monkeypatch, _result("claim", detail="evidence", evidence=evidence))
+    whole = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "CLM-1", "--detail", "evidence"])
+
+    assert whole.exit_code == 0, whole.output
+    assert "value: Affirmed, in full." in whole.output
+    assert f"content_digest: {digest}" in whole.output

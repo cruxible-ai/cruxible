@@ -13,17 +13,25 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1, PlaybillQueryResult
+from cruxible_client.contracts.get_reads import (
+    PlaybillGetClaimCardV1,
+    PlaybillGetRequestV1,
+    PlaybillGetResultV1,
+    PlaybillGetSubjectCardV1,
+)
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
 from cruxible_core.service.discovery.compact_query import service_playbill_query
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.core_support._exact_content_support import EXACT_KIND, seed_exact_content
 from tests.core_support._knowledge_loop_support import (
     EVALUATION_TIME,
     PREDICATE,
     SUBJECT_KIND,
     seed_claims,
+    work_item_query,
 )
 
 _WHEN = datetime.fromisoformat(EVALUATION_TIME)
@@ -325,3 +333,143 @@ def test_get_cards_name_predicates_by_the_shared_rule_as_orient_does(
         ).card
         assert isinstance(claim, PlaybillGetClaimCardV1)
         assert claim.predicate == advertised[claim.predicate_full] == row.predicate
+
+
+# -- exact-content values read as text on every verb --------------------------
+
+_RULING = b"The ruling, exactly as written.\n"
+_LONG_RULING = ("A long method law. " * 40).encode()
+_BINARY = b"\xff\xfe\x00opaque"
+
+
+@pytest.fixture(scope="module")
+def exact_world(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, dict[str, Any]]:
+    return seed_exact_content(
+        tmp_path_factory.mktemp("exact-content"),
+        {"wi-42": _RULING, "wi-long": _LONG_RULING, "wi-bin": _BINARY},
+    )
+
+
+def _exact_get(
+    instance: Any, ref: str, *, access: BodyAccessContext = _ACCESS, **fields: Any
+) -> PlaybillGetResultV1:
+    return service_playbill_get(
+        instance,
+        request=PlaybillGetRequestV1(ref=ref, evaluation_time=_WHEN, **fields),
+        access=access,
+    )
+
+
+def _exact_query(
+    instance: Any, access: BodyAccessContext | None = _ACCESS, **fields: Any
+) -> PlaybillQueryResult:
+    return service_playbill_query(
+        instance,
+        request=PlaybillQueryRequestV1.model_validate({"evaluation_time": _WHEN, **fields}),
+        content_access=access,
+    )
+
+
+def test_get_and_query_show_an_exact_content_value_as_its_text(
+    exact_world: tuple[Any, dict[str, Any]],
+) -> None:
+    from cruxible_client.contracts.get_reads import (
+        GET_SUMMARY_TEXT_MAX_CHARS,
+        PlaybillExactContentRefV1,
+        PlaybillGetTruncatedTextV1,
+    )
+
+    instance, seeded = exact_world
+    ruling, long_ruling, binary = seeded["wi-42"], seeded["wi-long"], seeded["wi-bin"]
+    text = _RULING.decode()
+    cut = PlaybillGetTruncatedTextV1(
+        value=_LONG_RULING.decode()[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(_LONG_RULING)
+    )
+    marker = PlaybillExactContentRefV1(
+        exact_content="binary", content_digest=binary.digest, length=len(_BINARY)
+    )
+
+    # get: the Claim card and the Subject row read the text, the digest beside it.
+    claim = _exact_get(instance, ruling.claim_id).card
+    assert isinstance(claim, PlaybillGetClaimCardV1)
+    assert (claim.value, claim.content_digest) == (text, ruling.digest)
+    subject = _exact_get(instance, ruling.subject).card
+    assert isinstance(subject, PlaybillGetSubjectCardV1)
+    ((row),) = subject.claims
+    assert (row.claim, row.value, row.content_digest) == (ruling.claim_id, text, ruling.digest)
+
+    # A long value is cut on the card by the card rule; evidence reads it whole.
+    long_card = _exact_get(instance, long_ruling.claim_id).card
+    assert isinstance(long_card, PlaybillGetClaimCardV1) and long_card.value == cut
+    evidence = _exact_get(instance, long_ruling.claim_id, detail="evidence").evidence
+    assert evidence is not None
+    assert (evidence.value, evidence.content_digest) == (_LONG_RULING.decode(), long_ruling.digest)
+
+    # Bytes that are not UTF-8 text show as a typed marker, never an error.
+    binary_card = _exact_get(instance, binary.claim_id).card
+    assert isinstance(binary_card, PlaybillGetClaimCardV1)
+    assert binary_card.value == marker and binary_card.content_digest == binary.digest
+
+    # History reads each revision's value the same way.
+    history = _exact_get(instance, ruling.claim_id, detail="history").history
+    assert history is not None
+    assert [(item.value, item.content_digest) for item in history.revisions] == [
+        (text, ruling.digest)
+    ]
+
+    # query: the same values and digests, on compact and spec rows alike.
+    compact = {
+        row["subject"]: row
+        for row in _exact_query(instance, kind=EXACT_KIND, select=["status"]).rows
+    }
+    declared = work_item_query("project.exact").model_dump(mode="json")
+    spec = {
+        row["subject"]: row
+        for row in _exact_query(
+            instance, spec=QueryDefinitionSpecV1.model_validate({**declared, "pins": []})
+        ).rows
+    }
+    for seeded_claim, shown in ((ruling, text), (long_ruling, cut), (binary, marker)):
+        for rows in (compact, spec):
+            row_of = rows[seeded_claim.subject]
+            assert row_of["status"] == shown
+            assert row_of["content_digests"] == {"status": seeded_claim.digest}
+        card = _exact_get(instance, seeded_claim.subject).card
+        assert isinstance(card, PlaybillGetSubjectCardV1)
+        assert card.claims[0].value == compact[seeded_claim.subject]["status"]
+        assert card.claims[0].flags == tuple(compact[seeded_claim.subject]["flags"])
+
+
+def test_contains_matches_exact_content_text_never_its_digest(
+    exact_world: tuple[Any, dict[str, Any]],
+) -> None:
+    instance, seeded = exact_world
+    ruling = seeded["wi-42"]
+
+    (row,) = _exact_query(instance, contains="exactly as written").rows
+    assert (row["claim"], row["value"]) == (ruling.claim_id, _RULING.decode())
+    assert row["content_digests"] == {"value": ruling.digest}
+    (kind_row,) = _exact_query(instance, kind=EXACT_KIND, contains="exactly as written").rows
+    assert kind_row["subject"] == ruling.subject
+    # A digest is proof, not a value: no search matches it.
+    assert _exact_query(instance, contains=ruling.digest.split(":")[1][:16]).rows == ()
+
+
+def test_a_caller_who_may_not_read_bodies_sees_exact_content_withheld(
+    exact_world: tuple[Any, dict[str, Any]],
+) -> None:
+    from cruxible_client.contracts.get_reads import PlaybillExactContentRefV1
+
+    instance, seeded = exact_world
+    ruling = seeded["wi-42"]
+    reader = BodyAccessContext(principal_id="reader", can_read_body=False)
+    withheld = PlaybillExactContentRefV1(
+        exact_content="withheld", content_digest=ruling.digest, length=len(_RULING)
+    )
+
+    card = _exact_get(instance, ruling.claim_id, access=reader).card
+    assert isinstance(card, PlaybillGetClaimCardV1)
+    assert (card.value, card.content_digest) == (withheld, ruling.digest)
+    rows = _exact_query(instance, None, kind=EXACT_KIND, select=["status"]).rows
+    assert {row["subject"]: row["status"] for row in rows}[ruling.subject] == withheld
+    assert _exact_query(instance, None, contains="exactly as written").rows == ()

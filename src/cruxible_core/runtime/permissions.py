@@ -459,6 +459,18 @@ def check_permission(
         )
 
 
+def permits(tool_name: str) -> bool:
+    """Whether the current mode would pass ``check_permission(tool_name)``'s tier check.
+
+    For a read that shapes its answer by what the caller may see rather than
+    refusing: it neither raises nor logs a denial. The caller has already passed
+    its own operation's check, including the instance scope.
+    """
+    if tool_name not in PERMISSION_REQUIREMENTS:
+        raise ConfigError(f"Tool '{tool_name}' has no entry in permission requirements")
+    return get_current_mode() >= PERMISSION_REQUIREMENTS[tool_name]
+
+
 def require_unscoped_operator(operation: str) -> None:
     """Require an unscoped operator credential for a daemon-wide operation.
 

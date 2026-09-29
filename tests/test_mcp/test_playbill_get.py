@@ -104,3 +104,18 @@ def test_a_malformed_get_names_the_json_path_and_an_example() -> None:
     with pytest.raises(DataValidationError) as bad_at:
         handlers.handle_playbill_get("inst_get", ref="x", at="not-an-oid")
     assert any(item.startswith("$.at") for item in bad_at.value.errors)
+
+
+def test_exact_content_reads_as_text_only_for_a_caller_who_may_read_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_core.runtime import playbill_api
+    from cruxible_core.runtime.permissions import request_permission_scope, reset_permissions
+
+    monkeypatch.setenv("CRUXIBLE_MODE", "admin")
+    reset_permissions()
+    with request_permission_scope(PermissionMode.READ_ONLY):
+        assert playbill_api._content_access().can_read_body is False
+    with request_permission_scope(PermissionMode.GOVERNED_WRITE):
+        assert playbill_api._content_access().can_read_body is True
+    reset_permissions()

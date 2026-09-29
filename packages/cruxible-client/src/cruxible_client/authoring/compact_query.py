@@ -24,6 +24,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel
+
 from cruxible_client.authoring.sdk_types import LiteralValue, PlaybillSdkError, SubjectRef
 from cruxible_client.contracts.compact_query import (
     QUERY_FILTER_OPERATORS,
@@ -125,9 +127,32 @@ class QueryResult:
 _CELL_WIDTH = 60
 
 
+def exact_content_marker_text(marker: Mapping[str, object]) -> str:
+    """An exact-content value shown by digest (binary, withheld or unavailable), in one line."""
+
+    digest = str(marker.get("content_digest", ""))
+    algorithm, _, hexdigest = digest.partition(":")
+    short = f"{algorithm}:{hexdigest[:12]}" if hexdigest else digest
+    length = marker.get("length")
+    size = f" {length} bytes" if isinstance(length, int) else ""
+    reason = {
+        "binary": "binary",
+        "withheld": "withheld: needs body read",
+        "unavailable": "unavailable",
+    }.get(str(marker.get("exact_content")), str(marker.get("exact_content")))
+    return f"<{reason}{size} {short}>"
+
+
 def _cell(value: object) -> str:
     if value is None:
         return "-"
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="json")
+    if isinstance(value, Mapping) and "exact_content" in value and "content_digest" in value:
+        return exact_content_marker_text(value)
+    if isinstance(value, Mapping) and value.get("truncated") is True and "value" in value:
+        text = " ".join(str(value["value"]).split())
+        return (text if len(text) < _CELL_WIDTH else text[: _CELL_WIDTH - 1]) + "…"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, list | tuple):
@@ -427,6 +452,7 @@ __all__ = [
     "QueryNameError",
     "QueryResult",
     "WHERE_SYNTAX",
+    "exact_content_marker_text",
     "filters_from_mappings",
     "keyword_field",
     "keyword_name",

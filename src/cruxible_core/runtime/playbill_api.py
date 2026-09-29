@@ -157,6 +157,7 @@ from cruxible_core.runtime.permissions import (
     check_permission,
     current_request_instance_scope,
     get_current_mode,
+    permits,
 )
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.actor_identity import local_operator_actor_context
@@ -388,6 +389,20 @@ def _access(instance_id: str, *, include_body: bool) -> BodyAccessContext:
     if include_body:
         check_permission("cruxible_playbill_body_read", instance_id=instance_id)
     return BodyAccessContext(principal_id=principal_id, can_read_body=include_body)
+
+
+def _content_access() -> BodyAccessContext:
+    """Who reads exact-content Claim values as text: a caller who may read bodies.
+
+    A read verb answers every caller; one without body-read permission sees an
+    exact-content value as a ``withheld`` marker (with its digest), not a refusal.
+    """
+
+    actor = _actor_context()
+    return BodyAccessContext(
+        principal_id="anonymous" if actor is None else actor.actor_id,
+        can_read_body=permits("cruxible_playbill_body_read"),
+    )
 
 
 def _consumption_context() -> ConsumptionContextV1 | None:
@@ -1935,7 +1950,11 @@ def playbill_query(
     """Answer one ``query`` call (compact, spec or named) as one page of values."""
 
     check_permission("cruxible_playbill_read", instance_id=instance_id)
-    result = service_playbill_query(get_playbill_manager().get(instance_id), request=request)
+    result = service_playbill_query(
+        get_playbill_manager().get(instance_id),
+        request=request,
+        content_access=_content_access(),
+    )
     if result.receipt.mode == "named" and request.name is not None:
         _record_consumed_paths(
             instance_id,
@@ -2611,6 +2630,7 @@ def playbill_get(instance_id: str, *, request: PlaybillGetRequestV1) -> Playbill
         get_playbill_manager().get(instance_id),
         request=request.model_copy(update={"full_coordinate": True}),
         access=_access(instance_id, include_body=request.detail == "body"),
+        content_access=_content_access(),
     )
     read_at = result.accepted_coordinate
     assert read_at is not None

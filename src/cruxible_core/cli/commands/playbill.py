@@ -38,7 +38,12 @@ from cruxible_client.authoring.attestations import (
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
-from cruxible_client.authoring.compact_query import WHERE_SYNTAX, parse_where, render_query_table
+from cruxible_client.authoring.compact_query import (
+    WHERE_SYNTAX,
+    exact_content_marker_text,
+    parse_where,
+    render_query_table,
+)
 from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
     AUTHORING_EXAMPLE_NAMES,
@@ -3591,12 +3596,15 @@ def get_by_ref(
 
 
 def _get_value_text(value: object, *, width: int = 120) -> str:
+    if isinstance(value, dict) and "exact_content" in value and "content_digest" in value:
+        return exact_content_marker_text(value)
     if isinstance(value, dict) and value.get("truncated") is True and "length" in value:
         # A summary card cut this string; --detail evidence reads it whole.
         shown = _get_value_text(value.get("value", ""), width=width - 24)
         return f"{shown.removesuffix('…')}… ({value['length']} chars)"
     if isinstance(value, list) and any(
-        isinstance(item, dict) and item.get("truncated") is True for item in value
+        isinstance(item, dict) and ("truncated" in item or "exact_content" in item)
+        for item in value
     ):
         return "[" + ", ".join(_get_value_text(item, width=width) for item in value) + "]"
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
@@ -3658,6 +3666,14 @@ def _emit_get_text(result: Any) -> None:
             click.echo(f"next: {step}")
         return
     if result.evidence is not None:
+        # Evidence carries the whole value; a summary card cuts a long one.
+        whole = result.evidence.model_dump(mode="json")["value"]
+        if isinstance(whole, str):
+            click.echo(f"value: {printable(whole)}")
+        else:
+            click.echo(f"value: {_get_value_text(whole, width=200)}")
+        if result.evidence.content_digest is not None:
+            click.echo(f"content_digest: {result.evidence.content_digest}")
         for capture in result.evidence.captures:
             click.echo(
                 f"capture {capture.capture}  {capture.contract} v{capture.version}  "
