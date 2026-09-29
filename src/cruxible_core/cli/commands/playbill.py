@@ -3449,6 +3449,8 @@ def _write_text(outcome: WriteOutcome) -> None:
                 f"{_get_value_text(change.after)}"
             )
         details = [item for item in (change.claim,) if item]
+        if change.already_live:
+            details.append("already live")
         if change.verdict is not None:
             details.append(f"verdict {change.verdict}")
         if change.retired:

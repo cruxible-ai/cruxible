@@ -187,8 +187,19 @@ def test_two_adds_on_one_many_valued_field_land_in_one_change_set(
     assert len(claims) == 2 and None not in claims
     assert _values(instance, WI1, "governs") == [WI2, WI3]
 
-    duplicate = _refusal(_write(instance, _add(WI1, "governs", WI2)))
-    assert duplicate.code == "playbill.write.value_already_present"
+    head = instance.accepted_coordinate().git_oid
+    again = _write(instance, _add(WI1, "governs", WI2))
+    assert again.status == "accepted" and again.proposal is None
+    (change,) = again.changes
+    assert change.already_live and change.claim in claims and change.after == WI2
+    assert change.verdict == "supported"
+    assert instance.accepted_coordinate().git_oid == head  # no change set was submitted
+    assert _write(instance, _add(WI1, "governs", WI2), dry_run=True).status == "would_accept"
+
+    # In a batch, only the new value is submitted.
+    mixed = _write(instance, _add(WI1, "governs", WI2), _set(WI1, "status", "ready"))
+    assert mixed.status == "accepted" and mixed.proposal is not None
+    assert [item.already_live for item in mixed.changes] == [True, False]
 
 
 def test_without_the_filled_dispositions_the_same_adds_refuse(

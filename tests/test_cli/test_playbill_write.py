@@ -164,6 +164,9 @@ def test_write_applies_a_file_of_changes_and_prints_its_schema(
     result = _run("write", str(changes), "--because", "Linked.")
     assert result.exit_code == 0, result.output
     assert result.output.count("add project.work_item/wi-1 governs") == 2
+    again = _run("write", str(changes), "--because", "Linked again.")
+    assert again.exit_code == 0, again.output
+    assert again.output.count("already live") == 2
 
     bad = tmp_path / "bad.yaml"
     bad.write_text("because: x\nchanges:\n  - op: move\n", encoding="utf-8")

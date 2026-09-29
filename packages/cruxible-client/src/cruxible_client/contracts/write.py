@@ -320,6 +320,11 @@ class ChangeOutcome(_StrictWriteModel):
         exclude_if=_omit_empty,
         description="Live Claims this one now contends with in a single-value slot.",
     )
+    already_live: bool = Field(
+        default=False,
+        exclude_if=lambda value: value is False,
+        description="The value was already live as `claim`: nothing was submitted for it.",
+    )
     verdict: str | None = Field(
         default=None,
         exclude_if=_omit_none,

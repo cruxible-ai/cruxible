@@ -759,15 +759,26 @@ class _Planner:
                     revises = remaining[0].claim_id
                     before = remaining[0].value
         else:
-            for item in live:
-                if item.value == shown_after:
-                    raise _refuse(
-                        "playbill.write.value_already_present",
-                        f"{label} already holds {shown_after!r} as {item.claim_id}",
-                        change=index,
-                        candidates=(item.claim_id,),
-                        repair="Leave it out; the value is already there",
-                    )
+            present = next((item for item in live if item.value == shown_after), None)
+            if present is not None:
+                # Adding what is already there is done already: an idempotent
+                # success, with nothing to submit for this change.
+                return _Planned(
+                    index=index,
+                    op=change.op,
+                    outcome={
+                        "subject": change.subject,
+                        "field": name,
+                        "predicate": info.predicate,
+                        "before": summary_value(present.value),
+                        "after": summary_value(present.value),
+                        "claim": present.claim_id,
+                        "already_live": True,
+                    },
+                    slot=(path, info.predicate),
+                    change=change,
+                    claim_type=claim_type,
+                )
         statement = AuthoringClaimStatementV1(
             subject=SemanticAddress.whole_artifact(path),
             predicate=info.predicate,
@@ -1042,8 +1053,8 @@ def _lower(plan: _Plan, *, because: str) -> _Lowered:
         (None, SubjectAuthoringPayloadV1(subject=shell)) for shell in plan.subjects.values()
     ]
     for item in plan.changes:
-        assert item.member is not None
-        drafts.append((item.index, item.member))
+        if item.member is not None:
+            drafts.append((item.index, item.member))
     by_identity: dict[str, tuple[int | None, AuthoringChangeSetMemberV1]] = {}
     for index, member in drafts:
         identity = authoring_member_identity(member)
@@ -1098,7 +1109,7 @@ def _change_outcomes(
     outcomes: list[ChangeOutcome] = []
     for item in plan.changes:
         values = dict(item.outcome)
-        if item.op != "retire":
+        if item.op != "retire" and item.member is not None:
             identity = lowered.identity_by_change[item.index]
             values["claim"] = item.revises or minted.get(identity)
         outcomes.append(ChangeOutcome(op=item.op, **values))
@@ -1458,6 +1469,8 @@ def _service_write(
     try:
         read_at = resolve_read_coordinate(instance, request.at) if request.at is not None else head
         plan = _Planner(instance, head=head, read_at=read_at, request=request).build()
+        if all(item.member is None for item in plan.changes) and not plan.subjects:
+            return _already_done(instance, head=head, plan=plan, request=request)
         lowered = _lower(plan, because=request.because)
     except (WriteRefusalError, ReadRefusalError) as error:
         return refuse(_refusal(error))
@@ -1603,6 +1616,36 @@ def _service_write(
         approval=approval,
         warnings=warnings,
         next=approval.approve or approval.activate,
+    )
+
+
+def _already_done(
+    instance: PlaybillInstance,
+    *,
+    head: AcceptedProjectionCoordinate,
+    plan: _Plan,
+    request: PlaybillWriteRequestV1,
+) -> WriteOutcome:
+    """Every change is already live: accepted, with no change set submitted."""
+
+    changes = tuple(ChangeOutcome(op=item.op, **item.outcome) for item in plan.changes)
+    changes, warnings = _with_verdicts(
+        instance,
+        head=head,
+        plan=plan,
+        changes=changes,
+        verdicts=_accepted_verdicts(instance, head, plan),
+        surface=request.surface,
+        because=request.because,
+    )
+    first = next((item.subject for item in changes if item.subject is not None), None)
+    return WriteOutcome(
+        status="would_accept" if request.dry_run else "accepted",
+        changes=changes,
+        coordinate=_compact(instance, head),
+        base=None if request.dry_run else _compact(instance, head),
+        warnings=warnings,
+        next=None if first is None else _render_get(request.surface, first),
     )
 
 
