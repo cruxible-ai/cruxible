@@ -15,6 +15,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV3,
 )
 from cruxible_core.service.discovery import orient as orient_module
+from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.orient import OrientCaller, service_playbill_orient
 from cruxible_core.service.list_pages import PlaybillListCursorMismatch
 from cruxible_core.service.read_refusals import ReadRefusalError
@@ -283,11 +284,9 @@ def test_identity_rules_name_their_contracts_and_unknown_digests_stay_short(
     )
     coordinate = seeded.accepted_coordinate()
     with seeded.bind_accepted_projection(coordinate) as projection:
-        names = orient_module._ContractNames(seeded, coordinate, projection.typed.connection)
-        assert orient_module._evidence_names(identity_named, names) == (
-            ("sec.advisory-feed",),
-            False,
-        )
+        names = CaptureContractNames(seeded, coordinate, connection=projection.typed.connection)
+        assert names.admitted(identity_named) == ("sec.advisory-feed",)
+        assert not names.names_by_digest(identity_named)
         assert names.name("sha256:" + "ab" * 32) == "unresolved:abababababab"
 
 

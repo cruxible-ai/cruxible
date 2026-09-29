@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import re
 import shlex
-import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -46,16 +45,12 @@ from cruxible_client.contracts.orient import (
     PlaybillOrientSurface,
     PlaybillOrientYouV1,
 )
-from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionRuleV1,
-    ClaimEvidenceAdmissionRuleV2,
-    ClaimEvidenceAdmissionRuleV3,
-)
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.next import (
     PlaybillNextItemV1,
@@ -129,57 +124,6 @@ class _State:
     queries: tuple[PlaybillOrientQueryV1, ...]
 
 
-class _ContractNames:
-    """CaptureContract digests to identity names, read through accepted state."""
-
-    def __init__(
-        self,
-        instance: PlaybillInstance,
-        coordinate: AcceptedProjectionCoordinate,
-        connection: sqlite3.Connection,
-    ) -> None:
-        self._instance = instance
-        self._at = AcceptedCoordinate.from_internal(coordinate)
-        self._connection = connection
-        self._names: dict[str, str] = {}
-
-    def name(self, digest: str) -> str:
-        found = self._names.get(digest)
-        if found is not None:
-            return found
-        row = self._connection.execute(
-            "SELECT identity FROM capture_contracts WHERE artifact_digest=?", (digest,)
-        ).fetchone()
-        if row is not None:
-            name = str(row[0]).removeprefix("CaptureContract:")
-        else:
-            try:
-                version = self._instance.accepted_capture_contract_version(self._at, digest)
-            except PlaybillError:
-                version = None
-            name = (
-                version.contract.identity.name
-                if version is not None
-                else f"unresolved:{digest.rpartition(':')[2][:12]}"
-            )
-        self._names[digest] = name
-        return name
-
-
-def _evidence_names(claim_type: ClaimType, names: _ContractNames) -> tuple[tuple[str, ...], bool]:
-    """The contract names a ClaimType admits, and whether any rule names them by digest."""
-
-    found: set[str] = set()
-    by_digest = False
-    for rule in claim_type.evidence_admission_policy.rules:
-        if isinstance(rule, ClaimEvidenceAdmissionRuleV3):
-            found.update(ref.target.name for ref in rule.capture_contracts)
-        elif isinstance(rule, (ClaimEvidenceAdmissionRuleV1, ClaimEvidenceAdmissionRuleV2)):
-            by_digest = by_digest or bool(rule.capture_contract_digests)
-            found.update(names.name(digest) for digest in rule.capture_contract_digests)
-    return tuple(sorted(found)), by_digest
-
-
 def _query_row(query: QueryDefinitionV1) -> PlaybillOrientQueryV1:
     return PlaybillOrientQueryV1(
         name=query.identity.name,
@@ -195,7 +139,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
     with instance.bind_accepted_projection(coordinate) as projection:
         typed = projection.typed
         connection = typed.connection
-        names = _ContractNames(instance, coordinate, connection)
+        names = CaptureContractNames(instance, coordinate, connection=connection)
         claim_types: list[ClaimType] = []
         evidence: dict[str, tuple[str, ...]] = {}
         digest_named = 0
@@ -206,8 +150,8 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
             if not isinstance(claim_type, ClaimType):
                 continue
             claim_types.append(claim_type)
-            evidence[claim_type.predicate], by_digest = _evidence_names(claim_type, names)
-            digest_named += by_digest
+            evidence[claim_type.predicate] = names.admitted(claim_type)
+            digest_named += names.names_by_digest(claim_type)
         subjects_by_kind = {
             str(kind): int(count)
             for kind, count in connection.execute(

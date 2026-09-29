@@ -25,7 +25,6 @@ from typing import Any, cast
 
 from cruxible_client.contracts import PlaybillAcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.captures import (
-    AcceptedCaptureContract,
     CaptureContractV1,
     parse_capture_envelope,
 )
@@ -68,7 +67,6 @@ from cruxible_client.contracts.get_reads import (
     PlaybillReadFlag,
     PlaybillReadSurface,
 )
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRuleV3
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -76,6 +74,7 @@ from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.read_refusals import (
     ReadRefusalError,
     nearest,
@@ -532,65 +531,6 @@ def unsure_held_claims(
     )
 
 
-# -- CaptureContract identities --------------------------------------------------
-
-
-class CaptureContractNames:
-    """Name CaptureContracts by identity and version, never by digest.
-
-    v6 ClaimTypes name contracts by identity already. Older ClaimTypes name
-    exact digests; each digest resolves through accepted history to the
-    identity it is a version of, or shows as ``unresolved:<digest prefix>``.
-    """
-
-    def __init__(self, instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate):
-        self._instance = instance
-        self._at = AcceptedCoordinate.from_internal(coordinate)
-        self._versions: dict[str, AcceptedCaptureContract | None] = {}
-        self._lineages: dict[str, tuple[str, ...]] = {}
-
-    def version_of(self, digest: str) -> AcceptedCaptureContract | None:
-        if digest not in self._versions:
-            self._versions[digest] = self._instance.accepted_capture_contract_version(
-                self._at, digest
-            )
-        return self._versions[digest]
-
-    def lineage(self, identity: str) -> tuple[str, ...]:
-        """Every accepted version digest of one contract identity, oldest first."""
-
-        if identity not in self._lineages:
-            with self._instance.accepted_history_reader(at=self._at) as history:
-                occurrences = history.occurrences(identity)
-            ordered: list[str] = []
-            for location in occurrences:
-                if location.artifact_digest not in ordered:
-                    ordered.append(location.artifact_digest)
-            self._lineages[identity] = tuple(ordered)
-        return self._lineages[identity]
-
-    def version_number(self, identity: str, digest: str) -> int:
-        lineage = self.lineage(identity)
-        return lineage.index(digest) + 1 if digest in lineage else len(lineage)
-
-    def name(self, digest: str) -> str:
-        found = self.version_of(digest)
-        if found is None:
-            return f"unresolved:{_short_digest(digest).partition(':')[2]}"
-        return found.contract.identity.qualified
-
-    def accepted_evidence(self, claim_type: ClaimType) -> tuple[str, ...]:
-        """The contract names a ClaimType's evidence rules admit."""
-
-        names: set[str] = set()
-        for rule in claim_type.evidence_admission_policy.rules:
-            if isinstance(rule, ClaimEvidenceAdmissionRuleV3):
-                names.update(item.target.qualified for item in rule.capture_contracts)
-            else:
-                names.update(self.name(digest) for digest in rule.capture_contract_digests)
-        return tuple(sorted(names, key=lambda item: item.encode("utf-8")))
-
-
 # -- per-kind builders ------------------------------------------------------------
 
 
@@ -813,7 +753,7 @@ def _claim_type_card(
                 (claim_type.predicate,),
             ).fetchone()[0]
         )
-    evidence = CaptureContractNames(instance, coordinate).accepted_evidence(claim_type)
+    evidence = CaptureContractNames(instance, coordinate).admitted(claim_type, qualified=True)
     object_type, members = _object_description(claim_type)
     next_steps = [_render_get(surface, resolved.display, "proof")]
     next_steps.extend(
@@ -945,7 +885,8 @@ def _capture_contract_card(
         sorted(
             item.predicate
             for item in claim_types
-            if item.lifecycle.state == "live" and resolved.identity in names.accepted_evidence(item)
+            if item.lifecycle.state == "live"
+            and resolved.identity in names.admitted(item, qualified=True)
         )
     )
     return PlaybillGetCaptureContractCardV1(
@@ -1515,7 +1456,6 @@ def service_playbill_get(
 
 
 __all__ = [
-    "CaptureContractNames",
     "ResolvedRef",
     "resolve_get_ref",
     "service_playbill_get",

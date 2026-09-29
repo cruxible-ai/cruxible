@@ -90,6 +90,7 @@ from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.query import evaluate_accepted_query
 from cruxible_core.service.discovery.query_values import (
     LiveValue,
@@ -104,7 +105,6 @@ from cruxible_core.service.discovery.query_values import (
 from cruxible_core.service.discovery.query_vocabulary import (
     ORDERABLE_TYPES,
     SUBJECT_ID_FIELD,
-    CaptureContractNames,
     PredicateInfo,
     QueryVocabulary,
     check_operator,

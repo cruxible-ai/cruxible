@@ -27,8 +27,8 @@ from cruxible_core.service.authoring.documents import (
     service_store_playbill_body,
 )
 from cruxible_core.service.discovery import get as get_module
+from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.get import (
-    CaptureContractNames,
     service_playbill_get,
     verdict_flags,
 )

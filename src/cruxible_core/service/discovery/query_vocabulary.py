@@ -23,11 +23,9 @@ from typing import Any, Literal
 
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.compact_query import QueryFilterOperator
-from cruxible_client.contracts.errors import PlaybillFormatError
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV3
-from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.field_names import (
     reserved_meaning,
     resolve_field_in,
@@ -444,44 +442,6 @@ def check_operator(
 # -- compact definitions ----------------------------------------------------
 
 
-class CaptureContractNames:
-    """Resolve the CaptureContracts an evidence rule admits to their identity names."""
-
-    def __init__(self, instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate):
-        self._instance = instance
-        self._at = AcceptedCoordinate.from_internal(coordinate)
-        self._by_digest: dict[str, str] = {}
-
-    def by_digest(self, digest: str) -> str:
-        known = self._by_digest.get(digest)
-        if known is None:
-            found = None
-            try:
-                found = self._instance.accepted_capture_contract_version(self._at, digest)
-            except PlaybillFormatError:
-                found = None
-            short = digest.split(":", 1)[-1][:12]
-            known = f"unresolved:{short}" if found is None else found.contract.identity.name
-            self._by_digest[digest] = known
-        return known
-
-    def of(self, claim_type: ClaimType) -> tuple[str, ...]:
-        policy = claim_type.evidence_admission_policy
-        names: set[str] = set()
-        if isinstance(policy, ClaimEvidenceAdmissionPolicyV3):
-            for rule in policy.rules:
-                names.update(item.target.name for item in rule.capture_contracts)
-        else:
-            for old in policy.rules:
-                names.update(self.by_digest(digest) for digest in old.capture_contract_digests)
-        return tuple(sorted(names))
-
-    def names_by_digest(self, claim_type: ClaimType) -> bool:
-        """Whether this ClaimType's evidence rules still name contracts by digest."""
-
-        return not isinstance(claim_type.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV3)
-
-
 def object_label(info: PredicateInfo) -> str:
     if info.value_type == "subject":
         return "subject:" + "|".join(info.object_kinds) if info.object_kinds else "subject"
@@ -502,12 +462,11 @@ def claim_type_row(info: PredicateInfo, contracts: CaptureContractNames) -> dict
     description = getattr(info.claim_type, "description", None)
     if isinstance(description, str) and description:
         row["description"] = description
-    row["evidence"] = list(contracts.of(info.claim_type))
+    row["evidence"] = list(contracts.admitted(info.claim_type))
     return row
 
 
 __all__ = [
-    "CaptureContractNames",
     "ORDERABLE_TYPES",
     "PredicateInfo",
     "QueryVocabulary",

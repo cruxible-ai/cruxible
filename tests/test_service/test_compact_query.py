@@ -316,13 +316,16 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
         ClaimEvidenceAdmissionPolicyV3,
         ClaimEvidenceAdmissionRuleV3,
     )
-    from cruxible_core.service.discovery.query_vocabulary import CaptureContractNames
+    from cruxible_core.service.discovery.contract_names import CaptureContractNames
     from tests.test_claims.test_claims import _claim_type
 
     legacy = _claim_type()
     digest = legacy.evidence_admission_policy.rules[0].capture_contract_digests[0]
     names = CaptureContractNames.__new__(CaptureContractNames)
-    names._by_digest = {}
+    names._versions = {}
+    names._names = {}
+    names._lineages = {}
+    names._connection = None
     names._at = None  # type: ignore[assignment]
     names._instance = SimpleNamespace(  # type: ignore[assignment]
         accepted_capture_contract_version=lambda _at, found: (
@@ -331,8 +334,9 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
             else None
         )
     )
-    assert names.of(legacy) == ("direct",)
-    assert names.by_digest("sha256:" + "ab" * 32) == "unresolved:" + "ab" * 6
+    assert names.admitted(legacy) == ("direct",)
+    assert names.admitted(legacy, qualified=True) == ("CaptureContract:direct",)
+    assert names.name("sha256:" + "ab" * 32) == "unresolved:" + "ab" * 6
 
     identity_rule = ClaimEvidenceAdmissionRuleV3(
         rule_id="by-identity",
@@ -356,7 +360,7 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
             ).model_dump(mode="json"),
         }
     )
-    assert names.of(current) == ("fixture.reports",)
+    assert names.admitted(current) == ("fixture.reports",)
     assert names.names_by_digest(legacy) and not names.names_by_digest(current)
 
 
