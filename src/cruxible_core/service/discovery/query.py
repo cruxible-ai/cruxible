@@ -202,6 +202,57 @@ def _fact_row(
     )
 
 
+def verify_retired_claim_adjudication(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> None:
+    """Refuse exactly where a retired facts build would refuse on adjudication.
+
+    ``build(include_retired=True)`` assembles a row for every retired Claim,
+    and assembling one demands its law evidence, its current ClaimType and a
+    reproducible adjudication rule. A fold that can skip that build must not
+    skip that refusal. This reads only those inputs: retired rows come from the
+    accepted index, and each (ClaimType, recorded rule) pair is reproduced once.
+    """
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        retired = tuple(
+            (str(path), str(predicate))
+            for path, predicate in projection.typed.connection.execute(
+                "SELECT path, predicate FROM claims WHERE lifecycle='retired'"
+            )
+        )
+    if not retired:
+        return
+    history = _claim_read_history_index(instance, coordinate=coordinate)
+    law_evidence = history.law_evidence
+    if isinstance(law_evidence, _IndexedClaimLawEvidence):
+        law_evidence.prefetch(tuple(path for path, _ in retired))
+    claim_types: dict[str, ClaimType] = {}
+    reproduced: set[tuple[str, str]] = set()
+    for path, predicate in sorted(retired, key=lambda item: item[0].encode("utf-8")):
+        evidence = law_evidence.get(path)
+        if evidence is None:
+            raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
+        type_path = claim_type_path(predicate)
+        claim_type = claim_types.get(type_path)
+        if claim_type is None:
+            content = instance.blob_at(coordinate.git_oid, type_path)
+            if content is None:
+                raise ClaimNotFoundError(type_path)
+            claim_type = parse_claim_type(content, path=type_path)
+            claim_types[type_path] = claim_type
+        key = (type_path, evidence.adjudication_rule_digest)
+        if key not in reproduced:
+            _reproduced_claim_adjudication_rule(
+                claim_type=claim_type,
+                evidence_digest=evidence.adjudication_rule_digest,
+                history=history,
+            )
+            reproduced.add(key)
+
+
 class _AcceptedQueryFactsRead:
     """Private facts shared by folds within one request at one coordinate.
 
