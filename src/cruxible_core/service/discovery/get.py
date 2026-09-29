@@ -79,6 +79,7 @@ from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.read_flags import (
     answer_flags,
@@ -521,6 +522,14 @@ def _claim_value(row: ClaimValueV1) -> object:
     return row.value
 
 
+def _value_key(row: ClaimValueV1) -> str:
+    """What makes two slot values one value; an exact-content value keeps its span."""
+
+    if isinstance(row.object, ExactContentClaimObject):
+        return repr(("exact_content", row.object.content_digest, row.object.span))
+    return repr(_claim_value(row))
+
+
 def _artifact_value(claim: ClaimArtifactAny) -> object:
     obj = claim.statement.object
     if isinstance(obj, SubjectClaimObject):
@@ -528,6 +537,16 @@ def _artifact_value(claim: ClaimArtifactAny) -> object:
     if isinstance(obj, ExactContentClaimObject):
         return obj.content_digest
     return obj.value
+
+
+def _shown(
+    obj: object, value: Callable[[], object], content: ExactContentReader
+) -> tuple[object, str | None]:
+    """A value as a card shows it, with an exact-content value's digest beside its text."""
+
+    if isinstance(obj, ExactContentClaimObject):
+        return content.of(obj), obj.content_digest
+    return value(), None
 
 
 def _slot_values(
@@ -565,6 +584,7 @@ def _claim_card(
     *,
     evaluation_time: datetime,
     surface: PlaybillReadSurface,
+    content: ExactContentReader,
 ) -> PlaybillGetClaimCardV1:
     with instance.bind_accepted_projection(coordinate) as projection:
         claim = cast(ClaimArtifactAny, projection.typed.source(resolved.identity))
@@ -604,13 +624,20 @@ def _claim_card(
         latest = h.latest_member(claim_path(claim.identity.name))
         accepted = None if latest is None else _generation_timestamp(instance, h, latest.sequence)
     name = claim.identity.name
+    value, content_digest = _shown(statement.object, lambda: _artifact_value(claim), content)
+    contender_values = {
+        item.claim_id: _shown(item.object, functools.partial(_claim_value, item), content)
+        for item in slot
+        if item.claim_id != name
+    }
     return PlaybillGetClaimCardV1(
         claim=name,
         subject=_subject_ref(subject_path),
         predicate=short_field_name(statement.predicate, subject_kind, accepted_predicates),
         predicate_full=statement.predicate,
         qualifier=statement.qualifier,
-        value=summary_value(_artifact_value(claim)),
+        value=summary_value(value),
+        content_digest=content_digest,
         verdict=verdict,
         status=status,
         revision=int(row.revision) if row is not None else 1,
@@ -618,7 +645,8 @@ def _claim_card(
         contenders=tuple(
             PlaybillGetContenderV1(
                 claim=item.claim_id,
-                value=summary_value(_claim_value(item)),
+                value=summary_value(contender_values[item.claim_id][0]),
+                content_digest=contender_values[item.claim_id][1],
                 verdict=item.verdict,
             )
             for item in slot
@@ -640,6 +668,7 @@ def _subject_card(
     *,
     evaluation_time: datetime,
     surface: PlaybillReadSurface,
+    content: ExactContentReader,
 ) -> PlaybillGetSubjectCardV1:
     subject = _name(resolved.identity)
     kind = subject.split("/", 1)[0]
@@ -682,10 +711,17 @@ def _subject_card(
         # The slot's answer: what resolution selected, or every live contender
         # while it is contested. Overturned and refused contenders are not values.
         shown = [item for item in members if item.status in {"accepted", "conflicted"}] or members
-        values = [_claim_value(item) for item in shown]
+        # Distinctness is judged on the accepted values before any is shown as
+        # text: an exact-content value is its digest AND its span, so two spans
+        # of one body are two values.
         marks: set[PlaybillReadFlag] = set(
-            answer_flags("many" if many else "one", len({repr(value) for value in values}))
+            answer_flags("many" if many else "one", len({_value_key(item) for item in shown}))
         )
+        pairs = [
+            _shown(item.object, functools.partial(_claim_value, item), content) for item in shown
+        ]
+        values = [value for value, _digest in pairs]
+        digests = tuple(digest for _value, digest in pairs if digest is not None)
         for item in shown:
             marks.update(
                 verdict_flags(item.verdict, item.status, held=f"Claim:{item.claim_id}" in held)
@@ -698,6 +734,7 @@ def _subject_card(
                 qualifier=qualifier,
                 claim=claims_shown if listed else claims_shown[0],
                 value=summary_value(values if listed else values[0]),
+                content_digest=(digests if listed else digests[0]) if digests else None,
                 flags=tuple(ordered_flags(marks)),
             )
         )
@@ -996,6 +1033,7 @@ def _claim_evidence(
     resolved: ResolvedRef,
     *,
     evaluation_time: datetime,
+    content: ExactContentReader,
 ) -> PlaybillGetEvidenceV1:
     from cruxible_core.service.claims.claims import service_explain_playbill_claim
 
@@ -1040,8 +1078,10 @@ def _claim_evidence(
     )
     with instance.bind_accepted_projection(coordinate) as projection:
         claim = cast(ClaimArtifactAny, projection.typed.source(resolved.identity))
+    value, content_digest = _shown(claim.statement.object, lambda: _artifact_value(claim), content)
     return PlaybillGetEvidenceV1(
-        value=_artifact_value(claim),
+        value=value,
+        content_digest=content_digest,
         captures=tuple(captures),
         attestations=attestations,
         rationale=_claim_rationale(instance, coordinate, _name(resolved.identity)),
@@ -1061,7 +1101,8 @@ class _RevisionEntry:
     sequence: int
     digest: str
     lifecycle: str | None
-    value: Callable[[], object] | None = None
+    # The revision's value and, for exact content, its digest.
+    value: Callable[[], tuple[object, str | None]] | None = None
 
 
 def _revision(
@@ -1071,6 +1112,7 @@ def _revision(
 ) -> PlaybillGetRevisionV1:
     generation = history.generation(entry.sequence)
     record = history.read_generation_record(entry.sequence, instance.blob_at)
+    value, content_digest = (None, None) if entry.value is None else entry.value()
     return PlaybillGetRevisionV1(
         revision=entry.revision,
         sequence=entry.sequence,
@@ -1078,7 +1120,10 @@ def _revision(
         actor=generation.actor_id or record.actor_binding.actor_id,
         approved_by=tuple(dict.fromkeys(item.attestation.signer_id for item in record.approvals)),
         lifecycle=entry.lifecycle,
-        value=None if entry.value is None else entry.value(),
+        # Every revision value follows the card rule; detail="evidence" reads
+        # the current value whole.
+        value=summary_value(value),
+        content_digest=content_digest,
         digest=_short_digest(entry.digest),
     )
 
@@ -1087,6 +1132,7 @@ def _history_entries(
     instance: PlaybillInstance,
     resolved: ResolvedRef,
     history: Any,
+    content: ExactContentReader,
 ) -> list[_RevisionEntry]:
     """Every accepted revision up to the read coordinate, oldest first."""
 
@@ -1099,10 +1145,13 @@ def _history_entries(
     if resolved.kind == "claim":
         path = claim_path(_name(resolved.identity))
 
-        def claim_value(git_oid: str) -> Callable[[], object]:
-            def read() -> object:
-                content = instance.blob_at(git_oid, path)
-                return None if content is None else _artifact_value(parse_claim(content, path=path))
+        def claim_value(git_oid: str) -> Callable[[], tuple[object, str | None]]:
+            def read() -> tuple[object, str | None]:
+                member = instance.blob_at(git_oid, path)
+                if member is None:
+                    return None, None
+                claim = parse_claim(member, path=path)
+                return _shown(claim.statement.object, lambda: _artifact_value(claim), content)
 
             return read
 
@@ -1144,7 +1193,7 @@ def _history_entries(
                         sequence=document_entry.sequence,
                         digest=document_entry.envelope_digest,
                         lifecycle=None,
-                        value=functools.partial(lambda value: value, body),
+                        value=functools.partial(lambda value: (value, None), body),
                     )
                 )
     else:
@@ -1173,12 +1222,13 @@ def _history(
     ref: str,
     limit: int,
     continuation: ListContinuation | None,
+    content: ExactContentReader,
 ) -> tuple[PlaybillGetHistoryV1, bool, str | None]:
     """One page of revisions, newest first, and the cursor that continues it."""
 
     at = AcceptedCoordinate.from_internal(coordinate)
     with instance.accepted_history_reader(at=at) as history:
-        newest_first = list(reversed(_history_entries(instance, resolved, history)))
+        newest_first = list(reversed(_history_entries(instance, resolved, history, content)))
         keys = [(str(entry.sequence), entry.digest) for entry in newest_first]
         snapshot = list_snapshot(keys)
         page, truncated = page_after_boundary(
@@ -1418,8 +1468,13 @@ def service_playbill_get(
     *,
     request: PlaybillGetRequestV1,
     access: BodyAccessContext,
+    content_access: BodyAccessContext | None = None,
 ) -> PlaybillGetResultV1:
-    """Resolve one reference and answer it at one ``detail`` level."""
+    """Resolve one reference and answer it at one ``detail`` level.
+
+    ``content_access`` reads exact-content Claim values as text (``access`` when
+    not given); without body access they show as a ``withheld`` marker.
+    """
 
     continuation, at = _history_continuation(request)
     coordinate = resolve_read_coordinate(instance, at)
@@ -1456,14 +1511,25 @@ def service_playbill_get(
     card: PlaybillGetCardV1 | None = None
     fields: dict[str, Any] = {}
     surface = request.surface
+    content = ExactContentReader(instance, access if content_access is None else content_access)
     if request.detail == "summary":
         if resolved.kind == "claim":
             card = _claim_card(
-                instance, coordinate, resolved, evaluation_time=evaluation_time, surface=surface
+                instance,
+                coordinate,
+                resolved,
+                evaluation_time=evaluation_time,
+                surface=surface,
+                content=content,
             )
         elif resolved.kind == "subject":
             card = _subject_card(
-                instance, coordinate, resolved, evaluation_time=evaluation_time, surface=surface
+                instance,
+                coordinate,
+                resolved,
+                evaluation_time=evaluation_time,
+                surface=surface,
+                content=content,
             )
         elif resolved.kind == "claim_type":
             card = _claim_type_card(instance, coordinate, resolved, surface=surface)
@@ -1482,7 +1548,7 @@ def service_playbill_get(
         fields["card"] = card
     elif request.detail == "evidence":
         fields["evidence"] = _claim_evidence(
-            instance, coordinate, resolved, evaluation_time=evaluation_time
+            instance, coordinate, resolved, evaluation_time=evaluation_time, content=content
         )
     elif request.detail == "why":
         fields["why"] = _why(
@@ -1496,6 +1562,7 @@ def service_playbill_get(
             ref=request.ref,
             limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
             continuation=continuation,
+            content=content,
         )
     elif request.detail == "proof":
         fields["proof"] = _proof(

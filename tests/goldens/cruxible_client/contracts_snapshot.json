@@ -144,7 +144,8 @@
         "documents",
         "procedures",
         "claim_types",
-        "queries"
+        "queries",
+        "interfaces"
       ]
     },
     "PlaybillOrientSurface": {
@@ -27153,6 +27154,29 @@
             "type": "string"
           }
         },
+        "interfaces": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "interfaces",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientInterfaceV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Interfaces"
+          }
+        },
         "kind_detail": {
           "default": null,
           "default_json_serializable": true,
@@ -27311,7 +27335,8 @@
                   "documents",
                   "procedures",
                   "claim_types",
-                  "queries"
+                  "queries",
+                  "interfaces"
                 ],
                 "type": "string"
               },
@@ -27421,6 +27446,11 @@
                 "title": "Documents",
                 "type": "integer"
               },
+              "interfaces": {
+                "minimum": 0,
+                "title": "Interfaces",
+                "type": "integer"
+              },
               "procedures": {
                 "minimum": 0,
                 "title": "Procedures",
@@ -27436,7 +27466,8 @@
               "claim_types",
               "procedures",
               "documents",
-              "queries"
+              "queries",
+              "interfaces"
             ],
             "title": "PlaybillOrientArtifactCountsV1",
             "type": "object"
@@ -27506,6 +27537,67 @@
               "media_type"
             ],
             "title": "PlaybillOrientDocumentV1",
+            "type": "object"
+          },
+          "PlaybillOrientInterfaceV1": {
+            "additionalProperties": false,
+            "description": "One live provider interface a Procedure node can call.\n\n``input`` and ``output`` list the operation contract's fields as\n``name: type`` (``?`` when optional); an acquisition interface's output is\nthe named external-capture contract instead. ``effect`` is the interface's\ngoverned effect class: an ``external_mutation`` call needs an effect policy\non its node. ``providers`` are the live Providers implementing it; one with\nnone has nothing to run it yet.",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "effect": {
+                "enum": [
+                  "none",
+                  "external_read",
+                  "external_mutation"
+                ],
+                "title": "Effect",
+                "type": "string"
+              },
+              "input": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Input",
+                "type": "array"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "output": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Output",
+                "type": "array"
+              },
+              "providers": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Providers",
+                "type": "array"
+              }
+            },
+            "required": [
+              "name",
+              "effect"
+            ],
+            "title": "PlaybillOrientInterfaceV1",
             "type": "object"
           },
           "PlaybillOrientKindDetailV1": {
@@ -27850,7 +27942,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types`` or ``queries``), paged.\n\n``next`` is rendered for the requesting surface.",
+        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``queries`` or ``interfaces``), paged.\n\n``next`` is rendered for the requesting surface.",
         "properties": {
           "accepted_at": {
             "format": "date-time",
@@ -27925,6 +28017,21 @@
           "instance": {
             "title": "Instance",
             "type": "string"
+          },
+          "interfaces": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientInterfaceV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Interfaces"
           },
           "kind_detail": {
             "anyOf": [
@@ -28021,7 +28128,8 @@
                   "documents",
                   "procedures",
                   "claim_types",
-                  "queries"
+                  "queries",
+                  "interfaces"
                 ],
                 "type": "string"
               },
@@ -56304,7 +56412,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One page of a ``query`` answer: values first, flags per row.",
+        "description": "One page of a ``query`` answer: values first, flags per row.\n\nRows are bounded by ``get``'s card rule: a string value over 500 characters\nis cut to ``{value, truncated: true, length}`` (``get(detail=\"evidence\")``\nreads it whole), and an exact-content value is its text, or a typed marker\nwhen it cannot be shown as text.",
         "properties": {
           "capped": {
             "default": [],

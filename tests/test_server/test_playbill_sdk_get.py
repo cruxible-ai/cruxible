@@ -92,3 +92,38 @@ def test_get_resolves_strings_and_typed_refs_directly(
 
     with pytest.raises(CoreError, match="playbill.get.ref_not_found"):
         pb.get("project.work_item/wi-4")
+
+
+def test_an_exact_content_claim_view_carries_the_text_the_daemon_reads(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.get_reads import PlaybillExactContentRefV1
+    from tests.core_support._exact_content_support import seed_exact_content_into
+
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
+    seeded = seed_exact_content_into(
+        instance,
+        GeneratedKeyMaterial(
+            principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
+        ),
+        {"wi-42": b"The ruling, exactly as written.\n", "wi-bin": b"\xff\xfe\x00opaque"},
+    )
+    ruling, binary = seeded["wi-42"], seeded["wi-bin"]
+    pb = _sdk(client, instance_id, tmp_path)
+
+    card = pb.get(ruling.claim_id)
+    assert isinstance(card.value, ClaimView)
+    assert card.value.object_kind == "exact_content"
+    assert card.value.value == "The ruling, exactly as written.\n"
+    assert card.value.content_digest == ruling.digest
+    # claim_view and the batch read agree with get, and with the CLI and MCP card.
+    assert pb.claim_view(ruling.claim_id) == card.value
+    (batched, marked) = pb.claim_views([ruling.claim_id, binary.claim_id])
+    assert batched == card.value
+    assert marked.value == PlaybillExactContentRefV1(
+        exact_content="binary", content_digest=binary.digest, length=9
+    )
+    assert marked.content_digest == binary.digest

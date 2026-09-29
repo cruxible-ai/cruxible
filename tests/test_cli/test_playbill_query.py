@@ -181,3 +181,46 @@ def test_the_named_entrypoint_leaves_still_answer(stub: _StubClient) -> None:
     helped = _run()
     assert helped.exit_code == 0
     assert "Query accepted state" in helped.output and "run" in helped.output
+
+
+def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
+    from cruxible_client.authoring.compact_query import render_query_table
+    from cruxible_client.contracts.get_reads import (
+        PlaybillExactContentRefV1,
+        PlaybillGetTruncatedTextV1,
+    )
+
+    digest = "sha256:" + "cd" * 32
+    page = contracts.PlaybillQueryResult(
+        kind="legal.case",
+        columns=(contracts.PlaybillQueryColumnV1(name="ruling", type="exact_content"),),
+        rows=(
+            {"subject": "legal.case/a", "subject_id": "a", "ruling": "Affirmed.", "flags": []},
+            {
+                "subject": "legal.case/b",
+                "subject_id": "b",
+                "ruling": PlaybillGetTruncatedTextV1(value="Reversed " * 60, length=900),
+                "flags": [],
+            },
+            {
+                "subject": "legal.case/c",
+                "subject_id": "c",
+                "ruling": PlaybillExactContentRefV1(
+                    exact_content="withheld", content_digest=digest, length=40
+                ),
+                "flags": [],
+            },
+        ),
+        receipt=contracts.PlaybillQueryReceiptV1(
+            mode="inline",
+            spec_digest="sha256:" + "0" * 64,
+            coordinate=COORDINATE,  # type: ignore[arg-type]
+            evaluation_time=datetime(2026, 9, 1, tzinfo=UTC),
+        ),
+    )
+
+    table = render_query_table(page)
+
+    assert "Affirmed." in table
+    assert "Reversed Reversed" in table and "…" in table
+    assert "<withheld: needs body read 40 bytes sha256:cdcdcdcdcdcd>" in table

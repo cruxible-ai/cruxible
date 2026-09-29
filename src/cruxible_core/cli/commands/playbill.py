@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast, get_args
 
 import click
 import yaml
@@ -38,7 +38,12 @@ from cruxible_client.authoring.attestations import (
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
-from cruxible_client.authoring.compact_query import WHERE_SYNTAX, parse_where, render_query_table
+from cruxible_client.authoring.compact_query import (
+    WHERE_SYNTAX,
+    exact_content_marker_text,
+    parse_where,
+    render_query_table,
+)
 from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
     AUTHORING_EXAMPLE_NAMES,
@@ -3578,12 +3583,15 @@ def get_by_ref(
 
 
 def _get_value_text(value: object, *, width: int = 120) -> str:
+    if isinstance(value, dict) and "exact_content" in value and "content_digest" in value:
+        return exact_content_marker_text(value)
     if isinstance(value, dict) and value.get("truncated") is True and "length" in value:
         # A summary card cut this string; --detail evidence reads it whole.
         shown = _get_value_text(value.get("value", ""), width=width - 24)
         return f"{shown.removesuffix('…')}… ({value['length']} chars)"
     if isinstance(value, list) and any(
-        isinstance(item, dict) and item.get("truncated") is True for item in value
+        isinstance(item, dict) and ("truncated" in item or "exact_content" in item)
+        for item in value
     ):
         return "[" + ", ".join(_get_value_text(item, width=width) for item in value) + "]"
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
@@ -3645,6 +3653,14 @@ def _emit_get_text(result: Any) -> None:
             click.echo(f"next: {step}")
         return
     if result.evidence is not None:
+        # Evidence carries the whole value; a summary card cuts a long one.
+        whole = result.evidence.model_dump(mode="json")["value"]
+        if isinstance(whole, str):
+            click.echo(f"value: {printable(whole)}")
+        else:
+            click.echo(f"value: {_get_value_text(whole, width=200)}")
+        if result.evidence.content_digest is not None:
+            click.echo(f"content_digest: {result.evidence.content_digest}")
         for capture in result.evidence.captures:
             click.echo(
                 f"capture {capture.capture}  {capture.contract} v{capture.version}  "
@@ -5509,6 +5525,14 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     if section in {"documents", "procedures"}:
         for row in result[section]:
             lines.append("  ".join(str(value) for value in row.values()))
+    if section == "interfaces":
+        for row in result["interfaces"]:
+            providers = ",".join(row.get("providers", ())) or "(no provider)"
+            lines.append(f"{row['name']}  effect={row['effect']}  providers={providers}")
+            if row.get("description"):
+                lines.append(f"  {row['description']}")
+            lines.append(f"  in:  {', '.join(row.get('input', ())) or '-'}")
+            lines.append(f"  out: {', '.join(row.get('output', ())) or '-'}")
     if section == "claim_types":
         for row in result["claim_types"]:
             lines.append(
@@ -5541,7 +5565,7 @@ def _render_orient(result: Mapping[str, Any]) -> str:
 @click.option("--kind", default=None, help="Read one Subject kind in full.")
 @click.option(
     "--section",
-    type=click.Choice(["documents", "procedures", "claim_types", "queries"]),
+    type=click.Choice(list(get_args(contracts.PlaybillOrientSection))),
     default=None,
     help="Page one artifact family instead of the map.",
 )

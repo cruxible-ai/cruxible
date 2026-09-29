@@ -868,7 +868,10 @@ class World:
             for raw in result.claims:
                 if raw.coordinate != result.coordinate:
                     raise WorldStructureError("prefetch Claim returned a different coordinate")
-                view = self._playbill._typed_claim_view(raw)
+                view = self._playbill._with_exact_text(
+                    self._playbill._typed_claim_view(raw),
+                    AcceptedCoordinate.model_validate(raw.coordinate.model_dump(mode="json")),
+                )
                 if (
                     view.claim_id in seen
                     or view.subject not in paths

@@ -48,6 +48,39 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     page = cruxible.json("playbill", "orient", "--section", "claim_types", "--limit", "1")
     assert [row["predicate"] for row in page["claim_types"]] == [f"{KIND}.status"]
     assert "(no procedures)" in cruxible.run("playbill", "orient", "--section", "procedures").stdout
+    assert mapped["artifacts"]["interfaces"] == 0
+    assert cruxible.json("playbill", "orient", "--section", "interfaces")["interfaces"] == []
+    assert "(no interfaces)" in cruxible.run("playbill", "orient", "--section", "interfaces").stdout
+
+
+def test_an_interfaces_page_prints_each_contract_and_who_implements_it() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    text = _render_orient(
+        {
+            "instance": "inst",
+            "generation": 3,
+            "coordinate": {"git_oid": "a" * 64},
+            "accepted_at": "2026-09-29T00:00:00Z",
+            "section": "interfaces",
+            "interfaces": [
+                {
+                    "name": "workspace.file",
+                    "description": "Structure the bytes of one workspace file read.",
+                    "input": ["bytes: string", "byte_length: integer"],
+                    "output": ["content: object"],
+                    "effect": "none",
+                    "providers": ["cruxible-provider-workspace"],
+                }
+            ],
+            "next": [],
+        }
+    )
+
+    assert "workspace.file  effect=none  providers=cruxible-provider-workspace" in text
+    assert "  Structure the bytes of one workspace file read." in text
+    assert "  in:  bytes: string, byte_length: integer" in text
+    assert "  out: content: object" in text
 
 
 def test_orient_refuses_a_wrong_kind_with_the_nearest_names(

@@ -159,6 +159,22 @@ def summary_value(value: Any) -> Any:
     return value
 
 
+class PlaybillExactContentRefV1(_StrictGetModel):
+    """An exact-content Claim value shown by digest, because it cannot be shown as text.
+
+    An exact-content value reads as its UTF-8 text wherever a value is shown.
+    This marker stands in for the text when there is none to show: the bytes are
+    not UTF-8 text (``binary``), the caller may not read bodies (``withheld``),
+    or the store no longer holds them (``unavailable``). It never raises.
+    """
+
+    exact_content: Literal["binary", "withheld", "unavailable"]
+    content_digest: str
+    # The value's length in bytes, when it is known without reading the bytes
+    # (the accepted span) or they were read.
+    length: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
+
+
 class PlaybillGetCoordinateV1(_StrictGetModel):
     """Which accepted generation answered: the git oid's 12-hex prefix and its sequence."""
 
@@ -169,6 +185,8 @@ class PlaybillGetCoordinateV1(_StrictGetModel):
 class PlaybillGetContenderV1(_StrictGetModel):
     claim: str
     value: Any
+    # An exact-content value's digest; its text is ``value``.
+    content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     verdict: str
 
 
@@ -179,6 +197,8 @@ class PlaybillGetClaimCardV1(_StrictGetModel):
     predicate_full: str
     qualifier: str | None = Field(default=None, exclude_if=_omit_none)
     value: Any
+    # An exact-content value's digest, the proof its text is ``value``.
+    content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     verdict: str
     status: str
     revision: int
@@ -195,6 +215,8 @@ class PlaybillGetSubjectClaimV1(_StrictGetModel):
     # shows several (a many-valued predicate or a contested slot).
     claim: str | tuple[str, ...]
     value: Any
+    # An exact-content row's digests, aligned with ``claim`` the same way.
+    content_digest: str | tuple[str, ...] | None = Field(default=None, exclude_if=_omit_none)
     flags: tuple[PlaybillReadFlag, ...] = ()
 
 
@@ -314,6 +336,7 @@ class PlaybillGetAttestationEvidenceV1(_StrictGetModel):
 class PlaybillGetEvidenceV1(_StrictGetModel):
     # The Claim's whole value, never cut as a summary card cuts a long one.
     value: Any
+    content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     captures: tuple[PlaybillGetCaptureEvidenceV1, ...]
     attestations: tuple[PlaybillGetAttestationEvidenceV1, ...]
     rationale: str | None = Field(default=None, exclude_if=_omit_none)
@@ -327,11 +350,16 @@ class PlaybillGetRevisionV1(_StrictGetModel):
     approved_by: tuple[str, ...] = ()
     lifecycle: str | None = Field(default=None, exclude_if=_omit_none)
     value: Any = Field(default=None, exclude_if=_omit_none)
+    content_digest: str | None = Field(default=None, exclude_if=_omit_none)
     digest: str = Field(description="Artifact digest prefix of this revision.")
 
 
 class PlaybillGetHistoryV1(_StrictGetModel):
-    """One page of revisions, newest first; ``revision`` counts from the oldest."""
+    """One page of revisions, newest first; ``revision`` counts from the oldest.
+
+    Each revision's value follows the summary card rule: a string over 500
+    characters is cut to ``{value, truncated: true, length}``.
+    """
 
     revisions: tuple[PlaybillGetRevisionV1, ...]
 
@@ -378,6 +406,7 @@ __all__ = [
     "GET_HISTORY_MAX_LIMIT",
     "GET_SUMMARY_TEXT_MAX_CHARS",
     "PlaybillByteRangeV1",
+    "PlaybillExactContentRefV1",
     "PlaybillGetAttestationEvidenceV1",
     "PlaybillGetBodyV1",
     "PlaybillGetCaptureContractCardV1",

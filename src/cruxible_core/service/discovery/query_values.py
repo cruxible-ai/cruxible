@@ -31,6 +31,10 @@ class LiveValue:
     predicate: str
     value: object
     artifact_digest: str
+    # An exact-content value: ``value`` is its content digest, and ``span`` the
+    # byte range of that content the Claim states, when it states one.
+    exact: bool = False
+    span: tuple[int, int] | None = None
 
 
 def _chunks(values: Sequence[str]) -> Iterable[Sequence[str]]:
@@ -65,7 +69,8 @@ def subjects_of_kind(connection: sqlite3.Connection, kind: str) -> dict[str, str
 _VALUE_COLUMNS = (
     "c.identity, c.subject_path, c.predicate, c.object_kind, "
     "s.subject_kind, s.subject_id, c.object_content_digest, c.literal_type, "
-    "c.literal_text, c.literal_boolean, c.literal_integer_text, c.artifact_digest"
+    "c.literal_text, c.literal_boolean, c.literal_integer_text, c.artifact_digest, "
+    "c.object_span_start_text, c.object_span_end_text"
 )
 
 
@@ -83,6 +88,8 @@ def _value_of(row: Sequence[Any], source: Any) -> object:
         literal_boolean,
         literal_integer,
         _digest,
+        _span_start,
+        _span_end,
     ) = row
     if object_kind == "subject":
         return None if object_kind_name is None else f"{object_kind_name}/{object_id}"
@@ -149,6 +156,12 @@ def read_live_values(
                         predicate=str(row[2]),
                         value=_value_of(row, projection.typed.source),
                         artifact_digest=str(row[11]),
+                        exact=row[3] == "exact_content",
+                        span=(
+                            None
+                            if row[3] != "exact_content" or row[12] is None
+                            else (int(row[12]), int(row[13]))
+                        ),
                     )
                 )
     return values

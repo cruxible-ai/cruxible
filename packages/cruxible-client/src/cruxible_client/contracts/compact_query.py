@@ -274,7 +274,13 @@ class PlaybillQueryReceiptV1(BaseModel):
 
 
 class PlaybillQueryResult(BaseModel):
-    """One page of a ``query`` answer: values first, flags per row."""
+    """One page of a ``query`` answer: values first, flags per row.
+
+    Rows are bounded by ``get``'s card rule: a string value over 500 characters
+    is cut to ``{value, truncated: true, length}`` (``get(detail="evidence")``
+    reads it whole), and an exact-content value is its text, or a typed marker
+    when it cannot be shown as text.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
