@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,7 +13,6 @@ from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
 from cruxible_core.service.discovery import compact_query as compact_module
 from cruxible_core.service.discovery.compact_query import service_playbill_query
-from cruxible_core.service.discovery.query_values import LiveValue, unsure_holds
 from cruxible_core.service.discovery.query_vocabulary import (
     PlaybillQueryNotFound,
     PlaybillQueryRefused,
@@ -250,53 +247,6 @@ def test_flags_come_from_the_verdict_machinery(instance: Any, monkeypatch: Any) 
     ]
 
 
-def test_unsure_hold_lapses_at_valid_until_or_the_hold_period() -> None:
-    connection = sqlite3.connect(":memory:")
-    connection.execute(
-        "CREATE TABLE attestations (claim_identity TEXT, claim_artifact_digest TEXT, "
-        "principal_id TEXT, basis TEXT, stance TEXT, attested_at_us INTEGER, "
-        "valid_until_us INTEGER)"
-    )
-    day = 86_400_000_000
-    now = datetime.fromisoformat("2026-09-28T00:00:00+00:00")
-    now_us = int(now.timestamp()) * 1_000_000
-    rows = [
-        ("Claim:A", "d-a", "p1", "examined_existing", "unsure", now_us - day, None),
-        ("Claim:B", "d-b", "p1", "examined_existing", "unsure", now_us - 40 * day, None),
-        ("Claim:C", "d-c", "p1", "examined_existing", "unsure", now_us - day, now_us - 1),
-        ("Claim:D", "d-d", "p1", "examined_existing", "unsure", now_us - 2 * day, None),
-        ("Claim:D", "d-d", "p1", "examined_existing", "support", now_us - day, None),
-        ("Claim:E", "old", "p1", "examined_existing", "unsure", now_us - day, None),
-    ]
-    connection.executemany("INSERT INTO attestations VALUES (?,?,?,?,?,?,?)", rows)
-
-    @contextmanager
-    def bind(_coordinate: Any):
-        yield SimpleNamespace(typed=SimpleNamespace(connection=connection))
-
-    fake = SimpleNamespace(bind_accepted_projection=bind)
-    claims = [
-        LiveValue(
-            identity=f"Claim:{name}",
-            subject_path="s",
-            predicate="p",
-            value=None,
-            artifact_digest=f"d-{name.lower()}",
-        )
-        for name in "ABCDE"
-    ]
-    held = unsure_holds(
-        fake,  # type: ignore[arg-type]
-        None,  # type: ignore[arg-type]
-        claims=claims,
-        evaluation_time=now,
-        hold_for={},
-        default_hold=timedelta(days=30),
-    )
-
-    assert held == {"Claim:A"}
-
-
 def test_a_contested_slot_shows_every_live_value(tmp_path: Path) -> None:
     from cruxible_client.contracts.captures import DirectForeignSourceSelectionV1
     from cruxible_client.contracts.semantic import ContentSpan
@@ -400,3 +350,68 @@ def test_a_definition_filter_naming_an_unknown_namespace_refuses(instance: Any) 
 
     assert refused.value.error_code == "playbill.query.unknown_ref"
     assert SUBJECT_KIND in refused.value.nearest
+
+
+def _contend(instance: Any, owner: Any, against: Any, value: str, name: str) -> None:
+    from cruxible_client.contracts.claims import claim_statement_digest
+    from tests.core_support._claim_authoring_support import (
+        ExistingStatementHandoffV1,
+        service_propose_playbill_claim,
+    )
+    from tests.core_support._knowledge_loop_support import activate, authoring
+
+    activate(
+        instance,
+        owner,
+        service_propose_playbill_claim(
+            instance,
+            authoring=authoring("wi-42", value, with_claim_type=False).model_copy(
+                update={
+                    "existing_statement_handoffs": (
+                        ExistingStatementHandoffV1(
+                            statement_digest=claim_statement_digest(against.statement).tagged,
+                            disposition="contradict",
+                        ),
+                    )
+                }
+            ),
+            actor_id="owner",
+            proposal_name=name,
+            timestamp="2026-08-24T17:00:03.000000Z",
+        ),
+    )
+
+
+def test_unsure_hold_follows_next_and_ends_when_a_new_contender_arrives(tmp_path: Path) -> None:
+    from tests.test_integration.test_next_closed_loop import EVALUATION_TIME as LATER
+    from tests.test_integration.test_next_closed_loop import _current_claim
+    from tests.test_integration.test_next_holds import _all_claims, _attest, _next, _rows
+
+    seeded, owner = seed_claims(tmp_path)
+    first = _current_claim(seeded)
+    _contend(seeded, owner, first, "blocked", "hold-conflict")
+    contenders = [
+        claim
+        for claim in _all_claims(seeded)
+        if claim.statement.subject.artifact_path.endswith("wi-42.json")
+    ]
+    for offset, claim in enumerate(contenders):
+        _attest(seeded, owner, claim, tmp_path, at=LATER - timedelta(minutes=2 - offset))
+
+    def flags() -> list[str]:
+        result = _query(
+            seeded,
+            kind=SUBJECT_KIND,
+            where=[{"field": "subject_id", "eq": "wi-42"}],
+            select=["status"],
+            evaluation_time=LATER,
+        )
+        return list(result.rows[0]["flags"])
+
+    assert not _rows(_next(seeded), "claim_conflicted")
+    assert "unsure_hold" in flags()
+
+    # A contender nobody examined brings the conflict back; the flag follows next.
+    _contend(seeded, owner, contenders[-1], "done", "hold-conflict-new")
+    assert _rows(_next(seeded), "claim_conflicted")
+    assert "unsure_hold" not in flags()

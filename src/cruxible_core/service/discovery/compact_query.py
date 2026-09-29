@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Literal, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
@@ -98,7 +98,6 @@ from cruxible_core.service.discovery.query_values import (
     ordered_flags,
     read_live_values,
     subject_labels,
-    unsure_holds,
 )
 from cruxible_core.service.discovery.query_vocabulary import (
     ORDERABLE_TYPES,
@@ -639,20 +638,6 @@ def _capped(result: ClaimQueryResultV1) -> tuple[tuple[str, ...], tuple[str, ...
     return capped, (note,)
 
 
-def _hold_for(vocabulary: QueryVocabulary) -> dict[str, timedelta]:
-    return {
-        predicate: timedelta(microseconds=info.claim_type.unsure_hold_for.microseconds)
-        for predicate, info in vocabulary.predicates.items()
-        if info.claim_type.unsure_hold_for is not None
-    }
-
-
-def _default_hold() -> timedelta:
-    from cruxible_core.service.discovery.next import DEFAULT_UNSURE_HOLD
-
-    return DEFAULT_UNSURE_HOLD
-
-
 def _default_columns(
     vocabulary: QueryVocabulary, kind: str
 ) -> tuple[list[PredicateInfo], tuple[str, ...]]:
@@ -724,8 +709,6 @@ class _RowRenderer:
             self.coordinate,
             claims=shown,
             evaluation_time=self.evaluation_time,
-            hold_for=_hold_for(self.vocabulary),
-            default_hold=_default_hold(),
         )
         rendered: list[dict[str, Any]] = []
         for position, row in enumerate(rows):
@@ -1015,8 +998,6 @@ def _contains_everywhere(
             coordinate,
             claims=mates,
             evaluation_time=evaluation_time,
-            hold_for=_hold_for(vocabulary),
-            default_hold=_default_hold(),
         )
         with instance.bind_accepted_projection(coordinate) as projection:
             labels = subject_labels(
@@ -1530,7 +1511,7 @@ def _engine_answer(
             if row.conflicts:
                 marks.add("contested")
             extra.append(marks)
-        holds = _holds_for_paths(instance, coordinate, vocabulary, read_identities, evaluation_time)
+        holds = _holds_for_paths(instance, coordinate, read_identities, evaluation_time)
         for row, marks in zip(rows, extra, strict=True):
             if any(item.claim_path in holds for item in row.read_claims):
                 marks.add("unsure_hold")
@@ -1575,42 +1556,33 @@ def _subject_path_of(row: Any, binding: str) -> str | None:
 def _holds_for_paths(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
-    vocabulary: QueryVocabulary,
     claim_paths: set[str],
     evaluation_time: datetime,
 ) -> set[str]:
+    """The read Claim paths ``next`` parks under an ``unsure`` hold right now."""
+
+    from cruxible_core.service.discovery.next import claim_unsure_holds
+    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+
     if not claim_paths:
         return set()
     with instance.bind_accepted_projection(coordinate) as projection:
-        connection = projection.typed.connection
         ordered = sorted(claim_paths)
-        found: list[LiveValue] = []
         path_of: dict[str, str] = {}
         for start in range(0, len(ordered), 400):
             chunk = ordered[start : start + 400]
             marks = ",".join("?" for _ in chunk)
-            for identity, path, subject_path, predicate, digest in connection.execute(
-                "SELECT identity, path, subject_path, predicate, artifact_digest FROM claims "
-                f"WHERE path IN ({marks})",
-                tuple(chunk),
+            for identity, path in projection.typed.connection.execute(
+                f"SELECT identity, path FROM claims WHERE path IN ({marks})", tuple(chunk)
             ):
                 path_of[str(identity)] = str(path)
-                found.append(
-                    LiveValue(
-                        identity=str(identity),
-                        subject_path=str(subject_path),
-                        predicate=str(predicate),
-                        value=None,
-                        artifact_digest=str(digest),
-                    )
-                )
-    held = unsure_holds(
+    context = ClaimVerdictReadContext(instance, coordinate)
+    context.prefetch(tuple(path_of.values()))
+    held = claim_unsure_holds(
         instance,
-        coordinate,
-        claims=found,
+        coordinate=coordinate,
+        claims=tuple(context.claim(identity) for identity in sorted(path_of)),
         evaluation_time=evaluation_time,
-        hold_for=_hold_for(vocabulary),
-        default_hold=_default_hold(),
     )
     return {path_of[identity] for identity in held if identity in path_of}
 

@@ -1410,6 +1410,71 @@ def _apply_holds(
     return tuple(kept), held
 
 
+def claim_unsure_holds(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    claims: tuple[ClaimArtifactAny, ...],
+    evaluation_time: datetime,
+    resolution_statuses: Mapping[str, str] | None = None,
+) -> frozenset[str]:
+    """The Claims an ``unsure`` hold parks right now, decided exactly as ``next`` decides.
+
+    The rows are ``next``'s own Claim rows for these Claims, and a Claim is held
+    when ``_Holds.covers`` parks one of them: a new contender, a revised input,
+    newer evidence or a further expiry the attester never saw ends the hold here
+    exactly as it returns the row to the queue.
+    """
+
+    live = tuple(claim for claim in claims if claim.lifecycle.state == "live")
+    if not live:
+        return frozenset()
+    store = instance.claim_attestation_evidence_store()
+    head = store.head()
+    door_events = store.fold_events(at_head=head)
+    holds = _Holds(
+        instance,
+        coordinate=coordinate,
+        claims=live,
+        door_events=door_events,
+        door_history=None if head is None else (lambda: store.events(at_head=head)),
+        evaluation_time=evaluation_time,
+    )
+    if not holds:
+        return frozenset()
+    rows = (
+        *_claim_items(
+            instance,
+            coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+            evaluation_time=evaluation_time,
+            expiring_within=CanonicalDurationV1(microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS),
+            door_events=door_events,
+            claims=live,
+            resolution_statuses=resolution_statuses,
+        ),
+        *_claim_attestation_door_items(
+            instance,
+            coordinate=coordinate,
+            door_events=door_events,
+            evaluation_time=evaluation_time,
+        ),
+    )
+    identities = {claim.identity.qualified for claim in live}
+    held: set[str] = set()
+    for item in rows:
+        members: tuple[PlaybillNextItemV1 | PlaybillNextFindingV1, ...] = (item, *item.findings)
+        for row in members:
+            if not holds.covers(row):
+                continue
+            named = {row.subject_identity, *row.related_identities}
+            arguments = row.repair.arguments if isinstance(row.repair.arguments, Mapping) else {}
+            contenders = arguments.get("claim_ids")
+            if isinstance(contenders, list):
+                named.update(str(contender) for contender in contenders)
+            held.update(named & identities)
+    return frozenset(held)
+
+
 def _row_of(finding: PlaybillNextFindingV1) -> PlaybillNextItemV1:
     return _item(
         severity=finding.severity,
@@ -4406,6 +4471,7 @@ def _page_of(
 
 __all__ = [
     "DEFAULT_EXPIRING_WITHIN_MICROSECONDS",
+    "claim_unsure_holds",
     "NEXT_ITEM_ID_DOMAIN",
     "NEXT_RESULT_DIGEST_DOMAIN",
     "NEXT_RESULT_V2_DIGEST_DOMAIN",

@@ -10,16 +10,16 @@ slots the page touches); nothing here re-adjudicates a Claim.
 - ``contradicted``: the verdict is ``contradicted``.
 - ``contested``: the slot is unresolved between contenders, the verdict is
   ``unresolved``, or a one-cardinality slot holds more than one live value.
-- ``unsure_hold``: a principal's latest examined attestation of the Claim's
-  current version is ``unsure`` and has not lapsed (its ``valid_until``, else the
-  ClaimType's ``unsure_hold_for``, else the engine default).
+- ``unsure_hold``: ``next`` parks one of the Claim's rows under an ``unsure``
+  hold right now (``claim_unsure_holds``), decided by ``next``'s own rows and
+  hold coverage, door attestations and basis changes included.
 """
 
 from __future__ import annotations
 
 import sqlite3
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -250,8 +250,6 @@ def claim_flags(
     *,
     claims: Sequence[LiveValue],
     evaluation_time: datetime,
-    hold_for: Mapping[str, timedelta],
-    default_hold: timedelta,
 ) -> dict[str, set[QueryFlag]]:
     """Verdict flags per Claim identity, from the shared per-slot verdict derivation.
 
@@ -288,68 +286,17 @@ def claim_flags(
             marks.add("contradicted")
         if verdict == "unresolved" or statuses.get(claim.identity.name) == "conflicted":
             marks.add("contested")
-    for identity in unsure_holds(
+    from cruxible_core.service.discovery.next import claim_unsure_holds
+
+    for identity in claim_unsure_holds(
         instance,
-        coordinate,
-        claims=claims,
+        coordinate=coordinate,
+        claims=parsed,
         evaluation_time=evaluation_time,
-        hold_for=hold_for,
-        default_hold=default_hold,
+        resolution_statuses=statuses,
     ):
         flags.setdefault(identity, set()).add("unsure_hold")
     return flags
-
-
-def unsure_holds(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-    *,
-    claims: Sequence[LiveValue],
-    evaluation_time: datetime,
-    hold_for: Mapping[str, timedelta],
-    default_hold: timedelta,
-) -> set[str]:
-    """Claim identities an ``unsure`` examined attestation still holds at this time."""
-
-    if not claims:
-        return set()
-    identities = sorted({item.identity for item in claims})
-    predicate_of = {item.identity: item.predicate for item in claims}
-    digest_of = {item.identity: item.artifact_digest for item in claims}
-    now = _micros(evaluation_time)
-    latest: dict[tuple[str, str], tuple[int, str, int | None]] = {}
-    with instance.bind_accepted_projection(coordinate) as projection:
-        connection = projection.typed.connection
-        for chunk in _chunks(identities):
-            marks_sql = ",".join("?" for _ in chunk)
-            for identity, digest, principal, stance, attested, valid_until in connection.execute(
-                "SELECT claim_identity, claim_artifact_digest, principal_id, stance, "
-                "attested_at_us, valid_until_us FROM attestations "
-                f"WHERE basis='examined_existing' AND claim_identity IN ({marks_sql})",
-                tuple(chunk),
-            ):
-                if digest_of.get(str(identity)) != digest or int(attested) > now:
-                    continue
-                key = (str(identity), str(principal))
-                if key not in latest or latest[key][0] < int(attested):
-                    latest[key] = (
-                        int(attested),
-                        str(stance),
-                        None if valid_until is None else int(valid_until),
-                    )
-    held: set[str] = set()
-    step = timedelta(microseconds=1)
-    for (identity, _principal), (attested, stance, valid_until) in latest.items():
-        if stance != "unsure":
-            continue
-        lapses = (
-            valid_until
-            if valid_until is not None
-            else attested + hold_for.get(predicate_of.get(identity, ""), default_hold) // step
-        )
-        if now < lapses:
-            held.add(identity)
-    return held
 
 
 def ordered_flags(flags: Iterable[QueryFlag]) -> list[QueryFlag]:
@@ -368,5 +315,4 @@ __all__ = [
     "read_live_values",
     "subject_labels",
     "subjects_of_kind",
-    "unsure_holds",
 ]
