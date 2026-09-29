@@ -64,6 +64,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.records import RecordConstructor
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from cruxible_client.authoring.compact_query import CompactQuery
     from cruxible_client.authoring.sdk import ClaimView, Playbill, SubjectDraft
     from cruxible_client.contracts.claim_reads import ClaimValueV1
 
@@ -447,6 +448,29 @@ class KindNamespace:
             pins=(),
             lifecycle=ArtifactLifecycle(),
         )
+
+    def where(self, **filters: object) -> CompactQuery:
+        """Start a compact query over this kind, filtered all-of by keyword.
+
+        ``where(adoption_state="adopted", implementation_state__ne="completed")``;
+        suffixes ``__ne``, ``__lt``, ``__lte``, ``__gt``, ``__gte``, ``__in``,
+        ``__exists`` and ``__contains`` pick the operator. Names and enum
+        values are checked against this World before the wire.
+        """
+
+        return self._query().where(**filters)
+
+    def select(self, *fields: str) -> CompactQuery:
+        """Start a compact query over this kind that shows only these columns."""
+
+        return self._query().select(*fields)
+
+    def _query(self) -> CompactQuery:
+        from cruxible_client.authoring.compact_query import CompactQuery
+
+        kind = self._require_kind()
+        self._world._assert_current()
+        return CompactQuery(self._world, kind)
 
     def _require_kind(self) -> str:
         if not self._node.subject_kind:

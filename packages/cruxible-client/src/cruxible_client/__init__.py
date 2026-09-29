@@ -10,6 +10,7 @@ if TYPE_CHECKING:
         ClaimAttestationV2Signer,
         LocalEd25519ClaimAttestationSigner,
     )
+    from cruxible_client.authoring.compact_query import CompactQuery, QueryNameError, QueryResult
     from cruxible_client.authoring.sdk import Playbill, Prediction, PredictionSettlement
     from cruxible_client.authoring.sdk_types import (
         AbsentSubject,
@@ -102,6 +103,7 @@ __all__ = [
     "ArtifactPin",
     "CapabilityNotServed",
     "Cardinality",
+    "CompactQuery",
     "CaptureRef",
     "CaptureView",
     "ClaimObjectKind",
@@ -146,7 +148,9 @@ __all__ = [
     "ProcedurePinSlotV1",
     "ProjectNodeV3",
     "PropertySchema",
+    "QueryNameError",
     "QueryRef",
+    "QueryResult",
     "ReferentSensitivity",
     "SlotRef",
     "SourceRef",
@@ -181,6 +185,10 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.authoring import sdk
 
         return getattr(sdk, name)
+    if name in {"CompactQuery", "QueryNameError", "QueryResult"}:
+        from cruxible_client.authoring import compact_query
+
+        return getattr(compact_query, name)
     if name in {"ClaimAttestationV2Signer", "LocalEd25519ClaimAttestationSigner"}:
         from cruxible_client.authoring import attestations
 

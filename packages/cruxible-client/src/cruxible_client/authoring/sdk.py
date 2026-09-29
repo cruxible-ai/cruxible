@@ -30,6 +30,7 @@ from cruxible_client.authoring.blocks import (
     repin_projection_block,
     sync_projection_blocks,
 )
+from cruxible_client.authoring.compact_query import QueryResult, filters_from_mappings
 from cruxible_client.authoring.context import (
     PlaybillContextResolutionError,
     resolve_playbill_context,
@@ -174,6 +175,7 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     SubjectClaimObject,
 )
+from cruxible_client.contracts.compact_query import QueryFilterV1, QueryFollowV1
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV2,
     ProjectionCurrencyPolicy,
@@ -206,7 +208,7 @@ from cruxible_client.contracts.procedures.windows import (
     TriggerEventReferenceV1,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1, QueryDefinitionV1
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.records import Record, RecordConstructor
 from cruxible_client.contracts.resolution_contracts import (
@@ -2983,6 +2985,97 @@ class Playbill:
             at=requested,
             budgets=None if budgets is None else budgets.model_dump(mode="json"),
         )
+
+    def query(
+        self,
+        kind: str | None = None,
+        *,
+        where: Sequence[QueryFilterV1 | Mapping[str, object]] | None = None,
+        contains: str | None = None,
+        select: Sequence[str] | None = None,
+        follow: Sequence[QueryFollowV1 | Mapping[str, str] | tuple[str, str]] | None = None,
+        order_by: Sequence[str] | None = None,
+        limit: int = api.PLAYBILL_QUERY_DEFAULT_LIMIT,
+        cursor: str | None = None,
+        spec: QueryDefinitionSpecV1 | None = None,
+        name: str | QueryRef | None = None,
+        params: Mapping[str, object] | None = None,
+        at: AcceptedCoordinate | str | None = None,
+        evaluation_time: datetime | str | None = None,
+    ) -> QueryResult:
+        """Answer any question over accepted state: one page of values with flags.
+
+        Exactly one mode: ``kind`` and/or ``contains`` (compact, with ``where``
+        filters such as ``{"field": "adoption_state", "eq": "adopted"}``,
+        ``select``, ``follow`` and ``order_by``), a ``spec``, or a query ``name``
+        with ``params``. ``next_page()`` continues a truncated answer.
+        """
+
+        follows = [
+            {"field": item[0], "as": item[1]} if isinstance(item, tuple) else item
+            for item in follow or ()
+        ]
+        request = api.PlaybillQueryRequestV1.model_validate(
+            {
+                "kind": kind,
+                "where": filters_from_mappings(where or ()),
+                "contains": contains,
+                "select": tuple(select or ()),
+                "follow": [
+                    item.model_dump(mode="json", by_alias=True)
+                    if isinstance(item, QueryFollowV1)
+                    else dict(item)
+                    for item in follows
+                ],
+                "order_by": tuple(order_by or ()),
+                "limit": limit,
+                "cursor": cursor,
+                "spec": spec,
+                "name": None if name is None else _address(name, RefKind.QUERY),
+                "params": None if params is None else dict(params),
+            }
+        )
+        return self._run_query_request(request, at=at, evaluation_time=evaluation_time)
+
+    def _run_query_request(
+        self,
+        request: api.PlaybillQueryRequestV1,
+        *,
+        at: AcceptedCoordinate | str | None = None,
+        evaluation_time: datetime | str | None = None,
+    ) -> QueryResult:
+        expected = None if isinstance(at, str) else self._read_at(at)
+        when = evaluation_time if evaluation_time is not None else self._evaluation_time()
+        prepared = request.model_copy(
+            update={
+                "at": (
+                    at
+                    if isinstance(at, str)
+                    else None
+                    if expected is None
+                    else AcceptedCoordinate.model_validate(expected.model_dump(mode="json"))
+                ),
+                "evaluation_time": (
+                    datetime.fromisoformat(when.replace("Z", "+00:00"))
+                    if isinstance(when, str)
+                    else when
+                ),
+            }
+        )
+        page = self._client.query_playbill(self._instance_id, request=prepared)
+        coordinate = AcceptedCoordinate.model_validate(
+            page.receipt.coordinate.model_dump(mode="json")
+        )
+        self._observe_read(coordinate, expected=expected)
+
+        def fetch(next_cursor: str) -> QueryResult:
+            return self._run_query_request(
+                prepared.model_copy(update={"cursor": next_cursor}),
+                at=coordinate,
+                evaluation_time=prepared.evaluation_time,
+            )
+
+        return QueryResult(page, fetch=fetch)
 
     def accepted_procedure(self, procedure: str | ProcedureRef) -> Procedure:
         name = _address(procedure, RefKind.PROCEDURE)

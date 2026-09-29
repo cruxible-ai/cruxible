@@ -37,7 +37,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 STUB_HEADER_TAG = "playbill-world-stub-v1"
 
-_NAMESPACE_MEMBERS = frozenset({"define", "subject_ids", "subject_kind"})
+_NAMESPACE_MEMBERS = frozenset({"define", "select", "subject_ids", "subject_kind", "where"})
 _WORLD_MEMBERS = frozenset(
     {
         "claim_type",
@@ -54,7 +54,10 @@ _WORLD_MEMBERS = frozenset(
 _STUB_IMPORTS = (
     "from collections.abc import Sequence",
     "from collections.abc import Iterator",
+    "from datetime import datetime",
+    "from typing import Literal",
     "",
+    "from cruxible_client.authoring.compact_query import QueryResult",
     "from cruxible_client.authoring.sdk import ClaimView, SubjectDraft",
     "from cruxible_client.authoring.sdk_types import (",
     "    Cardinality,",
@@ -66,6 +69,7 @@ _STUB_IMPORTS = (
     "    SubjectRef,",
     ")",
     "from cruxible_client.authoring.world import KindNamespace, WorldClaimType",
+    "from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1",
     "from cruxible_client.contracts.projection import AcceptedCoordinate",
 )
 
@@ -99,6 +103,12 @@ def _kind_class_name(path: str) -> str:
     return "_K_" + _encoded(path)
 
 
+def _query_class_name(path: str) -> str:
+    """Return the class a compact query over one accepted kind is typed as."""
+
+    return "_Q_" + _encoded(path)
+
+
 def _subject_class_name(path: str) -> str:
     """Return the class the Subjects of one accepted kind are typed as."""
 
@@ -118,6 +128,12 @@ class _Body:
 
     def declare(self, line: str) -> None:
         self._lines.append(f"    {line}")
+        self._statements += 1
+
+    def declare_lines(self, lines: list[str]) -> None:
+        """Declare one statement spelled over several lines."""
+
+        self._lines.extend(f"    {line}" for line in lines)
         self._statements += 1
 
     def note(self, line: str) -> None:
@@ -199,6 +215,7 @@ def _namespace_block(world: World, node: _Node, *, class_name: str) -> list[str]
         body.declare("def __contains__(self, subject_id: object) -> bool: ...")
         body.declare(f"def __iter__(self) -> Iterator[{subject}]: ...")
         body.declare("def __len__(self) -> int: ...")
+        _query_members(world, node.path, body, include_run=False)
     else:
         body.declare("subject_kind: None")
     _children(node, body, reserved=_NAMESPACE_MEMBERS)
@@ -210,6 +227,99 @@ def _namespace_block(world: World, node: _Node, *, class_name: str) -> list[str]
             if subject_id in node.children:
                 continue
             body.declare(f"{subject_id}: {_subject_class_name(node.path)}")
+    lines.extend(body.rendered())
+    return lines
+
+
+_ORDERED_OPERATORS = ("lt", "lte", "gt", "gte")
+
+
+def _value_annotation(claim_type: WorldClaimType) -> tuple[str, tuple[str, ...]]:
+    """The keyword value type of one predicate and the operators that apply to it.
+
+    Mirrors the daemon's value checks, so a filter the stub accepts is one the
+    daemon evaluates, and an enum member outside the schema is a type error.
+    """
+
+    object_kind = claim_type.object_kind.value
+    if object_kind == "subject":
+        return "str | SubjectRef", ("eq", "ne", "in", "exists", "contains")
+    if object_kind == "exact_content":
+        return "bool", ("exists",)
+    members = claim_type.members
+    if members:
+        spelled = ", ".join(repr(member) for member in members)
+        return f"Literal[{spelled}]", ("eq", "ne", "in", "exists", "contains")
+    schema = claim_type.literal_schema or {}
+    declared = schema.get("type")
+    if declared == "string":
+        annotation = "str | datetime" if schema.get("format") == "date-time" else "str"
+        return annotation, ("eq", "ne", *_ORDERED_OPERATORS, "in", "exists", "contains")
+    if declared == "integer":
+        return "int", ("eq", "ne", *_ORDERED_OPERATORS, "in", "exists")
+    if declared == "number":
+        return "int | str", ("eq", "ne", *_ORDERED_OPERATORS, "in", "exists")
+    if declared == "boolean":
+        return "bool", ("eq", "ne", "in", "exists")
+    return "str | int | bool", ("eq", "ne", "in", "exists")
+
+
+def _filter_parameters(world: World, kind: str) -> tuple[list[str], list[str]]:
+    """Keyword filters and selectable field names for one kind, deterministically."""
+
+    parameters: list[str] = []
+    fields: list[str] = ["subject_id"]
+    for leaf, predicates in sorted(world._leaf_map(kind).items()):
+        fields.extend(predicates)
+        if len(predicates) != 1 or not _is_identifier(leaf) or leaf == "subject_id":
+            continue
+        fields.append(leaf)
+        annotation, operators = _value_annotation(world.claim_type(predicates[0]))
+        for operator in operators:
+            name = leaf if operator == "eq" else f"{leaf}__{operator}"
+            if operator == "in":
+                value = f"Sequence[{annotation}]"
+            elif operator == "exists":
+                value = "bool"
+            elif operator == "contains":
+                value = "str"
+            else:
+                value = annotation
+            parameters.append(f"{name}: {value} | None = ...,")
+    for operator in ("eq", "ne", *_ORDERED_OPERATORS, "in", "contains"):
+        name = "subject_id" if operator == "eq" else f"subject_id__{operator}"
+        value = "Sequence[str]" if operator == "in" else "str"
+        parameters.append(f"{name}: {value} | None = ...,")
+    return parameters, sorted(set(fields), key=lambda item: item.encode("utf-8"))
+
+
+def _query_members(world: World, kind: str, body: _Body, *, include_run: bool) -> None:
+    query = _query_class_name(kind)
+    parameters, fields = _filter_parameters(world, kind)
+    body.declare_lines(
+        ["def where(", "    self,", "    *,", *(f"    {item}" for item in parameters)]
+        + [f") -> {query}: ..."]
+    )
+    spelled = ", ".join(f'"{name}"' for name in fields)
+    body.declare_lines(
+        ["def select(", f"    self, *fields: Literal[{spelled}]", f") -> {query}: ..."]
+    )
+    if include_run:
+        body.declare(f"def order_by(self, *fields: str) -> {query}: ...")
+        body.declare(f"def limit(self, count: int) -> {query}: ...")
+        body.declare("def request(self) -> PlaybillQueryRequestV1: ...")
+        body.declare("def run(self) -> QueryResult: ...")
+        body.declare("def __iter__(self) -> Iterator[dict[str, object]]: ...")
+
+
+def _query_block(world: World, node: _Node) -> list[str]:
+    """Type the compact query over one accepted kind, filter by filter."""
+
+    lines = [f"class {_query_class_name(node.path)}:"]
+    lines.append(f'    """A compact query over accepted kind {node.path}."""')
+    lines.append("")
+    body = _Body()
+    _query_members(world, node.path, body, include_run=True)
     lines.extend(body.rendered())
     return lines
 
@@ -283,6 +393,7 @@ def _blocks(world: World, node: _Node) -> list[list[str]]:
         return blocks
     if node.subject_kind:
         blocks.append(_subject_block(world, node))
+        blocks.append(_query_block(world, node))
     if node.structure is not None:
         if node.subject_kind:
             blocks.append(_namespace_block(world, node, class_name=_kind_class_name(node.path)))
