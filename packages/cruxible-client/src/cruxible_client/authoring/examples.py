@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Callable, Final, Literal
 
 from cruxible_client.authoring.inputs import (
+    AcquisitionPolicyInput,
     ApprovalPolicyInput,
     AuthoringInputV1,
     CarriedContractInput,
@@ -16,6 +17,7 @@ from cruxible_client.authoring.inputs import (
     ClaimTypeSuccessionInput,
     ExactContentObjectInput,
     ExistingCaptureInput,
+    LineInput,
     LiteralObjectInput,
     ProcedureInput,
     ProcedureMandateInputV1,
@@ -26,11 +28,15 @@ from cruxible_client.authoring.inputs import (
     SubjectObjectInput,
     WorkingSelectionInput,
 )
+from cruxible_client.contracts.acquisition_policies import (
+    IndependentCoherenceV1,
+    InputAcquisitionRuleV1,
+    SourceAcquisitionPolicyV1,
+)
 from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.artifacts import ArtifactLifecycle as _ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependentV1
-from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
 from cruxible_client.contracts.policies import (
@@ -74,6 +80,8 @@ AuthoringExampleName = Literal[
     "approval-policy",
     "procedure-runtime-policy",
     "procedure-mandate",
+    "line",
+    "acquisition-policy",
     "change-set",
     "claim-type-succession",
 ]
@@ -217,22 +225,72 @@ def claim_type_succession_example() -> ChangeSetInput:
     )
 
 
+#: The `--example procedure` hard caps. A mandate's resource ceiling may narrow
+#: but never widen its Procedure's caps, so the mandate example reuses these and
+#: the two templates are accepted together.
+_EXAMPLE_PROCEDURE_HARD_CAPS: Final = {
+    "max_wall_clock": {"microseconds": 4_000_000},
+    "max_provider_calls": 0,
+    "max_capture_bytes": 0,
+    "max_items": 200,
+    "max_repeat_attempts": 1,
+}
+
+
 def procedure_mandate_example() -> ProcedureMandateInputV1:
+    """A propose grant over the `--example procedure` Procedure, within its caps.
+
+    Only a Line that proposes or settles needs a mandate; an observe-only Line
+    (like the example Procedure's) runs without one.
+    """
+
     return ProcedureMandateInputV1(
         kind="procedure_mandate",
         name="replace-me",
         procedure_name="replace-me",
         grants="propose",
-        resource_ceiling=ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=60_000_000),
-            max_provider_calls=100,
-            max_capture_bytes=10_000_000,
-            max_items=1000,
-            max_repeat_attempts=5,
-        ),
+        resource_ceiling=ProcedureHardCapsV3.model_validate(_EXAMPLE_PROCEDURE_HARD_CAPS),
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
+    )
+
+
+def line_example() -> LineInput:
+    """A manual Line over the `--example procedure` Procedure.
+
+    That Procedure has no Source nodes, so the Line names no acquisition
+    policy, and its input contract is empty, so `parameters` is `{}`. It only
+    observes, so it runs without a ProcedureMandate.
+    """
+
+    return LineInput(kind="line", name="replace-me", procedure_name="replace-me", parameters={})
+
+
+def acquisition_policy_example() -> AcquisitionPolicyInput:
+    """A SourceAcquisitionPolicy with one required input, for a Line with Source nodes.
+
+    Each rule's `input_name` is one Source node's output alias (`as`); a Line
+    names this policy in `acquisition_policy_name`.
+    """
+
+    return AcquisitionPolicyInput(
+        kind="acquisition_policy",
+        acquisition_policy=SourceAcquisitionPolicyV1(
+            identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="replace-me"),
+            inputs=(
+                InputAcquisitionRuleV1(
+                    input_name="replace-me",
+                    requirement="required",
+                    permitted_replayability=("exact",),
+                    on_unavailable="refuse",
+                    on_stale="refuse",
+                    on_oversized="refuse",
+                    on_conflict="refuse",
+                ),
+            ),
+            coherence=IndependentCoherenceV1(),
+        ),
     )
 
 
@@ -369,7 +427,7 @@ def procedure_example() -> ProcedureInput:
     return ProcedureInput(
         kind="procedure",
         definition={
-            "graph_format": 3,
+            "graph_format": 5,
             "name": "replace-me",
             "description": "Run all six deterministic compute kernels over typed collections.",
             "contract_in": carried("empty-input", "contract-in"),
@@ -472,13 +530,7 @@ def procedure_example() -> ProcedureInput:
                 "max_capture_bytes": 0,
                 "max_items": 100,
             },
-            "hard_caps": {
-                "max_wall_clock": {"microseconds": 4_000_000},
-                "max_provider_calls": 0,
-                "max_capture_bytes": 0,
-                "max_items": 200,
-                "max_repeat_attempts": 1,
-            },
+            "hard_caps": _EXAMPLE_PROCEDURE_HARD_CAPS,
             "terminal_capability": 1,
         },
         activation_policy="snapshot",
@@ -646,6 +698,8 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "approval-policy": approval_policy_example,
     "procedure-runtime-policy": procedure_runtime_policy_example,
     "procedure-mandate": procedure_mandate_example,
+    "line": line_example,
+    "acquisition-policy": acquisition_policy_example,
     "change-set": change_set_example,
     "claim-type-succession": claim_type_succession_example,
 }
@@ -673,6 +727,8 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "approval-policy",
     "procedure-runtime-policy",
     "procedure-mandate",
+    "line",
+    "acquisition-policy",
     "change-set",
     "claim-type-succession",
 )
@@ -728,6 +784,7 @@ __all__ = [
     "AUTHORING_EXAMPLE_FACTORIES",
     "AUTHORING_EXAMPLE_NAMES",
     "AuthoringExampleName",
+    "acquisition_policy_example",
     "authoring_example",
     "change_set_example",
     "claim_type_succession_example",
@@ -739,6 +796,7 @@ __all__ = [
     "claim_subject_relation_example",
     "document_example",
     "approval_policy_example",
+    "line_example",
     "procedure_example",
     "procedure_mandate_example",
     "query_claims_by_type_example",

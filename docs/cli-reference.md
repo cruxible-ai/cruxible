@@ -838,7 +838,8 @@ written, then counts zero use only from that point.
 
 One authoring intent is one changeset. The tagless `change_set` input carries
 any mix of members -- `claim`, `claim_type`, `claim_retirement`, `subject`,
-`query_definition`, `procedure`, `procedure_mandate` -- and the whole intent
+`query_definition`, `procedure`, `procedure_mandate`, `acquisition_policy`,
+`line` -- and the whole intent
 lowers once, proposes once and admits or refuses together, typed to the member
 index that offends. `approval_policy` and `procedure_runtime_policy` are the
 two exceptions: the member union parses either, but a change set carrying one
@@ -1123,6 +1124,15 @@ cruxible playbill line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit
 cruxible playbill line run LINE --evaluation-time TS
   [--occurrence-id ID] [--json]
 ~~~
+
+A Line is authored like any other definition: a `line` input (alone or as a
+change-set member) names its Procedure, trigger policy and `parameters` -- the
+Procedure's input record, which lowering checks against the Procedure's input
+contract, refusing `playbill.authoring.line_parameters_refused` with the
+expected fields. It names an `acquisition_policy` (an `acquisition_policy`
+input) only when the Procedure has Source nodes. `authoring create --example
+line` prints a manual Line over the `--example procedure` Procedure, and
+`--example acquisition-policy` a policy for a Source Procedure's Line.
 
 `check` is read-only: it returns `met`, `not_met`, or `incomplete`, exact
 matching events/windows, and the dispatch status of each occurrence (pending,

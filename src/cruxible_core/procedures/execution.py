@@ -1528,7 +1528,9 @@ def verify_line_admission_spec(
     if admission.procedure_artifact_digest != accepted_line.line.procedure.artifact_digest:
         raise PlaybillExecutionError("Line admission names another Procedure artifact")
     policy = accepted_line.line.acquisition_policy
-    if policy is None or admission.acquisition_policy_digest != policy.artifact_digest:
+    # A Source-free Line pins no acquisition policy; its admission binds the
+    # accepted runtime policy digest instead, which the admission digest seals.
+    if policy is not None and admission.acquisition_policy_digest != policy.artifact_digest:
         raise PlaybillExecutionError("Line admission names another acquisition policy")
 
 

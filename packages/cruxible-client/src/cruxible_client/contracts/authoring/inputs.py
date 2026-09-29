@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicyV1
 from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
@@ -30,6 +31,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimTypeSuccessionDependentV1,
     ClaimTypeSuccessionMemberV1,
     ExistingCaptureCitationSourceV1,
+    LineAuthoringPayloadV1,
     MandateConditionAuthoringV1,
     MandateScopeAuthoringV1,
     ProcedureAuthoringPayloadV1,
@@ -38,6 +40,7 @@ from cruxible_client.contracts.authoring.models import (
     ProcedureRuntimePolicyAuthoringPayloadV1,
     QueryDefinitionAuthoringPayloadV1,
     SelfSourceBodyV1,
+    SourceAcquisitionPolicyAuthoringPayloadV1,
     SubjectAuthoringPayloadV1,
     WorkingSelectionObservationV1,
     authoring_member_identity,
@@ -54,6 +57,7 @@ from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+from cruxible_client.contracts.procedures.line_specs import ManualTriggerPolicyV1, TriggerPolicyV2
 from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
@@ -280,6 +284,53 @@ class ProcedureMandateInputV1(_StrictInputModel):
     retire: bool = False
 
 
+class AcquisitionPolicyInput(_StrictInputModel):
+    """One SourceAcquisitionPolicy: how a Line's Source inputs may be acquired."""
+
+    kind: Literal["acquisition_policy"]
+    acquisition_policy: SourceAcquisitionPolicyV1
+
+
+class LineInput(_StrictInputModel):
+    """One Line: a trigger that runs an accepted or same-set Procedure.
+
+    Lowering resolves the named Procedure and acquisition policy into exact
+    pins. A Line that proposes or settles also needs a live ProcedureMandate
+    covering its Procedure before it can run; an observe-only Line needs none.
+    """
+
+    kind: Literal["line"]
+    name: str
+    procedure_name: str
+    acquisition_policy_name: str | None = Field(
+        default=None,
+        description=(
+            "SourceAcquisitionPolicy name; required only when the Procedure has Source nodes."
+        ),
+    )
+    trigger_policy: TriggerPolicyV2 = Field(
+        default_factory=ManualTriggerPolicyV1,
+        description="When the Line runs; manual (run or dispatch explicitly) by default.",
+    )
+    max_authority: Literal["observe", "propose", "settle"] | None = Field(
+        default=None,
+        description="Caps this Line below its Procedure's own capability; omit to inherit it.",
+    )
+    trigger_input: str | None = None
+    parameters: dict[str, object] = Field(
+        default_factory=dict,
+        description=(
+            "The Procedure's input record, checked against its input contract at authoring."
+        ),
+    )
+    budgets: dict[str, int] | None = Field(
+        default=None,
+        description="Per-run budgets; omit to use the Procedure's hard caps.",
+    )
+    occurrence_epoch: int = Field(default=1, ge=1)
+    retire: bool = False
+
+
 AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
     ClaimInput
     | ClaimTypeInput
@@ -290,6 +341,8 @@ AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
     | ProcedureMandateInputV1
+    | AcquisitionPolicyInput
+    | LineInput
     | ProcedureInput,
     Field(discriminator="kind"),
 ]
@@ -318,6 +371,8 @@ AuthoringInputV1: TypeAlias = Annotated[
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
     | ProcedureMandateInputV1
+    | AcquisitionPolicyInput
+    | LineInput
     | ChangeSetInput,
     Field(discriminator="kind"),
 ]
@@ -631,6 +686,21 @@ def _mandate_payload(value: ProcedureMandateInputV1) -> ProcedureMandateAuthorin
     )
 
 
+def _line_payload(value: LineInput) -> LineAuthoringPayloadV1:
+    return LineAuthoringPayloadV1(
+        name=value.name,
+        procedure_name=value.procedure_name,
+        acquisition_policy_name=value.acquisition_policy_name,
+        max_authority=value.max_authority,
+        trigger_policy=value.trigger_policy,
+        trigger_input=value.trigger_input,
+        parameters=value.parameters,
+        budgets=value.budgets,
+        occurrence_epoch=value.occurrence_epoch,
+        retire=value.retire,
+    )
+
+
 def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChangeSetMemberV1:
     if isinstance(member, ClaimInput):
         return _claim_payload(member)
@@ -660,6 +730,12 @@ def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChan
         return ProcedureRuntimePolicyAuthoringPayloadV1(
             procedure_runtime_policy=member.procedure_runtime_policy
         )
+    if isinstance(member, AcquisitionPolicyInput):
+        return SourceAcquisitionPolicyAuthoringPayloadV1(
+            acquisition_policy=member.acquisition_policy
+        )
+    if isinstance(member, LineInput):
+        return _line_payload(member)
     return _mandate_payload(member)
 
 
@@ -681,6 +757,12 @@ def lower_authoring_input(value: AuthoringInputV1) -> AuthoringPayloadV1:
         )
     if isinstance(value, ProcedureMandateInputV1):
         return _mandate_payload(value)
+    if isinstance(value, AcquisitionPolicyInput):
+        return SourceAcquisitionPolicyAuthoringPayloadV1(
+            acquisition_policy=value.acquisition_policy
+        )
+    if isinstance(value, LineInput):
+        return _line_payload(value)
     members = tuple(_change_set_member(member) for member in value.members)
     identities = tuple(authoring_member_identity(member) for member in members)
     if len(set(identities)) != len(identities):
@@ -703,6 +785,7 @@ def lower_authoring_input(value: AuthoringInputV1) -> AuthoringPayloadV1:
 
 __all__ = [
     "AcceptedReferenceInput",
+    "AcquisitionPolicyInput",
     "ApprovalPolicyInput",
     "ProcedureRuntimePolicyInput",
     "AuthoringChangeSetMemberInputV1",
@@ -720,6 +803,7 @@ __all__ = [
     "ClaimInput",
     "ExistingCaptureInput",
     "ExactContentObjectInput",
+    "LineInput",
     "LiteralObjectInput",
     "ProcedureInput",
     "ProcedureMandateInputV1",

@@ -924,7 +924,7 @@ class ChangeSetDraft:
         *,
         name: str,
         procedure: str,
-        acquisition_policy: str,
+        acquisition_policy: str | None = None,
         trigger_policy: TriggerPolicyV2 | None = None,
         max_authority: Literal["observe", "propose", "settle"] | None = None,
         trigger_input: str | None = None,
@@ -943,13 +943,16 @@ class ChangeSetDraft:
         the trigger selector must match that Source's exact CaptureContract.
         Missing or ineligible trigger material refuses admission, without a re-fetch.
 
-        Lowering refuses a Procedure that is not graph-v4/v5 and one whose Source
-        nodes leave a Provider slot open: the Line pins exactly what the
-        Procedure names, and an open slot is nothing to pin. ``max_authority``
-        (observe, propose or settle) caps this Line below its Procedure's own
-        capability and defaults to it. A Line that proposes or settles also needs
-        a live ProcedureMandate over its target namespace before it can run;
-        that is checked at admission, not here.
+        Lowering refuses a Procedure that is not graph-v4/v5/v6 and one whose
+        Source nodes leave a Provider slot open: the Line pins exactly what the
+        Procedure names, and an open slot is nothing to pin.
+        ``acquisition_policy`` is required only when the Procedure has Source
+        nodes. ``parameters`` is the Procedure's input record; lowering checks it
+        against the Procedure's input contract. ``max_authority`` (observe,
+        propose or settle) caps this Line below its Procedure's own capability
+        and defaults to it. A Line that proposes or settles also needs a live
+        ProcedureMandate covering its Procedure before it can run or be armed;
+        an observe-only Line needs none.
         """
 
         self._members.append(

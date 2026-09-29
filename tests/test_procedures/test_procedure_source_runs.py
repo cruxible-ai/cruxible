@@ -1751,3 +1751,31 @@ def _sdk_procedure_input(procedure: ProcedureArtifactV2) -> ProcedureInput:
             for contract in procedure.owned_contracts
         ),
     )
+
+
+def test_a_line_over_a_source_procedure_must_name_an_acquisition_policy(
+    tmp_path: Path,
+) -> None:
+    """Only an acquiring Procedure needs a policy pin; its Line is refused without one."""
+
+    from cruxible_client.contracts.authoring.models import LineAuthoringPayloadV1
+    from cruxible_core.authoring import lowering
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.proposals.proposals import AuthenticatedActor
+
+    instance, _owner, _procedure, _root, _policy_artifact = _world(tmp_path)
+    actor = AuthenticatedActor(actor_id="owner")
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    intent = coordinator.create(
+        actor=actor,
+        payload=LineAuthoringPayloadV1(
+            name="source-line",
+            procedure_name=PROCEDURE_NAME,
+            trigger_policy=ManualTriggerPolicyV1(),
+        ),
+        canonical_timestamp="2026-08-21T12:02:00.000000Z",
+    ).intent
+    with pytest.raises(lowering.AuthoringLoweringError) as refused:
+        lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
+    assert refused.value.code == "playbill.authoring.line_acquisition_policy_required"
+    assert refused.value.offending_element == "acquisition_policy_name"

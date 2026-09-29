@@ -3789,7 +3789,8 @@ def _run_playbill_line(
             message="This Line requires an opaque Exhaust access-binding carrier.",
             details={"repair": "Trigger through a carrier-aware Line scheduler."},
         )
-    if accepted_line.line.acquisition_policy is None:
+    line_policy_pin = accepted_line.line.acquisition_policy
+    if line_policy_pin is None and _source_input_names(accepted):
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -3797,7 +3798,7 @@ def _run_playbill_line(
             head_at_admission=head_at_admission,
             evaluation_time=evaluation_time,
             code="artifact_binding_mismatch",
-            message="Served Line execution requires an accepted acquisition-policy pin.",
+            message="A Line whose Procedure has Source nodes requires an acquisition-policy pin.",
             details={"repair": "Accept a Line successor with an acquisition policy."},
         )
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
@@ -3818,13 +3819,21 @@ def _run_playbill_line(
     capture_contracts = _accepted_capture_contracts(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
     )
-    accepted_policies = dict(
-        _accepted_acquisition_policies(
-            instance, coordinate, pin=accepted_line.line.acquisition_policy
+    # A Source-free Line acquires nothing, so it pins no acquisition policy.
+    # Its plan binds the accepted runtime policy instead, exactly as a direct
+    # run of a Source-free Procedure does.
+    line_policy: SourceAcquisitionPolicyV1 | None = None
+    if line_policy_pin is None:
+        policy_digest = procedure_runtime_policy_digest(runtime_policy).tagged
+        policy_format: str = runtime_policy.tag
+    else:
+        policy_digest = line_policy_pin.artifact_digest
+        policy_format = "playbill-source-acquisition-policy-v1"
+        accepted_policies = dict(
+            _accepted_acquisition_policies(instance, coordinate, pin=line_policy_pin)
         )
-    )
-    line_policy = accepted_policies.get(accepted_line.line.acquisition_policy.artifact_digest)
-    if line_policy is None:
+        line_policy = accepted_policies.get(line_policy_pin.artifact_digest)
+    if line_policy_pin is not None and line_policy is None:
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -3841,6 +3850,8 @@ def _run_playbill_line(
         and accepted_line.line.trigger_input is not None
     ):
         from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
+
+        assert line_policy is not None  # a trigger input is a Source input
 
         try:
             landed_materials = (
@@ -3911,11 +3922,15 @@ def _run_playbill_line(
                 repair=served_repair_for_refusal("provider_unavailable"),
             ),
         )
-    selection = _plan_selection_decision(
-        line_policy,
-        policy_digest=accepted_line.line.acquisition_policy.artifact_digest,
-        occurrences=external_occurrences,
-        capture_contracts=capture_contracts,
+    selection = (
+        ProcedureSelectionDecisionV1(policy_digest=policy_digest, verdict="selected", decisions=())
+        if line_policy is None
+        else _plan_selection_decision(
+            line_policy,
+            policy_digest=policy_digest,
+            occurrences=external_occurrences,
+            capture_contracts=capture_contracts,
+        )
     )
     if selection.verdict == "refused":
         return _line_refusal_state(
@@ -3969,8 +3984,8 @@ def _run_playbill_line(
         line_spec_digest=accepted_line.artifact_digest,
         occurrence_id=occurrence_id,
         occurrence_evaluation_time=evaluation_time,
-        acquisition_policy_format="playbill-source-acquisition-policy-v1",
-        acquisition_policy_digest=accepted_line.line.acquisition_policy.artifact_digest,
+        acquisition_policy_format=policy_format,
+        acquisition_policy_digest=policy_digest,
         selection_decision=selection,
         selection_decision_digest=selection_digest,
         external_occurrences=external_occurrences,
@@ -4061,7 +4076,7 @@ def _run_playbill_line(
         "line_spec_digest": accepted_line.artifact_digest,
         "occurrence_id": occurrence_id,
         "deployment_snapshot_digest": deployment_snapshot_digest,
-        "acquisition_policy_digest": accepted_line.line.acquisition_policy.artifact_digest,
+        "acquisition_policy_digest": policy_digest,
         "selection_receipt_digest": None,
         "sensitivity_policy_digest": sensitivity_policy_digest,
         "mandate_coordinate_digest": mandate_coordinate_digest,

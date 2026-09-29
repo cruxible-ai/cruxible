@@ -224,7 +224,8 @@ It reports approval conditions but never obtains or impersonates an approval.
 `cruxible_playbill_authoring_create` takes one tagless input, and the
 `change_set` kind carries any mix of members -- `claim`, `claim_type`,
 `claim_retirement`, `subject`, `query_definition`, `procedure`,
-`procedure_mandate` -- as one intent that admits or refuses whole, typed to the
+`procedure_mandate`, `acquisition_policy`, `line` -- as one intent that admits
+or refuses whole, typed to the
 offending member index. `approval_policy` and `procedure_runtime_policy` parse
 as members but a change set refuses them; send each as its own singleton input.
 There is no second batch tool.
@@ -232,7 +233,11 @@ A `claim_type_succession` member succeeds an accepted ClaimType and dispositions
 its whole reverse-pin closure in the same generation, so vocabulary evolution
 needs no second tool and no second generation either.
 `cruxible_playbill_authoring_example` serves `change-set` and
-`claim-type-succession` as starting points.
+`claim-type-succession` as starting points, and `procedure`, `line`,
+`acquisition-policy` and `procedure-mandate` templates that are accepted
+together. A `line` input's `parameters` is checked against its Procedure's input
+contract at authoring; its `acquisition_policy_name` is needed only when the
+Procedure has Source nodes.
 The publication tools take an `expectation_id` because a set that publishes
 several Claims owns one expectation per publishing member; an intent that owns
 exactly one may omit it.

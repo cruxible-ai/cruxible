@@ -229,6 +229,8 @@ PlaybillAuthoringExampleName = Literal[
     "approval-policy",
     "procedure-runtime-policy",
     "procedure-mandate",
+    "line",
+    "acquisition-policy",
     "change-set",
     "claim-type-succession",
 ]

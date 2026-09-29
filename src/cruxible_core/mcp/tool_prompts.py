@@ -161,8 +161,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need a durable machine-owned intent before iterating on a governed write."
     ),
     "cruxible_playbill_authoring_example": (
-        "Use when you need a model-constructed Claim, Procedure, Subject, QueryDefinition, "
-        "or ApprovalPolicy authoring input template."
+        "Use when you need a model-constructed Claim, Procedure, Line, acquisition policy, "
+        "mandate, Subject, QueryDefinition, or ApprovalPolicy authoring input template."
     ),
     "cruxible_playbill_authoring_get": (
         "Use when you need the current durable content and state of one authoring intent."
