@@ -919,10 +919,28 @@ the same coordinate.
 ## playbill query
 
 ~~~text
+cruxible playbill query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'|'f exists'|'f !exists'|'f~text']...
+    [--contains TEXT] [--select a,b] [--follow field:alias] [--order-by f|-f]
+    [--limit N] [--cursor C] [--spec FILE | --name N --param k=v ...]
+    [--at GIT_OID] [--evaluation-time TS] [--json]
 cruxible playbill query list
 cruxible playbill query get NAME
 cruxible playbill query run NAME [--parameters FILE] [--evaluation-time TS]
 ~~~
+
+Without a subcommand, `query` answers any question over accepted state in one
+call, the same read as MCP `cruxible_playbill_query` and SDK `pb.query`. KIND is
+a Subject kind, or `ClaimType` / `Procedure` for definitions; `--contains` alone
+searches every live Claim value across kinds. `--where` filters combine as
+all-of; a field is a predicate's short name, its full name, `subject_id`, or
+`alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
+Names and values are checked first: a wrong kind, field or enum member, or an
+operator that does not apply, refuses with its code, the nearest valid names and
+a repair. Text output is an aligned table of values and flags (`stale`,
+`contested`, `contradicted`, `unsure_hold`) followed by the next command when the
+page is truncated; `--json` gives the full answer with its receipt. `--spec` runs
+a `QueryDefinitionSpecV1` file inline; `--name` with `--param` runs an accepted
+named query.
 
 run executes one accepted QueryDefinition and prints its
 `playbill-query-execution-receipt-v1`: the definition digest, the resolved

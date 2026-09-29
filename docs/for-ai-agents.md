@@ -88,6 +88,13 @@ The CLI (`playbill claim values --kind K --predicate P`) and MCP
 kind.
 Use `pb.run_query(name_or_ref, parameters=...)` for named joins and filtered
 populations, checking truncation before assuming completeness.
+To ask any question over accepted state in one call, use `query`: MCP
+`cruxible_playbill_query`, CLI `cruxible playbill query KIND --where 'f=v'`, SDK
+`pb.query(kind, where=[{"field": ..., "eq": ...}], select=[...])` or the typed
+`w.<ns>.<kind>.where(field=value, other__ne=value).select("field")`. Rows lead
+with values and carry `flags` (`stale`, `contested`, `contradicted`,
+`unsure_hold`); a truncated page carries `next_cursor`. A wrong kind, field or
+enum member refuses with the nearest valid names instead of answering empty.
 
 `pb.world()` reads vocabulary, not Subjects. The current first Subject access
 loads the Subject listing; ordinary uncached field reads page the relevant Claim

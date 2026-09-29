@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
+from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
-from cruxible_client import CruxibleClient, contracts
+from cruxible_client import CruxibleClient, Playbill, contracts
 from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+from cruxible_core.cli.main import cli
 from cruxible_core.mcp.server import create_server
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.permissions import (
@@ -50,9 +54,12 @@ def _rows(result: contracts.PlaybillQueryResult) -> list[tuple[str, object]]:
     return [(row["subject_id"], row["status"]) for row in result.rows]
 
 
-@pytest.mark.parametrize("surface", ["transport", "mcp-local", "mcp-remote"])
+@pytest.mark.parametrize("surface", ["transport", "mcp-local", "mcp-remote", "cli", "sdk"])
 def test_every_surface_returns_the_same_page(
-    served: tuple[CruxibleClient, str], monkeypatch: pytest.MonkeyPatch, surface: str
+    served: tuple[CruxibleClient, str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    surface: str,
 ) -> None:
     from cruxible_core.mcp import handlers
 
@@ -69,6 +76,35 @@ def test_every_surface_returns_the_same_page(
                 }
             ),
         )
+    elif surface == "cli":
+        from cruxible_core.cli.commands import playbill as commands
+
+        monkeypatch.setattr(commands, "_server_call", lambda op, **_: op(client, instance_id))
+        invoked = CliRunner().invoke(
+            cli,
+            [
+                "playbill",
+                "query",
+                SUBJECT_KIND,
+                "--where",
+                "status!=blocked",
+                "--select",
+                "status",
+                "--evaluation-time",
+                EVALUATION_TIME,
+                "--json",
+            ],
+        )
+        assert invoked.exit_code == 0, invoked.output
+        result = contracts.PlaybillQueryResult.model_validate(json.loads(invoked.output))
+    elif surface == "sdk":
+        playbill = Playbill._from_client(  # type: ignore[arg-type]
+            client,
+            instance_id=instance_id,
+            workspace=tmp_path,
+            clock=lambda: datetime.fromisoformat(EVALUATION_TIME),
+        )
+        result = playbill.query(SUBJECT_KIND, where=WHERE, select=["status"]).page
     else:
         monkeypatch.setattr(
             handlers, "_get_client", lambda: None if surface == "mcp-local" else client
