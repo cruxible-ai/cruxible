@@ -36,7 +36,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.claim_verdicts import EvidenceRelativeClaimVerdict
-from cruxible_client.contracts.claims import SubjectClaimObject
+from cruxible_client.contracts.claims import ExactContentClaimObject, SubjectClaimObject
 from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillError
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
@@ -376,7 +376,13 @@ class _Evaluator:
                 value: object = target.shell.identity.qualified
             else:
                 value = item.model_dump(mode="json").get("value")
-            distinct[canonical_bytes(value)] = value
+            # An exact-content object has no literal value to project, but two
+            # of them are distinct by digest and span, so they compete exactly
+            # as two literals do under the query's conflict_behavior.
+            identity = (
+                item.model_dump(mode="json") if isinstance(item, ExactContentClaimObject) else value
+            )
+            distinct[canonical_bytes(identity)] = value
         if len(distinct) == 1:
             return _Value(state="present", value=next(iter(distinct.values())))
         subject = self._backend.subject(subject_path)

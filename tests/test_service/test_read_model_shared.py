@@ -638,3 +638,90 @@ def test_two_spans_of_one_body_are_two_values_on_query_and_get(
     (row,) = card.claims
     assert sorted(row.value) == ["first", "second"]
     assert "contested" in row.flags
+
+
+@pytest.fixture(scope="module")
+def competing_worlds(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    """One Subject whose one-cardinality status has two supported, competing Claims.
+
+    ``exact``: two different rulings; ``literal``: ``ready`` and ``blocked``.
+    """
+
+    from cruxible_client.contracts.captures import foreign_source_capture_contract
+    from tests.core_support._claim_authoring_support import service_propose_playbill_claim
+    from tests.core_support._exact_content_support import (
+        add_exact_claim,
+        seed_exact_content_into,
+    )
+    from tests.core_support._knowledge_loop_support import activate, authoring
+    from tests.core_support._support import initialize_local
+    from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
+
+    exact, owner = initialize_local(tmp_path_factory.mktemp("competing-exact"))
+    (first,) = seed_exact_content_into(exact, owner, {"wi-42": b"first ruling"}).values()
+    add_exact_claim(
+        exact,
+        owner,
+        "wi-42",
+        b"second ruling",
+        claim_id="CLM-" + "9" * 32,
+        existing=(first.claim_id,),
+    )
+    literal, literal_owner = initialize_local(tmp_path_factory.mktemp("competing-literal"))
+    _seed_claim_surface(
+        literal, literal_owner, contract=foreign_source_capture_contract("fixture.work-items")
+    )
+    for index, value in enumerate(("ready", "blocked")):
+        activate(
+            literal,
+            literal_owner,
+            service_propose_playbill_claim(
+                literal,
+                authoring=authoring("wi-42", value, with_claim_type=False),
+                actor_id="owner",
+                proposal_name=f"compete-{index}",
+                timestamp=f"2026-08-16T20:0{index}:00.000000Z",
+            ),
+        )
+    return {"exact": exact, "literal": literal}
+
+
+def _one_result_spec(conflict_behavior: str) -> QueryDefinitionSpecV1:
+    declared = work_item_query("project.one").model_dump(mode="json")
+    declared["result_cardinality"] = "one"
+    declared["default_budgets"]["max_results"] = 1
+    declared["maximum_budgets"]["max_results"] = 1
+    declared["evaluation_policy"]["conflict_behavior"] = conflict_behavior
+    return QueryDefinitionSpecV1.model_validate({**declared, "pins": []})
+
+
+@pytest.mark.parametrize("conflict_behavior", ["surface_conflicts", "refuse_on_conflict"])
+def test_competing_exact_content_follows_conflict_behavior_as_literals_do(
+    competing_worlds: dict[str, Any], conflict_behavior: str
+) -> None:
+    """Regression (Codex F-003): the engine's conflict path decides exact content too.
+
+    Two supported, competing exact-content Claims answer a one-cardinality read
+    exactly as two literals do: ``refuse_on_conflict`` refuses with the engine's
+    ``playbill.query.claim_conflict``, and ``surface_conflicts`` answers no value
+    with the ``contested`` flag. Neither shows both texts.
+    """
+
+    from cruxible_core.service.read_refusals import ReadRefusalError
+
+    def answer(kind: str) -> object:
+        try:
+            rows = _exact_query(
+                competing_worlds[kind], spec=_one_result_spec(conflict_behavior)
+            ).rows
+        except ReadRefusalError as refusal:
+            return ("refused", refusal.error_code)
+        return [(row["status"], row["flags"]) for row in rows]
+
+    exact, literal = answer("exact"), answer("literal")
+
+    assert exact == literal
+    if conflict_behavior == "refuse_on_conflict":
+        assert exact == ("refused", "playbill.query.claim_conflict")
+    else:
+        assert exact == [(None, ["contested"])]

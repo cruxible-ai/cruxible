@@ -1771,8 +1771,10 @@ def _engine_answer(
             states = {_out(projected.name): projected.state for projected in row.fields}
             for key, ref in exact_fields.items():
                 path = _subject_path_of(row, ref.binding)
-                if path is None or states.get(key) not in {"present", "conflict"}:
-                    # The engine answered no value; the text never adds one.
+                if path is None or states.get(key) != "present":
+                    # The engine answered no value (absent), or surfaced a
+                    # conflict exactly as it does for a literal (null plus the
+                    # contested flag); the text never adds a value.
                     out[key] = None
                     continue
                 ensure_values(
@@ -1790,14 +1792,10 @@ def _engine_answer(
                     for item in renderer.values.slot(path, ref.predicate)
                     if item.identity in selected
                 ]
-                shown = distinct(_value_identity(item) for item in slot)
-                info = vocabulary.predicates[ref.predicate]
-                listed = info.cardinality == "many" or len(shown) > 1
-                values = _exact_values(content, shown)
-                out[key] = values if listed else (values[0] if values else None)
-                # The engine reads every exact value as one (it has no literal),
-                # so a contest between spans or bodies is judged here.
-                flags = ordered_flags({*flags, *answer_flags(info.cardinality, len(shown))})
+                # A present value is the one distinct value the engine selected
+                # (it keys exact content by digest and span), shown as its text.
+                values = _exact_values(content, distinct(_value_identity(item) for item in slot))
+                out[key] = values[0] if values else None
             out["flags"] = flags
         return rendered
 

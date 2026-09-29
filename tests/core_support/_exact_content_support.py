@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     AuthoringExactContentObjectV1,
+    AuthoringExistingClaimDispositionV1,
     SelfSourceBodyV1,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -81,47 +82,65 @@ def seed_exact_content_into(
         ),
         additional_subjects=tuple(_shell(item) for item in contents if item != "wi-42"),
     )
-    actor = AuthenticatedActor(actor_id="owner")
-    template = _self_source_payload()
     seeded: dict[str, ExactClaim] = {}
     for index, (subject_id, content) in enumerate(contents.items(), start=1):
-        claim_id = "CLM-" + f"{index:x}" * 32
-        coordinator = AuthoringIntentCoordinator(
-            instance=instance,
-            store=AuthoringIntentCoordinator.for_instance(instance).store,
-            claim_id_factory=lambda claim_id=claim_id: claim_id,
-        )
-        encoded = base64.b64encode(content).decode("ascii")
-        payload = template.model_copy(
-            update={
-                "source": SelfSourceBodyV1(content_base64=encoded),
-                "statement": template.statement.model_copy(
-                    update={
-                        "subject": SemanticAddress.whole_artifact(
-                            f"subjects/{EXACT_KIND}/{subject_id}.json"
-                        ),
-                        "object": AuthoringExactContentObjectV1(content_base64=encoded),
-                    }
-                ),
-            }
-        )
-        created = coordinator.create(
-            actor=actor, payload=payload, canonical_timestamp="2026-08-16T20:00:00.000000Z"
-        )
-        submitted = coordinator.submit(created.intent.intent_id, actor=actor)
-        if submitted.status.proposal_id is None:
-            raise AssertionError(submitted.intent.last_preflight)
-        inspection = service_inspect_playbill_proposal(
-            instance, proposal_id=submitted.status.proposal_id
-        )
-        activate(instance, owner, SimpleNamespace(proposal=inspection))
-        seeded[subject_id] = ExactClaim(
-            subject=f"{EXACT_KIND}/{subject_id}", claim_id=claim_id, content=content
+        seeded[subject_id] = add_exact_claim(
+            instance, owner, subject_id, content, claim_id="CLM-" + f"{index:x}" * 32
         )
     return seeded
 
 
+def add_exact_claim(
+    instance: PlaybillInstance,
+    owner: GeneratedKeyMaterial,
+    subject_id: str,
+    content: bytes,
+    *,
+    claim_id: str,
+    existing: tuple[str, ...] = (),
+) -> ExactClaim:
+    """Accept one exact-content status Claim; ``existing`` same-slot Claims stay untested."""
+
+    actor = AuthenticatedActor(actor_id="owner")
+    template = _self_source_payload()
+    coordinator = AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentCoordinator.for_instance(instance).store,
+        claim_id_factory=lambda: claim_id,
+    )
+    encoded = base64.b64encode(content).decode("ascii")
+    payload = template.model_copy(
+        update={
+            "source": SelfSourceBodyV1(content_base64=encoded),
+            "statement": template.statement.model_copy(
+                update={
+                    "subject": SemanticAddress.whole_artifact(
+                        f"subjects/{EXACT_KIND}/{subject_id}.json"
+                    ),
+                    "object": AuthoringExactContentObjectV1(content_base64=encoded),
+                }
+            ),
+            "existing_claim_dispositions": tuple(
+                AuthoringExistingClaimDispositionV1(claim_id=item, disposition="not_tested")
+                for item in sorted(existing)
+            ),
+        }
+    )
+    created = coordinator.create(
+        actor=actor, payload=payload, canonical_timestamp="2026-08-16T20:00:00.000000Z"
+    )
+    submitted = coordinator.submit(created.intent.intent_id, actor=actor)
+    if submitted.status.proposal_id is None:
+        raise AssertionError(submitted.intent.last_preflight)
+    inspection = service_inspect_playbill_proposal(
+        instance, proposal_id=submitted.status.proposal_id
+    )
+    activate(instance, owner, SimpleNamespace(proposal=inspection))
+    return ExactClaim(subject=f"{EXACT_KIND}/{subject_id}", claim_id=claim_id, content=content)
+
+
 __all__ = [
+    "add_exact_claim",
     "EXACT_KIND",
     "EXACT_PREDICATE",
     "ExactClaim",
