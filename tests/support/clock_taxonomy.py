@@ -454,6 +454,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("_CaptureObservation", "observed_at"): "ASSERTION TIME",
     ("ClaimLineageNode", "generation"): "SETTLEMENT ORDER",
     ("_CurationHistoryIndex", "last_generation"): "SETTLEMENT ORDER",
+    ("_StoredClaimQueue", "valid_from"): "EVALUATION INSTANT",
+    ("_StoredClaimQueue", "valid_until"): "EVALUATION INSTANT",
     ("_DeterministicClock", "evaluation_time"): "EVALUATION INSTANT",
     ("_GenerationWindow", "generation"): "SETTLEMENT ORDER",
     ("_ProcessOutcome", "duration_seconds"): "VALIDITY WINDOW",
