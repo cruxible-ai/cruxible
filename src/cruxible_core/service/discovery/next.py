@@ -1293,6 +1293,18 @@ class _Holds:
     def __bool__(self) -> bool:
         return bool(self._holds)
 
+    def in_force(self, identity: str, *, contested: bool) -> bool:
+        """Whether an ``unsure`` hold on this Claim is in force at the evaluation time.
+
+        A contested Claim stays held until its basis changes; a standing one
+        (stale or uncovered) only until the hold lapses.
+        """
+
+        holds = self._holds.get(identity, ())
+        if contested:
+            return bool(holds)
+        return any(self._evaluation_time < self._lapses(identity, hold) for hold in holds)
+
     def covers(self, row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> bool:
         detail = row.detail if isinstance(row.detail, Mapping) else {}
         if row.reason == "claim_conflicted":
