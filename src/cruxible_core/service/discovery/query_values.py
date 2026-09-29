@@ -1,18 +1,10 @@
-"""Live Claim values and verdict flags for ``query`` rows.
+"""Live Claim values for ``query`` rows.
 
 Values are read from the accepted projection's Claim index, which already
 carries each live Claim's literal or Subject object, so a page of rows costs one
-indexed read rather than a fold over every Claim body. Flags reuse the verdict
-machinery every other read uses (``claim_resolution_statuses`` over the full
-slots the page touches); nothing here re-adjudicates a Claim.
-
-- ``stale``: the Claim's verdict is ``stale`` or ``stale_evidence``.
-- ``contradicted``: the verdict is ``contradicted``.
-- ``contested``: the slot is unresolved between contenders, the verdict is
-  ``unresolved``, or a one-cardinality slot holds more than one live value.
-- ``unsure_hold``: ``next`` parks one of the Claim's rows under an ``unsure``
-  hold right now (``claim_unsure_holds``), decided by ``next``'s own rows and
-  hold coverage, door attestations and basis changes included.
+indexed read rather than a fold over every Claim body. Row flags come from the
+read verbs' shared derivation (``read_flags``), over the full slots a page
+touches.
 """
 
 from __future__ import annotations
@@ -21,19 +13,13 @@ import sqlite3
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.claims import claim_path
-from cruxible_client.contracts.compact_query import QueryFlag
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 
-FLAG_ORDER: tuple[QueryFlag, ...] = ("stale", "contested", "contradicted", "unsure_hold")
 _CHUNK = 400
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -240,78 +226,11 @@ def ensure_values(
     index.mark_loaded(missing_paths, missing_predicates)
 
 
-def _micros(value: datetime) -> int:
-    return (value - _EPOCH) // timedelta(microseconds=1)
-
-
-def claim_flags(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-    *,
-    claims: Sequence[LiveValue],
-    evaluation_time: datetime,
-) -> dict[str, set[QueryFlag]]:
-    """Verdict flags per Claim identity, from the shared per-slot verdict derivation.
-
-    ``claims`` must hold every live contender of each slot it touches, so each
-    slot's resolution is its full resolution.
-    """
-
-    from cruxible_core.service.discovery.search import claim_resolution_statuses
-    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
-
-    flags: dict[str, set[QueryFlag]] = {item.identity: set() for item in claims}
-    if not claims:
-        return flags
-    identities = tuple(sorted({item.identity for item in claims}))
-    context = ClaimVerdictReadContext(instance, coordinate)
-    context.prefetch(tuple(claim_path(identity.removeprefix("Claim:")) for identity in identities))
-    parsed = tuple(context.claim(identity) for identity in identities)
-    verdicts: dict[str, Any] = {}
-    statuses = claim_resolution_statuses(
-        instance,
-        claims=parsed,
-        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
-        evaluation_time=evaluation_time,
-        verdicts_by_identity=verdicts,
-        read_context=context,
-    )
-    for claim in parsed:
-        qualified = claim.identity.qualified
-        marks = flags.setdefault(qualified, set())
-        verdict = getattr(verdicts.get(qualified), "verdict", None)
-        if verdict in {"stale", "stale_evidence"}:
-            marks.add("stale")
-        if verdict == "contradicted":
-            marks.add("contradicted")
-        if verdict == "unresolved" or statuses.get(claim.identity.name) == "conflicted":
-            marks.add("contested")
-    from cruxible_core.service.discovery.next import claim_unsure_holds
-
-    for identity in claim_unsure_holds(
-        instance,
-        coordinate=coordinate,
-        claims=parsed,
-        evaluation_time=evaluation_time,
-        resolution_statuses=statuses,
-    ):
-        flags.setdefault(identity, set()).add("unsure_hold")
-    return flags
-
-
-def ordered_flags(flags: Iterable[QueryFlag]) -> list[QueryFlag]:
-    present = set(flags)
-    return [flag for flag in FLAG_ORDER if flag in present]
-
-
 __all__ = [
-    "FLAG_ORDER",
     "LiveValue",
     "ValueIndex",
-    "claim_flags",
     "distinct",
     "ensure_values",
-    "ordered_flags",
     "read_live_values",
     "subject_labels",
     "subjects_of_kind",

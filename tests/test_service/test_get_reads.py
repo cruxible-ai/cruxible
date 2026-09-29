@@ -28,10 +28,8 @@ from cruxible_core.service.authoring.documents import (
 )
 from cruxible_core.service.discovery import get as get_module
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
-from cruxible_core.service.discovery.get import (
-    service_playbill_get,
-    verdict_flags,
-)
+from cruxible_core.service.discovery.get import service_playbill_get
+from cruxible_core.service.discovery.read_flags import verdict_flags
 from cruxible_core.service.read_refusals import ReadRefusalError
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._knowledge_loop_support import EVALUATION_TIME, PREDICATE, seed_claims
@@ -337,6 +335,9 @@ def test_flags_come_from_the_verdict_and_slot_status() -> None:
         "unsure_hold",
     )
     assert verdict_flags("contradicted", "overturned", held=False) == ("contradicted",)
+    # A Claim whose own evidence both supports and contradicts it is contested
+    # on every verb, even though resolution refuses it rather than conflicting.
+    assert verdict_flags("unresolved", "refused") == ("contested",)
 
 
 # -- identity evidence rules (ClaimType v6 and succession) -------------------------

@@ -250,8 +250,8 @@ def test_spec_query_pins_claim_types_at_the_coordinate(instance: Any) -> None:
 
 
 def test_flags_come_from_the_verdict_machinery(instance: Any, monkeypatch: Any) -> None:
-    def flagged(*_args: Any, claims: Any, **_kwargs: Any) -> dict[str, set[str]]:
-        return {item.identity: {"stale", "unsure_hold"} for item in claims}
+    def flagged(*_args: Any, identities: Any, **_kwargs: Any) -> dict[str, tuple[str, ...]]:
+        return {identity: ("stale", "unsure_hold") for identity in identities}
 
     monkeypatch.setattr(compact_module, "claim_flags", flagged)
     result = _query(instance, kind=SUBJECT_KIND, select=["status"])

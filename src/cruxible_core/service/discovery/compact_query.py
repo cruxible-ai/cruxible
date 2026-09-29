@@ -95,10 +95,8 @@ from cruxible_core.service.discovery.query import evaluate_accepted_query
 from cruxible_core.service.discovery.query_values import (
     LiveValue,
     ValueIndex,
-    claim_flags,
     distinct,
     ensure_values,
-    ordered_flags,
     read_live_values,
     subject_labels,
 )
@@ -115,6 +113,12 @@ from cruxible_core.service.discovery.query_vocabulary import (
     query_not_found,
     query_refusal,
     value_type_of,
+)
+from cruxible_core.service.discovery.read_flags import (
+    answer_flags,
+    claim_flags,
+    ordered_flags,
+    verdict_flags,
 )
 from cruxible_core.service.list_pages import (
     PlaybillListCursorMismatch,
@@ -806,7 +810,7 @@ class _RowRenderer:
         flags = claim_flags(
             self.instance,
             self.coordinate,
-            claims=shown,
+            identities=[item.identity for item in shown],
             evaluation_time=self.evaluation_time,
         )
         rendered: list[dict[str, Any]] = []
@@ -831,12 +835,10 @@ class _RowRenderer:
                 slot = [] if path is None else self.values.slot(path, info.predicate)
                 values = distinct(item.value for item in slot)
                 for item in slot:
-                    row_flags.update(flags.get(item.identity, set()))
-                if info.cardinality == "many":
+                    row_flags.update(flags.get(item.identity, ()))
+                row_flags.update(answer_flags(info.cardinality, len(values)))
+                if info.cardinality == "many" or len(values) > 1:
                     out[column.name] = values
-                elif len(values) > 1:
-                    out[column.name] = values
-                    row_flags.add("contested")
                 else:
                     out[column.name] = values[0] if values else None
             out["flags"] = ordered_flags(row_flags)
@@ -1157,7 +1159,7 @@ def _contains_everywhere(
         flags = claim_flags(
             instance,
             coordinate,
-            claims=mates,
+            identities=[item.identity for item in mates],
             evaluation_time=evaluation_time,
         )
         with instance.bind_accepted_projection(coordinate) as projection:
@@ -1167,15 +1169,13 @@ def _contains_everywhere(
         rows: list[dict[str, Any]] = []
         for item in items:
             label = labels.get(item.subject_path, item.subject_path)
-            marks = set(flags.get(item.identity, set()))
+            marks = set(flags.get(item.identity, ()))
             info = vocabulary.predicates.get(item.predicate)
             slot = slot_values.slot(item.subject_path, item.predicate)
-            if (
-                info is not None
-                and info.cardinality == "one"
-                and len(distinct(value.value for value in slot)) > 1
-            ):
-                marks.add("contested")
+            if info is not None:
+                marks.update(
+                    answer_flags(info.cardinality, len(distinct(value.value for value in slot)))
+                )
             rows.append(
                 {
                     "subject": label,
@@ -1671,20 +1671,15 @@ def _engine_answer(
         for row in rows:
             marks: set[QueryFlag] = set()
             for visibility in row.read_claims:
-                if visibility.verdict == "stale" or visibility.currency == "stale":
-                    marks.add("stale")
-                if visibility.verdict == "contradicted":
-                    marks.add("contradicted")
-                if visibility.verdict == "unresolved":
-                    marks.add("contested")
+                marks.update(verdict_flags(visibility.verdict))
                 read_identities.add(visibility.claim_path)
             if row.conflicts:
                 marks.add("contested")
             extra.append(marks)
-        holds = _holds_for_paths(instance, coordinate, read_identities, evaluation_time)
+        by_path = _flags_for_paths(instance, coordinate, read_identities, evaluation_time)
         for row, marks in zip(rows, extra, strict=True):
-            if any(item.claim_path in holds for item in row.read_claims):
-                marks.add("unsure_hold")
+            for item in row.read_claims:
+                marks.update(by_path.get(item.claim_path, ()))
         for row, marks in zip(rows, extra, strict=True):
             if any(projected.state == "conflict" for projected in row.fields):
                 marks.add("contested")
@@ -1723,38 +1718,50 @@ def _subject_path_of(row: Any, binding: str) -> str | None:
     return None
 
 
-def _holds_for_paths(
+def _flags_for_paths(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     claim_paths: set[str],
     evaluation_time: datetime,
-) -> set[str]:
-    """The read Claim paths ``next`` parks under an ``unsure`` hold right now."""
+) -> dict[str, tuple[QueryFlag, ...]]:
+    """The shared flags of the Claims a governed evaluation read, by Claim path.
 
-    from cruxible_core.service.discovery.next import claim_unsure_holds
-    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+    Flags are derived over every live contender of each slot those Claims sit
+    in, so a slot's resolution status and its ``unsure`` holds are the whole
+    slot's, exactly as ``next`` decides them.
+    """
 
     if not claim_paths:
-        return set()
+        return {}
+    path_of: dict[str, str] = {}
+    slots: set[tuple[str, str]] = set()
+    ordered = sorted(claim_paths)
     with instance.bind_accepted_projection(coordinate) as projection:
-        ordered = sorted(claim_paths)
-        path_of: dict[str, str] = {}
+        connection = projection.typed.connection
         for start in range(0, len(ordered), 400):
             chunk = ordered[start : start + 400]
             marks = ",".join("?" for _ in chunk)
-            for identity, path in projection.typed.connection.execute(
-                f"SELECT identity, path FROM claims WHERE path IN ({marks})", tuple(chunk)
+            for identity, path, subject_path, predicate in connection.execute(
+                "SELECT identity, path, subject_path, predicate FROM claims "
+                f"WHERE path IN ({marks})",
+                tuple(chunk),
             ):
                 path_of[str(identity)] = str(path)
-    context = ClaimVerdictReadContext(instance, coordinate)
-    context.prefetch(tuple(path_of.values()))
-    held = claim_unsure_holds(
-        instance,
-        coordinate=coordinate,
-        claims=tuple(context.claim(identity) for identity in sorted(path_of)),
-        evaluation_time=evaluation_time,
+                slots.add((str(subject_path), str(predicate)))
+        contenders = set(path_of)
+        for subject_path, predicate in sorted(slots):
+            contenders.update(
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT identity FROM claims WHERE lifecycle='live' "
+                    "AND subject_path=? AND predicate=?",
+                    (subject_path, predicate),
+                )
+            )
+    flags = claim_flags(
+        instance, coordinate, identities=contenders, evaluation_time=evaluation_time
     )
-    return {path_of[identity] for identity in held if identity in path_of}
+    return {path: flags.get(identity, ()) for identity, path in path_of.items()}
 
 
 def _named_answer(

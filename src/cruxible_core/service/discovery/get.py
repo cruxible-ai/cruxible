@@ -18,7 +18,7 @@ import json
 import re
 import shlex
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
@@ -75,6 +75,12 @@ from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.read_flags import (
+    answer_flags,
+    ordered_flags,
+    unsure_holds,
+    verdict_flags,
+)
 from cruxible_core.service.read_refusals import (
     ReadRefusalError,
     nearest,
@@ -488,49 +494,6 @@ def _render_proposal_step(surface: PlaybillReadSurface, step: str, proposal_id: 
     return f"{tool}(proposal_id={json.dumps(proposal_id)})"
 
 
-# -- flags ---------------------------------------------------------------------
-
-
-def verdict_flags(verdict: str, status: str, *, held: bool) -> tuple[PlaybillReadFlag, ...]:
-    """The verdict problems one Claim row shows, from the existing verdict and status."""
-
-    flags: list[PlaybillReadFlag] = []
-    if verdict in {"stale", "stale_evidence"}:
-        flags.append("stale")
-    if status == "conflicted":
-        flags.append("contested")
-    if verdict == "contradicted":
-        flags.append("contradicted")
-    if held:
-        flags.append("unsure_hold")
-    return tuple(flags)
-
-
-def unsure_held_claims(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-    claims: Iterable[ClaimArtifactAny],
-    *,
-    statuses: Mapping[str, str],
-    evaluation_time: datetime,
-) -> frozenset[str]:
-    """Claims an ``unsure`` examined attestation holds right now, as ``next`` decides.
-
-    ``statuses`` are the slot resolution statuses by bare Claim id. The decision
-    is ``next``'s own: its Claim rows for these Claims and its hold coverage.
-    """
-
-    from cruxible_core.service.discovery.next import claim_unsure_holds
-
-    return claim_unsure_holds(
-        instance,
-        coordinate=coordinate,
-        claims=tuple(claims),
-        evaluation_time=evaluation_time,
-        resolution_statuses=statuses,
-    )
-
-
 # -- per-kind builders ------------------------------------------------------------
 
 
@@ -611,7 +574,7 @@ def _claim_card(
             for item in slot
             if item.claim_id != claim.identity.name
         )
-    held = unsure_held_claims(
+    held = unsure_holds(
         instance,
         coordinate,
         (claim, *contenders),
@@ -678,7 +641,7 @@ def _subject_card(
                 (path,),
             ).fetchone()[0]
         )
-    held = unsure_held_claims(
+    held = unsure_holds(
         instance,
         coordinate,
         claims,
@@ -698,19 +661,19 @@ def _subject_card(
         # while it is contested. Overturned and refused contenders are not values.
         shown = [item for item in members if item.status in {"accepted", "conflicted"}] or members
         values = [_claim_value(item) for item in shown]
-        flags: list[PlaybillReadFlag] = []
+        marks: set[PlaybillReadFlag] = set(
+            answer_flags("many" if many else "one", len({repr(value) for value in values}))
+        )
         for item in shown:
-            for flag in verdict_flags(
-                item.verdict, item.status, held=f"Claim:{item.claim_id}" in held
-            ):
-                if flag not in flags:
-                    flags.append(flag)
+            marks.update(
+                verdict_flags(item.verdict, item.status, held=f"Claim:{item.claim_id}" in held)
+            )
         entries.append(
             PlaybillGetSubjectClaimV1(
                 predicate=_short_predicate(predicate, kind),
                 qualifier=qualifier,
                 value=values if many or len(values) > 1 else values[0],
-                flags=tuple(flags),
+                flags=tuple(ordered_flags(marks)),
             )
         )
     return PlaybillGetSubjectCardV1(
@@ -1459,6 +1422,4 @@ __all__ = [
     "ResolvedRef",
     "resolve_get_ref",
     "service_playbill_get",
-    "unsure_held_claims",
-    "verdict_flags",
 ]
