@@ -426,11 +426,6 @@ def _cli_where(item: Mapping[str, object]) -> str:
     return field
 
 
-def _cli_follow(item: Mapping[str, object]) -> str:
-    marker = "^" if item.get("direction") == "reverse" else ""
-    return f"{marker}{item['field']}:{item['as']}"
-
-
 def render_orient_call(call: _Call, surface: PlaybillOrientSurface) -> str:
     """One runnable call in the caller's own syntax."""
 
@@ -466,7 +461,11 @@ def render_orient_call(call: _Call, surface: PlaybillOrientSurface) -> str:
         elif key == "select" and isinstance(value, list):
             parts.append(f"--select {_cli_value(','.join(str(item) for item in value))}")
         elif key == "follow" and isinstance(value, list):
-            parts.extend(f"--follow {_cli_value(_cli_follow(item))}" for item in value)
+            parts.extend(
+                f"--follow{'-in' if item.get('direction') == 'reverse' else ''} "
+                + _cli_value(f"{item['field']}:{item['as']}")
+                for item in value
+            )
         else:
             parts.append(f"--{key.replace('_', '-')} {_cli_value(value)}")
     return " ".join(parts)

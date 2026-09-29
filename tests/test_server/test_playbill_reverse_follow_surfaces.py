@@ -105,8 +105,8 @@ def test_every_surface_follows_a_relation_backwards(
                 "playbill",
                 "query",
                 SUBJECT_KIND,
-                "--follow",
-                f"^{DELIVERS}:batch",
+                "--follow-in",
+                f"{DELIVERS}:batch",
                 "--follow",
                 "parent:up",
                 "--select",
@@ -169,8 +169,8 @@ def test_every_surface_pages_reverse_rows_and_refuses_a_wrong_predicate(
                 "playbill",
                 "query",
                 SUBJECT_KIND,
-                "--follow",
-                f"^{follow['field']}:{follow['as']}",
+                "--follow-in",
+                f"{follow['field']}:{follow['as']}",
                 "--select",
                 "batch",
                 "--limit",
@@ -229,7 +229,7 @@ def test_every_surface_pages_reverse_rows_and_refuses_a_wrong_predicate(
         monkeypatch.setattr(commands, "_server_call", lambda op, **_: op(client, instance_id))
         invoked = CliRunner().invoke(
             cli,
-            ["playbill", "query", SUBJECT_KIND, "--follow", "^project.batch.state:batch"],
+            ["playbill", "query", SUBJECT_KIND, "--follow-in", "project.batch.state:batch"],
         )
         assert invoked.exit_code != 0
         assert "playbill.query.follow_not_incoming" in invoked.output
@@ -265,9 +265,9 @@ def test_every_surface_orients_with_the_incoming_predicates(
         invoked = CliRunner().invoke(cli, ["playbill", "orient", "--kind", SUBJECT_KIND, "--json"])
         assert invoked.exit_code == 0, invoked.output
         result = contracts.PlaybillOrientResultV1.model_validate(json.loads(invoked.output))
-        marker = f"--follow '^{DELIVERS}:batch'"
+        marker = f"--follow-in {DELIVERS}:batch"
         text = CliRunner().invoke(cli, ["playbill", "orient", "--kind", SUBJECT_KIND]).output
-        assert f"Incoming (follow with ^): {DELIVERS}, {GOVERNS}, {PARENT}" in text
+        assert f"Incoming (--follow-in): {DELIVERS}, {GOVERNS}, {PARENT}" in text
     elif surface == "sdk":
         result = _playbill(client, instance_id, tmp_path).orient(kind=SUBJECT_KIND)
         marker = f'pb.query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}"'
