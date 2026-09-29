@@ -121,7 +121,7 @@ def test_fork_receive_equals_the_whole_tree_receive(seed: int, monkeypatch) -> N
 def test_carried_facts_equal_facts_built_from_scratch(seed: int) -> None:
     generator = random.Random(seed)
     root = SnapshotTree({_path(generator): _content(generator) for _ in range(20)})
-    path_facts(root).oversize_count(30, root._rows)
+    path_facts(root)
     for _ in range(4):
         fork = root.fork()
         for _ in range(5):
@@ -136,11 +136,33 @@ def test_carried_facts_equal_facts_built_from_scratch(seed: int) -> None:
         carried = root._path_facts
         assert carried is not None
         fresh = path_facts(SnapshotTree(dict(root._rows.items())))
-        fresh.oversize_count(30, root._rows)
         assert carried.content_bytes == fresh.content_bytes
         assert carried.noncanonical == fresh.noncanonical
         assert carried.colliding == fresh.colliding
         assert carried.max_depth == fresh.max_depth
         assert {k: v for k, v in carried.depths.items() if v} == fresh.depths
         assert dict(carried.folded.items()) == dict(fresh.folded.items())
-        assert carried.oversize == fresh.oversize
+
+
+def test_an_accepted_record_over_the_file_limit_does_not_block_later_proposals() -> None:
+    """A change set record is bounded by its own record limit, not the per-file one.
+
+    A large closure (an evidence-rule upgrade carrying every Claim) writes a
+    record bigger than any single authored file may be. Later proposals leave it
+    unchanged, so they must still be received; only what a proposal writes is
+    bounded per file.
+    """
+    limits = ProposalReceiveLimits().model_copy(update={"max_file_bytes": 30})
+    root = SnapshotTree(
+        {
+            "changesets/cs-00000000000000000001.json": b"r" * 100,
+            "subjects/project.work_item/a.json": b"{}",
+        }
+    )
+    root._accepted = True
+    fork = root.fork()
+    fork["subjects/project.work_item/b.json"] = b"{}"
+    assert validate_proposal_tree(fork.snapshot(), limits=limits, base_tree=root)
+    fork["subjects/project.work_item/c.json"] = b"x" * 31
+    with pytest.raises(Exception, match="exceeds its byte limit: subjects/project.work_item/c"):
+        validate_proposal_tree(fork.snapshot(), limits=limits, base_tree=root)
