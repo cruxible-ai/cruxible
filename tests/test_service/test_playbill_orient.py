@@ -322,3 +322,16 @@ def test_kinds_name_shared_evidence_once(seeded) -> None:  # type: ignore[no-unt
     )
     assert differing.evidence == ()
     assert [item.evidence for item in differing.predicates] == [(), ("feed",)]
+
+
+def test_short_names_stay_unique_when_a_fallback_collides_with_another_short_name() -> None:
+    predicates = ("other.status", "third.status", f"{SUBJECT_KIND}.other.status")
+
+    names = orient_module._short_names(predicates, SUBJECT_KIND)
+
+    assert len(set(names.values())) == len(predicates)
+    assert names == {
+        "other.status": "other.status",
+        "third.status": "third.status",
+        f"{SUBJECT_KIND}.other.status": f"{SUBJECT_KIND}.other.status",
+    }

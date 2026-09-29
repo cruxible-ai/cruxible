@@ -300,21 +300,31 @@ def _duration(microseconds: int) -> str:
 
 
 def _short_names(predicates: Iterable[str], kind: str) -> dict[str, str]:
-    """Each predicate's short name against ``kind``; a clashing leaf keeps its full name."""
+    """Each predicate's short name against ``kind``, unique among the kind's names.
+
+    A name two predicates share falls back to the full predicate. A fallback can
+    itself equal another predicate's short name, so collisions are re-checked
+    until none remain; full predicates are unique, so this always ends.
+    """
 
     prefix = f"{kind}."
-    short = {
+    names = {
         predicate: predicate[len(prefix) :]
         if predicate.startswith(prefix)
         else predicate.rpartition(".")[2]
         for predicate in predicates
     }
-    counts: dict[str, int] = {}
-    for name in short.values():
-        counts[name] = counts.get(name, 0) + 1
-    return {
-        predicate: (name if counts[name] == 1 else predicate) for predicate, name in short.items()
-    }
+    while True:
+        counts: dict[str, int] = {}
+        for name in names.values():
+            counts[name] = counts.get(name, 0) + 1
+        clashing = [
+            predicate for predicate, name in names.items() if counts[name] > 1 and name != predicate
+        ]
+        if not clashing:
+            return names
+        for predicate in clashing:
+            names[predicate] = predicate
 
 
 def _descriptor(
