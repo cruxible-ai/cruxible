@@ -8,8 +8,9 @@ surface. ``orient(kind=K)`` widens one kind to every predicate in full plus a
 few sample Subject IDs; ``orient(section=S)`` pages one artifact family.
 
 Everything here is read from the accepted index at one coordinate. The
-attention summary is the existing ``next`` service's answer, called rather than
-re-derived, and evidence is named by CaptureContract identity: v6 rules name
+attention summary uses the existing ``next`` service's queue fold, without
+building health facets, a result digest or a continuation page. Evidence is
+named by CaptureContract identity: v6 rules name
 contracts by reference, and a v5 rule's digests are resolved through accepted
 state, so a digest is shown only when no accepted contract carries it.
 """
@@ -61,7 +62,7 @@ from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.next import (
     PlaybillNextItemV1,
     PlaybillNextRequestV2,
-    service_playbill_next,
+    summarize_playbill_next,
 )
 from cruxible_core.service.list_pages import (
     ListContinuation,
@@ -507,8 +508,6 @@ def _attention(
     evaluation_time: datetime,
     state: _State,
     caller: OrientCaller | None,
-    provider_lane: contracts.ProviderLaneStatusV1 | None,
-    consumers_running: bool,
 ) -> tuple[PlaybillOrientAttentionV1, bool]:
     notes: list[str] = []
     terminal = instance.descriptor.decommissioned
@@ -518,9 +517,10 @@ def _attention(
             "reads serve, every write is refused"
         )
     items: tuple[PlaybillNextItemV1, ...] = ()
+    reused: PlaybillNextItemV1 | None = None
     total = 0
     try:
-        queue = service_playbill_next(
+        queue = summarize_playbill_next(
             instance,
             request=PlaybillNextRequestV2(
                 at=AcceptedCoordinate.from_internal(coordinate),
@@ -528,16 +528,15 @@ def _attention(
                 access_profile=_NEXT_PROFILE,
                 limit=contracts.PLAYBILL_NEXT_MAX_LIMIT,
             ),
-            provider_lane=provider_lane,
-            consumers_running=consumers_running,
             caller_principal_id=None if caller is None else caller.actor_id,
+            match=lambda item: _upgrade_hint((item,)) is not None,
         )
         items, total = queue.items, queue.total_items
+        reused = queue.matching_item
     except PlaybillError as exc:
         code = getattr(exc, "error_code", None) or getattr(exc, "code", None)
         notes.append(f"the next queue could not be read: {code or type(exc).__name__}")
     upgrade = False
-    reused = _upgrade_hint(items)
     if reused is not None:
         notes.append(_line(reused))
         upgrade = True
@@ -763,8 +762,6 @@ def service_playbill_orient(
         evaluation_time=moment,
         state=state,
         caller=caller,
-        provider_lane=provider_lane,
-        consumers_running=consumers_running,
     )
     focus = max(kinds_page, key=lambda row: (row.subjects, len(row.predicates)), default=None)
     if focus is not None:

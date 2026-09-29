@@ -108,8 +108,10 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
     )
     monkeypatch.setattr(
         orient_module,
-        "service_playbill_next",
-        lambda *args, **kwargs: SimpleNamespace(items=(other, item), total_items=7),
+        "summarize_playbill_next",
+        lambda *args, **kwargs: SimpleNamespace(
+            items=(other, item), total_items=7, matching_item=item
+        ),
     )
 
     attention = service_playbill_orient(seeded, caller=OWNER).attention
@@ -649,3 +651,40 @@ def test_modal_evidence_ties_are_independent_of_predicate_order() -> None:
     assert orient_module._hoist_evidence(rows)[0] == ("a",)
     assert orient_module._hoist_evidence(tuple(reversed(rows)))[0] == ("a",)
     assert orient_module._hoist_evidence(()) == ((), ())
+
+
+def test_attention_summary_preserves_complete_orient_bytes(
+    seeded,  # type: ignore[no-untyped-def]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    from cruxible_client.contracts.canonical import canonical_bytes
+    from cruxible_core.service.claims.claims import _claim_law_evidence_index
+    from cruxible_core.service.discovery import next as next_module
+    from cruxible_core.service.discovery.next import PlaybillNextSummary, service_playbill_next
+
+    moment = datetime(2026, 9, 29, tzinfo=UTC)
+    optimized = service_playbill_orient(seeded, caller=OWNER, evaluation_time=moment)
+    dependency_fold = next_module._claim_dependency_items
+
+    def original_dependencies(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs.pop("claims", None)
+        return dependency_fold(*args, **kwargs)
+
+    def full_queue(instance, *, request, caller_principal_id, match):  # type: ignore[no-untyped-def]
+        result = service_playbill_next(
+            instance, request=request, caller_principal_id=caller_principal_id
+        )
+        matching = next((item for item in result.items if match(item)), None)
+        return PlaybillNextSummary(result.items, result.total_items, matching)
+
+    # The previous path constructed public Claim cards, all dependency facts,
+    # the entire law-evidence map, health facets and a digested next page.
+    monkeypatch.setattr(next_module, "_claim_dependency_items", original_dependencies)
+    monkeypatch.setattr(next_module, "_claim_threshold_evidence", _claim_law_evidence_index)
+    monkeypatch.setattr(orient_module, "summarize_playbill_next", full_queue)
+    previous = service_playbill_orient(seeded, caller=OWNER, evaluation_time=moment)
+    assert canonical_bytes(optimized.model_dump(mode="json")) == canonical_bytes(
+        previous.model_dump(mode="json")
+    )

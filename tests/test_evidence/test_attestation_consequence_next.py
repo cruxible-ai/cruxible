@@ -181,7 +181,7 @@ def threshold_world(
         attestations = attestation_mutator(instance, claim, attestations)
     patched = law.model_copy(update={"verified_attestations": attestations})
     monkeypatch.setattr(
-        "cruxible_core.service.discovery.next._claim_law_evidence_index",
+        "cruxible_core.service.discovery.next._claim_threshold_evidence",
         lambda _instance, *, at: {claim_path(claim.identity.name): patched},
     )
     return instance, owner, claim
@@ -455,7 +455,7 @@ def test_threshold_fold_refuses_missing_law_evidence_as_typed_integrity(
 ) -> None:
     instance, _owner, _claim = threshold_world(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        "cruxible_core.service.discovery.next._claim_law_evidence_index",
+        "cruxible_core.service.discovery.next._claim_threshold_evidence",
         lambda _instance, *, at: {},
     )
 
