@@ -15,7 +15,6 @@ never as a bare digest.
 
 from __future__ import annotations
 
-import difflib
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -24,7 +23,7 @@ from typing import Any, Literal
 
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.compact_query import QueryFilterOperator
-from cruxible_client.contracts.errors import ClaimNotFoundError, PlaybillFormatError
+from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -34,6 +33,7 @@ from cruxible_core.service.discovery.field_names import (
     resolve_field_in,
     short_field_name,
 )
+from cruxible_core.service.read_refusals import ReadRefusalError, nearest
 
 ValueType = Literal[
     "string",
@@ -68,79 +68,42 @@ _SUBJECT_ID_OPERATORS = frozenset({"eq", "ne", "lt", "lte", "gt", "gte", "in", "
 ORDERABLE_TYPES = _ORDERED | {"boolean", "enum", "subject"}
 
 
-class PlaybillQueryRefused(PlaybillFormatError):
-    """A ``query`` input names something accepted state does not, or cannot be evaluated.
+def query_refusal(
+    code: str,
+    message: str,
+    *,
+    nearest: Iterable[str] = (),
+    repair: str | None = None,
+    field_path: str | None = None,
+) -> ReadRefusalError:
+    """A ``query`` input that names something accepted state does not, or cannot run.
 
-    The message is ``<code>: <what>; nearest: <names>; repair: <one line>``.
+    ``nearest`` are the valid names the caller most likely meant and ``repair``
+    is the one-line fix; both ride the shared read refusal (``candidates`` and
+    ``repair_line``), with the request path in ``field_path``.
     """
 
-    error_code = "playbill.query.refused"
-
-    def __init__(
-        self,
-        code: str,
-        message: str,
-        *,
-        nearest: Iterable[str] = (),
-        repair: str | None = None,
-        field_path: str | None = None,
-    ) -> None:
-        self.error_code = code
-        self.nearest = tuple(nearest)
-        self.repair_hint = repair
-        self.field_path = field_path
-        text = f"{code}: {message}"
-        if field_path:
-            text += f" (at {field_path})"
-        if self.nearest:
-            text += f"; nearest: {', '.join(self.nearest)}"
-        if repair:
-            text += f"; repair: {repair}"
-        super().__init__(text)
-
-    @property
-    def served_context(self) -> dict[str, object]:
-        context: dict[str, object] = {}
-        if self.nearest:
-            context["nearest"] = list(self.nearest)
-        if self.field_path:
-            context["field_path"] = self.field_path
-        if self.repair_hint:
-            context["repair_hint"] = self.repair_hint
-        return context
-
-
-class PlaybillQueryNotFound(ClaimNotFoundError):
-    """A named QueryDefinition that accepted state does not hold."""
-
-    error_code = "playbill.query.name_not_found"
-
-    def __init__(self, name: str, *, nearest: tuple[str, ...]) -> None:
-        self.name = name
-        self.nearest = nearest
-        hint = f"; nearest: {', '.join(nearest)}" if nearest else ""
-        super().__init__(
-            f"{self.error_code}: no accepted QueryDefinition is named {name!r}{hint}; "
-            "repair: pass one of the accepted query names (orient lists them)"
-        )
-
-    @property
-    def served_context(self) -> dict[str, object]:
-        return {"nearest": list(self.nearest)} if self.nearest else {}
-
-
-def nearest(value: str, names: Iterable[str], *, limit: int = 5) -> tuple[str, ...]:
-    """The accepted names a wrong one most likely meant: leaf matches first, then close ones."""
-
-    ordered = sorted(set(names))
-    leaf = value.rsplit(".", 1)[-1]
-    by_leaf = [name for name in ordered if name.rsplit(".", 1)[-1] == leaf and name != value]
-    close = difflib.get_close_matches(value, ordered, n=limit, cutoff=0.5)
-    by_suffix = difflib.get_close_matches(
-        leaf, [name.rsplit(".", 1)[-1] for name in ordered], n=limit, cutoff=0.6
+    return ReadRefusalError(
+        code,
+        message,
+        http_status=400,
+        candidates=nearest,
+        repair_line=repair,
+        field_path=field_path,
     )
-    suffixed = [name for name in ordered if name.rsplit(".", 1)[-1] in by_suffix]
-    return tuple(dict.fromkeys([*by_leaf, *close, *suffixed]))[:limit]
+
+
+def query_not_found(name: str, *, nearest: Iterable[str]) -> ReadRefusalError:
+    """A named QueryDefinition that accepted state does not hold: a coded 404."""
+
+    return ReadRefusalError(
+        "playbill.query.name_not_found",
+        f"no accepted QueryDefinition is named {name!r}",
+        http_status=404,
+        candidates=nearest,
+        repair_line="Pass one of the accepted query names (orient lists them)",
+        field_path="name",
+    )
 
 
 @dataclass(frozen=True)
@@ -207,7 +170,7 @@ class QueryVocabulary:
     def require_kind(self, kind: str, *, field_path: str = "kind") -> str:
         if kind in self.kinds:
             return kind
-        raise PlaybillQueryRefused(
+        raise query_refusal(
             "playbill.query.unknown_kind",
             f"no accepted Subject kind is named {kind!r}",
             nearest=nearest(kind, (*self.kinds, "ClaimType", "Procedure")),
@@ -258,7 +221,7 @@ class QueryVocabulary:
             return next(iter(found.values()))
         label = owner or " / ".join(kinds)
         if found:
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.ambiguous_field",
                 f"{name!r} names more than one predicate of {label}",
                 nearest=tuple(sorted(found)),
@@ -272,7 +235,7 @@ class QueryVocabulary:
             message = f"predicate {name!r} does not apply to {label}"
         else:
             message = f"{label} has no field {name!r}"
-        raise PlaybillQueryRefused(
+        raise query_refusal(
             "playbill.query.unknown_field",
             message,
             nearest=suggestions,
@@ -320,8 +283,8 @@ def load_query_vocabulary(
 
 def _refuse_value(
     info_label: str, value: object, expected: str, *, field_path: str, example: str
-) -> PlaybillQueryRefused:
-    return PlaybillQueryRefused(
+) -> ReadRefusalError:
+    return query_refusal(
         "playbill.query.value_type_mismatch",
         f"{value!r} is not a {expected} value for {info_label}",
         repair=f"pass a {expected}, for example {example}",
@@ -394,7 +357,7 @@ def check_value(
         if not isinstance(value, str):
             raise _refuse_value(label, value, "string", field_path=field_path, example='"text"')
         if value_type == "enum" and value not in info.members:
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.unknown_member",
                 f"{value!r} is not a member of {label}",
                 nearest=tuple(info.members),
@@ -447,7 +410,7 @@ def check_value(
             )
         kind = ref.split("/", 1)[0]
         if info.object_kinds and kind not in info.object_kinds:
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.value_type_mismatch",
                 f"{label} names Subjects of {', '.join(info.object_kinds)}, not {kind!r}",
                 nearest=info.object_kinds,
@@ -469,7 +432,7 @@ def check_operator(
     if operator in admitted:
         return
     type_name = "subject_id" if isinstance(info, str) else info.value_type
-    raise PlaybillQueryRefused(
+    raise query_refusal(
         "playbill.query.operator_not_applicable",
         f"{operator!r} does not apply to {label} ({type_name})",
         nearest=tuple(sorted(admitted)),
@@ -546,8 +509,6 @@ def claim_type_row(info: PredicateInfo, contracts: CaptureContractNames) -> dict
 __all__ = [
     "CaptureContractNames",
     "ORDERABLE_TYPES",
-    "PlaybillQueryNotFound",
-    "PlaybillQueryRefused",
     "PredicateInfo",
     "QueryVocabulary",
     "SUBJECT_ID_FIELD",
@@ -556,7 +517,8 @@ __all__ = [
     "check_value",
     "claim_type_row",
     "load_query_vocabulary",
-    "nearest",
+    "query_not_found",
+    "query_refusal",
     "object_label",
     "render_instant",
     "subject_ref",

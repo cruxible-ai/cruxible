@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from cruxible_client._error_base import CoreError, printable
+
+if TYPE_CHECKING:
+    from cruxible_client.contracts.repairs import RepairOperationV1
 
 
 class PlaybillError(CoreError):
@@ -370,6 +373,80 @@ class ReplayCheckpointError(PlaybillError):
     """A local replay checkpoint is missing, stale, or does not reproduce the ledger."""
 
 
+class ReadRefusalError(CoreError):
+    """A read verb (``orient``, ``get``, ``query``) refused for a reason the caller can repair.
+
+    A read never answers a wrong name with an empty result or a server fault. It
+    refuses with a stable code, the candidates it could have meant, and the one
+    operation that repairs the call. The message carries all three, so a caller
+    that only sees prose still sees the repair; ``context`` carries them as data
+    (``candidates``, ``repair_line`` and, for a request field, ``field_path``).
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        http_status: int = 400,
+        candidates: Iterable[str] = (),
+        repair: RepairOperationV1 | None = None,
+        repair_line: str | None = None,
+        field_path: str | None = None,
+        context: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.error_code = code
+        self.http_status = http_status
+        self.candidates = tuple(candidates)
+        self.repair = repair
+        self.context: dict[str, Any] = dict(context or {})
+        if self.candidates:
+            self.context["candidates"] = list(self.candidates)
+        if repair_line is not None:
+            self.context["repair_line"] = repair_line
+        if field_path is not None:
+            self.context["field_path"] = field_path
+        text = f"{code}: {message}"
+        if field_path is not None:
+            text += f" (at {field_path})"
+        if self.candidates:
+            text += f"; nearest: {', '.join(self.candidates)}"
+        if repair_line is not None:
+            text += f". {repair_line}"
+        super().__init__(text)
+
+    @property
+    def repair_line(self) -> str | None:
+        line = self.context.get("repair_line")
+        return line if isinstance(line, str) else None
+
+    @property
+    def field_path(self) -> str | None:
+        path = self.context.get("field_path")
+        return path if isinstance(path, str) else None
+
+    @classmethod
+    def from_served(
+        cls,
+        *,
+        code: str,
+        message: str,
+        http_status: int,
+        context: Mapping[str, Any],
+    ) -> Self:
+        """Rebuild a served refusal exactly as the daemon rendered it."""
+
+        refusal = cls.__new__(cls)
+        refusal.error_code = code
+        refusal.http_status = http_status
+        candidates = context.get("candidates", ())
+        refusal.candidates = tuple(str(item) for item in candidates) if candidates else ()
+        refusal.repair = None
+        refusal.context = dict(context)
+        CoreError.__init__(refusal, message)
+        return refusal
+
+
 class ProjectionError(PlaybillError):
     """Base refusal for deterministic Playbill projection operations."""
 
@@ -423,6 +500,7 @@ __all__ = [
     "ProjectionFormatError",
     "ProjectionIntegrityError",
     "ProjectionPublicationError",
+    "ReadRefusalError",
     "ReplayCheckpointError",
     "SemanticDeltaLimitError",
     "SettlementIntegrityError",

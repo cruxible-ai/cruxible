@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient, Playbill, contracts
 from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+from cruxible_client.contracts.errors import ReadRefusalError
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.server import create_server
 from cruxible_core.runtime import playbill_api
@@ -131,10 +132,26 @@ def test_wrong_names_refuse_over_http_with_code_and_nearest(
 
     assert response.status_code == 400
     body = response.json()
+    assert body["error_type"] == "ReadRefusalError"
     assert body["error_code"] == "playbill.query.unknown_field"
-    assert "status" in body["context"]["nearest"]
+    assert "status" in body["context"]["candidates"]
     assert body["context"]["field_path"] == "where[0].field"
+    assert body["context"]["repair_line"]
     assert "Traceback" not in response.text
+
+    # The client rebuilds the same coded refusal, not a bare CoreError.
+    with pytest.raises(ReadRefusalError) as refused:
+        client.query_playbill(
+            instance_id,
+            request=PlaybillQueryRequestV1.model_validate(
+                {"kind": SUBJECT_KIND, "where": [{"field": "stauts", "eq": "ready"}]}
+            ),
+        )
+    assert refused.value.error_code == "playbill.query.unknown_field"
+    assert refused.value.http_status == 400
+    assert "status" in refused.value.candidates
+    assert refused.value.field_path == "where[0].field"
+    assert refused.value.repair_line == body["context"]["repair_line"]
 
 
 def test_malformed_filters_name_their_json_path(served: tuple[CruxibleClient, str]) -> None:

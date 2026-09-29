@@ -76,7 +76,11 @@ from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.read_refusals import ReadRefusalError, nearest
+from cruxible_core.service.read_refusals import (
+    ReadRefusalError,
+    nearest,
+    resolve_read_coordinate,
+)
 from cruxible_core.storage.cas import BodyAccessContext
 
 _CLAIM_ID = re.compile(r"^CLM-[0-9a-f]{32}$")
@@ -178,37 +182,6 @@ def _short_predicate(predicate: str, subject_kind: str | None) -> str:
     if subject_kind is not None and predicate.startswith(subject_kind + "."):
         return predicate[len(subject_kind) + 1 :]
     return predicate.rpartition(".")[2]
-
-
-# -- coordinate ---------------------------------------------------------------
-
-
-def resolve_read_coordinate(
-    instance: PlaybillInstance,
-    at: ClientCoordinate | AcceptedCoordinate | str | None,
-) -> AcceptedProjectionCoordinate:
-    """The accepted coordinate a read names: head, an exact coordinate, or a git oid."""
-
-    from cruxible_client.contracts.errors import PlaybillError
-
-    if at is None:
-        return instance.accepted_coordinate()
-    try:
-        if isinstance(at, str):
-            return instance.coordinate_for_oid(at)
-        return instance.resolve_accepted_coordinate(
-            git_oid=at.git_oid,
-            semantic_root=at.semantic_root,
-            generation_root=at.generation_root,
-            compiler_digest=at.compiler_digest,
-        )
-    except PlaybillError as exc:
-        raise ReadRefusalError(
-            "playbill.read.coordinate_not_accepted",
-            f"at does not name an accepted generation of this instance ({exc})",
-            http_status=404,
-            repair_line="Omit at to read the current head, or pass a git oid from history",
-        ) from exc
 
 
 # -- reference resolution ------------------------------------------------------
@@ -1545,7 +1518,6 @@ __all__ = [
     "CaptureContractNames",
     "ResolvedRef",
     "resolve_get_ref",
-    "resolve_read_coordinate",
     "service_playbill_get",
     "unsure_held_claims",
     "verdict_flags",

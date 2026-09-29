@@ -71,7 +71,11 @@ from cruxible_core.service.list_pages import (
     page_after_boundary,
 )
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
-from cruxible_core.service.read_refusals import ReadRefusalError, nearest
+from cruxible_core.service.read_refusals import (
+    ReadRefusalError,
+    nearest,
+    resolve_read_coordinate,
+)
 
 _LIST = "orient"
 _NEXT_PROFILE = CoverageAccessProfileV1(
@@ -110,21 +114,6 @@ class OrientCaller:
 
 
 # -- reading accepted state -------------------------------------------------
-
-
-def _resolve(
-    instance: PlaybillInstance, at: AcceptedCoordinate | str | None
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    if isinstance(at, str):
-        return instance.coordinate_for_oid(at)
-    return instance.resolve_accepted_coordinate(
-        git_oid=at.git_oid,
-        semantic_root=at.semantic_root,
-        generation_root=at.generation_root,
-        compiler_digest=at.compiler_digest,
-    )
 
 
 @dataclass(frozen=True)
@@ -672,7 +661,7 @@ def service_playbill_orient(
         raise _request_invalid("orient(kind=K) is one page and takes no cursor; drop the cursor")
     view = section or ("kind" if kind is not None else "kinds")
     continuation, at = _continuation(cursor, view=view, at=at)
-    coordinate = _resolve(instance, at)
+    coordinate = resolve_read_coordinate(instance, at)
     served = AcceptedCoordinate.from_internal(coordinate)
     moment = (evaluation_time or datetime.now(UTC)).astimezone(UTC)
     state = _read_state(instance, coordinate)

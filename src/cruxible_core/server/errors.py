@@ -292,12 +292,6 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["candidates"] = list(exc.candidates)
         context["repair_commands"] = list(exc.repair_commands)
 
-    # A refusal that carries its own structured repair context (nearest valid
-    # names, the request path it refers to) serves it beside the message.
-    served_context = getattr(exc, "served_context", None)
-    if isinstance(served_context, dict):
-        context.update(served_context)
-
     body = ErrorResponse(
         error_type=exc.__class__.__name__,
         message=_message_for_error(exc),

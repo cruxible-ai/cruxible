@@ -47,7 +47,6 @@ from cruxible_client.contracts.compact_query import (
     QueryFlag,
     QueryMode,
 )
-from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactV1,
@@ -106,16 +105,15 @@ from cruxible_core.service.discovery.query_vocabulary import (
     ORDERABLE_TYPES,
     SUBJECT_ID_FIELD,
     CaptureContractNames,
-    PlaybillQueryNotFound,
-    PlaybillQueryRefused,
     PredicateInfo,
     QueryVocabulary,
     check_operator,
     check_value,
     claim_type_row,
     load_query_vocabulary,
-    nearest,
     object_label,
+    query_not_found,
+    query_refusal,
     value_type_of,
 )
 from cruxible_core.service.list_pages import (
@@ -126,6 +124,7 @@ from cruxible_core.service.list_pages import (
     list_snapshot,
     page_after_boundary,
 )
+from cruxible_core.service.read_refusals import nearest, resolve_read_coordinate
 
 LIST_NAME = "query"
 COMPACT_QUERY_MAX_RESULTS = 5000
@@ -172,7 +171,7 @@ def _mode(request: PlaybillQueryRequestV1) -> QueryMode:
         if present
     ]
     if len(chosen) != 1:
-        raise PlaybillQueryRefused(
+        raise query_refusal(
             "playbill.query.mode_invalid",
             "a query takes exactly one mode: kind and/or contains (compact), spec, or name",
             repair=(
@@ -181,41 +180,18 @@ def _mode(request: PlaybillQueryRequestV1) -> QueryMode:
         )
     mode = cast(QueryMode, chosen[0])
     if mode != "inline" and shaping:
-        raise PlaybillQueryRefused(
+        raise query_refusal(
             "playbill.query.mode_invalid",
             "where, select, follow and order_by shape a compact query only",
             repair="drop them, or pass kind instead of spec/name",
         )
     if request.params is not None and mode != "named":
-        raise PlaybillQueryRefused(
+        raise query_refusal(
             "playbill.query.mode_invalid",
             "params bind a named query only",
             repair="pass name with params, or drop params",
         )
     return mode
-
-
-def _resolve_coordinate(
-    instance: PlaybillInstance, at: AcceptedCoordinate | str | None
-) -> AcceptedProjectionCoordinate:
-    if at is None:
-        return instance.accepted_coordinate()
-    try:
-        if isinstance(at, str):
-            return instance.coordinate_for_oid(at)
-        return instance.resolve_accepted_coordinate(
-            git_oid=at.git_oid,
-            semantic_root=at.semantic_root,
-            generation_root=at.generation_root,
-            compiler_digest=at.compiler_digest,
-        )
-    except PlaybillError as exc:
-        raise PlaybillQueryRefused(
-            "playbill.query.coordinate_unknown",
-            f"at does not name an accepted coordinate ({exc})",
-            repair="omit at for the current head, or pass an accepted git oid",
-            field_path="at",
-        ) from exc
 
 
 # -- answers ------------------------------------------------------------------
@@ -323,7 +299,7 @@ def _column_keys(wanted: Sequence[_Wanted]) -> list[str]:
     for index in fixed:
         key = candidates[index][0]
         if key in taken:
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.column_collision",
                 f"two columns would both be served as {key!r}",
                 repair="rename the follow alias, or select one of the two fields",
@@ -334,7 +310,7 @@ def _column_keys(wanted: Sequence[_Wanted]) -> list[str]:
     for index in flexible:
         fallback = next((name for name in candidates[index][1:] if name not in taken), None)
         if fallback is None:
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.column_collision",
                 f"two columns would both be served as {candidates[index][0]!r}",
                 repair="rename the follow alias, or select one of the two fields",
@@ -383,7 +359,7 @@ class _CompactPlan:
                 (self.kind,), follow.field, field_path=f"{path}.field", owner=self.kind
             )
             if isinstance(resolved, str) or resolved.value_type != "subject":
-                raise PlaybillQueryRefused(
+                raise query_refusal(
                     "playbill.query.follow_not_relation",
                     f"{follow.field!r} is not a Subject-valued predicate of {self.kind}",
                     nearest=tuple(
@@ -405,7 +381,7 @@ class _CompactPlan:
                 or alias in {ROOT, SUBJECT_ID_FIELD, "value"}
                 or alias in roots
             ):
-                raise PlaybillQueryRefused(
+                raise query_refusal(
                     "playbill.query.alias_invalid",
                     f"alias {follow.as_!r} must be a new lower-case identifier that is not "
                     "subject, subject_id, value, another alias, or a predicate namespace",
@@ -602,7 +578,7 @@ def _require_refs(
                 if spelled in known:
                     continue
                 names = sorted(known)
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.unknown_ref",
                 f"no accepted Subject {value!r} of {' / '.join(kinds)} exists",
                 nearest=nearest(value, names),
@@ -725,7 +701,7 @@ def _refuse_engine(result: ClaimQueryResultV1, *, declared: Sequence[str] = ()) 
         "playbill.query.parameter_type_mismatch",
     }:
         repair = f"pass params named {', '.join(declared)}" if declared else "pass no params"
-    raise PlaybillQueryRefused(code, result.refusal.message, nearest=declared, repair=repair)
+    raise query_refusal(code, result.refusal.message, nearest=declared, repair=repair)
 
 
 def _server_budgets(budgets: QueryBudgetsV1, ceiling: int) -> QueryBudgetsV1:
@@ -945,7 +921,7 @@ def _compact_subject_query(
         if not isinstance(resolved.info, str) and (
             resolved.info.cardinality != "one" or resolved.info.value_type not in ORDERABLE_TYPES
         ):
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.order_not_applicable",
                 f"cannot order by {resolved.label} "
                 f"({resolved.info.cardinality}-valued {resolved.info.value_type})",
@@ -972,7 +948,7 @@ def _compact_subject_query(
     )
     ordering_keys = {canonical_bytes(item.key.model_dump(mode="json")) for item in orderings}
     if len(ordering_keys) != len(orderings):
-        raise PlaybillQueryRefused(
+        raise query_refusal(
             "playbill.query.order_repeated",
             "order_by names the same field twice",
             repair="name each field once",
@@ -1359,7 +1335,7 @@ def _shape_artifact_rows(
     for index, item in enumerate(request.where):
         path = f"where[{index}]"
         if item.field not in fields:
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.unknown_field",
                 f"{kind} definitions have no field {item.field!r}",
                 nearest=nearest(item.field, fields) or fields,
@@ -1367,7 +1343,7 @@ def _shape_artifact_rows(
                 field_path=f"{path}.field",
             )
         if item.operator not in {"eq", "ne", "in", "contains"}:
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.operator_not_applicable",
                 f"{item.operator!r} does not apply to {kind} {item.field}",
                 nearest=("contains", "eq", "in", "ne"),
@@ -1377,14 +1353,14 @@ def _shape_artifact_rows(
         value = item.value
         if item.operator == "in":
             if not all(isinstance(entry, str) for entry in cast(tuple[object, ...], value)):
-                raise PlaybillQueryRefused(
+                raise query_refusal(
                     "playbill.query.value_type_mismatch",
                     f"{kind} {item.field} values are strings",
                     repair='pass strings, for example ["dev"]',
                     field_path=f"{path}.in",
                 )
         elif not isinstance(value, str):
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.value_type_mismatch",
                 f"{kind} {item.field} values are strings",
                 repair='pass a string, for example "dev"',
@@ -1422,7 +1398,7 @@ def _shape_artifact_rows(
     for index, raw in enumerate(request.order_by):
         name = raw.removeprefix("-").removeprefix("+")
         if name not in names:
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.unknown_field",
                 f"{kind} rows have no column {name!r}",
                 nearest=nearest(name, names) or tuple(names),
@@ -1443,7 +1419,7 @@ def _shape_artifact_rows(
         for index, name in enumerate(request.select):
             match = next((column for column in columns if column.name == name), None)
             if match is None:
-                raise PlaybillQueryRefused(
+                raise query_refusal(
                     "playbill.query.unknown_field",
                     f"{kind} rows have no column {name!r}",
                     nearest=nearest(name, names) or tuple(names),
@@ -1489,7 +1465,7 @@ def _require_artifact_names(
         values = cast(tuple[object, ...], item.value) if item.operator == "in" else (item.value,)
         for value in values:
             if isinstance(value, str) and value not in known[item.field]:
-                raise PlaybillQueryRefused(
+                raise query_refusal(
                     "playbill.query.unknown_ref",
                     f"no accepted {request.kind} has {item.field} {value!r}",
                     nearest=nearest(value, known[item.field]),
@@ -1522,7 +1498,7 @@ def _artifact_definition(
                 selection, prefixes = "name_prefixes", candidate
         except ValueError:
             known = {_namespace(name) for name in vocabulary.predicates}
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.value_type_mismatch",
                 f"{names!r} is not a {kind} namespace",
                 nearest=nearest(names[0], known) if names else (),
@@ -1565,7 +1541,7 @@ def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpecV1) -> Qu
     referenced = spec.referenced_predicates
     for predicate in referenced:
         if predicate not in vocabulary.predicates:
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.unknown_field",
                 f"the spec reads predicate {predicate!r}, which is not an accepted ClaimType",
                 nearest=nearest(predicate, vocabulary.predicates),
@@ -1575,7 +1551,7 @@ def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpecV1) -> Qu
     explicit = {pin.target.name: pin for pin in spec.pins if pin.role == CLAIM_TYPE_PIN_ROLE}
     for predicate, pin in explicit.items():
         if pin.artifact_digest != vocabulary.predicates[predicate].claim_type_digest:
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.pin_stale",
                 f"the spec pins ClaimType {predicate} at a version that is not accepted here",
                 repair="omit ClaimType pins to resolve them at this coordinate",
@@ -1600,7 +1576,7 @@ def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpecV1) -> Qu
             }
         )
     except ValueError as exc:
-        raise PlaybillQueryRefused(
+        raise query_refusal(
             "playbill.query.spec_invalid",
             f"the spec does not validate once pinned: {str(exc).splitlines()[0]}",
             repair="check the spec against QueryDefinitionSpecV1",
@@ -1797,7 +1773,7 @@ def _named_answer(
             for row in projection.typed.envelopes(kind="query-definition")
         )
     if request.name not in names:
-        raise PlaybillQueryNotFound(request.name, nearest=nearest(request.name, names))
+        raise query_not_found(request.name, nearest=nearest(request.name, names))
     from cruxible_core.service.discovery.query_definitions import accepted_query_definition
 
     definition = accepted_query_definition(instance, name=request.name, coordinate=coordinate)
@@ -1917,7 +1893,7 @@ def service_playbill_query(
     if continuation is not None:
         pinned = AcceptedCoordinate.model_validate(continuation.coordinate["at"])
         if at is not None:
-            requested = AcceptedCoordinate.from_internal(_resolve_coordinate(instance, at))
+            requested = AcceptedCoordinate.from_internal(resolve_read_coordinate(instance, at))
             if requested != pinned:
                 raise PlaybillListCursorMismatch(
                     f"{PlaybillListCursorMismatch.error_code}: the cursor continues a different "
@@ -1935,13 +1911,13 @@ def service_playbill_query(
     if evaluation_time is None:
         evaluation_time = utc_now()
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
-        raise PlaybillQueryRefused(
+        raise query_refusal(
             "playbill.query.evaluation_time_invalid",
             "evaluation_time must carry a timezone",
             repair="pass an ISO-8601 instant such as 2026-09-28T12:00:00Z",
             field_path="evaluation_time",
         )
-    coordinate = _resolve_coordinate(instance, at)
+    coordinate = resolve_read_coordinate(instance, at)
     vocabulary = load_query_vocabulary(instance, coordinate)
     if mode == "named":
         answer = _named_answer(instance, coordinate, vocabulary, request, evaluation_time)
@@ -1949,7 +1925,7 @@ def service_playbill_query(
         answer = _spec_answer(instance, coordinate, vocabulary, request, evaluation_time)
     elif request.kind in ARTIFACT_KINDS:
         if request.follow:
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.follow_not_relation",
                 f"{request.kind} definitions have no relations to follow",
                 repair="drop follow",
@@ -1968,7 +1944,7 @@ def service_playbill_query(
         )
     elif request.kind is None:
         if request.where or request.select or request.follow or request.order_by:
-            raise PlaybillQueryRefused(
+            raise query_refusal(
                 "playbill.query.mode_invalid",
                 "where, select, follow and order_by need a kind",
                 repair="pass kind, or search values with contains alone",
@@ -2022,7 +1998,5 @@ def service_playbill_query(
 __all__ = [
     "COMPACT_QUERY_MAX_RESULTS",
     "DEFAULT_COLUMN_CAP",
-    "PlaybillQueryNotFound",
-    "PlaybillQueryRefused",
     "service_playbill_query",
 ]

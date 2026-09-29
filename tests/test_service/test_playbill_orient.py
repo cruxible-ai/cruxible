@@ -247,6 +247,14 @@ def test_orient_reads_an_earlier_coordinate_by_git_oid(seeded) -> None:  # type:
     assert result.coordinate.git_oid == earlier.oid and result.generation == earlier.sequence
 
 
+def test_an_unaccepted_at_refuses_with_the_shared_read_code(seeded) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ReadRefusalError) as refused:
+        service_playbill_orient(seeded, at="0" * 40)
+
+    assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+    assert refused.value.http_status == 404
+
+
 def test_identity_rules_name_their_contracts_and_unknown_digests_stay_short(
     seeded,  # type: ignore[no-untyped-def]
 ) -> None:
