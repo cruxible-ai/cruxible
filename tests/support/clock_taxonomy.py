@@ -293,6 +293,13 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillOrientResultV1", "accepted_at"): "ASSERTION TIME",
     ("PlaybillOrientResultV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillOrientResultV1", "generation"): "SETTLEMENT ORDER",
+    # The get read: its evaluation instant, and the times it reads back.
+    ("PlaybillGetRequestV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("PlaybillGetResultV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("PlaybillGetProposalCardV1", "admitted_at"): "ASSERTION TIME",
+    ("PlaybillGetCaptureEvidenceV1", "observed_at"): "ASSERTION TIME",
+    ("PlaybillGetAttestationEvidenceV1", "at"): "ASSERTION TIME",
+    ("PlaybillGetRevisionV1", "sequence"): "SETTLEMENT ORDER",
     ("PlaybillSearchRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillSearchResult", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillSearchResultV1", "evaluation_time"): "EVALUATION INSTANT",
