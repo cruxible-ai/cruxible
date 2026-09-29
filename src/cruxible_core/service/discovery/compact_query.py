@@ -1611,11 +1611,13 @@ def _spec_answer(
 
 
 def _selection(request: PlaybillQueryRequestV1, mode: QueryMode) -> dict[str, Any]:
+    """The digest of everything that shapes the listing, so a cursor binds to it compactly."""
+
     body = request.model_dump(
         mode="json", exclude={"cursor", "limit", "at", "evaluation_time"}, by_alias=True
     )
     body["mode"] = mode
-    return body
+    return {"query": typed_digest(Sha256Value, "playbill-query-selection-v1", body).tagged}
 
 
 def service_playbill_query(
