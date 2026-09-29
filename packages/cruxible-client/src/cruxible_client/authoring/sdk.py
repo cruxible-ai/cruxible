@@ -494,7 +494,15 @@ class NextPage:
     result_digest: str
     observed_domains: tuple[str, ...]
     unobserved_domains: tuple[str, ...]
+    # The environment the queue was read in, including how many rows and
+    # findings were left out because this caller cannot perform their repair.
+    status: api.PlaybillNextStatus
     attestation_head_digest: str | None = None
+
+    @property
+    def hidden(self) -> int:
+        """Rows and findings withheld because this caller cannot perform their repair."""
+        return self.status.hidden
 
     def __iter__(self):  # type: ignore[no-untyped-def]
         return iter(self.items)
@@ -3386,6 +3394,7 @@ class Playbill:
             result_digest=result.result_digest,
             observed_domains=tuple(result.observed_domains),
             unobserved_domains=tuple(result.unobserved_domains),
+            status=result.status,
             attestation_head_digest=result.attestation_head_digest,
         )
 

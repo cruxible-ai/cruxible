@@ -2059,7 +2059,10 @@ Import: `cruxible_client.authoring.sdk.NextPage`. [Source](src/cruxible_client/a
 | `result_digest` | `str` | `Required` |
 | `observed_domains` | `tuple[str, ...]` | `Required` |
 | `unobserved_domains` | `tuple[str, ...]` | `Required` |
+| `status` | `PlaybillNextStatus` | `Required` |
 | `attestation_head_digest` | `str \| None` | `None` |
+
+`NextPage.hidden` is `status.hidden`: the rows and nested findings left out because this caller cannot perform their repair. An empty page with a nonzero `hidden` is not an empty queue.
 
 <a id="api-nextpage-iter"></a>
 

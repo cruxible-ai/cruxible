@@ -181,10 +181,14 @@ def test_sdk_rows_render_sdk_calls_not_cli_commands() -> None:
         assert command is None or not command.startswith("cruxible ")
 
 
-def test_the_sdk_next_names_its_surface(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _sdk_next(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, status: dict[str, object]
+) -> tuple[object, list[dict[str, object]]]:
+    """Run `Playbill.next` against a stub queue route; return the page and the calls."""
+
     from cruxible_client import contracts
     from cruxible_client.authoring import sdk as sdk_module
-    from tests.test_cli.test_playbill_next import COORDINATE, HEALTHY_STATUS
+    from tests.test_cli.test_playbill_next import COORDINATE
 
     calls: list[dict[str, object]] = []
 
@@ -196,7 +200,7 @@ def test_the_sdk_next_names_its_surface(monkeypatch: pytest.MonkeyPatch, tmp_pat
                 evaluation_time="2026-08-24T18:00:00.000000Z",
                 observed_domains=["accepted_state"],
                 unobserved_domains=[],
-                status=HEALTHY_STATUS,
+                status=status,
                 items=[],
                 total_items=0,
                 result_digest="sha256:" + "5" * 64,
@@ -219,6 +223,27 @@ def test_the_sdk_next_names_its_surface(monkeypatch: pytest.MonkeyPatch, tmp_pat
         lambda *_a, **_k: (None, None),
     )
 
-    playbill.next(expiring_within=sdk_module.Duration(value=1))
+    return playbill.next(expiring_within=sdk_module.Duration(value=1)), calls
+
+
+def test_the_sdk_next_names_its_surface(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from tests.test_cli.test_playbill_next import HEALTHY_STATUS
+
+    _page, calls = _sdk_next(monkeypatch, tmp_path, status=HEALTHY_STATUS)
 
     assert [call["caller_surface"] for call in calls] == ["sdk"]
+
+
+def test_the_sdk_page_carries_the_hidden_count_and_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two permission-hidden rows are not an empty queue: the page says so."""
+
+    from tests.test_cli.test_playbill_next import HEALTHY_STATUS
+
+    page, _calls = _sdk_next(monkeypatch, tmp_path, status={**HEALTHY_STATUS, "hidden": 2})
+
+    assert tuple(page) == ()  # type: ignore[call-overload]
+    assert page.hidden == 2  # type: ignore[attr-defined]
+    assert page.status.hidden == 2  # type: ignore[attr-defined]
+    assert page.status.line_dispatch.state == "idle"  # type: ignore[attr-defined]
