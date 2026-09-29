@@ -50,6 +50,40 @@ REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
 }
 
 
+# Where a definition names another governed definition by identity. These never
+# move -- an identity follows every version -- but whoever carries the naming
+# definition must carry what it names.
+IDENTITY_REFERENCE_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "claim-types/": (("evidence_admission_policy", "rules", "*", "capture_contracts", "*"),),
+}
+
+
+def referenced_identities(path: str, payload: Mapping[str, Any]) -> Iterator[tuple[str, str]]:
+    """The (kind, name) identities ``payload`` names by reference, never by digest."""
+
+    for prefix, fields in IDENTITY_REFERENCE_FIELDS.items():
+        if not path.startswith(prefix):
+            continue
+        for steps in fields:
+            yield from _identities_at(payload, steps)
+
+
+def _identities_at(value: object, steps: tuple[str, ...]) -> Iterator[tuple[str, str]]:
+    if not steps:
+        target = value.get("target") if isinstance(value, dict) else None
+        if isinstance(target, dict) and isinstance(target.get("kind"), str):
+            name = target.get("name")
+            if isinstance(name, str):
+                yield target["kind"], name
+        return
+    head, rest = steps[0], steps[1:]
+    if head == "*":
+        for item in value if isinstance(value, list) else ():
+            yield from _identities_at(item, rest)
+    elif isinstance(value, dict) and head in value:
+        yield from _identities_at(value[head], rest)
+
+
 def reference_fields(path: str) -> tuple[tuple[str, ...], ...] | None:
     """This path's reference fields, or None when its family has no table entry."""
 

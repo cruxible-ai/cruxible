@@ -789,3 +789,27 @@ def test_the_upgrade_leaves_producer_reducer_allowlists_for_a_decision() -> None
     )
     with pytest.raises(_Refused, match="producer reducers"):
         _convert(derived, None)  # type: ignore[arg-type]
+
+
+def test_a_kit_carries_the_contracts_its_identity_rules_name() -> None:
+    from cruxible_client.contracts.kits import PlaybillKitBuildRequestV1
+    from cruxible_core.service.kits import build_kit
+
+    identity_type = _v6_type().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name="acme.work_item.status"),
+            "predicate": "acme.work_item.status",
+            "allowed_subject_kinds": ("acme.work_item",),
+        }
+    )
+    tree = {
+        claim_type_path(identity_type.predicate): render_claim_type(identity_type),
+        CONTRACT_PATH: render_capture_contract(ORIGINAL),
+    }
+    bundle = build_kit(
+        tree, PlaybillKitBuildRequestV1(kit_id="acme", version="1.0.0", owns=("acme.",))
+    )
+    assert {item.path for item in bundle.manifest.artifacts} == {
+        claim_type_path(identity_type.predicate),
+        CONTRACT_PATH,
+    }

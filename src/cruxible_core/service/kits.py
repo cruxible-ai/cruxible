@@ -49,7 +49,11 @@ from cruxible_client.contracts.kits import (
     kit_artifact_path_allowed,
     kit_receipt_document_id,
 )
-from cruxible_core.claims.artifact_references import move_references, referenced_digests
+from cruxible_core.claims.artifact_references import (
+    move_references,
+    referenced_digests,
+    referenced_identities,
+)
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
     ClaimTypeMigrationError,
@@ -130,6 +134,11 @@ def _dependency_order(
         for text in _references(path, payloads[path]):
             if text in by_digest:
                 found.add(by_digest[text])
+        # A definition naming another by identity carries its live version.
+        for identity in referenced_identities(path, payloads[path]):
+            target = by_identity.get(identity)
+            if target is not None:
+                found.add(target)
         found.discard(path)
         return tuple(sorted(found))
 
