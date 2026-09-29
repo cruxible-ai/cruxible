@@ -568,7 +568,20 @@ def _attention(
     )
 
 
-def _you(caller: OrientCaller | None) -> PlaybillOrientYouV1:
+def _you(caller: OrientCaller | None, *, instance: PlaybillInstance) -> PlaybillOrientYouV1:
+    terminal = instance.descriptor.decommissioned
+    if terminal is not None:
+        # Every write door refuses a decommissioned instance, whoever asks.
+        active = caller is not None and caller.principal_registration_status == "active"
+        return PlaybillOrientYouV1(
+            actor=None if caller is None else caller.actor_id,
+            principal=caller.actor_id if caller is not None and active else None,
+            can_author=False,
+            reason=(
+                f"the instance was decommissioned at {terminal.decommissioned_at} "
+                f"({terminal.reason}); every write is refused"
+            ),
+        )
     if caller is None or caller.actor_id is None:
         return PlaybillOrientYouV1(
             actor=None,
@@ -779,7 +792,7 @@ def service_playbill_orient(
     live_procedures = sum(item.lifecycle == "live" for item in state.procedures)
     return PlaybillOrientResultV1(
         **base,
-        you=_you(caller),
+        you=_you(caller, instance=instance),
         kinds=kinds_page,
         artifacts=PlaybillOrientArtifactCountsV1(
             claim_types=len(state.claim_types),

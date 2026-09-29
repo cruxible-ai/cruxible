@@ -361,3 +361,14 @@ def test_sdk_suggestions_are_python_literals_and_mcp_keeps_json() -> None:
         f'cruxible_playbill_query(kind="{SUBJECT_KIND}", where=[{{"field": "flag", "eq": true}}, '
         '{"field": "note", "eq": null}], limit=10)'
     )
+
+
+def test_a_decommissioned_instance_cannot_be_authored_even_by_an_active_writer(seeded) -> None:  # type: ignore[no-untyped-def]
+    seeded.decommission(reason="migrated to a new host", decommissioned_by="owner")
+
+    you = service_playbill_orient(seeded, caller=OWNER).you
+
+    assert you is not None and you.can_author is False
+    assert you.actor == "owner" and you.principal == "owner"
+    assert you.reason is not None
+    assert "decommissioned" in you.reason and "migrated to a new host" in you.reason
