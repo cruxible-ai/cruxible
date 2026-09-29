@@ -47,6 +47,7 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
 
     page = cruxible.json("playbill", "orient", "--section", "claim_types", "--limit", "1")
     assert [row["predicate"] for row in page["claim_types"]] == [f"{KIND}.status"]
+    assert "(no procedures)" in cruxible.run("playbill", "orient", "--section", "procedures").stdout
 
 
 def test_orient_refuses_a_wrong_kind_with_the_nearest_names(
