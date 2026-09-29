@@ -884,9 +884,8 @@ def _compact_subject_query(
     )
     _refuse_engine(result)
     capped, cap_notes = _capped(result)
-    candidates: list[dict[str, str | None]] = [
-        {binding.binding: binding.subject_path for binding in row.bindings} for row in result.rows
-    ]
+    bindings = (ROOT, *(follow.alias for follow in follows))
+    candidates, _keys = _bound_rows(result.rows, bindings)
     renderer = _RowRenderer(
         instance=instance,
         coordinate=coordinate,
@@ -907,7 +906,6 @@ def _compact_subject_query(
                 predicate: info.cardinality for predicate, info in vocabulary.predicates.items()
             },
         )
-    bindings = (ROOT, *(follow.alias for follow in follows))
     keys = [tuple(row.get(binding) or "" for binding in bindings) for row in candidates]
     return _Answer(
         mode="inline",
@@ -920,6 +918,30 @@ def _compact_subject_query(
         capped=capped,
         notes=(*notes, *cap_notes),
     )
+
+
+def _bound_rows(
+    rows: Sequence[Any], bindings: tuple[str, ...]
+) -> tuple[list[dict[str, str | None]], list[tuple[str, ...]]]:
+    """One row per bound Subject and followed target, in the evaluator's order.
+
+    Two relation Claims can bind the same (Subject, target) pair, which the
+    evaluator reports as two paths. A row shows the bound Subjects, not the
+    relation Claims, so the pair is one row; its bindings are its page key.
+    """
+
+    candidates: list[dict[str, str | None]] = []
+    keys: list[tuple[str, ...]] = []
+    seen: set[tuple[str, ...]] = set()
+    for row in rows:
+        bound = {binding.binding: binding.subject_path for binding in row.bindings}
+        key = tuple(bound.get(binding) or "" for binding in bindings)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(bound)
+        keys.append(key)
+    return candidates, keys
 
 
 def _apply_inline(

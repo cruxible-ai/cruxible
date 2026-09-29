@@ -427,3 +427,41 @@ def test_unsure_hold_follows_next_and_ends_when_a_new_contender_arrives(tmp_path
     _contend(seeded, owner, contenders[-1], "done", "hold-conflict-new")
     assert _rows(_next(seeded), "claim_conflicted")
     assert "unsure_hold" not in flags()
+
+
+def test_parallel_relation_paths_page_once_per_bound_pair() -> None:
+    from cruxible_core.service.discovery.compact_query import _bound_rows
+    from cruxible_core.service.list_pages import list_snapshot, page_after_boundary
+
+    def row(*bound: tuple[str, str | None]) -> Any:
+        return SimpleNamespace(
+            bindings=tuple(SimpleNamespace(binding=name, subject_path=path) for name, path in bound)
+        )
+
+    # Two relation Claims bind the same (card, batch) pair: two engine paths.
+    rows = [
+        row(("subject", "subjects/k/a.json"), ("parent", "subjects/p/x.json")),
+        row(("subject", "subjects/k/a.json"), ("parent", "subjects/p/x.json")),
+        row(("subject", "subjects/k/b.json"), ("parent", None)),
+    ]
+    candidates, keys = _bound_rows(rows, ("subject", "parent"))
+    assert len(candidates) == len(set(keys)) == 2
+
+    seen: list[tuple[str, ...]] = []
+    continuation = None
+    snapshot = list_snapshot([list(key) for key in keys])
+    while True:
+        page, truncated = page_after_boundary(
+            candidates,
+            keys=keys,
+            snapshot=snapshot,
+            continuation=continuation,
+            limit=1,
+            list_name="query",
+        )
+        seen.extend(keys[candidates.index(item)] for item in page)
+        if not truncated:
+            break
+        continuation = SimpleNamespace(snapshot=snapshot, last_key=seen[-1])
+        assert len(seen) <= 2, "paging must advance"
+    assert seen == keys
