@@ -17,7 +17,8 @@ from cruxible_core.cli.main import cli
 
 
 @pytest.fixture
-def daemon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def daemon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest):
+    scoped = getattr(request, "param", False)
     calls: list[str] = []
     probes = 0
     action = None
@@ -42,6 +43,18 @@ def daemon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             )
         if path == "/api/v1/server/info":
             assert request.method == "GET"
+            if scoped:
+                return httpx.Response(
+                    403,
+                    json={
+                        "error_type": "DaemonOperationScopeError",
+                        "message": "Instance-scoped credential cannot read daemon-wide info",
+                        "context": {
+                            "operation": "cruxible_server_info",
+                            "credential_scope": "inst_scoped",
+                        },
+                    },
+                )
             return httpx.Response(
                 200,
                 json={
@@ -138,7 +151,43 @@ def test_a_cached_lifecycle_client_cannot_bypass_a_later_governed_handshake(daem
     with click.Context(cli, obj={"server_url": "http://daemon.invalid"}):
         lifecycle = _common._get_lifecycle_client()
         assert lifecycle is _common._get_lifecycle_client()
+        from cruxible_client import CruxibleClient
+        from cruxible_client.transport.lifecycle import DaemonLifecycleClient
+
+        assert isinstance(lifecycle, DaemonLifecycleClient)
+        assert not isinstance(lifecycle, CruxibleClient)
+        assert {name for name in dir(lifecycle) if not name.startswith("_")} == {
+            "version",
+            "daemon_identity",
+            "server_info",
+            "server_restart",
+            "server_stop",
+            "close",
+        }
         assert daemon == []
         with pytest.raises(IncompatibleDaemonVersion):
             _common._get_client()
         assert daemon == ["/version"]
+
+
+@pytest.mark.parametrize("daemon", [True], indirect=True)
+@pytest.mark.parametrize("as_json", [False, True])
+def test_scoped_status_keeps_lifecycle_facts_without_unchecked_instance_reads(daemon, as_json):
+    args = ["--server-url", "http://daemon.invalid", "server", "status"]
+    if as_json:
+        args.append("--json")
+    result = CliRunner().invoke(cli, args)
+    assert result.exit_code == 0, result.output
+    assert daemon == ["/api/v1/server/info", "/version", "/version"]
+    if as_json:
+        payload = json.loads(result.stdout)
+        assert payload["instance_status"] == "needs_matching_client"
+        assert payload["code"] == "playbill.sdk.daemon_version_incompatible"
+        assert payload["version"] == __version__
+        assert payload["transport"] == "http://daemon.invalid"
+        assert payload["instance_id"] == "inst_scoped"
+        assert "host" not in payload and "identity" not in payload
+    else:
+        assert f"Version: {__version__}" in result.output
+        assert "Daemon: reachable (http://daemon.invalid)" in result.output
+    assert "Instance section needs a matching client" in result.output

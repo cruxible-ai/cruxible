@@ -336,6 +336,7 @@ def test_status_answers_an_instance_scoped_token_with_its_own_host(
             )
 
     _patch_client(monkeypatch, ScopedClient())
+    monkeypatch.setattr("cruxible_core.cli.commands.server._get_checked_client", ScopedClient)
     text = runner.invoke(cli, ["--server-url", "http://server", "server", "status"])
     assert text.exit_code == 0, text.output
     assert "Scope: instance inst_scoped" in text.output

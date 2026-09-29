@@ -18,17 +18,22 @@ from __future__ import annotations
 import os
 import secrets
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, cast
 
 import click
 
-from cruxible_client import CruxibleClient
+from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
 from cruxible_client.errors import CoreError, DaemonOperationScopeError
+from cruxible_client.transport.lifecycle import DaemonLifecycleClient
 from cruxible_core.cli.commands._common import (
     SERVER_MODE_REQUIRED_MESSAGE,
     _emit_json,
     _root_ctx_obj,
+)
+from cruxible_core.cli.commands._common import (
+    _get_client as _get_checked_client,
 )
 from cruxible_core.cli.commands._common import (
     _get_lifecycle_client as _get_client,
@@ -78,7 +83,9 @@ def _client_transport_label() -> str:
     return "configured Cruxible server"
 
 
-def _wait_for_daemon(client: CruxibleClient, timeout: float, *, old_boot_id: str | None) -> str:
+def _wait_for_daemon(
+    client: DaemonLifecycleClient, timeout: float, *, old_boot_id: str | None
+) -> str:
     """Poll the daemon's /version probe until the NEW image answers.
 
     The old image keeps answering for a beat after it acknowledges the
@@ -106,7 +113,7 @@ def _wait_for_daemon(client: CruxibleClient, timeout: float, *, old_boot_id: str
     )
 
 
-def _daemon_still_answers(client: CruxibleClient) -> bool:
+def _daemon_still_answers(client: DaemonLifecycleClient) -> bool:
     """Return whether the daemon is still answering over the configured transport."""
     try:
         client.version()
@@ -118,7 +125,7 @@ def _daemon_still_answers(client: CruxibleClient) -> bool:
 
 
 def _observe_stop(
-    client: CruxibleClient,
+    client: DaemonLifecycleClient,
     state_root: Path,
     timeout: float,
 ) -> tuple[bool, bool | None]:
@@ -425,13 +432,38 @@ def server_install_service_cmd(
     )
 
 
+@dataclass(frozen=True)
+class _InstanceStatusNeedsMatchingClient:
+    version: str
+    transport: str
+    instance_id: str
+    scope: Literal["instance"] = "instance"
+    instance_status: Literal["needs_matching_client"] = "needs_matching_client"
+    code: str = IncompatibleDaemonVersion.code
+    message: str = "Instance section needs a matching client; lifecycle facts remain available."
+
+
 def _echo_instance_scoped_status(
-    client: CruxibleClient, instance_id: str, transport: str, output_json: bool
+    client: DaemonLifecycleClient, instance_id: str, transport: str, output_json: bool
 ) -> None:
     version = client.version()
-    host = client.show_playbill_host(instance_id)
     try:
-        identity = client.playbill_whoami(instance_id)
+        checked = _get_checked_client()
+    except IncompatibleDaemonVersion:
+        partial = _InstanceStatusNeedsMatchingClient(version, transport, instance_id)
+        if output_json:
+            _emit_json(asdict(partial))
+        else:
+            click.echo(f"Daemon: reachable ({transport})")
+            click.echo(f"Version: {version}")
+            click.echo(f"Scope: instance {instance_id}")
+            click.echo(partial.message)
+        return
+    if checked is None:
+        raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
+    host = checked.show_playbill_host(instance_id)
+    try:
+        identity = checked.playbill_whoami(instance_id)
     except CoreError:  # an uninitialized host has no identity to read yet
         identity = None
     if output_json:

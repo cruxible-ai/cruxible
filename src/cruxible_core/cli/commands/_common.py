@@ -13,6 +13,7 @@ import click
 
 import cruxible_client.compatibility as client_compatibility
 from cruxible_client import CruxibleClient
+from cruxible_client.transport.lifecycle import DaemonLifecycleClient
 from cruxible_core.cli.context import (
     CliContextState,
     clear_cli_context,
@@ -165,36 +166,40 @@ def _echo_explicit_write_target(instance_id: str, location: str | Path) -> None:
 
 
 def _get_client() -> CruxibleClient | None:
-    return _get_transport_client(lifecycle_only=False)
-
-
-def _get_lifecycle_client() -> CruxibleClient | None:
-    """Lifecycle RPCs must reach the old image during a contract-skewed deploy.
-
-    Keep this client in a separate cache: a later read or authoring operation
-    must still pass the normal compatibility gate.
-    """
-    return _get_transport_client(lifecycle_only=True)
-
-
-def _get_transport_client(*, lifecycle_only: bool) -> CruxibleClient | None:
     obj = _root_ctx_obj()
     server_url = obj.get("server_url")
     server_socket = obj.get("server_socket")
     if not server_url and not server_socket:
         return None
-    cache_key = "_lifecycle_client" if lifecycle_only else "_client"
-    client = obj.get(cache_key)
+    client = obj.get("_client")
     if isinstance(client, CruxibleClient):
         return client
     client = CruxibleClient(
-        base_url=server_url,
-        socket_path=server_socket,
-        token=get_runtime_bearer_token(),
+        base_url=server_url, socket_path=server_socket, token=get_runtime_bearer_token()
     )
-    if not lifecycle_only:
+    try:
         client_compatibility.check_daemon_compatibility(client)
-    obj[cache_key] = client
+    except Exception:
+        client.close()
+        raise
+    obj["_client"] = client
+    return client
+
+
+def _get_lifecycle_client() -> DaemonLifecycleClient | None:
+    """An unchecked client whose interface only permits lifecycle endpoints."""
+    obj = _root_ctx_obj()
+    server_url = obj.get("server_url")
+    server_socket = obj.get("server_socket")
+    if not server_url and not server_socket:
+        return None
+    client = obj.get("_lifecycle_client")
+    if isinstance(client, DaemonLifecycleClient):
+        return client
+    client = DaemonLifecycleClient(
+        base_url=server_url, socket_path=server_socket, token=get_runtime_bearer_token()
+    )
+    obj["_lifecycle_client"] = client
     return client
 
 
