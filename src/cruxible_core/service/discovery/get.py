@@ -1451,6 +1451,22 @@ def service_playbill_get(
     coordinate = resolve_read_coordinate(instance, request.at)
     evaluation_time = request.evaluation_time or utc_now()
     resolved = resolve_get_ref(instance, coordinate, request.ref, surface=request.surface)
+    if resolved.kind == "proposal":
+        # Proposals are operational state, read only as of the current head;
+        # one response never mixes an older requested generation with it.
+        head = instance.accepted_coordinate()
+        if request.at is not None and coordinate.git_oid != head.git_oid:
+            raise ReadRefusalError(
+                "playbill.get.historical_read_unsupported",
+                f"{resolved.display} is operational state, readable only at the current "
+                "head, not at an earlier accepted generation",
+                repair=RepairOperationV1(
+                    operation="playbill.get", arguments={"ref": resolved.display}
+                ),
+                repair_line="Omit at to read the proposal as of the current head",
+                context={"ref": resolved.display, "kind": resolved.kind},
+            )
+        coordinate = head
     allowed = GET_DETAILS_BY_KIND[resolved.kind]
     if request.detail not in allowed:
         raise ReadRefusalError(

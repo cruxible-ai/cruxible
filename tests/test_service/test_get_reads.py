@@ -609,3 +609,19 @@ def test_an_empty_document_reads_as_an_empty_body(tmp_path: Path) -> None:
         assert read is not None and read.size == 0
         assert read.text == "" and read.range is None
     assert beyond.error_code == "playbill.get.range_out_of_bounds"
+
+
+def test_a_proposal_is_read_only_at_the_current_head(world: dict[str, Any]) -> None:
+    instance, proposal, before = world["instance"], world["pending"], world["before"]
+    head = instance.accepted_coordinate()
+
+    refused = _refusal(instance, proposal, at=before.git_oid)
+    at_head = _get(instance, proposal, at=head.git_oid, detail="proof")
+
+    assert refused.error_code == "playbill.get.historical_read_unsupported"
+    assert refused.repair is not None and refused.repair.arguments == {
+        "ref": f"Proposal:{proposal}"
+    }
+    assert at_head.coordinate.git_oid == head.git_oid
+    # One generation per response: the proof carries no other accepted coordinate.
+    assert "accepted_coordinate" not in json.dumps(at_head.proof)
