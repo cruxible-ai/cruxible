@@ -464,6 +464,60 @@ def _checked_filters(
     return checked
 
 
+def _require_refs(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    plan: _CompactPlan,
+    checked: Sequence[tuple[_Field, QueryFilterOperator, object]],
+) -> None:
+    """A Subject a filter names by reference or by id must exist; a wrong one refuses."""
+
+    wanted: list[tuple[str, tuple[str, ...], str, int]] = []
+    for index, (item, operator, value) in enumerate(checked):
+        if operator not in {"eq", "ne", "in"}:
+            continue
+        values = cast(tuple[object, ...], value) if operator == "in" else (value,)
+        if isinstance(item.info, str):
+            kinds = (
+                (plan.kind,) if item.binding == ROOT else plan.follows[item.binding].target_kinds
+            )
+            wanted.extend((str(entry), kinds, "id", index) for entry in values)
+        elif item.info.value_type == "subject":
+            wanted.extend(
+                (str(entry), (str(entry).split("/", 1)[0],), "ref", index) for entry in values
+            )
+    if not wanted:
+        return
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+        for value, kinds, form, index in wanted:
+            marks = ",".join("?" for _ in kinds)
+            known = {
+                f"{kind}/{subject_id}"
+                for kind, subject_id in connection.execute(
+                    "SELECT subject_kind, subject_id FROM subjects "
+                    f"WHERE subject_kind IN ({marks})",
+                    kinds,
+                )
+            }
+            spelled = value if form == "ref" else None
+            if spelled is None:
+                if any(f"{kind}/{value}" in known for kind in kinds):
+                    continue
+                names = [name.split("/", 1)[1] for name in known]
+            else:
+                if spelled in known:
+                    continue
+                names = sorted(known)
+            raise PlaybillQueryRefused(
+                "playbill.query.unknown_ref",
+                f"no accepted Subject {value!r} of {' / '.join(kinds)} exists",
+                nearest=nearest(value, names),
+                repair="name an existing Subject (query the kind without where to list them)",
+                field_path=f"where[{index}]",
+            )
+
+
 def _comparable(info: PredicateInfo | Literal["subject_id"], value: object) -> object:
     if isinstance(info, str):
         return value
@@ -717,6 +771,7 @@ def _compact_subject_query(
 ) -> _Answer:
     plan = _CompactPlan(vocabulary, request)
     checked = _checked_filters(plan, request.where)
+    _require_refs(instance, coordinate, plan, checked)
     lowered: list[GrammarFilter] = []
     inline: list[_InlineFilter] = []
     for resolved, operator, value in checked:
@@ -1234,6 +1289,44 @@ def _shape_artifact_rows(
     return kept_rows, kept_ids, columns
 
 
+def _require_artifact_names(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    vocabulary: QueryVocabulary,
+    request: PlaybillQueryRequestV1,
+) -> None:
+    """A definition filter naming a namespace, name or kind that is not accepted refuses."""
+
+    if request.kind == "ClaimType":
+        names = set(vocabulary.predicates)
+        known = {
+            "name": names,
+            "namespace": {_namespace(name) for name in names},
+            "subject_kind": set(vocabulary.kinds),
+        }
+    else:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            names = {
+                row.identity.removeprefix("Procedure:")
+                for row in projection.typed.procedure_inventory()
+                if row.lifecycle == "live"
+            }
+        known = {"name": names, "namespace": {_namespace(name) for name in names}}
+    for index, item in enumerate(request.where):
+        if item.operator not in {"eq", "in"} or item.field not in known:
+            continue
+        values = cast(tuple[object, ...], item.value) if item.operator == "in" else (item.value,)
+        for value in values:
+            if isinstance(value, str) and value not in known[item.field]:
+                raise PlaybillQueryRefused(
+                    "playbill.query.unknown_ref",
+                    f"no accepted {request.kind} has {item.field} {value!r}",
+                    nearest=nearest(value, known[item.field]),
+                    repair=f"use an accepted {item.field}; query kind={request.kind} lists them",
+                    field_path=f"where[{index}]",
+                )
+
+
 def _artifact_definition(
     vocabulary: QueryVocabulary, request: PlaybillQueryRequestV1
 ) -> AcceptedQueryDefinitionV1:
@@ -1673,6 +1766,7 @@ def service_playbill_query(
                 repair="drop follow",
                 field_path="follow",
             )
+        _require_artifact_names(instance, coordinate, vocabulary, request)
         answer = _artifact_answer(
             instance,
             coordinate,

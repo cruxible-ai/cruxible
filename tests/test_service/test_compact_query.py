@@ -381,3 +381,22 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
     )
     assert names.of(current) == ("fixture.reports",)
     assert names.names_by_digest(legacy) and not names.names_by_digest(current)
+
+
+def test_a_filter_naming_a_missing_subject_refuses(instance: Any) -> None:
+    with pytest.raises(PlaybillQueryRefused) as refused:
+        _query(instance, kind=SUBJECT_KIND, where=[{"field": "subject_id", "eq": "wi-44"}])
+
+    assert refused.value.error_code == "playbill.query.unknown_ref"
+    assert "wi-42" in refused.value.nearest or "wi-43" in refused.value.nearest
+    assert _ids(
+        _query(instance, kind=SUBJECT_KIND, where=[{"field": "subject_id", "in": ["wi-43"]}])
+    ) == ["wi-43"]
+
+
+def test_a_definition_filter_naming_an_unknown_namespace_refuses(instance: Any) -> None:
+    with pytest.raises(PlaybillQueryRefused) as refused:
+        _query(instance, kind="ClaimType", where=[{"field": "namespace", "eq": "project.work_itm"}])
+
+    assert refused.value.error_code == "playbill.query.unknown_ref"
+    assert SUBJECT_KIND in refused.value.nearest
