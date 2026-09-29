@@ -31,7 +31,7 @@ from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.field_names import (
     reserved_meaning,
-    resolve_field,
+    resolve_field_in,
     short_field_name,
 )
 
@@ -216,15 +216,15 @@ class QueryVocabulary:
         )
 
     def _resolved(self, kinds: tuple[str, ...], name: str) -> dict[str, PredicateInfo]:
-        """Every predicate one field names for any of these kinds (Addendum 2)."""
+        """Every predicate one field names for any of these kinds (Addenda 2 and 3)."""
 
-        found: dict[str, PredicateInfo] = {}
-        for kind in kinds:
-            applicable = {info.predicate: info for info in self.predicates_of(kind)}
-            predicate = resolve_field(name, kind, applicable)
-            if predicate is not None:
-                found[predicate] = applicable[predicate]
-        return found
+        applicable = {
+            kind: {info.predicate: info for info in self.predicates_of(kind)} for kind in kinds
+        }
+        return {
+            predicate: self.predicates[predicate]
+            for predicate in resolve_field_in(name, applicable)
+        }
 
     def field_name(self, info: PredicateInfo, kinds: tuple[str, ...]) -> str:
         """How a predicate of these kinds is shown, so the name resolves back to it.

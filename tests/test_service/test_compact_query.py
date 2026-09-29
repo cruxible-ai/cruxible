@@ -566,6 +566,7 @@ def test_every_shown_field_name_resolves_back_to_its_predicate() -> None:
         _predicate_info("other.status", kind, "other"),
         _predicate_info(f"{kind}.other.status", kind),
         _predicate_info("third.status", "third"),
+        _predicate_info("third.other.status", "third"),
         _predicate_info("sec.vuln.severity", kind),
         _predicate_info(f"{kind}.subject_id", kind),
         _predicate_info(f"{kind}.flags", kind),
@@ -582,6 +583,16 @@ def test_every_shown_field_name_resolves_back_to_its_predicate() -> None:
             assert shown == short_field_name(info.predicate, owner, vocabulary.predicates)
             resolved = vocabulary.resolve_field((owner,), shown, field_path="select[0]")
             assert not isinstance(resolved, str) and resolved.predicate == info.predicate
+
+    # A follow over several target kinds: every shown name resolves back too, and
+    # an exact full name applicable to any target wins over prefix expansion.
+    targets = (kind, "third")
+    for info in {item for owner in targets for item in vocabulary.predicates_of(owner)}:
+        shown = vocabulary.field_name(info, targets)
+        resolved = vocabulary.resolve_field(targets, shown, field_path="select[0]")
+        assert not isinstance(resolved, str) and resolved.predicate == info.predicate
+    exact = vocabulary.resolve_field(targets, "other.status", field_path="select[0]")
+    assert not isinstance(exact, str) and exact.predicate == "other.status"
 
     assert vocabulary.field_name(vocabulary.predicates[PREDICATE], (kind,)) == "status"
     # The short form of project.work_item.other.status is another predicate's full name.

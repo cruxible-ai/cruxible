@@ -7,7 +7,7 @@ predicate it was shown for.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 
 RESERVED_FIELD_NAMES = frozenset({"subject_id", "subject", "kind", "predicate", "claim", "flags"})
 """Names the read verbs reserve: Subject fields and row metadata keys."""
@@ -64,11 +64,34 @@ def resolve_field(field: str, kind: str, applicable: Collection[str]) -> str | N
     return None
 
 
+def resolve_field_in(field: str, applicable: Mapping[str, Collection[str]]) -> tuple[str, ...]:
+    """Every predicate a field names over several kinds, sorted; one means resolved.
+
+    ``applicable`` maps each kind (a follow's target kinds, say) to the accepted
+    predicates that apply to it. An exact full predicate name applicable to ANY
+    of the kinds wins over kind-prefix expansion; expansion is ambiguous only
+    when it yields several predicates and no exact full name matched.
+    """
+
+    if any(field in predicates for predicates in applicable.values()):
+        return (field,)
+    return tuple(
+        sorted(
+            {
+                predicate
+                for kind, predicates in applicable.items()
+                if (predicate := resolve_field(field, kind, predicates)) is not None
+            }
+        )
+    )
+
+
 __all__ = [
     "RESERVED_FIELD_NAMES",
     "RESERVED_FIELD_PREFIX",
     "is_reserved_field_name",
     "reserved_meaning",
     "resolve_field",
+    "resolve_field_in",
     "short_field_name",
 ]
