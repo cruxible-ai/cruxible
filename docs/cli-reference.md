@@ -526,7 +526,7 @@ is reported at once rather than at the next governed write. It stays bound
 either way: a remote that is temporarily unreachable is not a wrong remote.
 `clone-url` prints the URL a reviewer clones and refuses with the typed
 `playbill.ledger.mirror_unset` when the instance publishes nowhere; the same
-value rides `playbill orient --json` as `orientation.mirror_url`, so an agent
+value rides `playbill orient --json` as `mirror_url`, so an agent
 that has just oriented already has it. The equivalent surfaces are
 `POST`/`GET /{instance}/playbill/ledger/mirror` and the `mirror_url` field on
 the init body.
@@ -1667,20 +1667,43 @@ budget clips the hits, the result says `truncated: true` at the top level
 (`page.coverage` names the budget); discovery has no cursor, so narrow the query
 or raise the budget.
 
-## playbill search, list, and orient
+## playbill orient
+
+~~~text
+cruxible playbill orient [--kind KIND | --section documents|procedures|claim_types|queries]
+  [--limit N] [--cursor C] [--at GIT_OID] [--evaluation-time TS] [--json]
+~~~
+
+The map of accepted state, in one call. With no option it prints each Subject
+kind with its live Subject count and its predicates (short name, cardinality,
+type or enum members, and the CaptureContracts whose evidence the ClaimType
+admits, by name), the artifact counts, the named queries with their parameters,
+who you are and whether you can author (and why not), what the `next` queue
+holds, and the next commands to run. When any live ClaimType still names
+CaptureContracts by digest, attention says so and suggests
+`cruxible playbill claim-type upgrade-evidence-rules`.
+
+`--kind` reads one kind in full: every predicate with its roles, freshness
+horizon and live Claim count, plus up to five sample Subject IDs. A kind that
+does not exist is refused as `playbill.orient.kind_not_found` with the nearest
+kinds. `--section` pages one artifact family as compact rows; follow
+`next_cursor` with `--cursor` while `truncated` is true. Kinds page the same way
+when there are more than `--limit`. `--at` reads an earlier accepted generation.
+`--json` returns the whole structured answer, including the coordinate and
+generation.
+
+## playbill search and list
 
 ~~~text
 cruxible playbill search QUERY [--kind KIND]... [--status STATUS]...
   [--subject-path PATH] [--cursor JSON] [--evaluation-time TS]
 cruxible playbill list [--kind KIND]... [--status STATUS]...
   [--subject-path PATH] [--cursor JSON] [--evaluation-time TS]
-cruxible playbill orient [--kind KIND]... [--status STATUS]...
-  [--subject-path PATH] [--evaluation-time TS]
 ~~~
 
 These are the generic headless discovery surface for Claims, Procedures, and
-installed demand policies. `orient` returns counts and exact follow-up filters,
-never arbitrary top rows. Until demand policy is installed it explicitly reports
+installed demand policies. Their text output starts with a count header.
+Until demand policy is installed it explicitly reports
 `demand: not_installed`.
 
 ## playbill world

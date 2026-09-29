@@ -448,9 +448,9 @@ def test_the_hook_marks_a_floor_from_an_older_generation_without_a_coverage_bind
 ) -> None:
     cruxible = served_cli
     _bootstrap(cruxible, tmp_path)
-    old = cruxible.json("playbill", "orient")["orientation"]
+    old = cruxible.json("playbill", "orient")
     _govern_a_foreign_span(cruxible, tmp_path)
-    current = cruxible.json("playbill", "orient")["orientation"]
+    current = cruxible.json("playbill", "orient")
     workspace = tmp_path / "workspace"
     floor = workspace / ".playbill/floor"
     floor.mkdir(parents=True)

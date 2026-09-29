@@ -692,12 +692,25 @@ Reads one compact listing page with explicit kind/status filters.
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-orient() -> SearchPage
+orient(
+    *,
+    kind: str | None = None,
+    section: api.PlaybillOrientSection | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+) -> api.PlaybillOrientResultV1
 ```
 
-Reads a compact orientation page for Claims, demands, and Procedures in the context’s state.
+Maps accepted state in one call at the context’s coordinate: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (whether this caller can author, and why not), `attention` from the `next` queue, and `next` suggestions written as SDK calls. `kind` reads one kind in full with sample Subject IDs; `section` pages `documents`, `procedures`, `claim_types` or `queries`.
 
-**Conditions and effects:** A discovery result is not the entire evidence/history body.
+**Conditions and effects:** Follow `next_cursor` while `truncated`. A wrong kind is refused with the nearest kinds.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `kind` | `None` | One Subject kind to read in full. |
+| `section` | `None` | One artifact family to page instead of the map. |
+| `limit` | `50` | Kinds or section rows per page. |
+| `cursor` | `None` | `next_cursor` from the previous page of the same view. |
 
 <a id="api-playbill-explain"></a>
 
@@ -5007,6 +5020,28 @@ playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI
 ```
 
 HTTP: `GET f'/api/v1/{instance_id}/playbill/whoami'`.
+
+<a id="api-cruxibleclient-orient-playbill"></a>
+
+### `CruxibleClient.orient_playbill`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+orient_playbill(
+    instance_id: str,
+    *,
+    kind: str | None = None,
+    section: contracts.PlaybillOrientSection | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
+    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | str | None = None,
+    evaluation_time: str | None = None,
+    surface: contracts.PlaybillOrientSurface = 'sdk',
+) -> contracts.PlaybillOrientResultV1
+```
+
+HTTP: `GET f'/api/v1/{instance_id}/playbill/orient'`. `at` is an accepted coordinate or one accepted generation's Git OID; `surface` picks how `next` suggestions are written (`mcp`, `cli` or `sdk`).
 
 <a id="api-cruxibleclient-list-playbill-proposals"></a>
 

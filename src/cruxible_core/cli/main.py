@@ -799,7 +799,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill", "search_list", "List accepted state in deterministic pages."
             ),
             "orient": _command(
-                "playbill", "orient", "Summarize accepted state and exact follow-up filters."
+                "playbill", "orient", "Map accepted state: kinds, attention and next commands."
             ),
             "expand": _command(
                 "playbill", "expand", "Expand one address into a bounded context capsule."

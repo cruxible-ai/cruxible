@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-28:rm-orient",
-    "surface_digest": "sha256:847099a2fad9248f1954874da0e13593b81e08352a6cbf3c52bef67b4236013e"
+    "surface_digest": "sha256:8dfb681edf919bbc53319c5b61ddc3560fa29ce797f8089aa25033b446914245"
   },
   "surface": {
     "cli_leaves": [
@@ -545,7 +545,9 @@
         "delegate": "cruxible_core.cli.commands.playbill.next_work"
       },
       {
-        "client_operations": [],
+        "client_operations": [
+          "orient_playbill"
+        ],
         "command": "playbill orient",
         "delegate": "cruxible_core.cli.commands.playbill.orient"
       },
