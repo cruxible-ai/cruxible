@@ -147,19 +147,16 @@ def copied_from_world(root: Path, *, retire: bool = True):  # type: ignore[no-un
         AuthoringExistingClaimDispositionV1,
     )
     from cruxible_client.contracts.captures import foreign_source_capture_contract
-    from cruxible_client.contracts.claims import ClaimRetireRequestV1
-    from cruxible_client.contracts.projection import AcceptedCoordinate
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.authoring.store import AuthoringIntentStore
-    from cruxible_core.claims.claim_retirement import service_retire_claim
     from cruxible_core.proposals.proposals import AuthenticatedActor
+    from tests.core_support._retirement_support import retire_claim
     from tests.core_support._support import initialize_local
     from tests.test_authoring.test_authoring_preflight import (
         TIMESTAMP,
         _seed_claim_surface,
         _working_payload,
     )
-    from tests.test_claims.test_claim_retirement import _activate as _activate_retirement
 
     instance, owner = initialize_local(root)
     _seed_claim_surface(
@@ -207,47 +204,19 @@ def copied_from_world(root: Path, *, retire: bool = True):  # type: ignore[no-un
 
     if not retire:
         return instance, owner, coordinator, actor
-    retirement = service_retire_claim(
-        instance,
-        claim_id=SOURCE_CLAIM_ID,
-        request=ClaimRetireRequestV1(
-            mode="submit",
-            reason="was-rescinded",
-            expected_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        ),
-        actor=actor,
-    )
-    _activate_retirement(instance, owner, retirement)
+    retire_claim(instance, owner, SOURCE_CLAIM_ID)
     return instance, owner, coordinator, actor
 
 
 def test_retiring_a_claim_says_nothing_about_who_else_read_the_same_bytes(
     tmp_path: Path,
 ) -> None:
-    """The retirement preflight advisory is withdrawn; the field stays empty."""
-    from cruxible_client.contracts.claims import ClaimRetireRequestV1
-    from cruxible_client.contracts.projection import AcceptedCoordinate
-    from cruxible_core.claims.claim_retirement import (
-        ClaimRetirePreflightV1,
-        service_retire_claim,
-    )
-    from cruxible_core.proposals.proposals import AuthenticatedActor
+    """Reading the same bytes is not a dependency: the copy is not in the closure."""
+    from tests.core_support._retirement_support import retirement_inventory
 
     instance, _owner, _coordinator, _actor = copied_from_world(tmp_path, retire=False)
 
-    preflight = service_retire_claim(
-        instance,
-        claim_id=SOURCE_CLAIM_ID,
-        request=ClaimRetireRequestV1(
-            mode="preflight",
-            reason="was-rescinded",
-            expected_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        ),
-        actor=AuthenticatedActor(actor_id="owner"),
-    )
-
-    assert isinstance(preflight, ClaimRetirePreflightV1)
-    assert preflight.citing_claims == ()
+    assert retirement_inventory(instance, SOURCE_CLAIM_ID) == ()
 
 
 def test_same_version_selector_relation_explains_the_claim_that_copied_a_retired_one(

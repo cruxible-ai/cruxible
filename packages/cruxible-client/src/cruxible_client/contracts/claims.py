@@ -613,35 +613,6 @@ class ClaimRetireDependentV1(_StrictClaimModel):
         return value
 
 
-class ClaimRetireRequestV1(_StrictClaimModel):
-    tag: Literal["playbill-claim-retire-request-v1"] = "playbill-claim-retire-request-v1"
-    mode: Literal["preflight", "submit"]
-    claim_ref: str | None = None
-    reason: ClaimRetirementReason
-    effective_until: datetime | None = None
-    expected_coordinate: AcceptedCoordinate
-    dependents: tuple[ClaimRetireDependentV1, ...] = ()
-
-    @field_validator("claim_ref")
-    @classmethod
-    def _claim_ref(cls, value: str | None) -> str | None:
-        if value is not None:
-            claim_path(value.removeprefix("Claim:"))
-        return value
-
-    @field_validator("effective_until")
-    @classmethod
-    def _time(cls, value: datetime | None) -> datetime | None:
-        return ClaimRetireDependentV1._time(value)
-
-    @model_validator(mode="after")
-    def _ordered_dependents(self) -> "ClaimRetireRequestV1":
-        identities = tuple(item.artifact_identity.qualified for item in self.dependents)
-        if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("retirement dependents must be UTF-8 byte-sorted and unique")
-        return self
-
-
 ClaimBackingAny: TypeAlias = Annotated[
     ClaimBacking | ClaimBackingV2,
     Field(discriminator="tag"),
@@ -2544,7 +2515,6 @@ __all__ = [
     "ClaimReferentContext",
     "ClaimRetirementAttributionV1",
     "ClaimRetireDependentV1",
-    "ClaimRetireRequestV1",
     "ClaimRetirementReason",
     "ClaimStatement",
     "ClaimStatementCardV1",

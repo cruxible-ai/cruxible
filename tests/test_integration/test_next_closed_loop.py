@@ -31,7 +31,6 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import (
-    ClaimRetireRequestV1,
     LiteralClaimObject,
     claim_artifact_digest,
     claim_citation_references,
@@ -54,7 +53,6 @@ from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.authoring.store import AUTHORING_INTENTS_ENV
-from cruxible_core.claims.claim_retirement import ClaimRetireResultV1, service_retire_claim
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeMigrationRequestV1,
@@ -73,7 +71,6 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.service.authoring.documents import (
-    service_activate_playbill_proposal,
     service_propose_playbill_document,
     service_submit_playbill_approval,
 )
@@ -808,43 +805,9 @@ def _citation_drifted_v4(
     )
 
     if drift_state == "gone":
-        coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-        retirement = service_retire_claim(
-            instance,
-            claim_id=current.identity.name,
-            request=ClaimRetireRequestV1(
-                mode="submit",
-                claim_ref=current.identity.qualified,
-                reason="was-rescinded",
-                expected_coordinate=coordinate,
-            ),
-            actor=AuthenticatedActor(actor_id="owner"),
-        )
-        assert isinstance(retirement, ClaimRetireResultV1)
-        assert retirement.proposal is not None
-        proposal = retirement.proposal.proposal
-        candidate = proposal.candidate
-        assert candidate is not None
-        if candidate.approval_requirements:
-            approval = _sign(
-                client_material(instance.root.parent, instance),
-                candidate.candidate_digest,
-                instance.accepted_coordinate().semantic_root,
-            )
-            service_submit_playbill_approval(
-                instance,
-                proposal_id=proposal.admission.proposal_id,
-                attestation=approval.attestation,
-                authenticated_submitter="owner",
-            )
-        assert (
-            service_activate_playbill_proposal(
-                instance,
-                proposal_id=proposal.admission.proposal_id,
-                activated_by="owner",
-            ).status
-            == "accepted"
-        )
+        from tests.core_support._retirement_support import retire_claim
+
+        retire_claim(instance, owner, current.identity.name)
         _assert_key_gone(
             instance,
             key,

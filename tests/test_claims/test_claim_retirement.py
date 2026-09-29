@@ -1,4 +1,8 @@
-"""PC-G12c attributed Claim-retirement operation laws."""
+"""Attributed Claim-retirement laws, through the change-set retirement member.
+
+A retirement is one ``ClaimRetirementMemberV1`` naming the Claim it ``retires``
+and its exact live dependent closure; the write verbs lower ``retire`` to it.
+"""
 
 from __future__ import annotations
 
@@ -16,7 +20,6 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claims import (
     ClaimArtifactV3,
     ClaimRetireDependentV1,
-    ClaimRetireRequestV1,
     LiteralClaimObject,
     _is_attributed_retirement,
     claim_artifact_digest,
@@ -24,19 +27,11 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import (
     query_definition_path,
     render_query_definition,
 )
-from cruxible_core.claims.claim_retirement import (
-    ClaimRetireClosureMismatch,
-    ClaimRetireDependentUnsupported,
-    ClaimRetireError,
-    ClaimRetireResultV1,
-    ClaimRetireStale,
-    service_retire_claim,
-)
+from cruxible_core.claims.claim_retirement import ClaimRetireDependentUnsupported
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
     ClaimTypeMigrationDependentInvalid,
@@ -46,10 +41,6 @@ from cruxible_core.claims.claim_type_migrations import (
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
 from cruxible_core.proposals.settlement import ChangeActorBinding
-from cruxible_core.service.authoring.documents import (
-    service_activate_playbill_proposal,
-    service_submit_playbill_approval,
-)
 from tests.core_support._adoption_fixture import _query_definition
 from tests.core_support._claim_authoring_support import (
     STATUS_CLAIM_ID,
@@ -61,6 +52,15 @@ from tests.core_support._claim_authoring_support import (
     _summary_authoring,
     service_propose_playbill_claim,
 )
+from tests.core_support._retirement_support import (
+    activate_submitted,
+    refusal_codes,
+    refusal_messages,
+    retirement_inventory,
+    retirement_member,
+    submit_retirement,
+)
+from tests.core_support._retirement_support import candidate_tree as _candidate_tree
 from tests.core_support._support import client_material, initialize_local
 from tests.test_claims.test_claim_type_migrations import (
     _accepted_claim_world,
@@ -70,50 +70,6 @@ from tests.test_claims.test_claim_type_migrations import (
 from tests.test_claims.test_claims import _claim_type
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_ledger.test_activation import _sign
-
-
-def _request(
-    instance,  # type: ignore[no-untyped-def]
-    *,
-    mode: str,
-    reason: str = "was-rescinded",
-    effective_until: datetime | None = None,
-    dependents: tuple[ClaimRetireDependentV1, ...] = (),
-) -> ClaimRetireRequestV1:
-    return ClaimRetireRequestV1(
-        mode=mode,  # type: ignore[arg-type]
-        reason=reason,  # type: ignore[arg-type]
-        effective_until=effective_until,
-        expected_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        dependents=dependents,
-    )
-
-
-def _activate(instance, owner, result: ClaimRetireResultV1) -> None:  # type: ignore[no-untyped-def]
-    assert result.proposal is not None
-    proposal = result.proposal.proposal
-    candidate = proposal.candidate
-    assert candidate is not None
-    if candidate.approval_requirements:
-        approval = _sign(
-            client_material(instance.root.parent, instance),
-            candidate.candidate_digest,
-            instance.accepted_coordinate().semantic_root,
-        )
-        service_submit_playbill_approval(
-            instance,
-            proposal_id=proposal.admission.proposal_id,
-            attestation=approval.attestation,
-            authenticated_submitter=owner.principal.principal_id,
-        )
-    assert (
-        service_activate_playbill_proposal(
-            instance,
-            proposal_id=proposal.admission.proposal_id,
-            activated_by="owner",
-        ).status
-        == "accepted"
-    )
 
 
 def _derivation_capable(authoring, *, value: str | None = None):  # type: ignore[no-untyped-def]
@@ -303,96 +259,24 @@ def _accepted_dependency_world(tmp_path: Path):  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.parametrize("reason", ["was-rescinded", "was-wrong", "superseded"])
-def test_root_only_retirement_is_idempotent_and_post_activation_terminal(
+def test_root_only_retirement_records_its_reason_and_is_terminal(
     tmp_path: Path,
     reason: str,
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
-    actor = AuthenticatedActor(actor_id="owner")
-    preflight_request = _request(instance, mode="preflight", reason=reason)
+    assert retirement_inventory(instance, claim_id) == ()
 
-    preflight = service_retire_claim(
-        instance,
-        claim_id=claim_id,
-        request=preflight_request,
-        actor=actor,
-    )
-    assert preflight.tag == "playbill-claim-retire-preflight-v1"
-    assert preflight.required_dependents == ()
-    assert preflight.submit_ready is True
-
-    submit_request = preflight_request.model_copy(update={"mode": "submit"})
-    first = service_retire_claim(
-        instance,
-        claim_id=claim_id,
-        request=submit_request,
-        actor=actor,
-    )
-    assert isinstance(first, ClaimRetireResultV1)
-    assert first.proposal is not None
-    target_ref = first.proposal.proposal.admission.target_ref
-    first_tip = instance.proposal_ref_target(target_ref)
-    second = service_retire_claim(
-        instance,
-        claim_id=claim_id,
-        request=submit_request,
-        actor=actor,
-    )
-    assert isinstance(second, ClaimRetireResultV1)
-    assert first.operation_digest == preflight.operation_digest == second.operation_digest
-    assert second.proposal is not None
-
-    # An identical resubmission is idempotent in its OPERATION and in its candidate
-    # BYTES, not in its admission event: `admitted_at` and `candidate_commit_oid`
-    # are part of the proposal-id preimage, and ops hotfix 1's card-80 lineage law
-    # makes a resubmission extend the ref's lineage instead of recreating the first
-    # commit from the accepted base, so each submission carries its own proposal id
-    # over one identical tree.
-    assert (
-        second.proposal.proposal.admission.candidate_tree_oid
-        == first.proposal.proposal.admission.candidate_tree_oid
-    )
-    assert (
-        second.proposal.proposal.evaluation.evaluated_tree_oid
-        == first.proposal.proposal.evaluation.evaluated_tree_oid
-    )
-
-    # The resubmission EXTENDS the ref linearly over the first submission's tip and
-    # orphans nothing: `parent_of` refuses merge commits, so walking the ref back to
-    # that tip is itself the linearity proof.
-    ledger = instance._ledger
-    second_tip = instance.proposal_ref_target(target_ref)
-    assert second_tip == second.proposal.proposal.admission.candidate_commit_oid
-    lineage: list[str] = []
-    walker: str | None = second_tip
-    while walker is not None and walker != first_tip:
-        lineage.append(walker)
-        walker = ledger.parent_of(walker)
-    assert walker == first_tip
-    assert first_tip == first.proposal.proposal.admission.candidate_commit_oid
-    assert len(lineage) == len(set(lineage))
-    assert ledger.unreachable_commits() == ()
-
-    tree_oid = first.proposal.proposal.evaluation.evaluated_tree_oid
-    assert tree_oid is not None
+    submitted = submit_retirement(instance, retirement_member(instance, claim_id, reason=reason))
     retired = parse_claim(
-        instance.proposal_tree(tree_oid)[claim_path(claim_id)],
-        path=claim_path(claim_id),
+        _candidate_tree(instance, submitted)[claim_path(claim_id)], path=claim_path(claim_id)
     )
     assert isinstance(retired, ClaimArtifactV3)
     assert retired.retirement.reason == reason
-    _activate(instance, owner, first)
+    activate_submitted(instance, owner, submitted)
 
-    terminal = service_retire_claim(
-        instance,
-        claim_id=claim_id,
-        request=submit_request,
-        actor=actor,
-    )
-    assert isinstance(terminal, ClaimRetireResultV1)
-    assert terminal.outcome == "already_retired"
-    assert terminal.proposal is None
-    assert terminal.retirements[0].successor_digest == claim_artifact_digest(retired).tagged
+    again = submit_retirement(instance, retirement_member(instance, claim_id, dependents=()))
+    assert again.status.proposal_id is None
+    assert "playbill.authoring.claim_terminal" in refusal_codes(again)
 
 
 def test_effective_until_is_caller_supplied_or_preserved_without_clock_substitution(
@@ -400,24 +284,15 @@ def test_effective_until_is_caller_supplied_or_preserved_without_clock_substitut
 ) -> None:
     until = datetime(2026, 9, 1, 12, tzinfo=UTC)
     instance, claim_id, _owner = _accepted_claim_world(tmp_path)
-    actor = AuthenticatedActor(actor_id="owner")
     original = parse_claim(
         instance.tree_at(instance.accepted_coordinate().git_oid)[claim_path(claim_id)],
         path=claim_path(claim_id),
     )
-    with_until = service_retire_claim(
-        instance,
-        claim_id=claim_id,
-        request=_request(instance, mode="submit", effective_until=until),
-        actor=actor,
+    with_until = submit_retirement(
+        instance, retirement_member(instance, claim_id, effective_until=until)
     )
-    assert isinstance(with_until, ClaimRetireResultV1)
-    assert with_until.proposal is not None
-    tree_oid = with_until.proposal.proposal.evaluation.evaluated_tree_oid
-    assert tree_oid is not None
     retired = parse_claim(
-        instance.proposal_tree(tree_oid)[claim_path(claim_id)],
-        path=claim_path(claim_id),
+        _candidate_tree(instance, with_until)[claim_path(claim_id)], path=claim_path(claim_id)
     )
     assert retired.statement.model_copy(
         update={"effective_until": original.statement.effective_until}
@@ -427,14 +302,11 @@ def test_effective_until_is_caller_supplied_or_preserved_without_clock_substitut
     preserve_root = tmp_path / "preserve"
     preserve_root.mkdir()
     second, second_id, _second_owner = _accepted_claim_world(preserve_root)
-    preserved = service_retire_claim(
-        second,
-        claim_id=second_id,
-        request=_request(second, mode="submit"),
-        actor=actor,
+    preserved = submit_retirement(second, retirement_member(second, second_id))
+    kept = parse_claim(
+        _candidate_tree(second, preserved)[claim_path(second_id)], path=claim_path(second_id)
     )
-    assert isinstance(preserved, ClaimRetireResultV1)
-    assert preserved.retirements[0].effective_until is None
+    assert kept.statement.effective_until is None
 
 
 def test_invalid_effective_interval_is_typed_for_retirement_and_migration(
@@ -465,13 +337,11 @@ def test_invalid_effective_interval_is_typed_for_retirement_and_migration(
     claim_id = STATUS_CLAIM_ID
     actor = AuthenticatedActor(actor_id="owner")
 
-    with pytest.raises(ClaimRetireError, match="invalid Claim effective interval"):
-        service_retire_claim(
-            instance,
-            claim_id=claim_id,
-            request=_request(instance, mode="submit", effective_until=invalid_until),
-            actor=actor,
-        )
+    refused = submit_retirement(
+        instance, retirement_member(instance, claim_id, effective_until=invalid_until)
+    )
+    assert refused.status.proposal_id is None
+    assert "invalid Claim effective interval" in refusal_messages(refused)
 
     with pytest.raises(
         ClaimTypeMigrationDependentInvalid,
@@ -502,31 +372,18 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
     tmp_path: Path,
 ) -> None:
     instance, owner, root_id, middle_id, leaf_id = _accepted_dependency_world(tmp_path)
-    actor = AuthenticatedActor(actor_id="owner")
     accepted_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     root = parse_claim(accepted_tree[claim_path(root_id)], path=claim_path(root_id))
     middle = parse_claim(accepted_tree[claim_path(middle_id)], path=claim_path(middle_id))
     leaf = parse_claim(accepted_tree[claim_path(leaf_id)], path=claim_path(leaf_id))
     assert middle.backing.input_claim_digests != (claim_artifact_digest(root).tagged,)
 
-    preflight = service_retire_claim(
-        instance,
-        claim_id=root_id,
-        request=_request(instance, mode="preflight"),
-        actor=actor,
-    )
-    assert preflight.tag == "playbill-claim-retire-preflight-v1"
-    assert [item.artifact_identity for item in preflight.required_dependents] == [
-        middle.identity,
-        leaf.identity,
-    ]
-    assert preflight.required_dependents[0].triggering_identity == root.identity
-    assert preflight.required_dependents[0].triggering_edge_roles == ("backing-input",)
-    assert preflight.required_dependents[1].triggering_identity == middle.identity
-    assert preflight.required_dependents[1].triggering_edge_roles == (
-        "backing-input",
-        "input-claim",
-    )
+    inventory = retirement_inventory(instance, root_id)
+    assert [item.artifact_identity for item in inventory] == [middle.identity, leaf.identity]
+    assert inventory[0].triggering_identity == root.identity
+    assert inventory[0].triggering_edge_roles == ("backing-input",)
+    assert inventory[1].triggering_identity == middle.identity
+    assert inventory[1].triggering_edge_roles == ("backing-input", "input-claim")
 
     dependents = tuple(
         ClaimRetireDependentV1(
@@ -534,26 +391,26 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
             predecessor_digest=item.predecessor_digest,
             reason="was-wrong" if item.artifact_identity == middle.identity else "was-rescinded",
         )
-        for item in preflight.required_dependents
+        for item in inventory
     )
-    submit_request = _request(instance, mode="submit", dependents=dependents)
-    result = service_retire_claim(
-        instance,
-        claim_id=root_id,
-        request=submit_request,
-        actor=actor,
+    result = submit_retirement(
+        instance, retirement_member(instance, root_id, dependents=dependents)
     )
-    assert isinstance(result, ClaimRetireResultV1)
-    assert result.proposal is not None
-    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
-    assert tree_oid is not None
-    candidate_tree = instance.proposal_tree(tree_oid)
-    retired_root = parse_claim(candidate_tree[claim_path(root_id)], path=claim_path(root_id))
-    retired_middle = parse_claim(candidate_tree[claim_path(middle_id)], path=claim_path(middle_id))
-    retired_leaf = parse_claim(candidate_tree[claim_path(leaf_id)], path=claim_path(leaf_id))
+    candidate_tree_value = _candidate_tree(instance, result)
+    candidate_tree_mapping = dict(candidate_tree_value)
+    retired_root = parse_claim(
+        candidate_tree_mapping[claim_path(root_id)], path=claim_path(root_id)
+    )
+    retired_middle = parse_claim(
+        candidate_tree_mapping[claim_path(middle_id)], path=claim_path(middle_id)
+    )
+    retired_leaf = parse_claim(
+        candidate_tree_mapping[claim_path(leaf_id)], path=claim_path(leaf_id)
+    )
     assert isinstance(retired_root, ClaimArtifactV3)
     assert isinstance(retired_middle, ClaimArtifactV3)
     assert isinstance(retired_leaf, ClaimArtifactV3)
+    assert retired_middle.retirement.reason == "was-wrong"
     assert retired_middle.backing.input_claim_digests == middle.backing.input_claim_digests
     assert retired_leaf.backing.input_claim_digests == leaf.backing.input_claim_digests
     before_pin = next(pin for pin in leaf.pins if pin.target == middle.identity)
@@ -561,12 +418,8 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
     assert before_pin.role == after_pin.role == "input-claim"
     assert after_pin.artifact_digest == claim_artifact_digest(retired_middle).tagged
     assert after_pin.artifact_digest != before_pin.artifact_digest
-    assert [item.artifact_identity for item in result.retirements] == [
-        root.identity,
-        middle.identity,
-        leaf.identity,
-    ]
 
+    candidate_tree = candidate_tree_mapping
     statement_rewrite = retired_leaf.model_copy(
         update={
             "statement": retired_leaf.statement.model_copy(
@@ -718,59 +571,27 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
         item.code for item in skipped_hop.diagnostics
     }
 
-    with pytest.raises(ClaimRetireClosureMismatch, match="expected"):
-        service_retire_claim(
-            instance,
-            claim_id=root_id,
-            request=_request(instance, mode="submit", dependents=dependents[:-1]),
-            actor=actor,
-        )
+    incomplete = submit_retirement(
+        instance, retirement_member(instance, root_id, dependents=dependents[:-1])
+    )
+    assert incomplete.status.proposal_id is None
+    assert "playbill.authoring.claim_retirement_closure_incomplete" in refusal_codes(incomplete)
 
-    _activate(instance, owner, result)
-    terminal = service_retire_claim(
-        instance,
-        claim_id=root_id,
-        request=submit_request,
-        actor=actor,
-    )
-    assert isinstance(terminal, ClaimRetireResultV1)
-    assert terminal.outcome == "already_retired"
-    assert terminal.operation_digest == result.operation_digest
-    assert terminal.retirements == result.retirements
-    reattributed = submit_request.model_copy(
-        update={
-            "dependents": (
-                dependents[0].model_copy(update={"reason": "was-rescinded"}),
-                dependents[1],
-            )
-        }
-    )
-    with pytest.raises(ClaimRetireClosureMismatch, match="attribution"):
-        service_retire_claim(
-            instance,
-            claim_id=root_id,
-            request=reattributed,
-            actor=actor,
-        )
+    activate_submitted(instance, owner, result)
+    terminal = submit_retirement(instance, retirement_member(instance, root_id, dependents=()))
+    assert "playbill.authoring.claim_terminal" in refusal_codes(terminal)
 
 
 @pytest.mark.parametrize("leaf_retirement", ["attributed-v3", "legacy-v2"])
-def test_terminal_replay_uses_only_the_original_retirement_changeset(
+def test_a_retired_dependent_leaves_the_closure(
     tmp_path: Path,
     leaf_retirement: str,
 ) -> None:
     instance, owner, _root_id, middle_id, leaf_id = _accepted_dependency_world(tmp_path)
-    actor = AuthenticatedActor(actor_id="owner")
     if leaf_retirement == "attributed-v3":
-        leaf_request = _request(instance, mode="submit")
-        leaf_result = service_retire_claim(
-            instance,
-            claim_id=leaf_id,
-            request=leaf_request,
-            actor=actor,
+        activate_submitted(
+            instance, owner, submit_retirement(instance, retirement_member(instance, leaf_id))
         )
-        assert isinstance(leaf_result, ClaimRetireResultV1)
-        _activate(instance, owner, leaf_result)
     else:
         tree = instance.tree_at(instance.accepted_coordinate().git_oid)
         leaf = parse_claim(tree[claim_path(leaf_id)], path=claim_path(leaf_id))
@@ -785,27 +606,16 @@ def test_terminal_replay_uses_only_the_original_retirement_changeset(
         tree[claim_path(leaf_id)] = render_claim(legacy_leaf)
         _accept_historical_derivation_tree(instance, tree)
 
-    middle_request = _request(instance, mode="submit")
-    middle_result = service_retire_claim(
-        instance,
-        claim_id=middle_id,
-        request=middle_request,
-        actor=actor,
+    assert retirement_inventory(instance, middle_id) == ()
+    accepted = dict(instance.tree_at(instance.accepted_coordinate().git_oid))
+    submitted = submit_retirement(instance, retirement_member(instance, middle_id))
+    candidate = dict(_candidate_tree(instance, submitted))
+    assert isinstance(
+        parse_claim(candidate[claim_path(middle_id)], path=claim_path(middle_id)),
+        ClaimArtifactV3,
     )
-    assert isinstance(middle_result, ClaimRetireResultV1)
-    assert [item.artifact_identity.name for item in middle_result.retirements] == [middle_id]
-    _activate(instance, owner, middle_result)
-
-    replayed = service_retire_claim(
-        instance,
-        claim_id=middle_id,
-        request=middle_request,
-        actor=actor,
-    )
-    assert isinstance(replayed, ClaimRetireResultV1)
-    assert replayed.outcome == "already_retired"
-    assert replayed.operation_digest == middle_result.operation_digest
-    assert replayed.retirements == middle_result.retirements
+    assert candidate[claim_path(leaf_id)] == accepted[claim_path(leaf_id)]
+    activate_submitted(instance, owner, submitted)
 
 
 def test_live_target_successor_cannot_advance_a_retiring_dependent_pin(tmp_path: Path) -> None:
@@ -844,61 +654,27 @@ def test_live_target_successor_cannot_advance_a_retiring_dependent_pin(tmp_path:
         )
 
 
-def test_retire_refuses_stale_coordinate_and_extra_dependent(tmp_path: Path) -> None:
+def test_retire_refuses_an_extra_dependent(tmp_path: Path) -> None:
     instance, claim_id, _owner = _accepted_claim_world(tmp_path)
-    actor = AuthenticatedActor(actor_id="owner")
-    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    stale = coordinate.model_copy(update={"git_oid": "0" * 40})
-    with pytest.raises(ClaimRetireStale, match="accepted head"):
-        service_retire_claim(
+    refused = submit_retirement(
+        instance,
+        retirement_member(
             instance,
-            claim_id=claim_id,
-            request=ClaimRetireRequestV1(
-                mode="submit",
-                reason="was-rescinded",
-                expected_coordinate=stale,
-            ),
-            actor=actor,
-        )
-
-    with pytest.raises(ClaimRetireClosureMismatch, match="supplied"):
-        service_retire_claim(
-            instance,
-            claim_id=claim_id,
-            request=_request(
-                instance,
-                mode="submit",
-                dependents=(
-                    ClaimRetireDependentV1(
-                        artifact_identity=ArtifactIdentity(
-                            kind="Claim",
-                            name="CLM-ffffffffffffffffffffffffffffffff",
-                        ),
-                        predecessor_digest="sha256:" + "f" * 64,
-                        reason="was-wrong",
+            claim_id,
+            dependents=(
+                ClaimRetireDependentV1(
+                    artifact_identity=ArtifactIdentity(
+                        kind="Claim",
+                        name="CLM-ffffffffffffffffffffffffffffffff",
                     ),
+                    predecessor_digest="sha256:" + "f" * 64,
+                    reason="was-wrong",
                 ),
             ),
-            actor=actor,
-        )
-
-
-def test_terminal_replay_refuses_a_different_coordinate(tmp_path: Path) -> None:
-    instance, claim_id, owner = _accepted_claim_world(tmp_path)
-    actor = AuthenticatedActor(actor_id="owner")
-    request = _request(instance, mode="submit")
-    result = service_retire_claim(instance, claim_id=claim_id, request=request, actor=actor)
-    assert isinstance(result, ClaimRetireResultV1)
-    _activate(instance, owner, result)
-
-    changed_coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    with pytest.raises(ClaimRetireClosureMismatch, match="no accepted retirement follows"):
-        service_retire_claim(
-            instance,
-            claim_id=claim_id,
-            request=request.model_copy(update={"expected_coordinate": changed_coordinate}),
-            actor=actor,
-        )
+        ),
+    )
+    assert refused.status.proposal_id is None
+    assert "playbill.authoring.claim_retirement_closure_incomplete" in refusal_codes(refused)
 
 
 def test_retire_refuses_a_live_non_claim_dependent(tmp_path: Path) -> None:
@@ -938,9 +714,8 @@ def test_retire_refuses_a_live_non_claim_dependent(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ClaimRetireDependentUnsupported, match=query.identity.qualified):
-        service_retire_claim(
-            instance,
-            claim_id=claim_id,
-            request=_request(instance, mode="preflight"),
-            actor=AuthenticatedActor(actor_id="owner"),
-        )
+        retirement_inventory(instance, claim_id)
+    refused = submit_retirement(instance, retirement_member(instance, claim_id, dependents=()))
+    assert refused.status.proposal_id is None
+    assert "playbill.authoring.claim_retirement_closure_unsupported" in refusal_codes(refused)
+    assert query.identity.qualified in refusal_messages(refused)

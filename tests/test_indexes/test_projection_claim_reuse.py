@@ -6,7 +6,6 @@ from cruxible_client.contracts import claims
 from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.projection_extensions import ProjectionExtensionRegistry
-from cruxible_core.claims.claim_retirement import service_retire_claim
 from cruxible_core.compiler.assembler import PYTHON_REFERENCE_ASSEMBLER
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 from cruxible_core.indexes.sqlite import (
@@ -14,8 +13,7 @@ from cruxible_core.indexes.sqlite import (
     initialize_projection_database,
     projection_logical_digest,
 )
-from cruxible_core.proposals.proposals import AuthenticatedActor
-from tests.test_claims.test_claim_retirement import _activate, _request
+from tests.core_support._retirement_support import retire_claim
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
 
@@ -71,13 +69,7 @@ def test_retirement_misses_old_bytes_and_rebuilds_lifecycle_revision_and_proofs(
 ):
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
     old = _parse(instance)[0]
-    result = service_retire_claim(
-        instance,
-        claim_id=claim_id,
-        request=_request(instance, mode="submit"),
-        actor=AuthenticatedActor(actor_id="owner"),
-    )
-    _activate(instance, owner, result)
+    retire_claim(instance, owner, claim_id)
     # Verified history is derived once per new generation (parsing its changed
     # members); bring it current so only the projection parse is counted.
     instance.coordinate_for_oid(instance.accepted_coordinate().git_oid)
