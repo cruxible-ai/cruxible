@@ -176,7 +176,7 @@ has tag `cruxible-provider-runtime-operational-config-v1` and these entries:
 | `process_group_termination_timeout_seconds` | `5.0` | Child group termination and verification deadline. |
 | `deployments` | `[]` | Digest-keyed local Provider deployment records. |
 | `provider_repository` | `null` | Operator-configured provider repository used by `provider list` and name-based installs. |
-| `provider_index_urls` | `[]` | Explicit allowed dependency indexes/download origins. Without these, supply locked dependency wheels. |
+| `provider_index_urls` | `[]` | Explicit allowed package indexes and download origins, in lookup order. Without these, a transferred or repository install must supply locked dependency wheels, and an install by name uses PyPI. |
 | `workspace_allowed_roots` | `[]` | Canonical absolute roots that widen `workspace.file` beyond an attached workspace; these are daemon-local authority and never come from an environment variable. The daemon state root, its trust, custody, Provider-secret, and instance substrate stay refused inside any allowed root. |
 
 Unknown entries, non-positive timing values, malformed JSON, unsafe deployment
@@ -509,14 +509,20 @@ the init body.
 
 ~~~text
 cruxible playbill provider list [--json]
-cruxible playbill provider install PACKAGE_OR_WHEEL [--lock FILE]
+cruxible playbill provider install NAME[==VERSION] | WHEEL [--lock FILE]
   [--dependency WHEEL]... [--extra NAME]... [--reverify] [--json]
 ~~~
 
 Installation requires **ADMIN**. A package name resolves through the daemon's
-configured repository. A local wheel requires `--lock`; `--dependency` supplies
-local or offline locked dependency wheels. Local paths are read by the client
-and transferred through CAS, so this also works against a remote daemon.
+configured repository when it has one. Otherwise it installs from the provider
+index: the newest final release, or exactly `==VERSION`. The first configured
+index that lists the package is the only one consulted, the wheel must match the
+hash the index publishes, and the environment is materialized from the lock the
+wheel embeds. With no `provider_index_urls` configured, the index is PyPI
+(`https://pypi.org/simple/`, files from `https://files.pythonhosted.org/`). A
+local wheel requires `--lock`; `--dependency` supplies local or offline locked
+dependency wheels. Local paths are read by the client and transferred through
+CAS, so this also works against a remote daemon.
 
 The shared installer prepares an exact Python environment, verifies it once,
 checks package classifiers in supervised children, and proposes the package's
@@ -600,8 +606,8 @@ since install, one defined outside the kit, and another kit's overlapping `owns`
 prefix are conflicts that block the change. `add` only proposes: activation, and
 any approval the instance's policy requires, are the ordinary `playbill proposal
 approve` and `activate` steps. It records a `kit_receipt` Document,
-`documents/kit-<id>.json`, with each path's release digest and installed digest,
-and names any carried ProviderInterface that no installed Provider implements.
+`documents/kit-<id>.json`, with each path's release digest and installed digest.
+A kit carries definitions only, so it never needs a Provider installed first.
 
 `status` lists installed kits and the kit paths edited locally. `remove`
 proposes retiring what a kit owns (never what it only carries); the dependency

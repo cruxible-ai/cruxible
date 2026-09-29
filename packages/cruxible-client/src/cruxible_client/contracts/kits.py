@@ -339,7 +339,6 @@ class PlaybillKitChangeResultV1(_Strict):
     proposal_id: str | None = None
     approval_required: bool = False
     plan: tuple[KitPathPlanV1, ...] = ()
-    missing_interfaces: tuple[str, ...] = ()
     detail: str | None = None
 
 
