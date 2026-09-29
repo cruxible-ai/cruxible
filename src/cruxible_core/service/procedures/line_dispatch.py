@@ -58,7 +58,9 @@ from cruxible_core.service.procedures.procedure_runs import (
     _journal,
     _line_admissions,
     _stream,
+    line_run_target_rung,
     require_line_mandate,
+    require_run_permission,
     service_run_playbill_line,
 )
 
@@ -730,8 +732,13 @@ def service_dispatch_line(
     """
 
     instance.require_writable()
-    accepted = _accepted_line_by_reference(
-        instance, coordinate=instance.accepted_coordinate(), reference=line
+    coordinate = instance.accepted_coordinate()
+    accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
+    # Dispatch runs what the Line can do, so it needs the tier those runs need.
+    require_run_permission(
+        "cruxible_playbill_line_dispatch",
+        target_rung=line_run_target_rung(instance, line),
+        caller_rung=caller_rung,
     )
     identity, epoch = line_identity_digest(accepted.line.identity), accepted.line.occurrence_epoch
     if not dispatch_root(instance).exists():

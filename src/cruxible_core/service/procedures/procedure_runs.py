@@ -198,6 +198,7 @@ from cruxible_core.compiler.compiler import (
 )
 from cruxible_core.consumers.clock import cadence_due
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
+from cruxible_core.errors import PermissionDeniedError
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -435,6 +436,59 @@ class LineMandateRequired(ProcedureSurfaceError):
             "before arming"
         )
         self.repair = RUNNABLE_REFUSAL_REPAIRS["line_mandate_required"]
+
+
+#: A caller rung is ``PermissionMode.value - 1``: 0 read-only, 1 governed write.
+_CALLER_RUNG_MODES = ("READ_ONLY", "GOVERNED_WRITE", "GRAPH_WRITE", "ADMIN")
+#: A run that can propose or settle writes governed state, so it needs this rung.
+GOVERNED_RUN_CALLER_RUNG = 1
+
+
+def run_permission_rung(target_rung: int) -> int:
+    """The caller rung a run needs: governed write if it can propose or settle."""
+
+    return GOVERNED_RUN_CALLER_RUNG if target_rung > 1 else 0
+
+
+def require_run_permission(tool_name: str, *, target_rung: int, caller_rung: int) -> None:
+    """Refuse a caller whose tier cannot do what the run it asks for can do.
+
+    The tier follows the target, not the tool: an observe-only Line or
+    Procedure runs at read-only, and one whose terminals propose or settle
+    needs governed write, whichever door triggers it.
+    """
+
+    required = run_permission_rung(target_rung)
+    if caller_rung < required:
+        raise PermissionDeniedError(
+            tool_name,
+            _CALLER_RUNG_MODES[max(caller_rung, 0)],
+            _CALLER_RUNG_MODES[required],
+        )
+
+
+def line_run_target_rung(instance: PlaybillInstance, reference: str) -> int:
+    """What a run of this live Line can do, read at the current head."""
+
+    coordinate = instance.accepted_coordinate()
+    accepted_line = _accepted_line_by_reference(
+        instance, coordinate=coordinate, reference=reference
+    )
+    accepted = _accepted_procedure(
+        instance, name=accepted_line.line.procedure.target.name, coordinate=coordinate
+    )
+    return line_authority_rung(accepted_line, accepted)
+
+
+def procedure_run_target_rung(
+    instance: PlaybillInstance, name: str, at: AcceptedCoordinate | None
+) -> int:
+    """What a direct run of this Procedure can do: its terminal capability."""
+
+    accepted = _accepted_procedure(
+        instance, name=name, coordinate=_resolve_coordinate(instance, at)
+    )
+    return int(accepted.procedure.definition.terminal_capability)
 
 
 def require_line_mandate(
@@ -3181,7 +3235,14 @@ def service_run_playbill_procedure(
     actor_context: GovernedActorContext,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
     workspace_file_reader: WorkspaceFileReader | None = None,
+    caller_rung: int | None = None,
 ) -> ProcedureRunStateV2:
+    """Run one accepted Procedure directly.
+
+    ``caller_rung`` is the served caller's tier (``PermissionMode.value - 1``);
+    a Procedure whose terminals propose or settle refuses a read-only caller.
+    ``None`` is an in-process caller that already holds its authority.
+    """
     instance.require_writable()
     coordinate = _resolve_coordinate(instance, request.at)
     evaluation_time = request.evaluation_time or (
@@ -3194,6 +3255,12 @@ def service_run_playbill_procedure(
     # addressed only by run_id through service_get_playbill_procedure_run.
     lane: Literal["current", "replay"] = "current"
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
+    if caller_rung is not None:
+        require_run_permission(
+            "cruxible_playbill_procedure_run",
+            target_rung=int(accepted.procedure.definition.terminal_capability),
+            caller_rung=caller_rung,
+        )
     readiness = _readiness(
         accepted,
         coordinate=coordinate,
@@ -3597,6 +3664,11 @@ def _run_playbill_line(
         instance,
         name=accepted_line.line.procedure.target.name,
         coordinate=coordinate,
+    )
+    require_run_permission(
+        "cruxible_playbill_line_run",
+        target_rung=line_authority_rung(accepted_line, accepted),
+        caller_rung=caller_rung,
     )
     if (
         expected_line_artifact_digest is not None

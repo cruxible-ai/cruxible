@@ -1181,7 +1181,9 @@ disarm is not reported.
 `evaluate` explicitly checks a historical `[since, until)` range and records
 its matches as pending. Follow its cursor to finish a bounded page.
 `dispatch` admits pending occurrences using the caller's current permissions
-and the ordinary Line admission checks. Permanent input failures close as
+and the ordinary Line admission checks. `run` and `dispatch` of a Line whose
+runs can propose or settle (and `procedure run` of such a Procedure) need
+governed write; an observe-only Line or Procedure runs at read-only. Permanent input failures close as
 `rejected`; changed Line bindings close as `superseded`. Both leave the runnable
 queue, retaining their evidence and a typed refusal with repair instructions.
 Invalid event bindings, unavailable event material, and Captures that exceed

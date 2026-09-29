@@ -175,3 +175,66 @@ def test_a_mandate_wider_than_its_procedure_names_each_widened_cap(
     assert "resource_ceiling_widens_procedure" in frontier
     assert "max_items 1000 > 200" in frontier
     assert "max_provider_calls 100 > 0" in frontier
+
+
+def test_the_run_tier_follows_what_the_line_or_procedure_can_do(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """Observe-only runs are reads; a run that can propose needs governed write."""
+
+    from cruxible_client.contracts.line_dispatch import LineDispatchRequestV1
+    from cruxible_core.errors import PermissionDeniedError
+    from cruxible_core.runtime import playbill_api
+    from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
+    from cruxible_core.service.procedures.procedure_runs import (
+        LineRunRequestV1,
+        ProcedureRunRequestV2,
+    )
+
+    http, instance_id, key = playbill_http
+    procedure = authoring_example("procedure")
+    mandate = authoring_example("procedure-mandate")
+    assert isinstance(procedure, ProcedureInput)
+    assert isinstance(mandate, ProcedureMandateInputV1)
+    proposer = procedure.model_copy(
+        update={
+            "definition": {**procedure.definition, "name": "proposer", "terminal_capability": 2}
+        }
+    )
+    change_set = ChangeSetInput(
+        kind="change_set",
+        members=(
+            procedure,
+            authoring_example("line"),  # type: ignore[arg-type]
+            proposer,
+            LineInput(kind="line", name="proposer", procedure_name="proposer"),
+            mandate.model_copy(update={"name": "proposer", "procedure_name": "proposer"}),
+        ),
+    )
+    _accept(http, instance_id, key, change_set)
+
+    def line_run(name: str) -> object:
+        return playbill_api.playbill_line_run(
+            instance_id, name, request=LineRunRequestV1(line=name)
+        )
+
+    def procedure_run(name: str) -> object:
+        return playbill_api.playbill_procedure_run(
+            instance_id, name, request=ProcedureRunRequestV2(input={})
+        )
+
+    with request_permission_scope(PermissionMode.READ_ONLY):
+        assert line_run("replace-me").status == "succeeded"  # type: ignore[attr-defined]
+        assert procedure_run("replace-me").status == "succeeded"  # type: ignore[attr-defined]
+        for denied in (
+            lambda: line_run("proposer"),
+            lambda: procedure_run("proposer"),
+            lambda: playbill_api.playbill_line_dispatch(
+                instance_id, "proposer", request=LineDispatchRequestV1()
+            ),
+        ):
+            with pytest.raises(PermissionDeniedError) as refused:
+                denied()
+            assert refused.value.required_mode == "GOVERNED_WRITE"
+    with request_permission_scope(PermissionMode.GOVERNED_WRITE):
+        assert line_run("proposer").status == "succeeded"  # type: ignore[attr-defined]

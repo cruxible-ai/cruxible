@@ -224,7 +224,7 @@ def test_dispatch_refusal_leaves_exact_pending_binding(tmp_path):
         LineDispatchRequestV1(),
         actor=_actor(instance),
         now=now,
-        caller_rung=0,
+        caller_rung=1,
     )
     assert result.items[0].status == "blocked"
     check = service_check_line_trigger(

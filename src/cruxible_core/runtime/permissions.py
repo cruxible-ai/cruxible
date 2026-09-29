@@ -116,7 +116,9 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_line_disarm": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_line_arm_status": PermissionMode.READ_ONLY,
     "cruxible_playbill_line_evaluate": PermissionMode.GOVERNED_WRITE,
-    "cruxible_playbill_line_dispatch": PermissionMode.GOVERNED_WRITE,
+    # Runs that can propose or settle additionally require GOVERNED_WRITE,
+    # decided per target at the served boundary and in the service.
+    "cruxible_playbill_line_dispatch": PermissionMode.READ_ONLY,
     "cruxible_playbill_line_run": PermissionMode.READ_ONLY,
     "cruxible_playbill_discover": PermissionMode.READ_ONLY,
     "cruxible_playbill_search": PermissionMode.READ_ONLY,

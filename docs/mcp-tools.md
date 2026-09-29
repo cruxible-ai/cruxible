@@ -257,8 +257,15 @@ exactly one may omit it.
 | `cruxible_playbill_line_disarm` | Stop a Line admitting work on its own; admitted runs keep going. A stopped arm returns `outcome: already_disarmed`. | `GOVERNED_WRITE` |
 | `cruxible_playbill_line_arm_status` | Read a Line's arm, its pending work, and why an arm stopped. | `READ_ONLY` |
 | `cruxible_playbill_line_evaluate` | Evaluate an explicit historical range into pending work; never executes. | `GOVERNED_WRITE` |
-| `cruxible_playbill_line_dispatch` | Admit retained pending occurrences under the current caller’s authority. | `GOVERNED_WRITE` |
-| `cruxible_playbill_line_run` | Trigger one due accepted Line occurrence under its governed mandate | `READ_ONLY` |
+| `cruxible_playbill_line_dispatch` | Admit retained pending occurrences under the current caller’s authority. | `READ_ONLY` |
+| `cruxible_playbill_line_run` | Trigger one due accepted Line occurrence; a Line that can propose or settle needs a mandate, an observe-only one none | `READ_ONLY` |
+
+`procedure_run`, `line_run` and `line_dispatch` are read-tier only for targets
+that observe. A Procedure whose terminals can propose or settle, or a Line whose
+runs can (its Procedure's capability capped by its `max_authority`), needs
+`GOVERNED_WRITE` to run or dispatch, whichever door triggers it; the daemon
+decides this per target, and a read-only caller is refused with
+`PermissionDeniedError`.
 
 Read-tier Procedure runs append receipted journal records, following the same
 precedent as QueryDefinition runs. They never alter accepted state or grant

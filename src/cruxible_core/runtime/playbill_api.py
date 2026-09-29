@@ -146,6 +146,7 @@ from cruxible_core.runtime.execution_policy import (
     enforce_customer_code_execution_supported,
 )
 from cruxible_core.runtime.permissions import (
+    PermissionMode,
     check_permission,
     current_request_instance_scope,
     get_current_mode,
@@ -269,6 +270,9 @@ from cruxible_core.service.procedures.procedure_runs import (
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
     ProcedureRunRequestV2,
+    line_run_target_rung,
+    procedure_run_target_rung,
+    run_permission_rung,
     service_bind_playbill_procedure,
     service_get_playbill_procedure_run,
     service_playbill_procedure_readiness,
@@ -1914,13 +1918,31 @@ def playbill_procedure_bind(
     return contracts.PlaybillProcedureBindResult.model_validate(result.model_dump(mode="json"))
 
 
+def _check_run_permission(tool_name: str, instance_id: str, target_rung: Callable[[], int]) -> None:
+    """Gate a run by what its target can do, after the static read-tier pre-gate.
+
+    Running an observe-only Line or Procedure is a read. One whose terminals
+    can propose or settle writes governed state, so it needs governed write.
+    """
+
+    check_permission(tool_name, instance_id=instance_id, audit_success=False)
+    required = PermissionMode(run_permission_rung(target_rung()) + 1)
+    check_permission(tool_name, instance_id=instance_id, required_override=required)
+
+
 def playbill_procedure_run(
     instance_id: str,
     name: str,
     *,
     request: ProcedureRunRequestV2,
 ) -> contracts.PlaybillProcedureRunState:
-    check_permission("cruxible_playbill_procedure_run", instance_id=instance_id)
+    _check_run_permission(
+        "cruxible_playbill_procedure_run",
+        instance_id,
+        lambda: procedure_run_target_rung(
+            get_playbill_manager().get(instance_id), name, request.at
+        ),
+    )
     # A shared hosted profile with no isolated execution backend cannot run
     # customer code at all; refuse at the served boundary so the operator gets
     # the mapped error instead of a node refusal buried in a run journal.
@@ -1942,6 +1964,7 @@ def playbill_procedure_run(
         actor_context=actor,
         provider_runtime_operator=manager.provider_runtime_operator(),
         workspace_file_reader=workspace_file_reader,
+        caller_rung=get_current_mode().value - 1,
     )
     instance = manager.get(instance_id)
     consumption_context = ConsumptionContextV1(
@@ -2087,7 +2110,11 @@ def playbill_line_evaluate(
 def playbill_line_dispatch(
     instance_id: str, line: str, *, request: contracts.LineDispatchRequestV1
 ) -> contracts.LineDispatchResultV1:
-    check_permission("cruxible_playbill_line_dispatch", instance_id=instance_id)
+    _check_run_permission(
+        "cruxible_playbill_line_dispatch",
+        instance_id,
+        lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line),
+    )
     enforce_customer_code_execution_supported()
     actor = _actor_context()
     if actor is None:
@@ -2128,7 +2155,11 @@ def playbill_line_run(
     *,
     request: LineRunRequestV1,
 ) -> contracts.PlaybillProcedureRunState:
-    check_permission("cruxible_playbill_line_run", instance_id=instance_id)
+    _check_run_permission(
+        "cruxible_playbill_line_run",
+        instance_id,
+        lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line_identity_digest),
+    )
     enforce_customer_code_execution_supported()
     actor = _actor_context()
     if actor is None:
