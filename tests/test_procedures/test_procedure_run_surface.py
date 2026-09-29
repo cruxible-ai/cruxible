@@ -202,6 +202,43 @@ def test_line_without_current_exact_mandate_refuses_typed(
     assert "accept a ProcedureMandate" in str(result.terminal.details)
 
 
+def test_a_read_only_caller_cannot_run_a_line_that_can_propose(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The service holds the tier law itself, not only the served boundary."""
+
+    from cruxible_core.errors import PermissionDeniedError
+
+    instance, _owner = initialize_local(tmp_path)
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_line_by_reference",
+        lambda *_args, **_kwargs: accepted_line,
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_procedure",
+        lambda *_args, **_kwargs: accepted,
+    )
+    assert procedure_run_service.line_authority_rung(accepted_line, accepted) == 2
+    with pytest.raises(PermissionDeniedError) as refused:
+        procedure_run_service.service_run_playbill_line(
+            instance,
+            path_identity_digest=line_identity_digest(line.identity),
+            request=LineRunRequestV1(
+                line_identity_digest=line_identity_digest(line.identity),
+                evaluation_time=READ_TIME,
+            ),
+            actor_context=_actor(instance),
+            caller_rung=0,
+            daemon_clock=_DAEMON_CLOCK,
+        )
+    assert refused.value.required_mode == "GOVERNED_WRITE"
+
+
 def test_line_closure_loss_refuses_before_mandate_or_occurrence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

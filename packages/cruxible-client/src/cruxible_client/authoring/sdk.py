@@ -199,6 +199,7 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.predictions import (
     ObservationSettlementEvidenceV2,
     PlaybillPredictRequestV2,
+    ResolutionContractInputV1,
     TerminalSettlementEvidenceV2,
 )
 from cruxible_client.contracts.procedures.artifacts import (
@@ -521,7 +522,15 @@ class NextPage:
     result_digest: str
     observed_domains: tuple[str, ...]
     unobserved_domains: tuple[str, ...]
+    # The environment the queue was read in, including how many rows and
+    # findings were left out because this caller cannot perform their repair.
+    status: api.PlaybillNextStatus
     attestation_head_digest: str | None = None
+
+    @property
+    def hidden(self) -> int:
+        """Rows and findings withheld because this caller cannot perform their repair."""
+        return self.status.hidden
 
     def __iter__(self):  # type: ignore[no-untyped-def]
         return iter(self.items)
@@ -952,7 +961,7 @@ class ChangeSetDraft:
         *,
         name: str,
         procedure: str,
-        acquisition_policy: str,
+        acquisition_policy: str | None = None,
         trigger_policy: TriggerPolicyV2 | None = None,
         max_authority: Literal["observe", "propose", "settle"] | None = None,
         trigger_input: str | None = None,
@@ -971,13 +980,16 @@ class ChangeSetDraft:
         the trigger selector must match that Source's exact CaptureContract.
         Missing or ineligible trigger material refuses admission, without a re-fetch.
 
-        Lowering refuses a Procedure that is not graph-v4/v5 and one whose Source
-        nodes leave a Provider slot open: the Line pins exactly what the
-        Procedure names, and an open slot is nothing to pin. ``max_authority``
-        (observe, propose or settle) caps this Line below its Procedure's own
-        capability and defaults to it. A Line that proposes or settles also needs
-        a live ProcedureMandate over its target namespace before it can run;
-        that is checked at admission, not here.
+        Lowering refuses a Procedure that is not graph-v4/v5/v6 and one whose
+        Source nodes leave a Provider slot open: the Line pins exactly what the
+        Procedure names, and an open slot is nothing to pin.
+        ``acquisition_policy`` is required only when the Procedure has Source
+        nodes. ``parameters`` is the Procedure's input record; lowering checks it
+        against the Procedure's input contract. ``max_authority`` (observe,
+        propose or settle) caps this Line below its Procedure's own capability
+        and defaults to it. A Line that proposes or settles also needs a live
+        ProcedureMandate covering its Procedure before it can run or be armed;
+        an observe-only Line needs none.
         """
 
         self._members.append(
@@ -1878,16 +1890,24 @@ class Playbill:
         return tuple(self._typed_claim_view(view) for view in result.claims)
 
     def resolution_contracts(
-        self, hypothesis: ClaimVersionReferenceV1
+        self, hypothesis: str | ClaimVersionReferenceV1
     ) -> api.ResolutionContractsResultV1:
-        """Find accepted tests of this exact Claim version, including retired tests."""
+        """Find accepted tests of a Claim, including retired tests.
+
+        ``hypothesis`` is a Claim ID (``CLM-...``); the daemon resolves its
+        accepted version. An exact ``ClaimVersionReferenceV1`` is the advanced form.
+        """
         return self._client.resolution_contracts(
             self._instance_id,
             request=api.ResolutionContractsRequestV1(hypothesis=hypothesis, at=self.coordinate),
         )
 
-    def predict(self, contract: ResolutionContractV1) -> Prediction:
-        """Propose a governed test of an exact, already accepted Claim version."""
+    def predict(self, contract: ResolutionContractV1 | ResolutionContractInputV1) -> Prediction:
+        """Propose a governed test of an accepted Claim.
+
+        The contract's ``hypothesis`` may be a Claim ID (``ResolutionContractInputV1``);
+        the daemon pins the exact accepted version it resolves to.
+        """
         result = self._client.predict_playbill(
             self._instance_id, request=PlaybillPredictRequestV2(contract=contract)
         )
@@ -1902,32 +1922,42 @@ class Playbill:
 
     def settle(
         self,
-        contract: ResolutionContractReferenceV1,
+        prediction: str | ResolutionContractReferenceV1,
         *,
-        observation: ClaimVersionReferenceV1,
+        observation: str | ClaimVersionReferenceV1,
         trigger_event: TriggerEventReferenceV1 | None = None,
         terminal_run_id: str | None = None,
         terminal_record_digest: str | None = None,
     ) -> PredictionSettlement:
-        """Settle a retained contract using an exact accepted observation version."""
+        """Settle a prediction from an accepted observation, both named by ID.
+
+        ``prediction`` is the contract name or a bound window's ``RSC-...`` id
+        (as ``next`` names it); ``observation`` is the settling Claim's ID. The
+        daemon resolves the exact contract, window and Claim version. Exact
+        references are accepted as the advanced form.
+        """
         if (terminal_run_id is None) != (terminal_record_digest is None):
             raise ValueError("terminal settlement requires its run and record digest")
-        evidence = (
-            ObservationSettlementEvidenceV2(claim=observation)
-            if terminal_run_id is None
-            else TerminalSettlementEvidenceV2(
-                claim=observation,
-                run_id=terminal_run_id,
-                terminal_record_digest=cast(str, terminal_record_digest),
+        contract = None if isinstance(prediction, str) else prediction
+        route = prediction if isinstance(prediction, str) else prediction.identity.name
+        if terminal_run_id is None and isinstance(observation, str):
+            request = api.PlaybillSettleRequestV2(
+                observation=observation, contract=contract, trigger_event=trigger_event
             )
-        )
-        result = self._client.settle_playbill_prediction(
-            self._instance_id,
-            contract.identity.name,
-            request=api.PlaybillSettleRequestV2(
+        else:
+            evidence = (
+                ObservationSettlementEvidenceV2(claim=observation)
+                if terminal_run_id is None
+                else TerminalSettlementEvidenceV2(
+                    claim=observation,
+                    run_id=terminal_run_id,
+                    terminal_record_digest=cast(str, terminal_record_digest),
+                )
+            )
+            request = api.PlaybillSettleRequestV2(
                 contract=contract, trigger_event=trigger_event, evidence=evidence
-            ),
-        )
+            )
+        result = self._client.settle_playbill_prediction(self._instance_id, route, request=request)
         outcome = result.resolution.get("settlement_outcome")
         if not isinstance(outcome, bool):
             raise ValueError("settlement response omitted its mechanical outcome")
@@ -3148,9 +3178,9 @@ class Playbill:
         """
         return self._client.disarm_playbill_line(self._instance_id, line)
 
-    def line_arm(self, line: str) -> api.LineArmV1:
+    def line_status(self, line: str) -> api.LineArmV1:
         """The Line's current arm, or its last one and why it stopped."""
-        return self._client.playbill_line_arm_status(self._instance_id, line)
+        return self._client.playbill_line_status(self._instance_id, line)
 
     def evaluate_line(
         self,
@@ -3521,6 +3551,8 @@ class Playbill:
                 workspace_observation=observation,
                 limit=api.PLAYBILL_NEXT_MAX_LIMIT,
                 cursor=cursor,
+                # Repairs render as SDK calls, not CLI commands.
+                caller_surface="sdk",
             )
 
         # A NextPage is the whole queue. Each cursor pins its first page's
@@ -3540,6 +3572,7 @@ class Playbill:
             result_digest=result.result_digest,
             observed_domains=tuple(result.observed_domains),
             unobserved_domains=tuple(result.unobserved_domains),
+            status=result.status,
             attestation_head_digest=result.attestation_head_digest,
         )
 

@@ -30,7 +30,7 @@ from cruxible_core.service.procedures.line_dispatch import (
     service_disarm_line,
     service_dispatch_line,
     service_evaluate_line,
-    service_line_arm_status,
+    service_line_status,
     service_match_listening_lines,
 )
 from cruxible_core.service.procedures.procedure_runs import _journal, _stream
@@ -106,7 +106,7 @@ def test_an_armed_line_admits_the_occurrence_its_daemon_matched(tmp_path, monkey
 
     assert result is not None and [item.status for item in result.items] == ["admitted"]
     assert _admissions(instance) == 1
-    status = service_line_arm_status(instance, line.identity.name)
+    status = service_line_status(instance, line.identity.name)
     assert status.state == "armed" and status.pending_automatic == 0
 
 
@@ -152,7 +152,7 @@ def test_a_restart_keeps_the_arm_forward_only_and_leaves_earlier_work_explicit(t
     capture(instance, procedure, at=start + timedelta(seconds=3))  # while the daemon is down
     _match(instance, restarted, daemon_id="restarted")
 
-    status = service_line_arm_status(instance, line.identity.name)
+    status = service_line_status(instance, line.identity.name)
     assert status.state == "armed"
     # What the pre-restart segment matched is never run implicitly.
     assert status.pending_automatic == 0 and status.pending_explicit == 1
@@ -170,7 +170,7 @@ def test_a_restart_keeps_the_arm_forward_only_and_leaves_earlier_work_explicit(t
         now=restarted + timedelta(seconds=3),
     )
     assert result is not None and [item.status for item in result.items] == ["admitted"]
-    assert service_line_arm_status(instance, line.identity.name).pending_explicit == 1
+    assert service_line_status(instance, line.identity.name).pending_explicit == 1
 
 
 def test_arming_never_drains_a_backlog_that_explicit_evaluation_left(tmp_path):
@@ -195,7 +195,7 @@ def test_arming_never_drains_a_backlog_that_explicit_evaluation_left(tmp_path):
     _match(instance, now + timedelta(seconds=5))
 
     assert armed_work(instance, now=now + timedelta(seconds=5)) == ()
-    status = service_line_arm_status(instance, line.identity.name)
+    status = service_line_status(instance, line.identity.name)
     assert (status.pending_automatic, status.pending_explicit) == (0, 1)
 
 
@@ -219,7 +219,7 @@ def test_disarming_stops_admission_of_work_already_scheduled(tmp_path):
         is None
     )
     assert _admissions(instance) == 0
-    assert service_line_arm_status(instance, line.identity.name).pending_explicit == 1
+    assert service_line_status(instance, line.identity.name).pending_explicit == 1
 
 
 @pytest.mark.parametrize(
@@ -255,7 +255,7 @@ def test_a_credential_that_no_longer_holds_stops_the_arm_before_admission(
     later = start + timedelta(seconds=4)
     assert dispatch_armed_line(_manager(instance), instance_id, arm, now=later) is None
     assert _admissions(instance) == 0
-    status = service_line_arm_status(instance, line.identity.name)
+    status = service_line_status(instance, line.identity.name)
     assert (status.state, status.stop_reason) == ("stopped", reason)
     assert status.pending_explicit == 1  # the occurrence stays for explicit dispatch
 
@@ -299,7 +299,7 @@ def test_a_revocation_between_two_admissions_stops_the_second(tmp_path, monkeypa
     later = start + timedelta(seconds=4)
     assert dispatch_armed_line(_manager(instance), instance_id, arm, now=later) is None
     assert _admissions(instance) == 1
-    status = service_line_arm_status(instance, line.identity.name)
+    status = service_line_status(instance, line.identity.name)
     assert (status.state, status.stop_reason) == ("stopped", "credential_revoked")
 
 
@@ -474,7 +474,7 @@ def test_a_disarm_that_lands_before_the_admission_record_prevents_the_run(tmp_pa
         future.result()
 
     assert _admissions(instance) == 0
-    assert service_line_arm_status(instance, line.identity.name).pending_explicit == 1
+    assert service_line_status(instance, line.identity.name).pending_explicit == 1
 
 
 def test_a_same_epoch_revision_accepted_during_matching_never_runs_under_the_old_arm(
@@ -532,7 +532,7 @@ def test_a_same_epoch_revision_accepted_during_matching_never_runs_under_the_old
         )
 
     assert _admissions(instance) == 0
-    status = service_line_arm_status(instance, line.identity.name)
+    status = service_line_status(instance, line.identity.name)
     assert (status.state, status.stop_reason) == ("stopped", "line_changed")
 
 
@@ -558,7 +558,7 @@ def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp
         daemon_id="daemon",
     )
     _match(instance, READ_TIME)
-    assert service_line_arm_status(instance, line.identity.name).pending_automatic == 1
+    assert service_line_status(instance, line.identity.name).pending_automatic == 1
     lapsed_id = next(
         item.occurrence_id
         for item in service_check_line_trigger(
@@ -576,7 +576,7 @@ def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp
     for offset in (0, 60, 120):
         _match(instance, restarted + timedelta(seconds=offset), daemon_id="restarted")
 
-    status = service_line_arm_status(instance, line.identity.name)
+    status = service_line_status(instance, line.identity.name)
     assert status.state == "armed"
     assert status.pending_automatic == 1 and status.pending_explicit == 0
     # The lapsed tick is retained and still runnable with an explicit retry.
@@ -614,7 +614,7 @@ def test_an_earlier_arms_cadence_tick_never_holds_back_a_new_arms_own(tmp_path):
     )
     _match(instance, READ_TIME + timedelta(seconds=62))
 
-    status = service_line_arm_status(instance, line.identity.name)
+    status = service_line_status(instance, line.identity.name)
     assert (status.pending_automatic, status.pending_explicit) == (1, 0)
 
 
@@ -635,13 +635,13 @@ def test_a_restart_after_a_real_cadence_admission_keeps_ticking(tmp_path):
     )
     assert admitted is not None and admitted.items[0].status == "admitted"
     _match(instance, READ_TIME + timedelta(seconds=60))
-    assert service_line_arm_status(instance, line.identity.name).pending_automatic == 1
+    assert service_line_status(instance, line.identity.name).pending_automatic == 1
 
     for offset in (120, 180, 240):
         _match(instance, READ_TIME + timedelta(seconds=offset), daemon_id="restarted")
 
     # The chain's overdue tick lapsed; the resumed arm ticks from its own start.
-    assert service_line_arm_status(instance, line.identity.name).pending_automatic == 1
+    assert service_line_status(instance, line.identity.name).pending_automatic == 1
 
 
 def test_explicit_evaluation_during_an_arm_never_starves_its_ticks(tmp_path):
@@ -667,7 +667,7 @@ def test_explicit_evaluation_during_an_arm_never_starves_its_ticks(tmp_path):
     for offset in (60, 120, 180):
         _match(instance, READ_TIME + timedelta(seconds=offset))
 
-    status = service_line_arm_status(instance, line.identity.name)
+    status = service_line_status(instance, line.identity.name)
     assert (status.pending_automatic, status.pending_explicit) == (1, 1)
 
 
@@ -747,7 +747,7 @@ def test_a_rollover_waits_for_an_admission_already_inside_the_arm_boundary(tmp_p
     # Admitted under the segment that matched it, then rolled over: nothing is
     # left behind as explicit work, and nothing ran after the rollover.
     assert _admissions(instance) == 1
-    status = service_line_arm_status(instance, line.identity.name)
+    status = service_line_status(instance, line.identity.name)
     assert status.state == "armed" and status.pending_explicit == 0
 
 
@@ -770,7 +770,7 @@ def test_an_interrupted_rollover_leaves_the_arm_whole_and_the_next_pass_complete
     monkeypatch.setattr(LineDispatchStore, "append", original_append)
 
     # Nothing landed: the old segment still stands, so the arm still matches.
-    assert service_line_arm_status(instance, line.identity.name).state == "armed"
+    assert service_line_status(instance, line.identity.name).state == "armed"
     _match(instance, start + timedelta(seconds=2), daemon_id="restarted")
     capture(instance, procedure, at=start + timedelta(seconds=3))
     _match(instance, start + timedelta(seconds=4), daemon_id="restarted")
@@ -794,7 +794,7 @@ def test_a_retried_lapsed_tick_never_blocks_the_arms_own_ticks(tmp_path):
         (lapsing,) = conn.execute("SELECT occurrence_id FROM pending").fetchone()
     _match(instance, READ_TIME + timedelta(seconds=120), daemon_id="restarted")
     _match(instance, READ_TIME + timedelta(seconds=180), daemon_id="restarted")
-    assert service_line_arm_status(instance, line.identity.name).pending_automatic == 1
+    assert service_line_status(instance, line.identity.name).pending_automatic == 1
     retried = service_dispatch_line(
         instance,
         line.identity.name,
@@ -832,7 +832,7 @@ def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tm
     name = line.identity.name
 
     with pytest.raises(LineNeverArmed) as never:
-        service_line_arm_status(instance, name)
+        service_line_status(instance, name)
     assert never.value.error_code == "playbill.line.never_armed"
     assert repr(name) in str(never.value)
     assert never.value.repair.operation == "playbill.line.arm"
@@ -842,7 +842,7 @@ def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tm
 
     typo = name[:-1]
     with pytest.raises(LineRunNotAccepted) as unknown:
-        service_line_arm_status(instance, typo)
+        service_line_status(instance, typo)
     assert f"no live accepted Line named {typo!r}" in str(unknown.value)
     assert f"nearest: {name}" in str(unknown.value)
     assert "sha256:" not in str(unknown.value)
@@ -862,7 +862,7 @@ def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
     assert armed.outcome == "armed"
     again = arm(LOCAL, start + timedelta(seconds=5))
     assert again.outcome == "already_armed"
-    assert again.model_copy(update={"outcome": None}) == service_line_arm_status(instance, name)
+    assert again.model_copy(update={"outcome": None}) == service_line_status(instance, name)
     assert (again.arm_id, again.armed_at) == (armed.arm_id, armed.armed_at)
 
     # A different credential is a different setting: the arm rebinds from now.
@@ -884,4 +884,4 @@ def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
     assert repeat.outcome == "already_disarmed"
     stopped = disarmed.model_copy(update={"outcome": None})
     assert repeat.model_copy(update={"outcome": None}) == stopped
-    assert service_line_arm_status(instance, name) == stopped
+    assert service_line_status(instance, name) == stopped

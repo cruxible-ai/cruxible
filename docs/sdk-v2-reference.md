@@ -1511,7 +1511,7 @@ Capture. Historical evaluation alone does not reopen closed work.
 `pb.arm_line(name)` has the daemon admit what the Line matches from now on,
 under this connection's credential (rechecked before each run) and the Line
 version current now. It never catches up: earlier pending work and daemon
-downtime still need `evaluate_line` and `dispatch_line`. `pb.line_arm(name)`
+downtime still need `evaluate_line` and `dispatch_line`. `pb.line_status(name)`
 reports whether the Line is armed, its automatic and explicit pending counts,
 and why an arm stopped; `pb.disarm_line(name)` stops further admissions.
 Both calls are idempotent: repeating one returns the arm unchanged with

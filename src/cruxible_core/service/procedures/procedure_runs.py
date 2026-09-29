@@ -169,7 +169,11 @@ from cruxible_client.contracts.providers import (
     AcceptedProviderV1,
     ProviderV2,
 )
-from cruxible_client.contracts.repairs import RepairOperationV1, served_repair_for_refusal
+from cruxible_client.contracts.repairs import (
+    RUNNABLE_REFUSAL_REPAIRS,
+    RepairOperationV1,
+    served_repair_for_refusal,
+)
 from cruxible_client.contracts.resolution_contracts import (
     InvestigationBindingV1,
     ResolutionContractReferenceV1,
@@ -194,6 +198,7 @@ from cruxible_core.compiler.compiler import (
 )
 from cruxible_core.consumers.clock import cadence_due
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
+from cruxible_core.errors import PermissionDeniedError
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -414,6 +419,96 @@ class LineNeverArmed(ProcedureSurfaceError):
             f"`cruxible playbill line arm {line}`"
         )
         self.repair = RepairOperationV1(operation="playbill.line.arm", arguments={"line": line})
+
+
+class LineMandateRequired(ProcedureSurfaceError):
+    """Arming a Line that can propose or settle when no mandate covers it."""
+
+    code = "playbill.line.mandate_required"
+    error_code = "line_mandate_required"
+    http_status = 409
+
+    def __init__(self, line: str, procedure: str) -> None:
+        super().__init__(
+            f"{self.code}: Line {line!r} can propose or settle, and Procedure {procedure!r} "
+            "has no current accepted ProcedureMandate, so every run would refuse; author "
+            "and accept one (`cruxible playbill authoring create --example procedure-mandate`) "
+            "before arming"
+        )
+        self.repair = RUNNABLE_REFUSAL_REPAIRS["line_mandate_required"]
+
+
+#: A caller rung is ``PermissionMode.value - 1``: 0 read-only, 1 governed write.
+_CALLER_RUNG_MODES = ("READ_ONLY", "GOVERNED_WRITE", "GRAPH_WRITE", "ADMIN")
+#: A run that can propose or settle writes governed state, so it needs this rung.
+GOVERNED_RUN_CALLER_RUNG = 1
+
+
+def run_permission_rung(target_rung: int) -> int:
+    """The caller rung a run needs: governed write if it can propose or settle."""
+
+    return GOVERNED_RUN_CALLER_RUNG if target_rung > 1 else 0
+
+
+def require_run_permission(tool_name: str, *, target_rung: int, caller_rung: int) -> None:
+    """Refuse a caller whose tier cannot do what the run it asks for can do.
+
+    The tier follows the target, not the tool: an observe-only Line or
+    Procedure runs at read-only, and one whose terminals propose or settle
+    needs governed write, whichever door triggers it.
+    """
+
+    required = run_permission_rung(target_rung)
+    if caller_rung < required:
+        raise PermissionDeniedError(
+            tool_name,
+            _CALLER_RUNG_MODES[max(caller_rung, 0)],
+            _CALLER_RUNG_MODES[required],
+        )
+
+
+def line_run_target_rung(instance: PlaybillInstance, reference: str) -> int:
+    """What a run of this live Line can do, read at the current head."""
+
+    coordinate = instance.accepted_coordinate()
+    accepted_line = _accepted_line_by_reference(
+        instance, coordinate=coordinate, reference=reference
+    )
+    accepted = _accepted_procedure(
+        instance, name=accepted_line.line.procedure.target.name, coordinate=coordinate
+    )
+    return line_authority_rung(accepted_line, accepted)
+
+
+def procedure_run_target_rung(
+    instance: PlaybillInstance, name: str, at: AcceptedCoordinate | None
+) -> int:
+    """What a direct run of this Procedure can do: its terminal capability."""
+
+    accepted = _accepted_procedure(
+        instance, name=name, coordinate=_resolve_coordinate(instance, at)
+    )
+    return int(accepted.procedure.definition.terminal_capability)
+
+
+def require_line_mandate(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpecV1,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    now: datetime,
+) -> None:
+    """Refuse up front when a Line that needs a mandate has none covering it."""
+
+    accepted = _accepted_procedure(
+        instance, name=accepted_line.line.procedure.target.name, coordinate=coordinate
+    )
+    if line_authority_rung(accepted_line, accepted) <= 1:
+        return
+    if not _accepted_line_mandates(instance, accepted, coordinate=coordinate, evaluation_time=now):
+        raise LineMandateRequired(
+            accepted_line.line.identity.name, accepted.procedure.identity.name
+        )
 
 
 class LineRunIdentityMismatch(ProcedureSurfaceError):
@@ -3140,7 +3235,14 @@ def service_run_playbill_procedure(
     actor_context: GovernedActorContext,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
     workspace_file_reader: WorkspaceFileReader | None = None,
+    caller_rung: int | None = None,
 ) -> ProcedureRunStateV2:
+    """Run one accepted Procedure directly.
+
+    ``caller_rung`` is the served caller's tier (``PermissionMode.value - 1``);
+    a Procedure whose terminals propose or settle refuses a read-only caller.
+    ``None`` is an in-process caller that already holds its authority.
+    """
     instance.require_writable()
     coordinate = _resolve_coordinate(instance, request.at)
     evaluation_time = request.evaluation_time or (
@@ -3153,6 +3255,12 @@ def service_run_playbill_procedure(
     # addressed only by run_id through service_get_playbill_procedure_run.
     lane: Literal["current", "replay"] = "current"
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
+    if caller_rung is not None:
+        require_run_permission(
+            "cruxible_playbill_procedure_run",
+            target_rung=int(accepted.procedure.definition.terminal_capability),
+            caller_rung=caller_rung,
+        )
     readiness = _readiness(
         accepted,
         coordinate=coordinate,
@@ -3402,6 +3510,20 @@ def _line_refusal_state(
     )
 
 
+def line_authority_rung(accepted_line: AcceptedLineSpecV1, accepted: AcceptedProcedureV1) -> int:
+    """The most this Line's runs can do: 1 observe, 2 propose, 3 settle.
+
+    It is the lower of what the Procedure's terminals reach and what the Line
+    allows. A Line at rung 1 only observes: it needs no mandate, and running or
+    dispatching it needs only read permission.
+    """
+
+    return min(
+        int(accepted.procedure.definition.terminal_capability),
+        line_requested_rung(accepted_line.line),
+    )
+
+
 def _accepted_line_mandates(
     instance: PlaybillInstance,
     accepted: AcceptedProcedureV1,
@@ -3543,6 +3665,11 @@ def _run_playbill_line(
         name=accepted_line.line.procedure.target.name,
         coordinate=coordinate,
     )
+    require_run_permission(
+        "cruxible_playbill_line_run",
+        target_rung=line_authority_rung(accepted_line, accepted),
+        caller_rung=caller_rung,
+    )
     if (
         expected_line_artifact_digest is not None
         and accepted_line.artifact_digest != expected_line_artifact_digest
@@ -3624,7 +3751,7 @@ def _run_playbill_line(
         coordinate=coordinate,
         evaluation_time=evaluation_time,
     )
-    if not mandates:
+    if not mandates and line_authority_rung(accepted_line, accepted) > 1:
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -3632,7 +3759,10 @@ def _run_playbill_line(
             head_at_admission=head_at_admission,
             evaluation_time=evaluation_time,
             code="line_mandate_required",
-            message="The Line's bound Procedure has no current accepted ProcedureMandate.",
+            message=(
+                "This Line can propose or settle, and its bound Procedure has no current "
+                "accepted ProcedureMandate."
+            ),
             details={
                 "repair": "Author and accept a ProcedureMandate pinning this exact Procedure."
             },
@@ -3789,7 +3919,8 @@ def _run_playbill_line(
             message="This Line requires an opaque Exhaust access-binding carrier.",
             details={"repair": "Trigger through a carrier-aware Line scheduler."},
         )
-    if accepted_line.line.acquisition_policy is None:
+    line_policy_pin = accepted_line.line.acquisition_policy
+    if line_policy_pin is None and _source_input_names(accepted):
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -3797,7 +3928,7 @@ def _run_playbill_line(
             head_at_admission=head_at_admission,
             evaluation_time=evaluation_time,
             code="artifact_binding_mismatch",
-            message="Served Line execution requires an accepted acquisition-policy pin.",
+            message="A Line whose Procedure has Source nodes requires an acquisition-policy pin.",
             details={"repair": "Accept a Line successor with an acquisition policy."},
         )
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
@@ -3818,13 +3949,21 @@ def _run_playbill_line(
     capture_contracts = _accepted_capture_contracts(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
     )
-    accepted_policies = dict(
-        _accepted_acquisition_policies(
-            instance, coordinate, pin=accepted_line.line.acquisition_policy
+    # A Source-free Line acquires nothing, so it pins no acquisition policy.
+    # Its plan binds the accepted runtime policy instead, exactly as a direct
+    # run of a Source-free Procedure does.
+    line_policy: SourceAcquisitionPolicyV1 | None = None
+    if line_policy_pin is None:
+        policy_digest = procedure_runtime_policy_digest(runtime_policy).tagged
+        policy_format: str = runtime_policy.tag
+    else:
+        policy_digest = line_policy_pin.artifact_digest
+        policy_format = "playbill-source-acquisition-policy-v1"
+        accepted_policies = dict(
+            _accepted_acquisition_policies(instance, coordinate, pin=line_policy_pin)
         )
-    )
-    line_policy = accepted_policies.get(accepted_line.line.acquisition_policy.artifact_digest)
-    if line_policy is None:
+        line_policy = accepted_policies.get(line_policy_pin.artifact_digest)
+    if line_policy_pin is not None and line_policy is None:
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -3841,6 +3980,8 @@ def _run_playbill_line(
         and accepted_line.line.trigger_input is not None
     ):
         from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
+
+        assert line_policy is not None  # a trigger input is a Source input
 
         try:
             landed_materials = (
@@ -3911,11 +4052,15 @@ def _run_playbill_line(
                 repair=served_repair_for_refusal("provider_unavailable"),
             ),
         )
-    selection = _plan_selection_decision(
-        line_policy,
-        policy_digest=accepted_line.line.acquisition_policy.artifact_digest,
-        occurrences=external_occurrences,
-        capture_contracts=capture_contracts,
+    selection = (
+        ProcedureSelectionDecisionV1(policy_digest=policy_digest, verdict="selected", decisions=())
+        if line_policy is None
+        else _plan_selection_decision(
+            line_policy,
+            policy_digest=policy_digest,
+            occurrences=external_occurrences,
+            capture_contracts=capture_contracts,
+        )
     )
     if selection.verdict == "refused":
         return _line_refusal_state(
@@ -3969,8 +4114,8 @@ def _run_playbill_line(
         line_spec_digest=accepted_line.artifact_digest,
         occurrence_id=occurrence_id,
         occurrence_evaluation_time=evaluation_time,
-        acquisition_policy_format="playbill-source-acquisition-policy-v1",
-        acquisition_policy_digest=accepted_line.line.acquisition_policy.artifact_digest,
+        acquisition_policy_format=policy_format,
+        acquisition_policy_digest=policy_digest,
         selection_decision=selection,
         selection_decision_digest=selection_digest,
         external_occurrences=external_occurrences,
@@ -4061,7 +4206,7 @@ def _run_playbill_line(
         "line_spec_digest": accepted_line.artifact_digest,
         "occurrence_id": occurrence_id,
         "deployment_snapshot_digest": deployment_snapshot_digest,
-        "acquisition_policy_digest": accepted_line.line.acquisition_policy.artifact_digest,
+        "acquisition_policy_digest": policy_digest,
         "selection_receipt_digest": None,
         "sensitivity_policy_digest": sensitivity_policy_digest,
         "mandate_coordinate_digest": mandate_coordinate_digest,
@@ -4157,7 +4302,11 @@ def _run_playbill_line(
         acquisition_plan=plan,
         acquisition_plan_digest=plan_digest,
     )
-    mandate_rung = max(procedure_mandate_rung(mandate) for _digest, mandate in mandates)
+    # An observe-only Line runs with no mandate; its effective rung is then
+    # capped at the mandate-free ceiling, which is observe.
+    mandate_rung = max(
+        (procedure_mandate_rung(mandate) for _digest, mandate in mandates), default=None
+    )
     effective_rung = compute_effective_rung(
         procedure_terminal_capability=accepted.procedure.definition.terminal_capability,
         requested_terminal_rung=line_requested_rung(accepted_line.line),

@@ -154,6 +154,7 @@ from cruxible_core.runtime.execution_policy import (
     enforce_customer_code_execution_supported,
 )
 from cruxible_core.runtime.permissions import (
+    PermissionMode,
     check_permission,
     current_request_instance_scope,
     get_current_mode,
@@ -275,10 +276,16 @@ from cruxible_core.service.procedures.predictions import (
     service_settle_playbill_prediction,
 )
 from cruxible_core.service.procedures.procedure_runs import (
+    LineRunNotAccepted,
     LineRunRequestV1,
     ProcedureBindRequestV1,
+    ProcedureNotFound,
     ProcedureReadinessRequestV1,
+    ProcedureRetired,
     ProcedureRunRequestV2,
+    line_run_target_rung,
+    procedure_run_target_rung,
+    run_permission_rung,
     service_bind_playbill_procedure,
     service_get_playbill_procedure_run,
     service_playbill_procedure_readiness,
@@ -1428,22 +1435,6 @@ def playbill_predict(
     )
 
 
-def playbill_prediction_settle_example(
-    instance_id: str, bound_contract_id: str
-) -> contracts.PlaybillSettleExampleV1:
-    """The settle request for one bound prediction window, evidence left to fill in."""
-
-    check_permission("cruxible_playbill_next", instance_id=instance_id)
-    from cruxible_core.service.procedures.predictions import service_prediction_settle_example
-
-    request = service_prediction_settle_example(
-        get_playbill_manager().get(instance_id), bound_contract_id=bound_contract_id
-    )
-    return contracts.PlaybillSettleExampleV1(
-        bound_contract_id=bound_contract_id, request=request.model_dump(mode="json")
-    )
-
-
 def playbill_settle_prediction(
     instance_id: str,
     prediction_id: str,
@@ -1991,17 +1982,49 @@ def playbill_procedure_bind(
     return contracts.PlaybillProcedureBindResult.model_validate(result.model_dump(mode="json"))
 
 
+def _check_run_target_permission(
+    tool_name: str, instance_id: str, target_rung: Callable[[], int]
+) -> None:
+    """Gate a run by what its target can do, after the read-tier and hosted gates.
+
+    The verb itself runs the static read-tier pre-gate and the hosted-execution
+    gate first, so a shared hosted profile refuses before any instance is read.
+    Running an observe-only Line or Procedure is a read. One whose terminals
+    can propose or settle writes governed state, so it needs governed write.
+    A target with no live accepted artifact has nothing to gate: the service
+    refuses it after its own request checks, and re-checks the caller's tier
+    for any target it finds.
+    """
+
+    try:
+        rung = target_rung()
+    except (ProcedureNotFound, ProcedureRetired, LineRunNotAccepted):
+        check_permission(tool_name, instance_id=instance_id)
+        return
+    required = PermissionMode(run_permission_rung(rung) + 1)
+    check_permission(tool_name, instance_id=instance_id, required_override=required)
+
+
 def playbill_procedure_run(
     instance_id: str,
     name: str,
     *,
     request: ProcedureRunRequestV2,
 ) -> contracts.PlaybillProcedureRunState:
-    check_permission("cruxible_playbill_procedure_run", instance_id=instance_id)
+    check_permission(
+        "cruxible_playbill_procedure_run", instance_id=instance_id, audit_success=False
+    )
     # A shared hosted profile with no isolated execution backend cannot run
     # customer code at all; refuse at the served boundary so the operator gets
     # the mapped error instead of a node refusal buried in a run journal.
     enforce_customer_code_execution_supported()
+    _check_run_target_permission(
+        "cruxible_playbill_procedure_run",
+        instance_id,
+        lambda: procedure_run_target_rung(
+            get_playbill_manager().get(instance_id), name, request.at
+        ),
+    )
     actor = _actor_context()
     if actor is None:
         raise AuthenticationError("Procedure run requires an authenticated actor identity")
@@ -2019,6 +2042,7 @@ def playbill_procedure_run(
         actor_context=actor,
         provider_runtime_operator=manager.provider_runtime_operator(),
         workspace_file_reader=workspace_file_reader,
+        caller_rung=get_current_mode().value - 1,
     )
     instance = manager.get(instance_id)
     consumption_context = ConsumptionContextV1(
@@ -2134,13 +2158,13 @@ def playbill_line_disarm(instance_id: str, line: str) -> contracts.LineArmV1:
     )
 
 
-def playbill_line_arm_status(instance_id: str, line: str) -> contracts.LineArmV1:
+def playbill_line_status(instance_id: str, line: str) -> contracts.LineArmV1:
     """The Line's current arm, or its last one and why it stopped."""
 
-    check_permission("cruxible_playbill_line_arm_status", instance_id=instance_id)
-    from cruxible_core.service.procedures.line_dispatch import service_line_arm_status
+    check_permission("cruxible_playbill_line_status", instance_id=instance_id)
+    from cruxible_core.service.procedures.line_dispatch import service_line_status
 
-    return service_line_arm_status(get_playbill_manager().get(instance_id), line)
+    return service_line_status(get_playbill_manager().get(instance_id), line)
 
 
 def playbill_line_evaluate(
@@ -2164,8 +2188,18 @@ def playbill_line_evaluate(
 def playbill_line_dispatch(
     instance_id: str, line: str, *, request: contracts.LineDispatchRequestV1
 ) -> contracts.LineDispatchResultV1:
-    check_permission("cruxible_playbill_line_dispatch", instance_id=instance_id)
+    check_permission(
+        "cruxible_playbill_line_dispatch", instance_id=instance_id, audit_success=False
+    )
+    # A shared hosted profile with no isolated execution backend cannot run
+    # customer code at all; refuse at the served boundary so the operator gets
+    # the mapped error instead of a node refusal buried in a run journal.
     enforce_customer_code_execution_supported()
+    _check_run_target_permission(
+        "cruxible_playbill_line_dispatch",
+        instance_id,
+        lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line),
+    )
     actor = _actor_context()
     if actor is None:
         raise AuthenticationError("Dispatch requires an authenticated actor identity")
@@ -2205,8 +2239,16 @@ def playbill_line_run(
     *,
     request: LineRunRequestV1,
 ) -> contracts.PlaybillProcedureRunState:
-    check_permission("cruxible_playbill_line_run", instance_id=instance_id)
+    check_permission("cruxible_playbill_line_run", instance_id=instance_id, audit_success=False)
+    # A shared hosted profile with no isolated execution backend cannot run
+    # customer code at all; refuse at the served boundary so the operator gets
+    # the mapped error instead of a node refusal buried in a run journal.
     enforce_customer_code_execution_supported()
+    _check_run_target_permission(
+        "cruxible_playbill_line_run",
+        instance_id,
+        lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line_identity_digest),
+    )
     actor = _actor_context()
     if actor is None:
         raise AuthenticationError("Line run requires an authenticated actor identity")
@@ -2253,6 +2295,7 @@ def playbill_next(
         ),
         caller_principal_id=None if actor is None else actor.actor_id,
         consumers_running=get_playbill_manager().consumer_runner.running,
+        caller_rung=get_current_mode().value - 1,
     )
     return contracts.PlaybillNextResult.model_validate(result.model_dump(mode="json"))
 

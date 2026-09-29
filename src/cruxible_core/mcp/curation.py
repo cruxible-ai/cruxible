@@ -112,3 +112,17 @@ def advertised_tool_names(
             raise ConfigError(f"Unknown MCP tools in allowlist: {sorted(unknown)}")
         permitted &= set(curation.allowlist)
     return permitted
+
+
+def session_tool_names() -> frozenset[str]:
+    """The tools this MCP process advertises to its caller, for surface-aware repairs."""
+
+    from cruxible_core.runtime.permissions import get_current_mode
+
+    return frozenset(
+        advertised_tool_names(
+            mode=get_current_mode(),
+            registered_tools=set(TOOL_PERMISSIONS),
+            curation=resolve_tool_curation(),
+        )
+    )

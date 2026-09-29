@@ -168,8 +168,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need a durable machine-owned intent before iterating on a governed write."
     ),
     "cruxible_playbill_authoring_example": (
-        "Use when you need a model-constructed Claim, Procedure, Subject, QueryDefinition, "
-        "or ApprovalPolicy authoring input template."
+        "Use when you need a model-constructed Claim, Procedure, Line, acquisition policy, "
+        "mandate, Subject, QueryDefinition, or ApprovalPolicy authoring input template."
     ),
     "cruxible_playbill_authoring_get": (
         "Use when you need the current durable content and state of one authoring intent."
@@ -307,7 +307,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Stop a Line admitting work on its own. Runs already admitted keep going. "
         "A Line already stopped returns already_disarmed."
     ),
-    "cruxible_playbill_line_arm_status": (
+    "cruxible_playbill_line_status": (
         "Read whether a Line is armed, its pending work, and why an arm stopped "
         "(credential revoked, Line changed, disarmed). Rearm to resume."
     ),
@@ -324,16 +324,16 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "idempotency assertion; the daemon derives occurrence identity."
     ),
     "cruxible_playbill_resolution_contracts": (
-        "Find accepted resolution contracts for an exact Claim version. Returns their "
+        "Find accepted resolution contracts testing a Claim, by Claim ID. Returns their "
         "definitions and version references, including retired contracts."
     ),
     "cruxible_playbill_predict": (
-        "Propose a governed test of an already accepted exact Claim version. Supply its "
+        "Propose a governed test of an accepted Claim: its hypothesis is a Claim ID, plus an "
         "observation selector, mechanical rule, and fixed or retained-event observation window."
     ),
     "cruxible_playbill_settle": (
-        "Use when a predicted Claim and its matching later observation are accepted, optionally "
-        "binding the exact retained mandate-settlement terminal record."
+        "Use when a predicted Claim and its matching later observation are accepted: pass the "
+        "prediction id and the observation's Claim ID."
     ),
     "cruxible_playbill_discover": (
         "Use when you do not yet know which interface or Subject names the state you want. "

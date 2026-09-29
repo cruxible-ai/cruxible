@@ -58,6 +58,9 @@ from cruxible_core.service.procedures.procedure_runs import (
     _journal,
     _line_admissions,
     _stream,
+    line_run_target_rung,
+    require_line_mandate,
+    require_run_permission,
     service_run_playbill_line,
 )
 
@@ -340,16 +343,20 @@ def service_arm_line(
     """Arm the current Line version forward-only under the caller's credential.
 
     Arming never catches up: matching starts at `now`, and any work already
-    pending stays for explicit dispatch. Arming a Line already armed by this
+    pending stays for explicit dispatch. A Line that can propose or settle
+    refuses to arm (`playbill.line.mandate_required`) while no current mandate
+    covers its Procedure. Arming a Line already armed by this
     caller, at the current version and epoch, on this daemon changes nothing
     and reports `already_armed`. Rearming with any of those different rebinds
     it to this caller and the current version, again from `now`.
     """
 
     instance.require_writable()
-    accepted = _accepted_line_by_reference(
-        instance, coordinate=instance.accepted_coordinate(), reference=line
-    )
+    coordinate = instance.accepted_coordinate()
+    accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
+    # An arm admits on its own; one whose every admission would refuse for want
+    # of a mandate is a silent stall, so it refuses here instead.
+    require_line_mandate(instance, accepted, coordinate=coordinate, now=now)
     identity = line_identity_digest(accepted.line.identity)
     store = LineDispatchStore(instance)
     with line_arm_boundary(instance.root, identity), store.locked() as conn:
@@ -422,7 +429,7 @@ def service_disarm_line(
         return _arm_view(store, conn, data, outcome="disarmed")
 
 
-def service_line_arm_status(instance: PlaybillInstance, line: str) -> LineArmV1:
+def service_line_status(instance: PlaybillInstance, line: str) -> LineArmV1:
     """The Line's current arm, or the last one and why it stopped."""
 
     accepted = _accepted_line_by_reference(
@@ -725,8 +732,13 @@ def service_dispatch_line(
     """
 
     instance.require_writable()
-    accepted = _accepted_line_by_reference(
-        instance, coordinate=instance.accepted_coordinate(), reference=line
+    coordinate = instance.accepted_coordinate()
+    accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
+    # Dispatch runs what the Line can do, so it needs the tier those runs need.
+    require_run_permission(
+        "cruxible_playbill_line_dispatch",
+        target_rung=line_run_target_rung(instance, line),
+        caller_rung=caller_rung,
     )
     identity, epoch = line_identity_digest(accepted.line.identity), accepted.line.occurrence_epoch
     if not dispatch_root(instance).exists():

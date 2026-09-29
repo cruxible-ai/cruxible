@@ -68,8 +68,10 @@ def test_prediction_tools_expose_the_same_typed_requests_as_http_and_sdk() -> No
 
     assert set(predict["properties"]) == {"instance_id", "request"}
     assert set(predict["required"]) == {"request"}
-    assert set(settle["properties"]) == {"instance_id", "prediction_id", "request"}
-    assert set(settle["required"]) == {"prediction_id", "request"}
+    # Settle names the observation by Claim ID; the full request stays the
+    # advanced form, so neither is required on its own.
+    assert set(settle["properties"]) == {"instance_id", "prediction_id", "observation", "request"}
+    assert set(settle["required"]) == {"prediction_id"}
 
 
 def test_every_instance_id_is_optional_and_names_its_default() -> None:
@@ -145,6 +147,8 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "approval-policy",
         "procedure-runtime-policy",
         "procedure-mandate",
+        "line",
+        "acquisition-policy",
         "change-set",
         "claim-type-succession",
     ]

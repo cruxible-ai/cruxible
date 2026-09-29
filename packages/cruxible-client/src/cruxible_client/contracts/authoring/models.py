@@ -100,7 +100,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:ec1e5594511901b23a2cbaeb73775dd4d4b9ad4edd4fba316d2a9fcbd46ad4e8"
+    "sha256:f371d774078e484d35551743d5c53243cf2d537cc598067bd8170858bf7a7497"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -980,13 +980,16 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
     An author names the accepted or same-set Procedure and acquisition policy
     by name, the way a ProcedureMandate member names its Procedure, and
     lowering resolves both into the exact digest pins the LineSpec carries. A
-    budget left unset lowers to the Procedure's own hard caps.
+    budget left unset lowers to the Procedure's own hard caps. The acquisition
+    policy is required only when the Procedure acquires (has Source or exhaust
+    nodes); a pure-compute Line pins none. ``parameters`` is the Procedure's
+    input record, checked against its input Contract when the Line lowers.
     """
 
     tag: Literal["playbill-line-authoring-payload-v1"] = "playbill-line-authoring-payload-v1"
     name: str
     procedure_name: str
-    acquisition_policy_name: str
+    acquisition_policy_name: str | None = None
     # Caps this Line below its Procedure's capability; omitted, it is that capability.
     max_authority: Literal["observe", "propose", "settle"] | None = None
     trigger_policy: TriggerPolicyV2
@@ -999,8 +1002,8 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
 
     @field_validator("name", "procedure_name", "acquisition_policy_name")
     @classmethod
-    def _names(cls, value: str) -> str:
-        if not value or value.strip() != value:
+    def _names(cls, value: str | None) -> str | None:
+        if value is not None and (not value or value.strip() != value):
             raise ValueError("Line authoring names must be nonblank and normalized")
         return value
 

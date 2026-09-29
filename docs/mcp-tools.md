@@ -229,7 +229,8 @@ It reports approval conditions but never obtains or impersonates an approval.
 `cruxible_playbill_authoring_create` takes one tagless input, and the
 `change_set` kind carries any mix of members -- `claim`, `claim_type`,
 `claim_retirement`, `subject`, `query_definition`, `procedure`,
-`procedure_mandate` -- as one intent that admits or refuses whole, typed to the
+`procedure_mandate`, `acquisition_policy`, `line` -- as one intent that admits
+or refuses whole, typed to the
 offending member index. `approval_policy` and `procedure_runtime_policy` parse
 as members but a change set refuses them; send each as its own singleton input.
 There is no second batch tool.
@@ -237,7 +238,11 @@ A `claim_type_succession` member succeeds an accepted ClaimType and dispositions
 its whole reverse-pin closure in the same generation, so vocabulary evolution
 needs no second tool and no second generation either.
 `cruxible_playbill_authoring_example` serves `change-set` and
-`claim-type-succession` as starting points.
+`claim-type-succession` as starting points, and `procedure`, `line`,
+`acquisition-policy` and `procedure-mandate` templates that are accepted
+together. A `line` input's `parameters` is checked against its Procedure's input
+contract at authoring; its `acquisition_policy_name` is needed only when the
+Procedure has Source nodes.
 The publication tools take an `expectation_id` because a set that publishes
 several Claims owns one expectation per publishing member; an intent that owns
 exactly one may omit it.
@@ -255,10 +260,17 @@ exactly one may omit it.
 | `cruxible_playbill_line_check` | Read trigger eligibility, exact matches, and admitted occurrences without queuing or running. | `READ_ONLY` |
 | `cruxible_playbill_line_arm` | Arm a Line forward-only: the daemon admits what it matches under the caller's credential, rechecked before each run. Repeating it unchanged returns `outcome: already_armed`. | `GOVERNED_WRITE` |
 | `cruxible_playbill_line_disarm` | Stop a Line admitting work on its own; admitted runs keep going. A stopped arm returns `outcome: already_disarmed`. | `GOVERNED_WRITE` |
-| `cruxible_playbill_line_arm_status` | Read a Line's arm, its pending work, and why an arm stopped. | `READ_ONLY` |
+| `cruxible_playbill_line_status` | Read a Line's arm, its pending work, and why an arm stopped. | `READ_ONLY` |
 | `cruxible_playbill_line_evaluate` | Evaluate an explicit historical range into pending work; never executes. | `GOVERNED_WRITE` |
-| `cruxible_playbill_line_dispatch` | Admit retained pending occurrences under the current caller’s authority. | `GOVERNED_WRITE` |
-| `cruxible_playbill_line_run` | Trigger one due accepted Line occurrence under its governed mandate | `READ_ONLY` |
+| `cruxible_playbill_line_dispatch` | Admit retained pending occurrences under the current caller’s authority. | `READ_ONLY` |
+| `cruxible_playbill_line_run` | Trigger one due accepted Line occurrence; a Line that can propose or settle needs a mandate, an observe-only one none | `READ_ONLY` |
+
+`procedure_run`, `line_run` and `line_dispatch` are read-tier only for targets
+that observe. A Procedure whose terminals can propose or settle, or a Line whose
+runs can (its Procedure's capability capped by its `max_authority`), needs
+`GOVERNED_WRITE` to run or dispatch, whichever door triggers it; the daemon
+decides this per target, and a read-only caller is refused with
+`PermissionDeniedError`.
 
 Read-tier Procedure runs append receipted journal records, following the same
 precedent as QueryDefinition runs. They never alter accepted state or grant
@@ -268,9 +280,14 @@ themselves a governed track record; promotion remains a separate governed act.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_resolution_contracts` | Find governed tests of an exact Claim version | `READ_ONLY` |
-| `cruxible_playbill_predict` | Propose a governed resolution contract | `GOVERNED_WRITE` |
-| `cruxible_playbill_settle` | Settle one prediction from accepted observation evidence or its governed terminal | `GOVERNED_WRITE` |
+| `cruxible_playbill_resolution_contracts` | Find governed tests of a Claim, by `claim_id` | `READ_ONLY` |
+| `cruxible_playbill_predict` | Propose a governed resolution contract whose hypothesis is a Claim ID | `GOVERNED_WRITE` |
+| `cruxible_playbill_settle` | Settle one prediction (`prediction_id`) from the Claim ID of an accepted observation (`observation`) | `GOVERNED_WRITE` |
+
+Every Claim version these tools need can be a plain Claim ID (`CLM-...` or
+`Claim:CLM-...`); the daemon resolves its digests and accepting coordinate. The
+exact reference, and settle's full `request` (exact contract reference, anchor
+event, or terminal evidence), remain as the advanced form.
 
 Prediction settlement records the activation and resolution in operational
 exhaust; it does not create or mutate Claims, and it does not create a second
@@ -321,6 +338,15 @@ now).
 | `cruxible_playbill_expand` | Expand one address into a context capsule | `READ_ONLY` |
 | `cruxible_playbill_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.playbill/floor` under the MCP workspace (status `unchanged` when it already holds this floor); `mode=status` reports whether that floor is current, stale, or absent | `READ_ONLY` |
 | `cruxible_playbill_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, `grep_results_path`, or `whole_working_set`) | `READ_ONLY` |
+
+`cruxible_playbill_next` renders each repair's `command` as the MCP tool call
+that performs it (for example `cruxible_playbill_settle(prediction_id="RSC-...")`,
+adding the observation's Claim ID), or none when its operands are local files.
+A row or nested finding whose repair the session cannot perform -- its profile
+does not advertise the tool that performs it, or its tier is too low -- is left
+out and counted in `status.hidden`. A status facet keeps its state either way,
+but drops a repair the session cannot perform and says `repair_hidden: true`. The `default` profile advertises neither
+`cruxible_playbill_settle` nor the Line tools, for example.
 
 Lists that can outgrow one answer are paged. `proposal_list`,
 `policies_in_force` and `curation_list` take `limit` and `cursor`; a cut page

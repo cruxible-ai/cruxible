@@ -108,7 +108,6 @@ from cruxible_client.contracts.predictions import (
     PlaybillPredictRequestV2 as PlaybillPredictRequestV2,
 )
 from cruxible_client.contracts.predictions import PlaybillPredictResultV2 as PlaybillPredictResultV2
-from cruxible_client.contracts.predictions import PlaybillSettleExampleV1 as PlaybillSettleExampleV1
 from cruxible_client.contracts.predictions import PlaybillSettleRequestV2 as PlaybillSettleRequestV2
 from cruxible_client.contracts.predictions import PlaybillSettleResultV2 as PlaybillSettleResultV2
 from cruxible_client.contracts.predictions import (
@@ -122,6 +121,9 @@ from cruxible_client.contracts.predictions import (
 )
 from cruxible_client.contracts.predictions import (
     PredictionThresholdRuleV1 as PredictionThresholdRuleV1,
+)
+from cruxible_client.contracts.predictions import (
+    ResolutionContractInputV1 as ResolutionContractInputV1,
 )
 from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidenceV2 as TerminalSettlementEvidenceV2,
@@ -264,6 +266,8 @@ PlaybillAuthoringExampleName = Literal[
     "approval-policy",
     "procedure-runtime-policy",
     "procedure-mandate",
+    "line",
+    "acquisition-policy",
     "change-set",
     "claim-type-succession",
 ]
@@ -1689,6 +1693,8 @@ class PlaybillNextHealth(BaseModel):
     state: str
     detail: Any = Field(default_factory=dict)
     repair: PlaybillNextRepair | None = None
+    # The facet needs a repair this caller cannot perform, so it was dropped.
+    repair_hidden: bool = False
 
 
 class PlaybillNextStatus(BaseModel):
@@ -1707,6 +1713,8 @@ class PlaybillNextStatus(BaseModel):
     line_dispatch: PlaybillNextHealth
     consumers: PlaybillNextHealth
     held: int = Field(default=0, ge=0)
+    #: Rows left out because this caller's surface, tools or tier cannot repair them.
+    hidden: int = Field(default=0, ge=0)
 
 
 class PlaybillNextResult(BaseModel):

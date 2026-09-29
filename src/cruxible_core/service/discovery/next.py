@@ -469,6 +469,17 @@ class PlaybillNextRequestV1(_StrictNextModel):
     # clock or head has moved still reads the same queue -- or is refused.
     limit: int = Field(default=PLAYBILL_NEXT_DEFAULT_LIMIT, ge=1, le=PLAYBILL_NEXT_MAX_LIMIT)
     cursor: str | None = Field(default=None, max_length=2048)
+    # Who reads the queue, so each repair is one this caller can run: the
+    # surface picks the syntax a repair renders in (a CLI command, or an MCP
+    # tool call), and an MCP caller lists the tools its session advertises, so
+    # a row whose repair is a tool it lacks is hidden and counted instead.
+    # Absent, rows render as CLI commands.
+    caller_surface: Literal["cli", "mcp", "sdk"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    caller_tools: tuple[str, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("evaluation_time")
     @classmethod
@@ -624,11 +635,21 @@ class PlaybillNextHealthV1(_StrictNextModel):
     state: str
     detail: object = Field(default_factory=dict)
     repair: PlaybillNextRepairV1 | None = None
+    #: The facet needs a repair this caller's surface, tool profile or
+    #: permission tier cannot perform, so its repair was dropped. The facet
+    #: itself is not left out, so it is not counted in ``status.hidden``.
+    repair_hidden: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @field_validator("detail", mode="before")
     @classmethod
     def _detail(cls, value: object) -> CanonicalValue:
         return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _hidden_repair(self) -> "PlaybillNextHealthV1":
+        if self.repair_hidden and self.repair is not None:
+            raise ValueError("a next status facet hides its repair or carries it, not both")
+        return self
 
 
 class PlaybillNextStatusV1(_StrictNextModel):
@@ -654,6 +675,12 @@ class PlaybillNextStatusV1(_StrictNextModel):
     consumers: PlaybillNextHealthV1
     #: Rows parked by a current ``unsure`` attestation whose basis is unchanged.
     held: int = Field(default=0, ge=0)
+    #: Rows and nested findings whose repair this caller's surface, tool
+    #: profile or permission tier cannot perform, so they were left out of
+    #: ``items``. Another caller -- the CLI, or a higher-tier credential -- sees
+    #: them. A status facet whose repair is withheld says so itself
+    #: (``repair_hidden``) and is not counted here.
+    hidden: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
 
     @model_validator(mode="after")
     def _states(self) -> "PlaybillNextStatusV1":
@@ -816,15 +843,186 @@ def _repair_operands(operation: NextRepairOperation, values: Mapping[str, object
     return rendered
 
 
+NextCallerSurface: TypeAlias = Literal["cli", "mcp", "sdk"]
+
+#: Every repair operation's served door: the tool that performs it. The tool's
+#: entry in ``TOOL_PERMISSIONS`` is the tier the repair needs on every surface,
+#: and an MCP caller must also advertise the tool. ``None`` is a repair with no
+#: served door to gate: a hand edit, or a client-local block stamp (`block
+#: repin` / `block sync` rewrite workspace files and write no governed state).
+_REPAIR_TOOLS: Mapping[str, str | None] = {
+    "playbill.authoring.create": "cruxible_playbill_authoring_create",
+    "playbill.authoring.bind": "cruxible_playbill_authoring_bind",
+    "playbill.claim.retire": "cruxible_playbill_claim_retire",
+    "playbill.floor.export": "cruxible_playbill_floor_export",
+    "playbill.block.depublish": "cruxible_playbill_block_depublish",
+    "playbill.block.repin": None,
+    "playbill.block.sync": None,
+    "playbill.document.propose": "cruxible_playbill_propose_document",
+    "playbill.proposal.readmit": "cruxible_playbill_proposal_readmit",
+    "playbill.proposal.approve": "cruxible_playbill_approve",
+    "playbill.compiler.upgrade": "cruxible_playbill_compiler_upgrade",
+    "playbill.line.arm": "cruxible_playbill_line_arm",
+    "playbill.line.dispatch": "cruxible_playbill_line_dispatch",
+    "playbill.settle": "cruxible_playbill_settle",
+    "hand_edit": None,
+}
+_GOVERNED_WRITE_RUNG = 1
+
+
+def _tool_rung(tool: str) -> int:
+    """The least caller rung (``PermissionMode.value - 1``) a tool runs at."""
+
+    from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
+
+    return int(TOOL_PERMISSIONS[tool]) - 1
+
+
+def _mcp_call(tool: str, **arguments: object) -> str:
+    rendered = ", ".join(f"{key}={json.dumps(value)}" for key, value in arguments.items())
+    return f"{tool}({rendered})"
+
+
+def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> str | None:
+    """Render one repair as the MCP tool call that performs it, or None.
+
+    A repair whose operands are local files or structured bases the queue does
+    not hold renders no call rather than a call that cannot be made.
+    """
+
+    values = arguments if isinstance(arguments, Mapping) else {}
+
+    def text(key: str) -> str | None:
+        value = values.get(key)
+        return value if isinstance(value, str) and value else None
+
+    if operation == "playbill.line.arm" and text("line"):
+        return _mcp_call("cruxible_playbill_line_arm", line=text("line"))
+    if operation == "playbill.line.dispatch" and text("line"):
+        limit = values.get("limit")
+        request = {"limit": limit} if isinstance(limit, int) and limit > 1 else {}
+        return _mcp_call("cruxible_playbill_line_dispatch", line=text("line"), request=request)
+    if operation == "playbill.settle" and text("prediction_id"):
+        # The observation is the settler's to choose: its Claim ID is the one
+        # argument left to add.
+        return _mcp_call("cruxible_playbill_settle", prediction_id=text("prediction_id"))
+    if operation == "playbill.authoring.create" and text("example") and not text("payload_file"):
+        return _mcp_call("cruxible_playbill_authoring_example", name=text("example"))
+    if operation == "playbill.proposal.readmit" and text("proposal_id"):
+        return _mcp_call("cruxible_playbill_proposal_readmit", proposal_id=text("proposal_id"))
+    if operation == "playbill.proposal.approve" and text("proposal_id") and text("signer_id"):
+        return _mcp_call(
+            "cruxible_playbill_approve",
+            proposal_id=text("proposal_id"),
+            signer_id=text("signer_id"),
+        )
+    if operation == "playbill.block.depublish" and text("source_id") and text("block_id"):
+        return _mcp_call(
+            "cruxible_playbill_block_depublish",
+            source_id=text("source_id"),
+            block_id=text("block_id"),
+        )
+    if operation == "playbill.floor.export":
+        return _mcp_call("cruxible_playbill_floor_export", mode="write")
+    return None
+
+
+def _python_literal(value: object) -> str:
+    """Render a str, bool, None, int, or list/dict of those as Python source.
+
+    A JSON string literal is a valid Python one (every JSON escape is a Python
+    escape), so strings keep their double quotes; JSON's `true`, `false` and
+    `null` are not Python, so they are rendered here.
+    """
+
+    if value is None or isinstance(value, bool):
+        return repr(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_python_literal(item) for item in value) + "]"
+    if isinstance(value, Mapping):
+        return (
+            "{"
+            + ", ".join(
+                f"{_python_literal(key)}: {_python_literal(item)}" for key, item in value.items()
+            )
+            + "}"
+        )
+    raise TypeError(f"no Python literal for an SDK repair operand of type {type(value).__name__}")
+
+
+def _sdk_call(target: str, *positional: object, **keywords: object) -> str:
+    rendered = [_python_literal(value) for value in positional]
+    rendered.extend(f"{key}={_python_literal(value)}" for key, value in keywords.items())
+    return f"{target}({', '.join(rendered)})"
+
+
+def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> str | None:
+    """Render one repair as the `Playbill` SDK call that performs it, or None.
+
+    Like the CLI and MCP renderings, an operand only the caller holds -- the
+    signer, the observation, the retirement reason -- is left for it to add. A
+    repair the SDK facade has no method for, or whose operands are local files,
+    renders no call rather than another surface's command.
+    """
+
+    values = arguments if isinstance(arguments, Mapping) else {}
+
+    def text(key: str) -> str | None:
+        value = values.get(key)
+        return value if isinstance(value, str) and value else None
+
+    if operation == "playbill.line.arm" and (line := text("line")):
+        return _sdk_call("playbill.arm_line", line)
+    if operation == "playbill.line.dispatch" and (line := text("line")):
+        limit = values.get("limit")
+        if isinstance(limit, int) and limit > 1:
+            return _sdk_call("playbill.dispatch_line", line, limit=limit)
+        return _sdk_call("playbill.dispatch_line", line)
+    if operation == "playbill.settle" and (prediction := text("prediction_id")):
+        return _sdk_call("playbill.settle", prediction)
+    if operation == "playbill.authoring.create" and not text("payload_file"):
+        example = text("example")
+        return None if example is None else _sdk_call("authoring_example", example)
+    if operation == "playbill.proposal.approve" and (proposal := text("proposal_id")):
+        handle = _sdk_call("playbill.proposal", proposal)
+        return f"{handle}.approve(reviewed={handle}.review())"
+    if operation == "playbill.claim.retire" and (claim := text("claim_id")):
+        return _sdk_call("playbill.retire_claim", claim)
+    if operation == "playbill.block.repin" and (source := text("source_id")):
+        block = text("block_id")
+        if block is None:
+            return None
+        listed = values.get("claim")
+        named = [values.get("claim_id"), *(listed if isinstance(listed, (list, tuple)) else ())]
+        claims = [
+            value.removeprefix("Claim:") for value in named if isinstance(value, str) and value
+        ]
+        if claims:
+            return _sdk_call("playbill.block.repin", source, block, claims=claims)
+        return _sdk_call("playbill.block.repin", source, block)
+    if operation == "playbill.block.sync" and values.get("all") is True:
+        return _sdk_call("playbill.block.sync", all=True)
+    return None
+
+
 def _repair_command(
     operation: NextRepairOperation,
     *,
     arguments: object,
+    surface: NextCallerSurface | None = None,
 ) -> str | None:
-    """Compose the runnable invocation for one repair operation."""
+    """Compose the runnable invocation for one repair operation on this surface."""
 
     if operation == "hand_edit":
         return None
+    if surface == "mcp":
+        return _mcp_repair_call(operation, arguments=arguments)
+    if surface == "sdk":
+        return _sdk_repair_call(operation, arguments=arguments)
     parts = ["cruxible", _REPAIR_COMMAND_PATHS[operation]]
     values = arguments if isinstance(arguments, Mapping) else {}
     if operation == "playbill.block.repin":
@@ -875,12 +1073,13 @@ def _repair_command(
         if operation == "playbill.line.dispatch" and isinstance(limit, int) and limit > 1:
             parts.extend(["--limit", str(limit)])
     elif operation == "playbill.settle":
-        # The request's evidence is the settler's to choose, so the runnable
-        # step is the template with the exact contract and window filled in.
+        # The daemon resolves the exact contract and window from the bound
+        # window id; the observation is the settler's to choose, so its Claim
+        # ID is the one operand left to add (`--observation CLM-...`).
         prediction_id = values.get("prediction_id")
         if not isinstance(prediction_id, str) or not prediction_id:
             return None
-        parts.extend(["--example", shlex.quote(prediction_id)])
+        parts.append(shlex.quote(prediction_id))
     elif operation == "playbill.proposal.readmit":
         proposal_id = values.get("proposal_id")
         if not isinstance(proposal_id, str):
@@ -919,15 +1118,27 @@ def _item(
     related_identities: tuple[str, ...] = (),
     detail: object,
     repair: PlaybillNextRepairV1,
+    surface: NextCallerSurface | None = None,
 ) -> PlaybillNextItemV1:
     # Composed here rather than at each emitting site: a row whose command was
     # forgotten would be indistinguishable from one that has no command.
-    command = _repair_command(repair.operation, arguments=repair.arguments)
+    command = _repair_command(repair.operation, arguments=repair.arguments, surface=surface)
     example = _ATTESTATION_REPAIR_EXAMPLES.get(repair.required_change)
     if example is not None and isinstance(repair.arguments, Mapping):
         claim_id = repair.arguments.get("claim_id")
         capture_digest = repair.arguments.get("capture_digest")
-        if isinstance(claim_id, str) and isinstance(capture_digest, str):
+        if isinstance(claim_id, str) and isinstance(capture_digest, str) and surface == "mcp":
+            command = _mcp_call(
+                "cruxible_playbill_authoring_example",
+                name=example,
+                claim_id=claim_id,
+                capture_digest=capture_digest,
+            )
+        elif isinstance(claim_id, str) and isinstance(capture_digest, str) and surface == "sdk":
+            command = _sdk_call(
+                "authoring_example", example, claim_id=claim_id, capture_digest=capture_digest
+            )
+        elif isinstance(claim_id, str) and isinstance(capture_digest, str):
             command = " ".join(
                 (
                     "cruxible playbill authoring create --example",
@@ -3059,10 +3270,10 @@ def _prediction_items(
                     operation="playbill.settle",
                     target=subject,
                     required_change=(
-                        "settle_the_prediction_from_an_accepted_observation_in_its_window"
+                        "settle_with_the_claim_id_of_an_accepted_observation_in_its_window"
                     ),
                     # The bound contract id names the exact window; the daemon
-                    # fills in its contract and anchor for the template.
+                    # resolves its contract and anchor from it.
                     arguments={"prediction_id": owed.bound_contract_id},
                 ),
             )
@@ -4030,6 +4241,142 @@ def _projection_items(
     return tuple(items)
 
 
+class _CallerView:
+    """What this caller can run, decided once per request and cached per Line."""
+
+    def __init__(
+        self,
+        instance: PlaybillInstance,
+        *,
+        surface: NextCallerSurface | None,
+        tools: tuple[str, ...] | None,
+        caller_rung: int | None,
+    ) -> None:
+        self.instance = instance
+        self.surface = surface
+        self.tools = None if tools is None else frozenset(tools)
+        self.caller_rung = caller_rung
+        self._line_rungs: dict[str, int] = {}
+
+    def _required_rung(self, repair: PlaybillNextRepairV1, tool: str) -> int:
+        static = _tool_rung(tool)
+        if repair.operation != "playbill.line.dispatch":
+            return static
+        # A Line dispatch's tier is the Line's own: an observe-only Line
+        # dispatches at read, one whose runs propose or settle at governed write.
+        line = repair.arguments.get("line") if isinstance(repair.arguments, Mapping) else None
+        if not isinstance(line, str):
+            return _GOVERNED_WRITE_RUNG
+        if line not in self._line_rungs:
+            from cruxible_core.service.procedures.procedure_runs import (
+                line_run_target_rung,
+                run_permission_rung,
+            )
+
+            try:
+                self._line_rungs[line] = run_permission_rung(
+                    line_run_target_rung(self.instance, line)
+                )
+            except PlaybillError:
+                self._line_rungs[line] = _GOVERNED_WRITE_RUNG
+        return max(static, self._line_rungs[line])
+
+    def can_run(self, repair: PlaybillNextRepairV1) -> bool:
+        tool = _REPAIR_TOOLS[repair.operation]
+        if tool is None:
+            return True
+        if self.surface == "mcp" and self.tools is not None and tool not in self.tools:
+            return False
+        return self.caller_rung is None or self.caller_rung >= self._required_rung(repair, tool)
+
+    def _render(self, row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> PlaybillNextItemV1:
+        """One row or nested finding as a standalone row, its repair for this surface."""
+
+        return _item(
+            severity=row.severity,
+            reason=row.reason,
+            subject_identity=row.subject_identity,
+            related_identities=row.related_identities,
+            detail=row.detail,
+            repair=row.repair.model_copy(update={"command": None}),
+            surface=self.surface,
+        )
+
+    def items(
+        self, found: Iterable[PlaybillNextItemV1]
+    ) -> tuple[tuple[PlaybillNextItemV1, ...], int]:
+        """Drop rows and findings this caller cannot repair, counting each.
+
+        A row's nested findings are work in their own right, so each is judged
+        on its own. A finding the caller cannot repair is counted in
+        ``hidden``; one it can repair stays inside its row, or stands as its
+        own row when the row that carried it is hidden. Rows keep their CLI
+        rendering here: holds and grouping rebuild rows, so `render` runs once,
+        after them.
+        """
+
+        kept: list[PlaybillNextItemV1] = []
+        hidden = 0
+        for item in found:
+            runnable = [finding for finding in item.findings if self.can_run(finding.repair)]
+            hidden += len(item.findings) - len(runnable)
+            if not self.can_run(item.repair):
+                hidden += 1
+                kept.extend(_row_of(finding) for finding in runnable)
+            elif len(runnable) == len(item.findings):
+                kept.append(item)
+            else:
+                # Rebuilt, never copied: the item id digests the findings it carries.
+                kept.append(
+                    _with_findings(item.model_copy(update={"findings": ()}), map(_row_of, runnable))
+                )
+        return tuple(kept), hidden
+
+    def render(self, items: Iterable[PlaybillNextItemV1]) -> tuple[PlaybillNextItemV1, ...]:
+        """Render each row's repair, and each nested finding's, for this caller's surface.
+
+        The one render point: it runs after holds and grouping, which rebuild
+        rows from their findings in the default (CLI) rendering.
+        """
+
+        if self.surface in {None, "cli"}:
+            return tuple(items)
+        return tuple(
+            _with_findings(self._render(item), map(self._render, item.findings))
+            if item.findings
+            else self._render(item)
+            for item in items
+        )
+
+    def health(self, health: PlaybillNextHealthV1) -> PlaybillNextHealthV1:
+        repair = health.repair
+        if repair is None or repair.operation == "hand_edit":
+            return health
+        if not self.can_run(repair):
+            return health.model_copy(update={"repair": None, "repair_hidden": True})
+        if self.surface in {None, "cli"}:
+            return health
+        command = _repair_command(
+            repair.operation, arguments=repair.arguments, surface=self.surface
+        )
+        return health.model_copy(update={"repair": repair.model_copy(update={"command": command})})
+
+
+def _caller_queue(
+    found: Iterable[PlaybillNextItemV1], caller: _CallerView, holds: _Holds | None
+) -> tuple[tuple[PlaybillNextItemV1, ...], int, int]:
+    """The caller's queue from every row found: filtered, held, grouped and rendered.
+
+    Returns the sorted rows with the hidden and held counts.
+    """
+
+    kept, hidden = caller.items(found)
+    held = 0
+    if holds is not None:
+        kept, held = _apply_holds(kept, holds)
+    return tuple(sorted(caller.render(_group_items(kept)), key=_item_sort_key)), hidden, held
+
+
 def service_playbill_next(
     instance: PlaybillInstance,
     *,
@@ -4037,11 +4384,17 @@ def service_playbill_next(
     provider_lane: ProviderLaneStatusV1 | None = None,
     consumers_running: bool = False,
     caller_principal_id: str | None = None,
+    caller_rung: int | None = None,
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
     """Fold accepted state and explicit client observations into one repair queue.
 
     `caller_principal_id` is the daemon's authenticated caller, passed beside
     the request rather than inside it so no request can name someone else.
+    `caller_rung` is that caller's permission tier (``PermissionMode.value -
+    1``): a row whose repair is a settle, Line dispatch or Line arm the tier
+    cannot perform is left out and counted in ``status.hidden``, as is one whose
+    MCP tool the request's ``caller_tools`` does not list. ``None`` is an
+    in-process caller that holds every tier.
     """
 
     continuation = None if request.cursor is None else _continuation_of(request.cursor)
@@ -4164,30 +4517,36 @@ def service_playbill_next(
         *_prediction_items(instance, access_profile=request.access_profile),
         *_consumer_stalled_items(consumer_healths),
     )
-    held = 0
-    if parsed_claims is not None and request.access_profile.permits("instance"):
-        found, held = _apply_holds(
-            found,
-            _Holds(
-                instance,
-                coordinate=coordinate,
-                claims=parsed_claims,
-                door_events=door_events,
-                door_history=(
-                    None
-                    if attestation_head is None
-                    else lambda: instance.claim_attestation_evidence_store().events(
-                        at_head=attestation_head
-                    )
-                ),
-                evaluation_time=request.evaluation_time,
+    caller = _CallerView(
+        instance,
+        surface=request.caller_surface,
+        tools=request.caller_tools,
+        caller_rung=caller_rung,
+    )
+    holds = (
+        _Holds(
+            instance,
+            coordinate=coordinate,
+            claims=parsed_claims,
+            door_events=door_events,
+            door_history=(
+                None
+                if attestation_head is None
+                else lambda: instance.claim_attestation_evidence_store().events(
+                    at_head=attestation_head
+                )
             ),
+            evaluation_time=request.evaluation_time,
         )
-    items = tuple(sorted(_group_items(found), key=_item_sort_key))
+        if parsed_claims is not None and request.access_profile.permits("instance")
+        else None
+    )
+    items, hidden, held = _caller_queue(found, caller, holds)
     terminal = instance.descriptor.decommissioned
     status = PlaybillNextStatusV1(
         blocking=terminal is not None,
         held=held,
+        hidden=hidden,
         instance=(
             PlaybillNextHealthV1(state="active")
             if terminal is None
@@ -4208,10 +4567,12 @@ def service_playbill_next(
                 ),
             )
         ),
-        floor=_floor_health(
-            instance, coordinate=public_coordinate, observation=request.workspace_observation
+        floor=caller.health(
+            _floor_health(
+                instance, coordinate=public_coordinate, observation=request.workspace_observation
+            )
         ),
-        ledger_mirror=_ledger_mirror_health(instance),
+        ledger_mirror=caller.health(_ledger_mirror_health(instance)),
         provider_lane=(
             PlaybillNextHealthV1(state="not_reported")
             if provider_lane is None
@@ -4230,24 +4591,30 @@ def service_playbill_next(
                 ),
             )
         ),
-        procedure_catalog=_procedure_catalog_health(
-            instance,
-            coordinate=coordinate,
-            access_profile=request.access_profile,
-            observation=request.workspace_observation,
+        procedure_catalog=caller.health(
+            _procedure_catalog_health(
+                instance,
+                coordinate=coordinate,
+                access_profile=request.access_profile,
+                observation=request.workspace_observation,
+            )
         ),
-        compiler=_compiler_health(instance),
-        line_dispatch=_line_dispatch_health(
-            instance,
-            coordinate=coordinate,
-            evaluation_time=request.evaluation_time,
-            access_profile=request.access_profile,
+        compiler=caller.health(_compiler_health(instance)),
+        line_dispatch=caller.health(
+            _line_dispatch_health(
+                instance,
+                coordinate=coordinate,
+                evaluation_time=request.evaluation_time,
+                access_profile=request.access_profile,
+            )
         ),
-        consumers=_consumers_health(
-            instance,
-            consumer_healths,
-            access_profile=request.access_profile,
-            running=consumers_running,
+        consumers=caller.health(
+            _consumers_health(
+                instance,
+                consumer_healths,
+                access_profile=request.access_profile,
+                running=consumers_running,
+            )
         ),
     )
     values = {
@@ -4273,7 +4640,9 @@ def service_playbill_next(
     )
     result_digest = playbill_next_result_digest(provisional)
     full = result_model.model_validate({**values, "result_digest": result_digest})
-    scope = _queue_scope(instance, request, caller_principal_id=caller_principal_id)
+    scope = _queue_scope(
+        instance, request, caller_principal_id=caller_principal_id, caller_rung=caller_rung
+    )
     _remember_queue(result_digest, full.items, scope=scope)
     answer = (
         full
@@ -4300,6 +4669,7 @@ def _queue_scope(
     request: PlaybillNextRequestAny,
     *,
     caller_principal_id: str | None,
+    caller_rung: int | None = None,
 ) -> str:
     return typed_digest(
         Sha256Value,
@@ -4308,6 +4678,11 @@ def _queue_scope(
             "instance_id": instance.descriptor.instance_id,
             "access_profile": request.access_profile.model_dump(mode="json"),
             "caller_principal_id": caller_principal_id,
+            # A delta names removed rows, so a queue filtered or rendered for one
+            # caller never diffs against one read for another.
+            "caller_surface": request.caller_surface,
+            "caller_tools": None if request.caller_tools is None else sorted(request.caller_tools),
+            "caller_rung": caller_rung,
         },
     ).tagged
 

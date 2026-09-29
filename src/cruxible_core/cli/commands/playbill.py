@@ -61,7 +61,7 @@ from cruxible_client.authoring.workspace import (
     write_playbill_workspace_config,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for
-from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
+from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestations import (
@@ -84,10 +84,11 @@ from cruxible_client.contracts.kits import (
     PlaybillKitRemoveRequestV1,
 )
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.procedures.results import ProcedureHaltTerminalV1
 from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequestV1
-from cruxible_client.contracts.repairs import render_served_repair
+from cruxible_client.contracts.repairs import RepairOperationV1, render_served_repair
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReferenceV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
@@ -2559,18 +2560,37 @@ def claim_group() -> None:
 
 
 @playbill_group.command("resolution-contracts")
-@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("claim_id", required=False)
+@click.option(
+    "--request",
+    "request_file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Advanced: a ResolutionContractsRequestV1 file with an exact hypothesis reference.",
+)
 @json_option
 @handle_errors
-def resolution_contracts(request_file: str, output_json: bool) -> None:
-    """Find accepted tests of an exact Claim version."""
-    request = _read_model(request_file, contracts.ResolutionContractsRequestV1)
+def resolution_contracts(claim_id: str | None, request_file: str | None, output_json: bool) -> None:
+    """Find accepted tests of a Claim, by Claim ID (CLM-... or Claim:CLM-...).
+
+    The daemon resolves the Claim's accepted version; `--request FILE` takes an
+    exact ClaimVersionReferenceV1 hypothesis instead.
+    """
+    if (claim_id is None) == (request_file is None):
+        raise click.UsageError("provide exactly one of CLAIM_ID or --request FILE")
+    request = (
+        _read_model(request_file, contracts.ResolutionContractsRequestV1)
+        if request_file is not None
+        else contracts.ResolutionContractsRequestV1(hypothesis=cast(str, claim_id))
+    )
     result = _server_call(
         lambda client, instance_id: client.resolution_contracts(instance_id, request=request),
         command_name="playbill resolution-contracts",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+        return
+    if not result.contracts:
+        click.echo("No resolution contracts test this Claim version.")
         return
     for view in result.contracts:
         click.echo(
@@ -2601,82 +2621,48 @@ def predict(request_file: str, output_json: bool) -> None:
     click.echo(f"Proposal: {result.proposal_id}")
 
 
-def _settle_example(prediction_id: str) -> contracts.PlaybillSettleRequestV2:
-    """A settlement request for one prediction contract, contract and evidence to fill in."""
-
-    placeholder = AcceptedCoordinate(
-        git_oid="0" * 40,
-        semantic_root="sha256:" + "0" * 64,
-        generation_root="sha256:" + "0" * 64,
-        compiler_digest="sha256:" + "0" * 64,
-    )
-    return contracts.PlaybillSettleRequestV2(
-        contract=ResolutionContractReferenceV1(
-            identity=ArtifactIdentity(
-                kind="ResolutionContract",
-                name=prediction_id.removeprefix("ResolutionContract:"),
-            ),
-            artifact_digest="sha256:" + "0" * 64,
-            coordinate=placeholder,
-        ),
-        trigger_event=None,
-        evidence=contracts.ObservationSettlementEvidenceV2(
-            claim=contracts.ClaimVersionReferenceV1(
-                identity=ArtifactIdentity(kind="Claim", name="CLM-" + "0" * 32),
-                artifact_digest="sha256:" + "0" * 64,
-                statement_digest="sha256:" + "0" * 64,
-                coordinate=placeholder,
-            )
-        ),
-    )
-
-
 @playbill_group.command("settle")
 @click.argument("prediction_id")
-@click.argument("request_file", required=False, type=click.Path(exists=True, dir_okay=False))
 @click.option(
-    "--example",
-    is_flag=True,
+    "--observation",
+    "observation",
+    help="Claim ID (CLM-...) of the accepted observation that settles the prediction.",
+)
+@click.option(
+    "--request",
+    "request_file",
+    type=click.Path(exists=True, dir_okay=False),
     help=(
-        "Print a settlement request whose evidence is left to fill in. For a bound "
-        "window id (RSC-...) the daemon fills in its exact contract and anchor event."
+        "Advanced: a PlaybillSettleRequestV2 file (exact contract reference, anchor event, "
+        "or terminal evidence)."
     ),
 )
 @json_option
 @handle_errors
 def settle(
     prediction_id: str,
+    observation: str | None,
     request_file: str | None,
-    example: bool,
     output_json: bool,
 ) -> None:
-    """Settle one prediction from a later observation or retained terminal.
+    """Settle one prediction from a later accepted observation.
 
-    `playbill next` names each settleable prediction window by its bound
-    contract id with a `--example RSC-...` command; the daemon fills in the exact
-    contract and bound window, you replace the evidence Claim reference with the
-    accepted observation, then pass the file here under the same RSC-... id.
+    PREDICTION_ID is the contract name or the bound window id (RSC-...) that
+    `playbill next` names; the daemon resolves the exact contract, window and
+    observation version from it and `--observation CLM-...`.
     """
 
-    if example:
-        if request_file is not None:
-            raise click.UsageError("--example does not accept REQUEST_FILE")
-        example_request = (
-            _server_call(
-                lambda client, instance_id: client.example_playbill_settlement(
-                    instance_id, prediction_id
-                ),
-                command_name="playbill settle --example",
-            )
-            if prediction_id.startswith("RSC-")
-            else _settle_example(prediction_id)
+    if (observation is None) == (request_file is None):
+        raise click.UsageError(
+            "provide --observation CLAIM_ID (the accepted observation that settles it) "
+            "or --request FILE"
         )
-        _emit_json(example_request.model_dump(mode="json"))
-        return
-    if request_file is None:
-        raise click.UsageError("provide PREDICTION_ID REQUEST_FILE or --example")
     try:
-        request = contracts.PlaybillSettleRequestV2.model_validate(_read_mapping(request_file))
+        request = (
+            contracts.PlaybillSettleRequestV2.model_validate(_read_mapping(request_file))
+            if request_file is not None
+            else contracts.PlaybillSettleRequestV2(observation=observation)
+        )
     except ValidationError as exc:
         raise click.ClickException(f"Invalid settlement request: {exc}") from exc
     result = _server_call(
@@ -2931,13 +2917,13 @@ def create_authoring_intent(
     \b
     Input kind family: claim | procedure | subject | query_definition |
     approval_policy | procedure_runtime_policy | procedure_mandate |
-    change_set (tagless).
+    acquisition_policy | line | change_set (tagless).
 
     \b
     Change-set member kind family: claim | claim_type | claim_type_succession |
     claim_retirement | subject | query_definition | procedure_mandate |
-    procedure. claim_type, claim_type_succession and claim_retirement are member
-    kinds only -- none is a top-level input.
+    acquisition_policy | line | procedure. claim_type, claim_type_succession and
+    claim_retirement are member kinds only -- none is a top-level input.
     approval_policy and procedure_runtime_policy are the reverse: the member
     union parses either, but a change set refuses either, so author each as its
     own singleton input.
@@ -2951,7 +2937,8 @@ def create_authoring_intent(
 
     Use --example for a model-generated starting point; --example change-set
     prints a mixed set and --example claim-type-succession a vocabulary
-    evolution.
+    evolution. --example procedure, line, acquisition-policy and
+    procedure-mandate are accepted together as members of one change set.
     """
 
     if (payload is None) == (example_name is None):
@@ -4264,6 +4251,51 @@ def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
     _emit_json(result.model_dump(mode="json"))
 
 
+#: Repair arguments a CLI leaf takes as its positional operand.
+_POSITIONAL_REPAIR_ARGUMENTS = frozenset(
+    {"line", "name", "claim_id", "proposal_id", "prediction_id", "run_id"}
+)
+
+
+def _cli_repair(repair: Any) -> str:
+    """Render a served repair as the CLI command that performs it."""
+
+    if not isinstance(repair, RepairOperationV1) or not repair.operation.startswith("playbill."):
+        return render_served_repair(repair)
+    parts = ["cruxible", *repair.operation.split(".")]
+    for key, value in repair.arguments.items():
+        if key in _POSITIONAL_REPAIR_ARGUMENTS:
+            parts.append(shlex.quote(str(value)))
+        elif value is True:
+            parts.append("--" + key.replace("_", "-"))
+        elif value not in (None, False):
+            parts.extend(["--" + key.replace("_", "-"), shlex.quote(str(value))])
+    return " ".join(parts)
+
+
+def _echo_run_outcome(result: contracts.PlaybillProcedureRunState, label: str) -> None:
+    """Lead with the answer: the result on success, the code and repair on refusal."""
+
+    click.echo(f"{label}: {result.status}")
+    if result.status == "succeeded" and result.result is not None:
+        click.echo("Result: " + json.dumps(result.result, sort_keys=True))
+    terminal = result.terminal
+    code = getattr(terminal, "code", None)
+    if code is not None:
+        click.echo(f"Refused: {code}: {getattr(terminal, 'message', '')}")
+        details = getattr(terminal, "details", None)
+        if isinstance(details, dict) and details.get("field_path"):
+            click.echo(f"Field: {details['field_path']}")
+        repair = getattr(terminal, "repair", None)
+        if repair is not None:
+            click.echo(f"Repair: {_cli_repair(repair)}")
+        elif isinstance(details, dict) and isinstance(details.get("repair"), str):
+            click.echo(f"Repair: {details['repair']}")
+    elif isinstance(terminal, ProcedureHaltTerminalV1) and terminal.reason:
+        click.echo(f"Halted at {terminal.node_id}: {terminal.reason}")
+    click.echo(f"Next: {result.next_operation['kind']}")
+
+
 def _echo_source_observations(result: contracts.PlaybillProcedureRunState) -> None:
     """Print what each admitted Source occurrence really observed.
 
@@ -4380,8 +4412,7 @@ def run_procedure(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(f"{result.run_id}: {result.status}")
-    click.echo(f"Next: {result.next_operation['kind']}")
+    _echo_run_outcome(result, result.run_id or name)
     if result.receipt_digest is not None:
         click.echo(f"Receipt: {result.receipt_digest}")
     _echo_source_observations(result)
@@ -4607,11 +4638,11 @@ def disarm_line(line: str, output_json: bool) -> None:
 @click.argument("line")
 @json_option
 @handle_errors
-def line_arm_status(line: str, output_json: bool) -> None:
+def line_status(line: str, output_json: bool) -> None:
     """Show whether the Line is armed and why an arm stopped."""
 
     result = _server_call(
-        lambda client, instance_id: client.playbill_line_arm_status(instance_id, line),
+        lambda client, instance_id: client.playbill_line_status(instance_id, line),
         command_name="playbill line status",
     )
     if output_json:
@@ -4747,8 +4778,7 @@ def run_line(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(f"{result.run_id or line}: {result.status}")
-    click.echo(f"Next: {result.next_operation['kind']}")
+    _echo_run_outcome(result, result.run_id or line)
     _echo_source_observations(result)
 
 
@@ -4917,8 +4947,12 @@ def _echo_next_status(status: contracts.PlaybillNextStatus) -> None:
             continue
         repair = health.repair
         hint = None if repair is None else repair.command or repair.required_change
+        if health.repair_hidden:
+            hint = "(repair needs a higher permission tier)"
         label = facet.replace("_", " ")
         click.echo(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
+    if status.hidden:
+        click.echo(f"Hidden: {status.hidden} rows whose repair needs a higher permission tier")
 
 
 @playbill_group.group("curation")

@@ -42,7 +42,16 @@ def _dispatch_sites() -> dict[str, bool]:
     return sites
 
 
+#: Operations whose static tier is the read pre-gate but whose runs can write:
+#: the tier a dispatch needs follows its Line, so it still carries a payload the
+#: served model validates. (`line_run` and `procedure_run` validate through the
+#: served model in the handler itself, before dispatch.)
+_TARGET_TIERED_WRITES = frozenset({"cruxible_playbill_line_dispatch"})
+
+
 def _is_mutating(operation: str) -> bool:
+    if operation in _TARGET_TIERED_WRITES:
+        return True
     return PERMISSION_REQUIREMENTS.get(operation, PermissionMode.READ_ONLY) != (
         PermissionMode.READ_ONLY
     )

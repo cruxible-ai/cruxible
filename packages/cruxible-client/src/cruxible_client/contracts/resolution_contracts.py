@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Literal
+from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
@@ -67,6 +67,34 @@ class ClaimVersionReferenceV1(_ContractModel):
             or claim_statement_digest(claim.statement).tagged != self.statement_digest
         ):
             raise PlaybillFormatError("resolution hypothesis does not reproduce its exact Claim")
+
+
+_CLAIM_ID_INPUT_RE = re.compile(r"^(?:Claim:)?CLM-[0-9a-f]{32}$")
+
+
+def _claim_id_input(value: str) -> str:
+    if not _CLAIM_ID_INPUT_RE.fullmatch(value):
+        raise ValueError(
+            "a Claim ID is CLM- plus 32 lowercase hex digits, optionally Claim:-prefixed"
+        )
+    return value.removeprefix("Claim:")
+
+
+#: A Claim ID (``CLM-…`` or ``Claim:CLM-…``), normalized to the bare ID.
+ClaimIdInput: TypeAlias = Annotated[str, AfterValidator(_claim_id_input)]
+
+#: Where a request needs one exact Claim version: a Claim ID, which the daemon
+#: resolves to its version at the accepted head (statement digest and accepting
+#: coordinate included), or -- the advanced form -- the exact reference itself.
+ClaimVersionInput: TypeAlias = Annotated[
+    ClaimIdInput | ClaimVersionReferenceV1,
+    Field(
+        description=(
+            "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. "
+            "An exact ClaimVersionReferenceV1 object is accepted as the advanced form."
+        )
+    ),
+]
 
 
 class ResolutionContractV1(_ContractModel):
@@ -163,7 +191,7 @@ class InvestigationBindingV1(_ContractModel):
 
 
 class ResolutionContractsRequestV1(_ContractModel):
-    hypothesis: ClaimVersionReferenceV1
+    hypothesis: ClaimVersionInput
     at: AcceptedCoordinate | None = None
 
 

@@ -40,9 +40,9 @@ from cruxible_core.service.procedures.line_dispatch import (
     service_stop_line_arm,
 )
 
-#: Arming lets the daemon dispatch on the caller's behalf, so it needs what an
-#: explicit dispatch needs.
-ARM_PERMISSION = TOOL_PERMISSIONS["cruxible_playbill_line_dispatch"]
+#: Arming lets the daemon dispatch on the caller's behalf for as long as the arm
+#: holds, so the arming credential must keep the tier arming itself needs.
+ARM_PERMISSION = TOOL_PERMISSIONS["cruxible_playbill_line_arm"]
 
 #: Occurrences one automatic pass admits before yielding to other Lines.
 AUTOMATIC_DISPATCH_LIMIT = 10

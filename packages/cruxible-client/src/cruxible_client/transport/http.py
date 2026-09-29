@@ -1052,16 +1052,6 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillPredictResultV2)
 
-    def example_playbill_settlement(
-        self, instance_id: str, bound_contract_id: str
-    ) -> contracts.PlaybillSettleRequestV2:
-        """The settle request for one bound window (RSC-...), evidence left to fill in."""
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/predictions/{bound_contract_id}/settle-example"
-        )
-        example = self._parse_model(response, contracts.PlaybillSettleExampleV1)
-        return contracts.PlaybillSettleRequestV2.model_validate(example.request)
-
     def settle_playbill_prediction(
         self,
         instance_id: str,
@@ -1625,7 +1615,7 @@ class CruxibleClient:
         response = self._client.post(f"/api/v1/{instance_id}/playbill/lines/{line}/disarm")
         return self._parse_model(response, contracts.LineArmV1)
 
-    def playbill_line_arm_status(self, instance_id: str, line: str) -> contracts.LineArmV1:
+    def playbill_line_status(self, instance_id: str, line: str) -> contracts.LineArmV1:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/lines/{line}/arm")
         return self._parse_model(response, contracts.LineArmV1)
 
@@ -1691,6 +1681,8 @@ class CruxibleClient:
         at_attestation_head_digest: str | None = None,
         limit: int | None = None,
         cursor: str | None = None,
+        caller_surface: Literal["cli", "mcp", "sdk"] | None = None,
+        caller_tools: Sequence[str] | None = None,
     ) -> contracts.PlaybillNextResult:
         payload: dict[str, Any] = {
             "tag": "playbill-next-request-v2",
@@ -1711,6 +1703,10 @@ class CruxibleClient:
             payload["limit"] = limit
         if cursor is not None:
             payload["cursor"] = cursor
+        if caller_surface is not None:
+            payload["caller_surface"] = caller_surface
+        if caller_tools is not None:
+            payload["caller_tools"] = list(caller_tools)
         response = self._client.post(f"/api/v1/{instance_id}/playbill/next", json=payload)
         return self._parse_model(response, contracts.PlaybillNextResult)
 

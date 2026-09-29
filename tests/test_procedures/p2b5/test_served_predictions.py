@@ -313,6 +313,81 @@ def test_observation_settlement_replays_into_existing_fold_and_survives_change(t
     assert _retained_activations(instance) == (activation.model_dump(mode="json"),)
 
 
+def test_predict_resolution_contracts_and_settle_take_plain_claim_ids(tmp_path: Path):
+    """R06: every Claim version reference can be a Claim ID the daemon resolves."""
+
+    from cruxible_client.contracts.predictions import ResolutionContractInputV1
+    from cruxible_client.contracts.resolution_contracts import ResolutionContractsRequestV1
+    from cruxible_core.service.procedures.resolution_contracts import (
+        resolve_claim_version,
+        service_resolution_contracts,
+    )
+
+    instance, owner, capture = _world(tmp_path)
+    hypothesis = _accept_payload(
+        instance,
+        owner,
+        _payload(capture, qualifier="prediction", value="ready"),
+        "2026-09-02T12:00:45.000000Z",
+    )
+    claim_id = hypothesis.identity.name
+    # A later, unrelated generation: the ID still resolves to the accepting one.
+    _accept_payload(
+        instance,
+        owner,
+        _payload(capture, qualifier="unrelated", value="blocked"),
+        "2026-09-02T12:00:50.000000Z",
+    )
+    assert resolve_claim_version(instance, claim_id) == hypothesis
+    contract = ResolutionContractInputV1.model_validate(
+        {
+            "identity": {"kind": "ResolutionContract", "name": "status-test"},
+            "hypothesis": f"Claim:{claim_id}",
+            "observation": PredictionObservationSelectorV1(
+                subject=subject_address("wi-42"),
+                predicate=PREDICATE,
+                qualifier="prediction-outcome",
+            ).model_dump(mode="json"),
+            "rule": PredictionEqualityRuleV1().model_dump(mode="json"),
+            "window": FixedWindowV1(starts_at=PREDICTED_AT, duration_seconds=3600).model_dump(
+                mode="json"
+            ),
+        }
+    )
+    proposed = service_predict_playbill(
+        instance,
+        request=PlaybillPredictRequestV2(contract=contract),
+        actor=AuthenticatedActor(actor_id="owner"),
+        evaluation_time=PREDICTED_AT,
+    )
+    accept_proposal(
+        instance,
+        owner,
+        service_inspect_playbill_proposal(instance, proposal_id=proposed.proposal_id),
+    )
+    found = service_resolution_contracts(
+        instance, ResolutionContractsRequestV1(hypothesis=claim_id)
+    )
+    (view,) = found.contracts
+    assert view.contract.hypothesis == hypothesis
+    observation = _accept_payload(
+        instance,
+        owner,
+        _payload(capture, qualifier="prediction-outcome", value="ready"),
+        "2026-09-02T12:02:00.000000Z",
+    )
+    settled = service_settle_playbill_prediction(
+        instance,
+        prediction_id="status-test",
+        request=PlaybillSettleRequestV2(observation=observation.identity.name),
+        actor_context=_actor(),
+        recorded_at=RECORDED_AT,
+    )
+    assert settled.resolution["settlement_outcome"] is True
+    # The same settlement through the exact-reference advanced form is the same answer.
+    assert _settle(instance, view.reference, observation) == settled
+
+
 PRESENCE_PREDICATE = "project.work_item.presence"
 
 

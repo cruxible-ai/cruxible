@@ -56,7 +56,7 @@ from cruxible_client.contracts.authoring.models import (
     WorkingSelectionObservationV1,
     authoring_member_identity,
 )
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
@@ -128,6 +128,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     render_procedure_runtime_policy,
 )
 from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedureV1,
     ProcedureArtifactAny,
     ProcedureArtifactV1,
     ProcedureArtifactV2,
@@ -137,6 +138,10 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
+)
+from cruxible_client.contracts.procedures.contracts import (
+    OwnedProcedureContractValidator,
+    ProcedureContractValidationError,
 )
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
@@ -153,12 +158,15 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
+    ExhaustTapNodeV3,
     ProcedureDefinitionAny,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
     ProcedureDefinitionV5,
     ProcedureDefinitionV6,
     ProcedurePinSlotRefV1,
+    SourceNodeV3,
+    SourceNodeV4,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
@@ -2139,19 +2147,46 @@ def _render_line_member(
             repair_description="Use a Procedure name present at the authoring coordinate.",
         )
     procedure = parse_procedure(procedure_content, path=procedure_target)
-    policy_target = acquisition_policy_path(payload.acquisition_policy_name)
-    policy_content = tree.get(policy_target)
-    if policy_content is None:
-        _refuse(
-            "playbill.authoring.line_acquisition_policy_missing",
-            "acquisition_policy_name",
-            "Line authoring requires the named accepted or same-ChangeSet SourceAcquisitionPolicy.",
-            repair_kind="replace_acquisition_policy_name",
-            repair_description=(
-                "Use a SourceAcquisitionPolicy name present at the authoring coordinate."
-            ),
+    policy_pin: ArtifactPin | None = None
+    if payload.acquisition_policy_name is None:
+        acquiring = sorted(
+            node.node_id
+            for node in procedure.definition.nodes
+            if isinstance(node, SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3)
         )
-    policy = parse_acquisition_policy(policy_content, path=policy_target)
+        if acquiring:
+            _refuse(
+                "playbill.authoring.line_acquisition_policy_required",
+                "acquisition_policy_name",
+                f"Procedure {payload.procedure_name!r} acquires through Source or exhaust nodes "
+                f"{acquiring}, so its Line must name a SourceAcquisitionPolicy.",
+                repair_kind="set_acquisition_policy_name",
+                repair_description=(
+                    "Name an accepted or same-ChangeSet SourceAcquisitionPolicy "
+                    "(authoring create --example acquisition-policy)."
+                ),
+            )
+    else:
+        policy_target = acquisition_policy_path(payload.acquisition_policy_name)
+        policy_content = tree.get(policy_target)
+        if policy_content is None:
+            _refuse(
+                "playbill.authoring.line_acquisition_policy_missing",
+                "acquisition_policy_name",
+                "Line authoring requires the named accepted or same-ChangeSet "
+                "SourceAcquisitionPolicy.",
+                repair_kind="replace_acquisition_policy_name",
+                repair_description=(
+                    "Use a SourceAcquisitionPolicy name present at the authoring coordinate, "
+                    "or omit it when the Procedure has no Source nodes."
+                ),
+            )
+        policy = parse_acquisition_policy(policy_content, path=policy_target)
+        policy_pin = ArtifactPin(
+            role=ACQUISITION_POLICY_PIN_ROLE,
+            target=policy.identity,
+            artifact_digest=acquisition_policy_digest(policy).tagged,
+        )
     if procedure.definition.graph_format not in {4, 5, 6}:
         _refuse(
             "playbill.authoring.line_graph_format_unsupported",
@@ -2174,11 +2209,7 @@ def _render_line_member(
         target=procedure.identity,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
-    policy_pin = ArtifactPin(
-        role=ACQUISITION_POLICY_PIN_ROLE,
-        target=policy.identity,
-        artifact_digest=acquisition_policy_digest(policy).tagged,
-    )
+    _check_line_parameters(payload, procedure=procedure, procedure_path_value=procedure_target)
     caps = procedure.definition.hard_caps
     budgets = (
         {
@@ -2244,7 +2275,11 @@ def _render_line_member(
         epsilon=payload.epsilon,
         pins=tuple(
             sorted(
-                (procedure_pin, policy_pin, *trigger_pins),
+                (
+                    procedure_pin,
+                    *(() if policy_pin is None else (policy_pin,)),
+                    *trigger_pins,
+                ),
                 key=lambda pin: (
                     pin.role.encode("utf-8"),
                     pin.target.qualified.encode("utf-8"),
@@ -2262,6 +2297,67 @@ def _render_line_member(
     if previous_content is not None and _same_revision_content(line, previous):
         return path, previous_content, line_spec_digest(previous).tagged
     return path, render_line_spec(line), line_spec_digest(line).tagged
+
+
+def _contract_fields_summary(
+    procedure: ProcedureArtifactV2, contract: ArtifactPin
+) -> dict[str, str]:
+    for owned in procedure.owned_contracts:
+        if (
+            owned.identity == contract.target
+            and procedure_owned_contract_digest(owned).tagged == contract.artifact_digest
+        ):
+            return {
+                name: field.type + (" (optional)" if field.optional else "")
+                for name, field in sorted(owned.contract_schema.fields.items())
+            }
+    return {}
+
+
+def _check_line_parameters(
+    payload: LineAuthoringPayloadV1,
+    *,
+    procedure: ProcedureArtifactAny,
+    procedure_path_value: str,
+) -> None:
+    """Refuse Line parameters the Procedure's input contract would refuse at run time.
+
+    Every Line run hands `parameters` to the Procedure as its input record, and
+    the executor validates that record against the Procedure's own input
+    Contract. The same validator runs here, so a mismatch refuses when the Line
+    is authored rather than on every later run.
+    """
+
+    if not isinstance(procedure, ProcedureArtifactV2):
+        return
+    contract = procedure.definition.contract_in
+    if not isinstance(contract, ArtifactPin):
+        return
+    accepted = AcceptedProcedureV1(
+        path=procedure_path_value,
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+    try:
+        OwnedProcedureContractValidator(accepted).validate_contract(
+            contract=contract,
+            payload=normalize_canonical(payload.parameters),
+            direction="input",
+        )
+    except ProcedureContractValidationError as exc:
+        field_path = exc.field_path
+        _refuse(
+            "playbill.authoring.line_parameters_refused",
+            "parameters" if not field_path else f"parameters.{field_path}",
+            f"Line parameters are the input record of Procedure {payload.procedure_name!r}, "
+            f"and its input contract {contract.target.name!r} refuses them: {exc}",
+            repair_kind="replace_parameters",
+            repair_description=(
+                "Set parameters to a record the Procedure's input contract accepts; "
+                "the replacement lists its fields and types."
+            ),
+            replacement=_contract_fields_summary(procedure, contract),
+        )
 
 
 def _required_slot_names(procedure: ProcedureArtifactAny) -> tuple[str, ...]:

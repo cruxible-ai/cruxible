@@ -905,18 +905,6 @@ async def predict(
     )
 
 
-@router.get(
-    "/{instance_id}/playbill/predictions/{bound_contract_id}/settle-example",
-    response_model=contracts.PlaybillSettleExampleV1,
-)
-async def prediction_settle_example(
-    instance_id: str, bound_contract_id: str
-) -> contracts.PlaybillSettleExampleV1:
-    return playbill_api.playbill_prediction_settle_example(
-        resolve_server_instance_id(instance_id), bound_contract_id
-    )
-
-
 @router.post(
     "/{instance_id}/playbill/predictions/{prediction_id}/settlements",
     response_model=contracts.PlaybillSettleResultV2,
@@ -1439,8 +1427,8 @@ def disarm_line(instance_id: str, line: str) -> contracts.LineArmV1:
 
 
 @router.get("/{instance_id}/playbill/lines/{line}/arm", response_model=contracts.LineArmV1)
-def line_arm_status(instance_id: str, line: str) -> contracts.LineArmV1:
-    return playbill_api.playbill_line_arm_status(resolve_server_instance_id(instance_id), line)
+def line_status(instance_id: str, line: str) -> contracts.LineArmV1:
+    return playbill_api.playbill_line_status(resolve_server_instance_id(instance_id), line)
 
 
 @router.post(

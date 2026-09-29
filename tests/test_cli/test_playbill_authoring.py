@@ -690,6 +690,8 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         "subject",
         "query_definition",
         "procedure_mandate",
+        "acquisition_policy",
+        "line",
         "procedure",
     ]
     assert (
@@ -706,6 +708,8 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         "approval-policy",
         "procedure-runtime-policy",
         "procedure-mandate",
+        "line",
+        "acquisition-policy",
         "query-claims-by-type",
         "change-set",
         "claim-type-succession",
@@ -722,6 +726,8 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
             "procedure_runtime_policy",
             "procedure_mandate",
             "query_definition",
+            "line",
+            "acquisition_policy",
         }
         if name == "procedure-mandate":
             assert payload["tag"] == "playbill-procedure-mandate-input-v1"

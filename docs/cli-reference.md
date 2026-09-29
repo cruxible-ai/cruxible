@@ -838,7 +838,8 @@ written, then counts zero use only from that point.
 
 One authoring intent is one changeset. The tagless `change_set` input carries
 any mix of members -- `claim`, `claim_type`, `claim_retirement`, `subject`,
-`query_definition`, `procedure`, `procedure_mandate` -- and the whole intent
+`query_definition`, `procedure`, `procedure_mandate`, `acquisition_policy`,
+`line` -- and the whole intent
 lowers once, proposes once and admits or refuses together, typed to the member
 index that offends. `approval_policy` and `procedure_runtime_policy` are the
 two exceptions: the member union parses either, but a change set carrying one
@@ -1142,6 +1143,15 @@ cruxible playbill line run LINE --evaluation-time TS
   [--occurrence-id ID] [--json]
 ~~~
 
+A Line is authored like any other definition: a `line` input (alone or as a
+change-set member) names its Procedure, trigger policy and `parameters` -- the
+Procedure's input record, which lowering checks against the Procedure's input
+contract, refusing `playbill.authoring.line_parameters_refused` with the
+expected fields. It names an `acquisition_policy` (an `acquisition_policy`
+input) only when the Procedure has Source nodes. `authoring create --example
+line` prints a manual Line over the `--example procedure` Procedure, and
+`--example acquisition-policy` a policy for a Source Procedure's Line.
+
 `check` is read-only: it returns `met`, `not_met`, or `incomplete`, exact
 matching events/windows, and the dispatch status of each occurrence (pending,
 admitted, rejected, or superseded).
@@ -1151,8 +1161,9 @@ it matches, with no explicit call. Runs use the arming caller's credential,
 which the daemon rechecks before every admission: a revoked credential, one
 moved to another instance, or one no longer permitted to dispatch stops the arm
 with that reason (`credential_revoked`, `credential_scope_changed`,
-`permission_insufficient`). Arming needs the permission `dispatch` needs, and
-keeps only the credential's identifier, never a token. An arm is pinned to the
+`permission_insufficient`). Arming needs governed write, and keeps only the
+credential's identifier, never a token. A Line that can propose
+or settle refuses to arm while no current mandate covers it. An arm is pinned to the
 Line version current when it was armed: any accepted change to the Line stops
 it (`line_changed`, or `epoch_changed`) until it is rearmed. Because a settle
 mandate, not the caller's tier, authorizes settling, an armed Line whose
@@ -1188,7 +1199,9 @@ disarm is not reported.
 `evaluate` explicitly checks a historical `[since, until)` range and records
 its matches as pending. Follow its cursor to finish a bounded page.
 `dispatch` admits pending occurrences using the caller's current permissions
-and the ordinary Line admission checks. Permanent input failures close as
+and the ordinary Line admission checks. `run` and `dispatch` of a Line whose
+runs can propose or settle (and `procedure run` of such a Procedure) need
+governed write; an observe-only Line or Procedure runs at read-only. Permanent input failures close as
 `rejected`; changed Line bindings close as `superseded`. Both leave the runnable
 queue, retaining their evidence and a typed refusal with repair instructions.
 Invalid event bindings, unavailable event material, and Captures that exceed
@@ -1220,8 +1233,15 @@ bound is refused. That bound is operational, not wire: the daemon reads
 `evaluation_instant_skew_seconds` from `daemon/procedure-runs.json` in its own
 state root, defaulting to the 300-second ProcedureMandate skew the bound
 protects, and refuses the run if that file exists but cannot be read as one.
-The accepted Line's governed mandate authorizes execution; without one the
-operation returns a typed no-mandate refusal.
+A Line whose runs can propose or settle needs a current accepted
+ProcedureMandate over its exact Procedure; without one each run refuses
+`line_mandate_required`, and `arm` refuses up front with
+`playbill.line.mandate_required`, both naming `authoring create --example
+procedure-mandate`. An observe-only Line -- one whose Procedure's terminals, or
+whose `max_authority`, stop at observe -- needs no mandate. A mandate whose
+`resource_ceiling` exceeds the Procedure's hard caps is refused naming each
+widened cap with both values; `--example procedure-mandate` uses the
+`--example procedure` caps.
 
 A Line whose Procedure ends in a `propose_change_set` terminal produces a
 proposal. Each resolved candidate template must be one Claim proposal item --
@@ -1296,39 +1316,42 @@ under a new operation key.
 ## playbill predictions
 
 ~~~text
-cruxible playbill resolution-contracts REQUEST_FILE [--json]
+cruxible playbill resolution-contracts CLAIM_ID [--json]
+cruxible playbill resolution-contracts --request REQUEST_FILE [--json]
 cruxible playbill predict REQUEST_FILE [--json]
-cruxible playbill settle PREDICTION_ID REQUEST_FILE [--json]
-cruxible playbill settle --example PREDICTION_ID
+cruxible playbill settle PREDICTION_ID --observation CLAIM_ID [--json]
+cruxible playbill settle PREDICTION_ID --request REQUEST_FILE [--json]
 ~~~
 
-`predict` submits a governed ResolutionContract for an already accepted, exact
-hypothesis Claim version and returns the proposal ID and authoring intent. The
-contract must be accepted before it can bind an investigation or settlement.
-`resolution-contracts` finds accepted contracts for an exact hypothesis version.
+Every Claim version these commands need is named by Claim ID (`CLM-...` or
+`Claim:CLM-...`); the daemon resolves its artifact and statement digests and the
+coordinate that accepted it. The exact `ClaimVersionReferenceV1` object is still
+accepted, as the advanced form, anywhere a Claim ID is.
 
-`settle` names that contract by ID, or one of its bound windows by its bound
-contract ID (`RSC-...`), and gives its exact accepted reference; a bound window
-ID must be the one the request's contract and window rebuild. It checks later
-accepted observation evidence against the contract's selector, mechanical rule,
-and bound window. Terminal-backed settlement additionally requires one delivered
+`predict` submits a governed ResolutionContract whose `hypothesis` is an already
+accepted Claim (by ID) and returns the proposal ID and authoring intent. The
+contract pins the exact version the ID resolved to, and must be accepted before
+it can bind an investigation or settlement. `resolution-contracts CLAIM_ID`
+finds accepted contracts testing that Claim's current version and says so when
+there are none; `--request` takes an exact hypothesis reference.
+
+`settle` names the prediction by its contract name, or one of its bound windows
+by its bound contract ID (`RSC-...`), and the settling observation by Claim ID.
+The daemon resolves the exact live contract reference and, for a bound window,
+its anchor event; a window the worker does not hold, or whose contract version
+is no longer live at the accepted head, is refused with
+`prediction_window_unknown`. It checks the observation against the contract's
+selector, mechanical rule, and bound window. `--request` takes the advanced
+request: an exact contract reference, an explicit anchor event, or terminal
+evidence. Terminal-backed settlement additionally requires one delivered
 `settle_change_set` receipt from the same investigation whose outcome is
 `settled`; one that fell back to a proposal does not qualify. It records
 the activation and resolution in operational exhaust; it does not create or
 mutate Claims. A failed attempt or an unevaluable
 observation does not settle the hypothesis as false. Effectful terminal nodes
-remain disabled in the public Procedure runner.
-
-`settle --example` prints a settlement request. Given a bound window ID
-(`RSC-...`), it asks the daemon for the prediction worker's window and fills in
-the exact accepted contract reference and, for an event window, the anchor event
-the window is bound to, so only the evidence Claim reference is left to replace.
-A window the worker does not hold, or whose contract version is no longer live
-at the accepted head, is refused with `prediction_window_unknown`. Submit the
-filled request with `cruxible playbill settle RSC-... REQUEST_FILE`.
-Given any other ID it prints a placeholder template without contacting the
-daemon. The `prediction_settleable` row in `playbill next` renders this command
-with its bound window ID.
+remain disabled in the public Procedure runner. The `prediction_settleable` row
+in `playbill next` renders `cruxible playbill settle RSC-...`; add
+`--observation CLAIM_ID`.
 
 A window that closed with no accepted observation inside it cannot settle:
 `settle` refuses with `prediction_deadline_passed`, and the
@@ -1534,9 +1557,8 @@ last check:
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the
   `bound_contract_id`, and `evaluated_at`. An event window has one row per
-  anchor. The repair is `cruxible playbill settle --example RSC-...`, which
-  fills in the contract and window; settle from an accepted observation inside
-  the window. The worker does not check that such an observation exists; if
+  anchor. The repair is `cruxible playbill settle RSC-...`; add
+  `--observation CLAIM_ID` naming an accepted observation inside the window. The worker does not check that such an observation exists; if
   none does, see the note under `playbill settle`.
   The worker clears the row when the settlement lands, and restores it if that
   answer is overturned.
@@ -1568,6 +1590,17 @@ the rows held. A hold lasts only while its basis is unchanged:
 
 A revised Claim, a later support or contradict from the same principal, or a
 lapsed validity window ends the hold, and the row returns.
+
+A row appears only when the caller can perform its repair: each repair needs
+the permission tier of the tool that performs it (approval needs graph write;
+settle, arm and authoring need governed write; a Line dispatch needs what the
+Line's runs need). A read-only credential sees only the rows it can repair.
+`status.hidden` counts the rows and nested findings left out, and the text
+output says so. A status facet (the compiler, floor, ledger mirror and so on)
+always reports its state; when its repair is one the caller cannot perform,
+the repair is dropped and the facet carries `repair_hidden: true` instead. Each repair's `command`
+renders for the caller's surface: a CLI command here, an MCP tool call on
+`cruxible_playbill_next`.
 Empty `items` means only that no work exists in the explicitly observed domains.
 
 Rows are typed: each carries `severity`, `reason`, `subject_identity`,
