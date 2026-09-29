@@ -5062,32 +5062,132 @@ def search_list(
     )
 
 
+def _orient_predicate_line(item: Mapping[str, Any]) -> str:
+    kind = item["type"]
+    if item.get("members"):
+        kind = "enum[" + "|".join(str(member) for member in item["members"]) + "]"
+    parts = [str(item["name"]), str(item["cardinality"]), kind]
+    if item.get("live_claims") is not None:
+        parts.append(f"claims={item['live_claims']}")
+    if item.get("stale_after"):
+        parts.append(f"stale_after={item['stale_after']}")
+    if item.get("evidence"):
+        parts.append("evidence=" + ",".join(item["evidence"]))
+    return "  ".join(parts)
+
+
+def _render_orient(result: Mapping[str, Any]) -> str:
+    lines = [
+        f"Playbill {result['instance']} generation={result['generation']} "
+        f"at {result['coordinate']['git_oid'][:12]} accepted {result['accepted_at']}"
+    ]
+    you = result.get("you")
+    if you is not None:
+        verdict = "can author" if you["can_author"] else f"cannot author: {you['reason']}"
+        lines.append(f"You: {you['actor'] or '(no actor)'}, {verdict}")
+    kinds = result.get("kinds")
+    if kinds is not None:
+        lines.append(f"Kinds ({len(kinds)}):")
+        for kind in kinds:
+            shared = kind.get("evidence")
+            lines.append(
+                f"  {kind['kind']}  subjects={kind['subjects']}"
+                + (f"  evidence={','.join(shared)}" if shared else "")
+            )
+            lines.extend(f"    {_orient_predicate_line(item)}" for item in kind["predicates"])
+    artifacts = result.get("artifacts")
+    if artifacts is not None:
+        lines.append(
+            "Artifacts: " + " ".join(f"{name}={count}" for name, count in artifacts.items())
+        )
+    detail = result.get("kind_detail")
+    if detail is not None:
+        lines.append(f"Kind {detail['kind']}  subjects={detail['subjects']}")
+        lines.extend(f"  {_orient_predicate_line(item)}" for item in detail["predicates"])
+        if detail["sample_subject_ids"]:
+            lines.append("Sample subjects: " + ", ".join(detail["sample_subject_ids"]))
+    section = result.get("section")
+    if section is not None and not result[section]:
+        lines.append(f"(no {section.replace('_', ' ')})")
+    if section in {"documents", "procedures"}:
+        for row in result[section]:
+            lines.append("  ".join(str(value) for value in row.values()))
+    if section == "claim_types":
+        for row in result["claim_types"]:
+            lines.append(
+                f"{row['predicate']}  kinds={','.join(row['subject_kinds'])}  "
+                + _orient_predicate_line(row).split("  ", 1)[1]
+            )
+    queries = result.get("queries")
+    if queries:
+        if section is None:
+            lines.append("Queries:")
+        for query in queries:
+            params = ", ".join(query["params"])
+            description = f"  {query['description']}" if query.get("description") else ""
+            lines.append(f"  {query['name']}({params}){description}")
+    attention = result.get("attention")
+    if attention is not None:
+        lines.append(
+            f"Attention: next={attention['next_items']} "
+            f"open_proposals={attention['open_proposals']}"
+        )
+        lines.extend(f"  {line}" for line in attention["top"])
+        lines.extend(f"  note: {line}" for line in attention.get("notes", ()))
+    if result.get("next"):
+        lines.append("Next:")
+        lines.extend(f"  {line}" for line in result["next"])
+    return "\n".join(lines)
+
+
 @playbill_group.command("orient")
-@click.option("--kind", "kinds", type=_SEARCH_KIND, multiple=True)
-@click.option("--status", "statuses", type=_SEARCH_STATUS, multiple=True)
-@click.option("--subject-path", default=None, help="Exact governed Subject artifact path.")
+@click.option("--kind", default=None, help="Read one Subject kind in full.")
+@click.option(
+    "--section",
+    type=click.Choice(["documents", "procedures", "claim_types", "queries"]),
+    default=None,
+    help="Page one artifact family instead of the map.",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(1, contracts.PLAYBILL_ORIENT_MAX_LIMIT),
+    default=contracts.PLAYBILL_ORIENT_DEFAULT_LIMIT,
+    show_default=True,
+)
+@click.option("--cursor", default=None, help="next_cursor from the previous page.")
+@click.option("--at", "at_oid", default=None, help="An accepted generation's Git OID.")
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @json_option
 @handle_errors
 def orient(
-    kinds: tuple[str, ...],
-    statuses: tuple[str, ...],
-    subject_path: str | None,
+    kind: str | None,
+    section: str | None,
+    limit: int,
+    cursor: str | None,
+    at_oid: str | None,
     evaluation_time: str | None,
     output_json: bool,
 ) -> None:
-    """Summarize accepted state and return exact follow-up filters."""
+    """Map accepted state: kinds, predicates, artifacts, attention and next commands."""
 
-    _headless_search(
-        mode="orient",
-        query_text=None,
-        kinds=kinds,
-        statuses=statuses,
-        subject_path=subject_path,
-        cursor_json=None,
-        evaluation_time=evaluation_time,
-        output_json=output_json,
+    result = _server_call(
+        lambda client, instance_id: client.orient_playbill(
+            instance_id,
+            kind=kind,
+            section=cast(Any, section),
+            limit=limit,
+            cursor=cursor,
+            at=at_oid,
+            evaluation_time=evaluation_time,
+            surface="cli",
+        ),
+        command_name="playbill orient",
     )
+    rendered = result.model_dump(mode="json")
+    if output_json:
+        _emit_json(rendered)
+        return
+    click.echo(_render_orient(rendered))
 
 
 @playbill_group.group("world")

@@ -62,18 +62,14 @@ def test_cli_search_and_orient_call_the_same_wire(monkeypatch) -> None:  # type:
     ]
     runner = CliRunner()
     searched = runner.invoke(cli, [*base, "search", "release", "--kind", "claim", "--json"])
-    oriented = runner.invoke(cli, [*base, "orient"])
     listed = runner.invoke(cli, [*base, "list"])
 
     assert searched.exit_code == 0, searched.output
-    assert oriented.exit_code == 0, oriented.output
     assert listed.exit_code == 0, listed.output
     assert calls == [
         ("search", "release"),
-        ("orient", None),
         ("list", None),
         ("orient", None),
     ]
     header = "Playbill generation=1 claim=3 procedure=1 demand=not_installed conflicted=2"
-    assert oriented.output.strip() == header
     assert listed.output.strip() == header

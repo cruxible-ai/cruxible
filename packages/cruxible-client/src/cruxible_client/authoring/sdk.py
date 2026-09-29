@@ -3194,13 +3194,40 @@ class Playbill:
     ) -> SearchPage:
         return self._search(mode="list", query=None, kinds=kinds, statuses=statuses)
 
-    def orient(self) -> SearchPage:
-        return self._search(
-            mode="orient",
-            query=None,
-            kinds=("claim", "demand", "procedure"),
-            statuses=(),
+    def orient(
+        self,
+        *,
+        kind: str | None = None,
+        section: api.PlaybillOrientSection | None = None,
+        limit: int = api.PLAYBILL_ORIENT_DEFAULT_LIMIT,
+        cursor: str | None = None,
+    ) -> api.PlaybillOrientResultV1:
+        """Map accepted state in one call, at this context's coordinate.
+
+        With no arguments: each Subject kind with its count and predicates,
+        artifact counts, named queries, whether this caller can author, what
+        needs attention, and ``next`` suggestions written as SDK calls.
+        ``kind`` reads one kind in full with sample Subject IDs; ``section``
+        pages documents, procedures, claim_types or queries. Follow
+        ``next_cursor`` while ``truncated``.
+        """
+
+        requested = self._read_at()
+        result = self._client.orient_playbill(
+            self._instance_id,
+            kind=kind,
+            section=section,
+            limit=limit,
+            cursor=cursor,
+            at=requested,
+            evaluation_time=self._evaluation_time(),
+            surface="sdk",
         )
+        self._observe_read(
+            result.coordinate,
+            expected=requested if cursor is None else None,
+        )
+        return result
 
     def _search(
         self,

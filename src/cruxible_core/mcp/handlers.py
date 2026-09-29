@@ -794,6 +794,45 @@ def handle_playbill_whoami(instance_id: str) -> McpWhoAmIResult:
     )
 
 
+def handle_playbill_orient(
+    instance_id: str,
+    *,
+    kind: str | None = None,
+    section: contracts.PlaybillOrientSection | None = None,
+    limit: int = contracts.PLAYBILL_ORIENT_DEFAULT_LIMIT,
+    cursor: str | None = None,
+    at: str | contracts.PlaybillAcceptedCoordinate | None = None,
+    evaluation_time: str | None = None,
+) -> contracts.PlaybillOrientResultV1:
+    """The orient map, with its follow-up calls rendered as MCP tool calls."""
+
+    return _dispatch_remote_or_local(
+        lambda client: client.orient_playbill(
+            instance_id,
+            kind=kind,
+            section=section,
+            limit=limit,
+            cursor=cursor,
+            at=at,
+            evaluation_time=evaluation_time,
+            surface="mcp",
+        ),
+        lambda: playbill_api.playbill_orient(
+            instance_id,
+            kind=kind,
+            section=section,
+            limit=limit,
+            cursor=cursor,
+            at=at
+            if at is None or isinstance(at, str)
+            else AcceptedCoordinate.model_validate(_json(at)),
+            evaluation_time=parse_datetime(evaluation_time),
+            surface="mcp",
+        ),
+        operation_name="cruxible_playbill_orient",
+    )
+
+
 def handle_playbill_list_proposals(
     instance_id: str,
     status: str | None,

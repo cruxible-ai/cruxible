@@ -137,6 +137,21 @@
         "warning"
       ]
     },
+    "PlaybillOrientSection": {
+      "values": [
+        "documents",
+        "procedures",
+        "claim_types",
+        "queries"
+      ]
+    },
+    "PlaybillOrientSurface": {
+      "values": [
+        "mcp",
+        "cli",
+        "sdk"
+      ]
+    },
     "PlaybillPolicyKind": {
       "values": [
         "approval_policy",
@@ -26293,6 +26308,1064 @@
         "line_dispatch",
         "procedure_catalog",
         "provider_lane"
+      ]
+    },
+    "PlaybillOrientResultV1": {
+      "fields": {
+        "accepted_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_at",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Accepted At",
+            "type": "string"
+          }
+        },
+        "artifacts": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifacts",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillOrientArtifactCountsV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "attention": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "attention",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillOrientAttentionV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "claim_types": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim_types",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientPredicateV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Types"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          }
+        },
+        "documents": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "documents",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientDocumentV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Documents"
+          }
+        },
+        "evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Evaluation Time",
+            "type": "string"
+          }
+        },
+        "generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "instance": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance",
+          "required": true,
+          "schema": {
+            "title": "Instance",
+            "type": "string"
+          }
+        },
+        "kind_detail": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind_detail",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillOrientKindDetailV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "kinds": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kinds",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientKindV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kinds"
+          }
+        },
+        "mirror_url": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "mirror_url",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mirror Url"
+          }
+        },
+        "next": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Next",
+            "type": "array"
+          }
+        },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          }
+        },
+        "procedures": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "procedures",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientProcedureV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Procedures"
+          }
+        },
+        "queries": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "queries",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientQueryV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Queries"
+          }
+        },
+        "section": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "section",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "documents",
+                  "procedures",
+                  "claim_types",
+                  "queries"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Section"
+          }
+        },
+        "tag": {
+          "default": "playbill-orient-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-orient-v1",
+            "default": "playbill-orient-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "truncated": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "you": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "you",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillOrientYouV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillOrientArtifactCountsV1": {
+            "additionalProperties": false,
+            "properties": {
+              "claim_types": {
+                "minimum": 0,
+                "title": "Claim Types",
+                "type": "integer"
+              },
+              "documents": {
+                "minimum": 0,
+                "title": "Documents",
+                "type": "integer"
+              },
+              "procedures": {
+                "minimum": 0,
+                "title": "Procedures",
+                "type": "integer"
+              },
+              "queries": {
+                "minimum": 0,
+                "title": "Queries",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "claim_types",
+              "procedures",
+              "documents",
+              "queries"
+            ],
+            "title": "PlaybillOrientArtifactCountsV1",
+            "type": "object"
+          },
+          "PlaybillOrientAttentionV1": {
+            "additionalProperties": false,
+            "description": "What the ``next`` queue holds, and anything else the instance needs.",
+            "properties": {
+              "next_items": {
+                "minimum": 0,
+                "title": "Next Items",
+                "type": "integer"
+              },
+              "notes": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Notes",
+                "type": "array"
+              },
+              "open_proposals": {
+                "minimum": 0,
+                "title": "Open Proposals",
+                "type": "integer"
+              },
+              "top": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Top",
+                "type": "array"
+              }
+            },
+            "required": [
+              "next_items",
+              "open_proposals"
+            ],
+            "title": "PlaybillOrientAttentionV1",
+            "type": "object"
+          },
+          "PlaybillOrientDocumentV1": {
+            "additionalProperties": false,
+            "properties": {
+              "document_kind": {
+                "title": "Document Kind",
+                "type": "string"
+              },
+              "media_type": {
+                "title": "Media Type",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "title",
+              "document_kind",
+              "media_type"
+            ],
+            "title": "PlaybillOrientDocumentV1",
+            "type": "object"
+          },
+          "PlaybillOrientKindDetailV1": {
+            "additionalProperties": false,
+            "description": "One kind in full, with a few Subject IDs to read next.",
+            "properties": {
+              "evidence": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence",
+                "type": "array"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "predicates": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientPredicateV1"
+                },
+                "title": "Predicates",
+                "type": "array"
+              },
+              "sample_subject_ids": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Sample Subject Ids",
+                "type": "array"
+              },
+              "subjects": {
+                "minimum": 0,
+                "title": "Subjects",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "subjects",
+              "predicates"
+            ],
+            "title": "PlaybillOrientKindDetailV1",
+            "type": "object"
+          },
+          "PlaybillOrientKindV1": {
+            "additionalProperties": false,
+            "description": "One Subject kind: how many live Subjects it has and its predicates.\n\nWhen every predicate of the kind admits the same CaptureContracts, the\ncompact map names them once here as ``evidence`` and the predicates leave\ntheirs out; otherwise each predicate carries its own.",
+            "properties": {
+              "evidence": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence",
+                "type": "array"
+              },
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "predicates": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientPredicateV1"
+                },
+                "title": "Predicates",
+                "type": "array"
+              },
+              "subjects": {
+                "minimum": 0,
+                "title": "Subjects",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "subjects",
+              "predicates"
+            ],
+            "title": "PlaybillOrientKindV1",
+            "type": "object"
+          },
+          "PlaybillOrientPredicateV1": {
+            "additionalProperties": false,
+            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.",
+            "properties": {
+              "cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Cardinality",
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "evidence": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Evidence",
+                "type": "array"
+              },
+              "live_claims": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Live Claims"
+              },
+              "members": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Members"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "roles": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Roles"
+              },
+              "stale_after": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Stale After"
+              },
+              "subject_kinds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Subject Kinds"
+              },
+              "type": {
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "predicate",
+              "cardinality",
+              "type"
+            ],
+            "title": "PlaybillOrientPredicateV1",
+            "type": "object"
+          },
+          "PlaybillOrientProcedureV1": {
+            "additionalProperties": false,
+            "properties": {
+              "lifecycle": {
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "Lifecycle",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "runnable": {
+                "enum": [
+                  "directly_runnable",
+                  "binding_required"
+                ],
+                "title": "Runnable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "lifecycle",
+              "runnable"
+            ],
+            "title": "PlaybillOrientProcedureV1",
+            "type": "object"
+          },
+          "PlaybillOrientQueryV1": {
+            "additionalProperties": false,
+            "description": "One named QueryDefinition; params read ``name: type`` with ``?`` when optional.",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "params": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Params",
+                "type": "array"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "PlaybillOrientQueryV1",
+            "type": "object"
+          },
+          "PlaybillOrientYouV1": {
+            "additionalProperties": false,
+            "description": "The caller as the daemon resolved it, and whether it can author.",
+            "properties": {
+              "actor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Actor"
+              },
+              "can_author": {
+                "title": "Can Author",
+                "type": "boolean"
+              },
+              "principal": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Principal"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              }
+            },
+            "required": [
+              "actor",
+              "can_author"
+            ],
+            "title": "PlaybillOrientYouV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types`` or ``queries``), paged.\n\n``next`` is rendered for the requesting surface.",
+        "properties": {
+          "accepted_at": {
+            "format": "date-time",
+            "title": "Accepted At",
+            "type": "string"
+          },
+          "artifacts": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillOrientArtifactCountsV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "attention": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillOrientAttentionV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "claim_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientPredicateV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Types"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/AcceptedCoordinate"
+          },
+          "documents": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientDocumentV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Documents"
+          },
+          "evaluation_time": {
+            "format": "date-time",
+            "title": "Evaluation Time",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "instance": {
+            "title": "Instance",
+            "type": "string"
+          },
+          "kind_detail": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillOrientKindDetailV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientKindV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kinds"
+          },
+          "mirror_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mirror Url"
+          },
+          "next": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Next",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          },
+          "procedures": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientProcedureV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Procedures"
+          },
+          "queries": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientQueryV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Queries"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "enum": [
+                  "documents",
+                  "procedures",
+                  "claim_types",
+                  "queries"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Section"
+          },
+          "tag": {
+            "const": "playbill-orient-v1",
+            "default": "playbill-orient-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "you": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillOrientYouV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "instance",
+          "coordinate",
+          "generation",
+          "accepted_at",
+          "evaluation_time"
+        ],
+        "title": "PlaybillOrientResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_at",
+        "coordinate",
+        "evaluation_time",
+        "generation",
+        "instance"
       ]
     },
     "PlaybillPolicyInForce": {

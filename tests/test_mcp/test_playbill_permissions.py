@@ -46,6 +46,7 @@ _DEFAULT_PROFILE = {
     "cruxible_playbill_review",
     "cruxible_playbill_approve",
     "cruxible_playbill_activate",
+    "cruxible_playbill_orient",
     "cruxible_playbill_whoami",
     "cruxible_server_info",
 }

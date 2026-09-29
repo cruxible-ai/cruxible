@@ -69,6 +69,12 @@ from cruxible_client.contracts.ledger_mirror import (
     PlaybillLedgerMirrorUnset,
     validate_mirror_url,
 )
+from cruxible_client.contracts.orient import (
+    PLAYBILL_ORIENT_DEFAULT_LIMIT,
+    PlaybillOrientResultV1,
+    PlaybillOrientSection,
+    PlaybillOrientSurface,
+)
 from cruxible_client.contracts.predictions import (
     PlaybillPredictRequestV2,
     PlaybillPredictResultV2,
@@ -232,6 +238,7 @@ from cruxible_core.service.discovery.next import (
     service_playbill_next,
     validate_playbill_next_request,
 )
+from cruxible_core.service.discovery.orient import OrientCaller, service_playbill_orient
 from cruxible_core.service.discovery.query import service_run_playbill_query
 from cruxible_core.service.discovery.query_definitions import (
     service_get_playbill_query_definition,
@@ -884,6 +891,52 @@ def playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
         permission_mode=get_current_mode(),
     )
     return contracts.PlaybillWhoAmI.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_orient(
+    instance_id: str,
+    *,
+    kind: str | None = None,
+    section: PlaybillOrientSection | None = None,
+    limit: int = PLAYBILL_ORIENT_DEFAULT_LIMIT,
+    cursor: str | None = None,
+    at: AcceptedCoordinate | str | None = None,
+    evaluation_time: datetime | None = None,
+    surface: PlaybillOrientSurface = "cli",
+) -> PlaybillOrientResultV1:
+    """The orient map; the caller is whoever ``whoami`` resolves the transport to."""
+
+    check_permission("cruxible_playbill_orient", instance_id=instance_id)
+    try:
+        identity: contracts.PlaybillWhoAmI | None = playbill_whoami(instance_id)
+    except AuthenticationError:
+        identity = None
+    lane_state, lane_code, lane_detail = (
+        get_playbill_manager().provider_runtime_operator().lane_status()
+    )
+    return service_playbill_orient(
+        get_playbill_manager().get(instance_id),
+        kind=kind,
+        section=section,
+        limit=limit,
+        cursor=cursor,
+        at=at,
+        evaluation_time=evaluation_time,
+        surface=surface,
+        caller=(
+            None
+            if identity is None
+            else OrientCaller(
+                actor_id=identity.actor_id,
+                principal_registration_status=identity.principal_registration_status,
+                credential_permission_mode=identity.credential_permission_mode,
+            )
+        ),
+        provider_lane=contracts.ProviderLaneStatusV1(
+            state=lane_state, code=lane_code, detail=lane_detail
+        ),
+        consumers_running=get_playbill_manager().consumer_runner.running,
+    )
 
 
 def playbill_inspect_refusal(

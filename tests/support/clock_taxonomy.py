@@ -285,6 +285,11 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillReviewOperationalEventV1", "recorded_at"): "ASSERTION TIME",
     ("PlaybillReviewOperationalEventV1", "sequence"): "SETTLEMENT ORDER",
     ("PlaybillSearchOrientationV1", "generation"): "SETTLEMENT ORDER",
+    # The accepted candidate's own timestamp: the author's assertion of when
+    # the head generation was made, surfaced by orient beside its sequence.
+    ("PlaybillOrientResultV1", "accepted_at"): "ASSERTION TIME",
+    ("PlaybillOrientResultV1", "evaluation_time"): "EVALUATION INSTANT",
+    ("PlaybillOrientResultV1", "generation"): "SETTLEMENT ORDER",
     ("PlaybillSearchRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillSearchResult", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillSearchResultV1", "evaluation_time"): "EVALUATION INSTANT",

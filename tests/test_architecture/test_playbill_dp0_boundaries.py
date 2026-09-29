@@ -439,6 +439,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "list_playbill_proposals",
         "resolve_playbill_proposal_selector",
         "playbill_whoami",
+        "orient_playbill",
         "readmit_playbill_proposal",
         "withdraw_playbill_proposal",
         "list_playbill_provider_packages",

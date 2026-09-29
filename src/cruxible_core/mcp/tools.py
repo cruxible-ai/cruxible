@@ -274,6 +274,43 @@ def register_tools(
         return handlers.handle_playbill_whoami(require_instance_id(instance_id))
 
     @_tool
+    def cruxible_playbill_orient(
+        instance_id: InstanceId = None,
+        *,
+        kind: Annotated[
+            str | None,
+            Field(description="One Subject kind to read in full, e.g. 'dev.roadmap_item'."),
+        ] = None,
+        section: Annotated[
+            contracts.PlaybillOrientSection | None,
+            Field(description="Page one artifact family as compact rows instead of the map."),
+        ] = None,
+        limit: Annotated[
+            int, Field(ge=1, le=contracts.PLAYBILL_ORIENT_MAX_LIMIT)
+        ] = contracts.PLAYBILL_ORIENT_DEFAULT_LIMIT,
+        cursor: Annotated[
+            str | None, Field(description="next_cursor from the previous page of this view.")
+        ] = None,
+        at: Annotated[
+            str | contracts.PlaybillAcceptedCoordinate | None,
+            Field(description="An accepted coordinate, or one accepted generation's Git OID."),
+        ] = None,
+        evaluation_time: Annotated[
+            str | None, Field(description="ISO-8601 instant; defaults to now.")
+        ] = None,
+    ) -> contracts.PlaybillOrientResultV1:
+        """Map accepted state: kinds and predicates, artifacts, you, attention, next calls."""
+        return handlers.handle_playbill_orient(
+            require_instance_id(instance_id),
+            kind=kind,
+            section=section,
+            limit=limit,
+            cursor=cursor,
+            at=at,
+            evaluation_time=evaluation_time,
+        )
+
+    @_tool
     def cruxible_playbill_proposal_list(
         instance_id: InstanceId = None,
         *,

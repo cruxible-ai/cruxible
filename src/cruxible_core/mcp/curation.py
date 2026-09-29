@@ -46,6 +46,8 @@ _DEFAULT_TOOLS = frozenset(
         "cruxible_playbill_review",
         "cruxible_playbill_approve",
         "cruxible_playbill_activate",
+        # the orient map
+        "cruxible_playbill_orient",
         # identity and versions
         "cruxible_playbill_whoami",
         "cruxible_server_info",
