@@ -287,7 +287,8 @@ class PlaybillGetBodyV1(_StrictGetModel):
     document: str
     media_type: str
     size: int
-    range: PlaybillByteRangeV1
+    # The bytes returned; absent for an empty Document, which has none.
+    range: PlaybillByteRangeV1 | None = None
     text: str | None = Field(default=None, exclude_if=_omit_none)
     content_base64: str | None = Field(default=None, exclude_if=_omit_none)
 

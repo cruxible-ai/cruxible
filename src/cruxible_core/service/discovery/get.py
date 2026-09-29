@@ -1295,21 +1295,31 @@ def _body(
                 repair_line=line,
                 context={"size": size, "cap": GET_BODY_DEFAULT_MAX_BYTES},
             )
-        window_range = PlaybillByteRangeV1(start=0, end=max(size, 1))
+        window_range: PlaybillByteRangeV1 | None = (
+            PlaybillByteRangeV1(start=0, end=size) if size else None
+        )
     else:
-        if requested.start >= max(size, 1):
+        # An empty Document has no bytes to range over: a range from 0 reads
+        # its empty body, and any later start is out of bounds.
+        if requested.start > 0 and requested.start >= size:
+            arguments: dict[str, object] = {"ref": resolved.display, "detail": "body"}
+            if size:
+                arguments["range"] = f"0:{size}"
             raise ReadRefusalError(
                 "playbill.get.range_out_of_bounds",
                 f"range starts at {requested.start} but {resolved.display} is {size} bytes",
-                repair=RepairOperationV1(
-                    operation="playbill.get",
-                    arguments={"ref": resolved.display, "detail": "body", "range": f"0:{size}"},
+                repair=RepairOperationV1(operation="playbill.get", arguments=arguments),
+                repair_line=(
+                    f"Pass a range inside 0:{size}" if size else "Omit range; the body is empty"
                 ),
-                repair_line=f"Pass a range inside 0:{size}",
                 context={"size": size},
             )
-        window_range = PlaybillByteRangeV1(start=requested.start, end=min(requested.end, size))
-    chunk = content[window_range.start : window_range.end]
+        window_range = (
+            PlaybillByteRangeV1(start=requested.start, end=min(requested.end, size))
+            if size
+            else None
+        )
+    chunk = b"" if window_range is None else content[window_range.start : window_range.end]
     text: str | None = None
     encoded: str | None = None
     try:

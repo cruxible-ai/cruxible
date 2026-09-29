@@ -578,3 +578,34 @@ def test_a_partial_proposal_reads_as_incomplete_not_an_integrity_error(
     assert proof is not None
     assert proof["status"]["incomplete_reasons"] == [f"missing_{missing}"]
     assert (proof.get("admission") is None) == (missing == "admission")
+
+
+def test_an_empty_document_reads_as_an_empty_body(tmp_path: Path) -> None:
+    from tests.core_support._support import initialize_local
+
+    instance, owner = initialize_local(tmp_path)
+    body = service_store_playbill_body(instance, content=b"").digest
+    _accept(
+        instance,
+        owner,
+        service_propose_playbill_document(
+            instance,
+            shell=_shell("empty", body, title="Empty"),
+            actor_id="owner",
+            proposal_name="get-empty",
+            timestamp="2026-08-16T20:30:00.000000Z",
+        ),
+    )
+
+    whole = _get(instance, "Document:empty", detail="body").body
+    ranged = _get(
+        instance, "Document:empty", detail="body", range=PlaybillByteRangeV1(start=0, end=10)
+    ).body
+    beyond = _refusal(
+        instance, "Document:empty", detail="body", range=PlaybillByteRangeV1(start=5, end=10)
+    )
+
+    for read in (whole, ranged):
+        assert read is not None and read.size == 0
+        assert read.text == "" and read.range is None
+    assert beyond.error_code == "playbill.get.range_out_of_bounds"

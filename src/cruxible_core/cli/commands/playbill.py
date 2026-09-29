@@ -3659,7 +3659,7 @@ def _emit_get_text(result: Any) -> None:
     if result.body is not None:
         body = result.body
         click.echo(body.text if body.text is not None else body.content_base64 or "", nl=False)
-        if body.range.end < body.size:
+        if body.range is not None and body.range.end < body.size:
             following = min(body.size, 2 * body.range.end - body.range.start)
             click.echo(
                 f"\n(bytes {body.range.start}:{body.range.end} of {body.size}; next: "
