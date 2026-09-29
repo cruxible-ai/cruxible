@@ -1558,14 +1558,18 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
     instance, owner, capture, contract = worker.fixed_world(root)
     worker.drain(instance, now=worker.FIXED_CLOSES)
 
-    row = _row(instance, "prediction_settleable", _request(instance))
+    row = _row(
+        instance,
+        "prediction_settleable",
+        _request(instance).model_copy(update={"evaluation_time": worker.FIXED_CLOSES}),
+    )
     assert row.subject_identity == contract.identity.qualified
     assert row.related_identities and row.related_identities[0].startswith("Claim:")
     assert row.detail["anchor_event"] is None and row.detail["bound_contract_id"]
     assert row.repair.operation == EXPECTED_OPERATIONS["prediction_settleable"]
     hidden = PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        evaluation_time=EVALUATION_TIME,
+        evaluation_time=worker.FIXED_CLOSES,
         access_profile=CoverageAccessProfileV1(
             profile_id="next-closed-loop-public", permitted_access_classes=("public",)
         ),
@@ -1600,7 +1604,11 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
         recorded_at=worker.FIXED_CLOSES + timedelta(minutes=1),
     )
     worker.drain(instance, now=worker.FIXED_CLOSES + timedelta(minutes=1))
-    _assert_gone(instance, "prediction_settleable", _request(instance))
+    _assert_gone(
+        instance,
+        "prediction_settleable",
+        _request(instance).model_copy(update={"evaluation_time": worker.FIXED_CLOSES}),
+    )
 
 
 def _prediction_window_unbindable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1631,7 +1639,12 @@ def _prediction_window_unbindable(root: Path, _monkeypatch: pytest.MonkeyPatch) 
 
     # The named repair: restore the anchor's material; the worker's retry binds it.
     restore()
-    worker.drain(instance, now=now + worker.UNBINDABLE_RETRY)
+    from cruxible_core.triggers.config import TriggerOperationalConfigV1
+    from cruxible_core.triggers.journal import evaluate_triggers
+
+    retry_at = now + timedelta(hours=1)
+    evaluate_triggers(instance, now=retry_at, config=TriggerOperationalConfigV1())
+    worker.drain(instance, now=retry_at)
     _assert_gone(instance, "prediction_window_unbindable", _request(instance))
 
 
@@ -1719,7 +1732,7 @@ def test_next_shows_a_settle_row_only_to_a_caller_who_can_settle(tmp_path: Path)
 
     instance, _owner, _capture, _contract = worker.fixed_world(tmp_path)
     worker.drain(instance, now=worker.FIXED_CLOSES)
-    request = _request(instance)
+    request = _request(instance).model_copy(update={"evaluation_time": worker.FIXED_CLOSES})
 
     def settle_rows(result):  # type: ignore[no-untyped-def]
         return [item for item in result.items if item.reason == "prediction_settleable"]
@@ -1747,3 +1760,29 @@ def test_next_shows_a_settle_row_only_to_a_caller_who_can_settle(tmp_path: Path)
     default_profile = mcp.model_copy(update={"caller_tools": ("cruxible_playbill_next",)})
     hidden = service_playbill_next(instance, request=default_profile, caller_rung=1)
     assert settle_rows(hidden) == [] and hidden.status.hidden == 1
+
+
+def test_next_applies_prediction_window_time_at_read_without_a_worker_tick(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from tests.test_consumers import test_prediction_settlement as worker
+
+    instance, _owner, _capture, _contract = worker.fixed_world(tmp_path)
+    worker.drain(instance, now=worker.served.PREDICTED_AT)
+    request = _request(instance)
+    before = request.model_copy(
+        update={"evaluation_time": worker.FIXED_CLOSES - timedelta(microseconds=1)}
+    )
+    after = request.model_copy(update={"evaluation_time": worker.FIXED_CLOSES})
+    assert all(
+        item.reason != "prediction_settleable"
+        for item in service_playbill_next(instance, request=before).items
+    )
+    rows = [
+        item
+        for item in service_playbill_next(instance, request=after).items
+        if item.reason == "prediction_settleable"
+    ]
+    assert len(rows) == 1
+    assert datetime.fromisoformat(rows[0].detail["evaluated_at"]) == worker.FIXED_CLOSES
+    assert tuple(worker.WORKER.due(instance, now=worker.FIXED_CLOSES)) == ()
