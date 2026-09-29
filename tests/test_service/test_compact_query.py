@@ -481,3 +481,19 @@ def test_a_continuation_refuses_a_different_evaluation_time(instance: Any) -> No
             cursor=first.next_cursor,
             evaluation_time=WHEN + timedelta(days=1),
         )
+
+
+def test_a_column_named_like_row_metadata_keeps_its_values(instance: Any) -> None:
+    declared = work_item_query("project.collide").model_dump(mode="json")
+    fields = declared["projection"]["fields"]
+    fields[0]["name"], fields[1]["name"] = "subject", "flags"
+    declared["projection"]["fields"] = sorted(fields, key=lambda item: item["name"])
+    spec = QueryDefinitionSpecV1.model_validate({**declared, "pins": []})
+
+    result = _query(instance, spec=spec)
+
+    assert [column.name for column in result.columns] == ["value.flags", "value.subject"]
+    assert result.rows[0]["subject"] == f"{SUBJECT_KIND}/wi-42"
+    assert result.rows[0]["value.flags"] == "ready"
+    assert result.rows[0]["value.subject"] == "wi-42"
+    assert result.rows[0]["flags"] == []

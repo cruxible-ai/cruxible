@@ -777,7 +777,7 @@ with one of `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `in`, `exists`, `contains`;
 filters combine as all-of and `ne` also matches a Subject without the value.
 Wrong kinds, fields, enum members and operators refuse with the nearest valid
 names. `QueryResult` has `.rows` (dicts of values plus `flags`), `.columns`,
-`.truncated`, `.next_page()`, `.pages()`, `.table()` and iterates its rows. A
+`.truncated`, `.next_page()`, `.pages()`, `.table()` and iterates its rows. `subject`, `subject_id` and `flags` are row metadata; a column with one of those names is served as `value.<name>`. A
 live connection reads the current head; a pinned one reads its coordinate.
 
 | Parameter | Default | Meaning |

@@ -287,7 +287,7 @@ no value equals, so a Subject without the value matches. `contains` alone
 searches every live Claim value across kinds. Rows lead with values (an array
 for a many-valued predicate or a contested slot) and carry `flags` (`stale`,
 `contested`, `contradicted`, `unsure_hold`); without `select` a kind shows up to
-12 predicates and names the rest in `notes`. ClaimType rows name the
+12 predicates and names the rest in `notes`. `subject`, `subject_id` and `flags` are row metadata; a column with one of those names is served as `value.<name>`. ClaimType rows name the
 CaptureContracts their evidence rules admit, never digests. `receipt` records the
 mode, the definition digest, the coordinate and the evaluation time (default
 now).

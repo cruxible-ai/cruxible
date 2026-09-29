@@ -271,6 +271,20 @@ class _InlineFilter:
     value: object
 
 
+ROW_METADATA = frozenset({"subject", "subject_id", "flags"})
+
+
+def _out(name: str) -> str:
+    """The row key a column's values are served under.
+
+    ``subject``, ``subject_id`` and ``flags`` are row metadata on every Subject
+    row. A column named like one of them keeps its values under
+    ``value.<name>`` instead of overwriting the metadata or losing its values.
+    """
+
+    return f"value.{name}" if name in ROW_METADATA else name
+
+
 def _column(item: _Field | _Follow, *, name: str) -> PlaybillQueryColumnV1:
     if isinstance(item, _Follow):
         return PlaybillQueryColumnV1(
@@ -328,13 +342,13 @@ class _CompactPlan:
             if (
                 not alias
                 or alias in self.follows
-                or alias in {ROOT, SUBJECT_ID_FIELD}
+                or alias in {ROOT, SUBJECT_ID_FIELD, "value"}
                 or alias in roots
             ):
                 raise PlaybillQueryRefused(
                     "playbill.query.alias_invalid",
                     f"alias {follow.as_!r} must be a new lower-case identifier that is not "
-                    "subject, subject_id, another alias, or a predicate namespace",
+                    "subject, subject_id, value, another alias, or a predicate namespace",
                     repair='pick a short alias such as "parent"',
                     field_path=f"{path}.as",
                 )
@@ -808,24 +822,24 @@ def _compact_subject_query(
         for index, name in enumerate(request.select):
             if name in plan.follows:
                 follow = plan.follows[name]
-                columns.append(_Column(name=name, binding=follow.alias, field=None))
-                output.append(_column(follow, name=name))
+                columns.append(_Column(name=_out(name), binding=follow.alias, field=None))
+                output.append(_column(follow, name=_out(name)))
                 continue
             resolved = plan.field(name, field_path=f"select[{index}]")
             if resolved.binding == ROOT and isinstance(resolved.info, str):
                 continue
-            columns.append(_Column(name=name, binding=resolved.binding, field=resolved))
-            output.append(_column(resolved, name=name))
+            columns.append(_Column(name=_out(name), binding=resolved.binding, field=resolved))
+            output.append(_column(resolved, name=_out(name)))
     else:
         shown, notes = _default_columns(vocabulary, plan.kind)
         for info in shown:
             name = _column_name(info, kind_predicates)
             resolved = _Field(name=name, binding=ROOT, info=info, label=info.predicate)
-            columns.append(_Column(name=name, binding=ROOT, field=resolved))
-            output.append(_column(resolved, name=name))
+            columns.append(_Column(name=_out(name), binding=ROOT, field=resolved))
+            output.append(_column(resolved, name=_out(name)))
         for alias, follow in plan.follows.items():
-            columns.append(_Column(name=alias, binding=alias, field=None))
-            output.append(_column(follow, name=alias))
+            columns.append(_Column(name=_out(alias), binding=alias, field=None))
+            output.append(_column(follow, name=_out(alias)))
 
     follows = tuple(plan.follows.values())
     path_shape = bool(follows)
@@ -1513,7 +1527,9 @@ def _engine_answer(
     renderer_columns: list[_Column] = []
     output: list[PlaybillQueryColumnV1] = []
     if projection is not None:
-        output = [_field_column(vocabulary, item.name, item.value) for item in projection.fields]
+        output = [
+            _field_column(vocabulary, _out(item.name), item.value) for item in projection.fields
+        ]
     elif (
         isinstance(query.entry, QueryEntryV1)
         and len(query.entry.subject_kinds) == 1
@@ -1525,8 +1541,8 @@ def _engine_answer(
         for info in shown:
             name = _column_name(info, kind_predicates)
             resolved = _Field(name=name, binding=ROOT, info=info, label=info.predicate)
-            renderer_columns.append(_Column(name=name, binding=ROOT, field=resolved))
-            output.append(_column(resolved, name=name))
+            renderer_columns.append(_Column(name=_out(name), binding=ROOT, field=resolved))
+            output.append(_column(resolved, name=_out(name)))
     renderer = _RowRenderer(
         instance=instance,
         coordinate=coordinate,
@@ -1575,7 +1591,7 @@ def _engine_answer(
                 value = projected.value if projected.state == "present" else None
                 if isinstance(value, str) and value.startswith("Subject:"):
                     value = value.removeprefix("Subject:")
-                out[projected.name] = value
+                out[_out(projected.name)] = value
             out["flags"] = flags
         return rendered
 
