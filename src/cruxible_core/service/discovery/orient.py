@@ -508,6 +508,9 @@ def _attention(
     evaluation_time: datetime,
     state: _State,
     caller: OrientCaller | None,
+    caller_rung: int | None,
+    surface: PlaybillOrientSurface,
+    caller_tools: tuple[str, ...] | None,
 ) -> tuple[PlaybillOrientAttentionV1, bool]:
     notes: list[str] = []
     terminal = instance.descriptor.decommissioned
@@ -527,8 +530,11 @@ def _attention(
                 evaluation_time=evaluation_time,
                 access_profile=_NEXT_PROFILE,
                 limit=contracts.PLAYBILL_NEXT_MAX_LIMIT,
+                caller_surface=surface,
+                caller_tools=caller_tools,
             ),
             caller_principal_id=None if caller is None else caller.actor_id,
+            caller_rung=caller_rung,
             match=lambda item: _upgrade_hint((item,)) is not None,
         )
         items, total = queue.items, queue.total_items
@@ -668,10 +674,17 @@ def service_playbill_orient(
     evaluation_time: datetime | None = None,
     surface: PlaybillOrientSurface = "cli",
     caller: OrientCaller | None = None,
+    caller_rung: int | None = None,
+    caller_tools: tuple[str, ...] | None = None,
     provider_lane: contracts.ProviderLaneStatusV1 | None = None,
     consumers_running: bool = False,
 ) -> PlaybillOrientResultV1:
-    """Answer one orient read at one accepted coordinate."""
+    """Answer one orient read at one accepted coordinate.
+
+    The runtime supplies its effective authenticated ``caller_rung``, just as
+    for next; ``None`` is an unrestricted in-process read. ``surface`` and
+    ``caller_tools`` select that same caller's repair view for attention.
+    """
 
     if kind is not None and section is not None:
         raise _request_invalid(
@@ -762,6 +775,9 @@ def service_playbill_orient(
         evaluation_time=moment,
         state=state,
         caller=caller,
+        caller_rung=caller_rung,
+        surface=surface,
+        caller_tools=caller_tools,
     )
     focus = max(kinds_page, key=lambda row: (row.subjects, len(row.predicates)), default=None)
     if focus is not None:

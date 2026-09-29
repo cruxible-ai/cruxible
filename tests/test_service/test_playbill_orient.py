@@ -672,9 +672,12 @@ def test_attention_summary_preserves_complete_orient_bytes(
         kwargs.pop("claims", None)
         return dependency_fold(*args, **kwargs)
 
-    def full_queue(instance, *, request, caller_principal_id, match):  # type: ignore[no-untyped-def]
+    def full_queue(instance, *, request, caller_principal_id, caller_rung, match):  # type: ignore[no-untyped-def]
         result = service_playbill_next(
-            instance, request=request, caller_principal_id=caller_principal_id
+            instance,
+            request=request,
+            caller_principal_id=caller_principal_id,
+            caller_rung=caller_rung,
         )
         matching = next((item for item in result.items if match(item)), None)
         return PlaybillNextSummary(result.items, result.total_items, matching)

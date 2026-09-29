@@ -4590,6 +4590,7 @@ def summarize_playbill_next(
     *,
     request: PlaybillNextRequestV2,
     caller_principal_id: str | None = None,
+    caller_rung: int | None = None,
     match: Callable[[PlaybillNextItemV1], bool] | None = None,
 ) -> PlaybillNextSummary:
     """Count the queue and return its first three rows plus one optional matched row.
@@ -4608,7 +4609,7 @@ def summarize_playbill_next(
         instance,
         request=request,
         caller_principal_id=caller_principal_id,
-        caller_rung=None,
+        caller_rung=caller_rung,
         read_context=ClaimVerdictReadContext(instance, coordinate),
     )
     matching = (
