@@ -59,12 +59,6 @@ occurrences to compare. It resolves equivalence to ``False``: copied bytes at a
 foreign occurrence are, by §11.6.1, precisely not identity.
 """
 
-DescriptorAuthorityFloor = Literal[
-    "target_namespace_authority",
-    "recall_only",
-    "namespace_creation_plus_cross_namespace",
-]
-
 _TERM_LIMIT = 80
 _FORBIDDEN_HINT_RE = re.compile(
     r"(?:https?://|file://|api[_ -]?key|bearer\s|password|private[_ -]?key|"
@@ -476,145 +470,6 @@ def evaluate_vocabulary_reuse(
     )
 
 
-class DescriptorClaimTypeSeedV1(_StrictDiscoveryModel):
-    identity: ArtifactIdentity
-    predicate: Literal[
-        "semantic.alias",
-        "semantic.tag",
-        "semantic.related_to",
-        "semantic.distinct_from",
-    ]
-    authority_floor: DescriptorAuthorityFloor
-    resolves_identity: bool
-    recall_only: bool
-    indexed_bidirectionally: bool
-
-    @model_validator(mode="after")
-    def _identity_and_floor(self) -> "DescriptorClaimTypeSeedV1":
-        if self.identity != ArtifactIdentity(kind="ClaimType", name=self.predicate):
-            raise ValueError("descriptor seed identity must equal its predicate")
-        expected = {
-            "semantic.alias": ("target_namespace_authority", True, False, False),
-            "semantic.tag": ("recall_only", False, True, False),
-            "semantic.related_to": ("recall_only", False, True, False),
-            "semantic.distinct_from": (
-                "namespace_creation_plus_cross_namespace",
-                False,
-                True,
-                True,
-            ),
-        }[self.predicate]
-        if (
-            self.authority_floor,
-            self.resolves_identity,
-            self.recall_only,
-            self.indexed_bidirectionally,
-        ) != expected:
-            raise ValueError("descriptor seed semantics differ from the frozen v1 floor")
-        return self
-
-
-DESCRIPTOR_CLAIM_TYPE_SEEDS: tuple[DescriptorClaimTypeSeedV1, ...] = (
-    DescriptorClaimTypeSeedV1(
-        identity=ArtifactIdentity(kind="ClaimType", name="semantic.alias"),
-        predicate="semantic.alias",
-        authority_floor="target_namespace_authority",
-        resolves_identity=True,
-        recall_only=False,
-        indexed_bidirectionally=False,
-    ),
-    DescriptorClaimTypeSeedV1(
-        identity=ArtifactIdentity(kind="ClaimType", name="semantic.distinct_from"),
-        predicate="semantic.distinct_from",
-        authority_floor="namespace_creation_plus_cross_namespace",
-        resolves_identity=False,
-        recall_only=True,
-        indexed_bidirectionally=True,
-    ),
-    DescriptorClaimTypeSeedV1(
-        identity=ArtifactIdentity(kind="ClaimType", name="semantic.related_to"),
-        predicate="semantic.related_to",
-        authority_floor="recall_only",
-        resolves_identity=False,
-        recall_only=True,
-        indexed_bidirectionally=False,
-    ),
-    DescriptorClaimTypeSeedV1(
-        identity=ArtifactIdentity(kind="ClaimType", name="semantic.tag"),
-        predicate="semantic.tag",
-        authority_floor="recall_only",
-        resolves_identity=False,
-        recall_only=True,
-        indexed_bidirectionally=False,
-    ),
-)
-
-
-class DescriptorAuthorityContextV1(_StrictDiscoveryModel):
-    actor_roles: tuple[str, ...]
-    target_namespace_roles: tuple[str, ...] = ()
-    recall_descriptor_roles: tuple[str, ...] = ()
-    new_item_namespace_roles: tuple[str, ...] = ()
-    blocking_cross_namespace_roles: tuple[str, ...] = ()
-
-    @field_validator(
-        "actor_roles",
-        "target_namespace_roles",
-        "recall_descriptor_roles",
-        "new_item_namespace_roles",
-        "blocking_cross_namespace_roles",
-    )
-    @classmethod
-    def _roles(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("descriptor authority roles must be sorted and unique")
-        return value
-
-
-class DescriptorAuthorityResultV1(_StrictDiscoveryModel):
-    tag: Literal["playbill-descriptor-authority-result-v1"] = (
-        "playbill-descriptor-authority-result-v1"
-    )
-    verdict: Literal["authorized", "refused"]
-    refusal_code: str | None = None
-
-    @model_validator(mode="after")
-    def _shape(self) -> "DescriptorAuthorityResultV1":
-        if (self.verdict == "refused") != (self.refusal_code is not None):
-            raise ValueError("descriptor authority refusal must carry one stable code")
-        return self
-
-
-def evaluate_descriptor_authority(
-    predicate: Literal[
-        "semantic.alias",
-        "semantic.tag",
-        "semantic.related_to",
-        "semantic.distinct_from",
-    ],
-    context: DescriptorAuthorityContextV1,
-) -> DescriptorAuthorityResultV1:
-    """Apply the descriptor-specific floor; the proposed Claim cannot author it."""
-
-    actor = set(context.actor_roles)
-    if predicate == "semantic.alias":
-        authorized = bool(actor.intersection(context.target_namespace_roles))
-        code = "playbill.descriptor.alias_target_authority_required"
-    elif predicate in {"semantic.tag", "semantic.related_to"}:
-        authorized = bool(actor.intersection(context.recall_descriptor_roles))
-        code = "playbill.descriptor.recall_authority_required"
-    else:
-        authorized = bool(actor.intersection(context.new_item_namespace_roles)) and (
-            not context.blocking_cross_namespace_roles
-            or bool(actor.intersection(context.blocking_cross_namespace_roles))
-        )
-        code = "playbill.descriptor.distinct_namespace_authority_required"
-    return DescriptorAuthorityResultV1(
-        verdict="authorized" if authorized else "refused",
-        refusal_code=None if authorized else code,
-    )
-
-
 class DiscoveryBudgetV1(_StrictDiscoveryModel):
     tag: Literal["playbill-discovery-budget-v1"] = "playbill-discovery-budget-v1"
     max_hits: int = Field(default=20, ge=1)
@@ -756,10 +611,6 @@ class ContextMaterialV1(_StrictDiscoveryModel):
 __all__ = [
     "ContextCapsuleV1",
     "ContextMaterialV1",
-    "DESCRIPTOR_CLAIM_TYPE_SEEDS",
-    "DescriptorAuthorityContextV1",
-    "DescriptorAuthorityResultV1",
-    "DescriptorClaimTypeSeedV1",
     "DiscoveryBudgetV1",
     "DiscoveryHintsV1",
     "DiscoveryHitV1",
@@ -776,7 +627,6 @@ __all__ = [
     "SemanticReuseInterfaceV1",
     "VocabularyReuseLawEvidenceV1",
     "VocabularyReuseRequestV1",
-    "evaluate_descriptor_authority",
     "evaluate_vocabulary_reuse",
     "normalize_discovery_term",
     "reject_locator_or_secret",
