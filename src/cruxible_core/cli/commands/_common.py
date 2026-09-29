@@ -13,6 +13,7 @@ import click
 
 import cruxible_client.compatibility as client_compatibility
 from cruxible_client import CruxibleClient
+from cruxible_client.transport.lifecycle import DaemonLifecycleClient
 from cruxible_core.cli.context import (
     CliContextState,
     clear_cli_context,
@@ -174,12 +175,31 @@ def _get_client() -> CruxibleClient | None:
     if isinstance(client, CruxibleClient):
         return client
     client = CruxibleClient(
-        base_url=server_url,
-        socket_path=server_socket,
-        token=get_runtime_bearer_token(),
+        base_url=server_url, socket_path=server_socket, token=get_runtime_bearer_token()
     )
-    client_compatibility.check_daemon_compatibility(client)
+    try:
+        client_compatibility.check_daemon_compatibility(client)
+    except Exception:
+        client.close()
+        raise
     obj["_client"] = client
+    return client
+
+
+def _get_lifecycle_client() -> DaemonLifecycleClient | None:
+    """An unchecked client whose interface only permits lifecycle endpoints."""
+    obj = _root_ctx_obj()
+    server_url = obj.get("server_url")
+    server_socket = obj.get("server_socket")
+    if not server_url and not server_socket:
+        return None
+    client = obj.get("_lifecycle_client")
+    if isinstance(client, DaemonLifecycleClient):
+        return client
+    client = DaemonLifecycleClient(
+        base_url=server_url, socket_path=server_socket, token=get_runtime_bearer_token()
+    )
+    obj["_lifecycle_client"] = client
     return client
 
 

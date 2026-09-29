@@ -39,6 +39,11 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.get_display import (
+    GET_CLI_HISTORY_VALUE_WIDTH,
+    GET_CLI_VALUE_WIDTH,
+    get_value_display,
+)
 from cruxible_client.contracts.get_reads import (
     GET_BODY_DEFAULT_MAX_BYTES,
     GET_DETAILS_BY_KIND,
@@ -67,6 +72,7 @@ from cruxible_client.contracts.get_reads import (
     PlaybillGetRevisionV1,
     PlaybillGetSubjectCardV1,
     PlaybillGetSubjectClaimV1,
+    PlaybillGetTruncatedTextV1,
     PlaybillReadFlag,
     PlaybillReadSurface,
     summary_value,
@@ -476,6 +482,7 @@ def _render_get(
     detail: str | None = None,
     *,
     window: str | None = None,
+    at: ClientCoordinate | None = None,
 ) -> str:
     """One ``get`` call spelled for the caller's surface (R07)."""
 
@@ -483,6 +490,8 @@ def _render_get(
         rendered = f"cruxible playbill get {shlex.quote(ref)}"
         if detail:
             rendered += f" --detail {detail}"
+        if at is not None:
+            rendered += f" --at {at.git_oid}"
         return rendered + (f" --range {window}" if window else "")
     arguments = [json.dumps(ref)]
     if detail:
@@ -495,9 +504,32 @@ def _render_get(
             else f'range={{"start": {start}, "end": {end}}}'
         )
     if surface == "sdk":
-        return f"pb.get({', '.join(arguments)})"
+        context = "pb"
+        if at is not None:
+            fields = ", ".join(
+                f"{key}={json.dumps(value)}" for key, value in at.model_dump().items()
+            )
+            context += f".at(PlaybillAcceptedCoordinate({fields}))"
+        return f"{context}.get({', '.join(arguments)})"
+    if at is not None:
+        arguments.append(f"at={json.dumps(at.git_oid)}")
     arguments[0] = f"ref={arguments[0]}"
     return f"cruxible_playbill_get({', '.join(arguments)})"
+
+
+def _value_was_cut(
+    value: object,
+    *,
+    surface: PlaybillReadSurface,
+    width: int = GET_CLI_VALUE_WIDTH,
+) -> bool:
+    if surface == "cli":
+        return get_value_display(value, width=width).truncated
+    if isinstance(value, PlaybillGetTruncatedTextV1):
+        return True
+    return isinstance(value, list | tuple) and any(
+        _value_was_cut(item, surface=surface, width=width) for item in value
+    )
 
 
 def _render_proposal_step(surface: PlaybillReadSurface, step: str, proposal_id: str) -> str:
@@ -655,6 +687,11 @@ def _claim_card(
         flags=verdict_flags(verdict, status, held=claim.identity.qualified in held),
         next=(
             _render_get(surface, name, "evidence"),
+            *(
+                _render_get(surface, item, "evidence")
+                for item, (value, _digest) in contender_values.items()
+                if _value_was_cut(summary_value(value), surface=surface)
+            ),
             _render_get(surface, name, "why"),
             _render_get(surface, _subject_ref(subject_path)),
         ),
@@ -703,6 +740,7 @@ def _subject_card(
     for item in rows:
         slots[(item.predicate, item.qualifier)].append(item)
     entries: list[PlaybillGetSubjectClaimV1] = []
+    evidence_steps: list[str] = []
     for (predicate, qualifier), members in sorted(
         slots.items(), key=lambda pair: (pair[0][0], pair[0][1] or "")
     ):
@@ -720,6 +758,9 @@ def _subject_card(
         pairs = [
             _shown(item.object, functools.partial(_claim_value, item), content) for item in shown
         ]
+        for item, (value, _digest) in zip(shown, pairs, strict=True):
+            if _value_was_cut(summary_value(value), surface=surface):
+                evidence_steps.append(_render_get(surface, item.claim_id, "evidence"))
         values = [value for value, _digest in pairs]
         digests = tuple(digest for _value, digest in pairs if digest is not None)
         for item in shown:
@@ -728,12 +769,15 @@ def _subject_card(
             )
         listed = many or len(values) > 1
         claims_shown = tuple(item.claim_id for item in shown)
+        displayed_value = summary_value(values if listed else values[0])
+        if listed and surface == "cli" and _value_was_cut(displayed_value, surface=surface):
+            evidence_steps.extend(_render_get(surface, item, "evidence") for item in claims_shown)
         entries.append(
             PlaybillGetSubjectClaimV1(
                 predicate=short_field_name(predicate, kind, accepted_predicates),
                 qualifier=qualifier,
                 claim=claims_shown if listed else claims_shown[0],
-                value=summary_value(values if listed else values[0]),
+                value=displayed_value,
                 content_digest=(digests if listed else digests[0]) if digests else None,
                 flags=tuple(ordered_flags(marks)),
             )
@@ -744,7 +788,11 @@ def _subject_card(
         lifecycle=shell.lifecycle.state,
         claims=tuple(entries),
         incoming_count=incoming,
-        next=(_render_get(surface, subject, "why"), _render_get(surface, subject, "history")),
+        next=(
+            *dict.fromkeys(evidence_steps),
+            _render_get(surface, subject, "why"),
+            _render_get(surface, subject, "history"),
+        ),
     )
 
 
@@ -1109,10 +1157,14 @@ def _revision(
     instance: PlaybillInstance,
     history: Any,
     entry: _RevisionEntry,
+    *,
+    ref: str,
+    surface: PlaybillReadSurface,
 ) -> PlaybillGetRevisionV1:
     generation = history.generation(entry.sequence)
     record = history.read_generation_record(entry.sequence, instance.blob_at)
     value, content_digest = (None, None) if entry.value is None else entry.value()
+    cut_value = summary_value(value)
     return PlaybillGetRevisionV1(
         revision=entry.revision,
         sequence=entry.sequence,
@@ -1120,9 +1172,22 @@ def _revision(
         actor=generation.actor_id or record.actor_binding.actor_id,
         approved_by=tuple(dict.fromkeys(item.attestation.signer_id for item in record.approvals)),
         lifecycle=entry.lifecycle,
-        # Every revision value follows the card rule; detail="evidence" reads
-        # the current value whole.
-        value=summary_value(value),
+        value=cut_value,
+        next=(
+            _render_get(
+                surface,
+                ref,
+                "evidence",
+                at=ClientCoordinate(
+                    git_oid=generation.git_oid,
+                    semantic_root=generation.semantic_root,
+                    generation_root=generation.generation_root,
+                    compiler_digest=generation.compiler_digest,
+                ),
+            ),
+        )
+        if _value_was_cut(cut_value, surface=surface, width=GET_CLI_HISTORY_VALUE_WIDTH)
+        else (),
         content_digest=content_digest,
         digest=_short_digest(entry.digest),
     )
@@ -1220,6 +1285,7 @@ def _history(
     resolved: ResolvedRef,
     *,
     ref: str,
+    surface: PlaybillReadSurface,
     limit: int,
     continuation: ListContinuation | None,
     content: ExactContentReader,
@@ -1239,7 +1305,10 @@ def _history(
             limit=limit,
             list_name=_HISTORY_LIST,
         )
-        revisions = tuple(_revision(instance, history, entry) for entry in page)
+        revisions = tuple(
+            _revision(instance, history, entry, ref=resolved.display, surface=surface)
+            for entry in page
+        )
     next_cursor = (
         encode_list_cursor(
             list_name=_HISTORY_LIST,
@@ -1558,6 +1627,7 @@ def service_playbill_get(
             coordinate,
             resolved,
             ref=request.ref,
+            surface=surface,
             limit=request.limit or GET_HISTORY_DEFAULT_LIMIT,
             continuation=continuation,
             content=content,

@@ -131,6 +131,91 @@ def test_an_exact_content_claim_view_carries_the_text_the_daemon_reads(
     assert marked.content_digest == binary.digest
 
 
+def test_cut_values_offer_runnable_evidence_on_every_surface(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    import shlex
+
+    from click.testing import CliRunner
+
+    from cruxible_client.contracts import PlaybillAcceptedCoordinate
+    from cruxible_client.contracts.get_reads import PlaybillGetHistoryV1
+    from cruxible_core.cli.main import cli
+    from cruxible_core.mcp import handlers
+    from tests.core_support._exact_content_support import seed_exact_content_into
+
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
+    whole = "a long ruling " * 100
+    seeded = seed_exact_content_into(
+        instance,
+        GeneratedKeyMaterial(
+            principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
+        ),
+        {"wi-42": whole.encode()},
+    )["wi-42"]
+    pb = _sdk(client, instance_id, tmp_path)
+    transport = pb._client  # noqa: SLF001
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "cli-context.json"))
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
+    monkeypatch.setattr(
+        handlers, "_dispatch_remote_or_local", lambda remote, _local, **_kw: remote(transport)
+    )
+    prefix = ["--server-url", "http://testserver", "--instance-id", instance_id]
+    url = f"/api/v1/{instance_id}/playbill/get"
+    for ref, detail in (
+        (seeded.subject, "summary"),
+        (seeded.claim_id, "summary"),
+        (seeded.claim_id, "history"),
+    ):
+        # HTTP and MCP retain the service's surface-specific suggestion, including
+        # the exact historical generation when a revision value was cut.
+        payload = client.post(url, json={"ref": ref, "detail": detail}).json()
+        section = payload["history"]["revisions"][0] if detail == "history" else payload["card"]
+        step = section["next"][0]
+        assert seeded.claim_id in step and 'detail="evidence"' in step
+        mcp = handlers.handle_playbill_get(instance_id, ref=ref, detail=detail)
+        mcp_section = mcp.history.revisions[0] if mcp.history else mcp.card
+        assert mcp_section is not None and mcp_section.next[0] == step
+        evidence = eval(
+            step,
+            {"cruxible_playbill_get": lambda **kw: handlers.handle_playbill_get(instance_id, **kw)},
+        )
+        assert evidence.evidence.value == whole
+
+        result = CliRunner().invoke(cli, [*prefix, "playbill", "get", ref, "--detail", detail])
+        assert result.exit_code == 0, result.output
+        assert f"({len(whole)} chars; --detail evidence for all)" in result.output
+        step = next(
+            line.removeprefix("next: ")
+            for line in result.output.splitlines()
+            if line.startswith("next: ")
+        )
+        read = CliRunner().invoke(cli, [*prefix, *shlex.split(step)[1:], "--json"])
+        assert read.exit_code == 0, read.output
+        assert json.loads(read.output)["evidence"]["value"] == whole
+
+        # SDK Claim summaries are already whole typed ClaimViews; Subject and
+        # history cards use the service's suggestions.
+        card = pb.get(ref, detail=detail)
+        if isinstance(card.value, ClaimView):
+            assert card.value.value == whole
+            continue
+        assert isinstance(card.value, PlaybillGetSubjectCardV1 | PlaybillGetHistoryV1)
+        section_sdk = (
+            card.value.revisions[0] if isinstance(card.value, PlaybillGetHistoryV1) else card.value
+        )
+        read_sdk = eval(
+            section_sdk.next[0],
+            {"pb": pb, "PlaybillAcceptedCoordinate": PlaybillAcceptedCoordinate},
+        )
+        assert read_sdk.value.value == whole
+
+
 def test_a_read_only_caller_reads_exact_content_text_on_every_surface(
     owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
     tmp_path: Path,

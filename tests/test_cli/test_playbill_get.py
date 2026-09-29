@@ -256,7 +256,7 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     as_json = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "dev.roadmap_item/x", "--json"])
 
     assert summary.exit_code == 0, summary.output
-    assert "(900 chars)" in summary.output
+    assert "(900 chars; --detail evidence for all)" in summary.output
     payload = json.loads(as_json.output)
     assert payload["card"]["claims"][0]["value"]["truncated"] is True
     assert payload["coordinate"] == {"git_oid": "1" * 12, "generation": 7}
@@ -307,3 +307,87 @@ def test_exact_content_prints_as_text_and_a_marker_says_why_when_it_cannot(
     assert whole.exit_code == 0, whole.output
     assert "value: Affirmed, in full." in whole.output
     assert f"content_digest: {digest}" in whole.output
+
+
+@pytest.mark.parametrize("value", ["x" * 300, "line\n" * 30])
+def test_cli_display_cuts_offer_runnable_evidence_even_below_the_summary_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    import shlex
+
+    from cruxible_client._error_base import printable
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+    from tests.core_support._exact_content_support import seed_exact_content
+
+    instance, claims = seed_exact_content(tmp_path, {"wi-42": value.encode()})
+    claim = claims["wi-42"]
+
+    class LocalClient:
+        def playbill_get(self, _instance_id, *, request):
+            return service_playbill_get(
+                instance,
+                request=request,
+                access=BodyAccessContext(principal_id="reader", can_read_body=True),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", LocalClient)
+    for ref, detail, width in (
+        (claim.subject, "summary", 120),
+        (claim.claim_id, "summary", 120),
+        (claim.claim_id, "history", 80),
+    ):
+        result = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", ref, "--detail", detail])
+        assert result.exit_code == 0, result.output
+        assert (
+            f"{printable(value)[: width - 1]}… ({len(value)} chars; --detail evidence for all)"
+            in result.output
+        )
+        step = next(
+            line.removeprefix("next: ")
+            for line in result.output.splitlines()
+            if line.startswith("next: ")
+        )
+        assert claim.claim_id in step and "--detail evidence" in step
+        assert ("--at " in step) == (detail == "history")
+        read = CliRunner().invoke(cli, [*PREFIX, *shlex.split(step)[1:]])
+        assert read.exit_code == 0, read.output
+        assert f"value: {printable(value)}" in read.output
+        assert "--detail evidence for all" not in read.output
+
+
+@pytest.mark.parametrize("width", [80, 120])
+def test_cli_value_width_boundary_and_evidence_objects_are_not_silently_cut(
+    monkeypatch: pytest.MonkeyPatch,
+    width: int,
+) -> None:
+    from cruxible_client.contracts.get_reads import PlaybillGetEvidenceV1
+    from cruxible_core.cli.commands.playbill import _get_value_text
+
+    assert _get_value_text("x" * width, width=width) == "x" * width
+    # Metadata without evidence detail keeps the same width without an invalid hint.
+    assert (
+        _get_value_text("x" * (width + 1), width=width, evidence_hint=False)
+        == "x" * (width - 1) + "…"
+    )
+    cut = _get_value_text("x" * (width + 1), width=width)
+    assert cut == "x" * (width - 1) + f"… ({width + 1} chars; --detail evidence for all)"
+    value = {"note": "x" * 300}
+    _stub(
+        monkeypatch,
+        _result(
+            "claim",
+            detail="evidence",
+            evidence=PlaybillGetEvidenceV1(
+                value=value,
+                captures=(),
+                attestations=(),
+            ),
+        ),
+    )
+    result = CliRunner().invoke(cli, [*PREFIX, "playbill", "get", "CLM-1", "--detail", "evidence"])
+    assert result.exit_code == 0, result.output
+    assert "value: " + json.dumps(value) in result.output
+    assert "--detail evidence for all" not in result.output

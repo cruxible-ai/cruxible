@@ -18,18 +18,25 @@ from __future__ import annotations
 import os
 import secrets
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, cast
 
 import click
 
-from cruxible_client import CruxibleClient
+from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
 from cruxible_client.errors import CoreError, DaemonOperationScopeError
+from cruxible_client.transport.lifecycle import DaemonLifecycleClient
 from cruxible_core.cli.commands._common import (
     SERVER_MODE_REQUIRED_MESSAGE,
     _emit_json,
-    _get_client,
     _root_ctx_obj,
+)
+from cruxible_core.cli.commands._common import (
+    _get_client as _get_checked_client,
+)
+from cruxible_core.cli.commands._common import (
+    _get_lifecycle_client as _get_client,
 )
 from cruxible_core.cli.main import handle_errors, long_running_command
 from cruxible_core.runtime.permissions import PERMISSION_MODE_NAMES
@@ -76,7 +83,9 @@ def _client_transport_label() -> str:
     return "configured Cruxible server"
 
 
-def _wait_for_daemon(client: CruxibleClient, timeout: float, *, old_boot_id: str | None) -> str:
+def _wait_for_daemon(
+    client: DaemonLifecycleClient, timeout: float, *, old_boot_id: str | None
+) -> str:
     """Poll the daemon's /version probe until the NEW image answers.
 
     The old image keeps answering for a beat after it acknowledges the
@@ -84,27 +93,38 @@ def _wait_for_daemon(client: CruxibleClient, timeout: float, *, old_boot_id: str
     boot id differs from the one that acknowledged. Returns the version the new
     image reports; raising here keeps the command skew-proof.
     """
+    if old_boot_id is None or not old_boot_id.strip():
+        raise click.ClickException(
+            "Daemon replacement could not be confirmed: restart acknowledgement has no boot ID."
+        )
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
+    still_old = False
+    missing_boot_id = False
     while time.monotonic() < deadline:
         try:
             version, boot_id = client.daemon_identity()
         except Exception as exc:  # connection refused while the image is replaced
             last_error = exc
+            still_old = False
         else:
-            if old_boot_id is None or boot_id != old_boot_id:
+            identifiable = boot_id is not None and bool(boot_id.strip())
+            if identifiable and boot_id != old_boot_id:
                 return version
+            missing_boot_id = not identifiable
+            still_old = identifiable
             last_error = None
         time.sleep(_RESTART_POLL_INTERVAL_SECONDS)
-    still_old = last_error is None and old_boot_id is not None
     raise click.ClickException(
-        f"Daemon did not come back within {timeout:.0f}s after restart"
+        f"Daemon did not come back within {timeout:.0f}s after restart; "
+        "replacement could not be confirmed"
         + ("; the old process image is still answering" if still_old else "")
+        + ("; a version probe has no boot ID" if missing_boot_id else "")
         + (f": {last_error}" if last_error is not None else "")
     )
 
 
-def _daemon_still_answers(client: CruxibleClient) -> bool:
+def _daemon_still_answers(client: DaemonLifecycleClient) -> bool:
     """Return whether the daemon is still answering over the configured transport."""
     try:
         client.version()
@@ -116,7 +136,7 @@ def _daemon_still_answers(client: CruxibleClient) -> bool:
 
 
 def _observe_stop(
-    client: CruxibleClient,
+    client: DaemonLifecycleClient,
     state_root: Path,
     timeout: float,
 ) -> tuple[bool, bool | None]:
@@ -423,13 +443,38 @@ def server_install_service_cmd(
     )
 
 
+@dataclass(frozen=True)
+class _InstanceStatusNeedsMatchingClient:
+    version: str
+    transport: str
+    instance_id: str
+    scope: Literal["instance"] = "instance"
+    instance_status: Literal["needs_matching_client"] = "needs_matching_client"
+    code: str = IncompatibleDaemonVersion.code
+    message: str = "Instance section needs a matching client; lifecycle facts remain available."
+
+
 def _echo_instance_scoped_status(
-    client: CruxibleClient, instance_id: str, transport: str, output_json: bool
+    client: DaemonLifecycleClient, instance_id: str, transport: str, output_json: bool
 ) -> None:
     version = client.version()
-    host = client.show_playbill_host(instance_id)
     try:
-        identity = client.playbill_whoami(instance_id)
+        checked = _get_checked_client()
+    except IncompatibleDaemonVersion:
+        partial = _InstanceStatusNeedsMatchingClient(version, transport, instance_id)
+        if output_json:
+            _emit_json(asdict(partial))
+        else:
+            click.echo(f"Daemon: reachable ({transport})")
+            click.echo(f"Version: {version}")
+            click.echo(f"Scope: instance {instance_id}")
+            click.echo(partial.message)
+        return
+    if checked is None:
+        raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
+    host = checked.show_playbill_host(instance_id)
+    try:
+        identity = checked.playbill_whoami(instance_id)
     except CoreError:  # an uninitialized host has no identity to read yet
         identity = None
     if output_json:

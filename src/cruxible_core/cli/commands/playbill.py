@@ -40,7 +40,6 @@ from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
 from cruxible_client.authoring.compact_query import (
     WHERE_SYNTAX,
-    exact_content_marker_text,
     parse_where,
     render_query_table,
 )
@@ -81,6 +80,11 @@ from cruxible_client.contracts.errors import (
     DocumentNotFoundError,
     PlaybillKeyError,
     PlaybillSinceRequestInvalid,
+)
+from cruxible_client.contracts.get_display import (
+    GET_CLI_HISTORY_VALUE_WIDTH,
+    GET_CLI_VALUE_WIDTH,
+    get_value_display,
 )
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
@@ -3587,21 +3591,10 @@ def get_by_ref(
         )
 
 
-def _get_value_text(value: object, *, width: int = 120) -> str:
-    if isinstance(value, dict) and "exact_content" in value and "content_digest" in value:
-        return exact_content_marker_text(value)
-    if isinstance(value, dict) and value.get("truncated") is True and "length" in value:
-        # A summary card cut this string; --detail evidence reads it whole.
-        shown = _get_value_text(value.get("value", ""), width=width - 24)
-        return f"{shown.removesuffix('…')}… ({value['length']} chars)"
-    if isinstance(value, list) and any(
-        isinstance(item, dict) and ("truncated" in item or "exact_content" in item)
-        for item in value
-    ):
-        return "[" + ", ".join(_get_value_text(item, width=width) for item in value) + "]"
-    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-    text = printable(text)
-    return text if len(text) <= width else text[: width - 1] + "…"
+def _get_value_text(
+    value: object, *, width: int = GET_CLI_VALUE_WIDTH, evidence_hint: bool = True
+) -> str:
+    return get_value_display(value, width=width, evidence_hint=evidence_hint).text
 
 
 def _emit_get_text(result: Any) -> None:
@@ -3651,7 +3644,7 @@ def _emit_get_text(result: Any) -> None:
                     # Names are never cut: a truncated name is not a usable reference.
                     click.echo(f"{key}: {printable(', '.join(map(str, value)))}")
                     continue
-                click.echo(f"{key}: {_get_value_text(value, width=200)}")
+                click.echo(f"{key}: {_get_value_text(value, width=200, evidence_hint=False)}")
         if card.get("flags"):
             click.echo(f"flags: {', '.join(card['flags'])}")
         for step in nexts:
@@ -3663,7 +3656,7 @@ def _emit_get_text(result: Any) -> None:
         if isinstance(whole, str):
             click.echo(f"value: {printable(whole)}")
         else:
-            click.echo(f"value: {_get_value_text(whole, width=200)}")
+            click.echo(f"value: {printable(json.dumps(whole, ensure_ascii=False))}")
         if result.evidence.content_digest is not None:
             click.echo(f"content_digest: {result.evidence.content_digest}")
         for capture in result.evidence.captures:
@@ -3683,12 +3676,16 @@ def _emit_get_text(result: Any) -> None:
     if result.history is not None:
         for revision in result.history.revisions:
             value = (
-                "" if revision.value is None else f"  = {_get_value_text(revision.value, width=80)}"
+                ""
+                if revision.value is None
+                else f"  = {_get_value_text(revision.value, width=GET_CLI_HISTORY_VALUE_WIDTH)}"
             )
             click.echo(
                 f"rev {revision.revision}  seq {revision.sequence}  {revision.accepted}  "
                 f"by {revision.actor or '-'}{value}"
             )
+            for step in revision.next:
+                click.echo(f"next: {step}")
         return
     if result.body is not None:
         body = result.body
