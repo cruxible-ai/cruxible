@@ -9,7 +9,7 @@ import re
 import time
 from collections import OrderedDict
 from collections.abc import Collection, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -182,6 +182,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.get_reads import (
     PlaybillByteRangeV1,
+    PlaybillExactContentRefV1,
     PlaybillGetDetail,
     PlaybillGetRequestV1,
     PlaybillGetResultV1,
@@ -304,10 +305,14 @@ class ClaimView:
     qualifier: str | None
     role: str
     object_kind: str
+    # The object's value: a literal, a Subject path, or an exact-content
+    # Claim's text (a PlaybillExactContentRefV1 marker when it is not text).
     value: object
     lifecycle_state: str
     verdict: str
     captures: tuple[CaptureRef, ...]
+    # An exact-content Claim's digest, the proof its text is ``value``.
+    content_digest: str | None = None
 
 
 def _address_path(value: object) -> str:
@@ -1768,7 +1773,33 @@ class Playbill:
             self._instance_id, identity, at=requested, evaluation_time=self._evaluation_time()
         )
         self._observe_read(_coordinate(view.coordinate), expected=requested)
-        return self._typed_claim_view(view, identity)
+        return self._with_exact_text(
+            self._typed_claim_view(view, identity), _coordinate(view.coordinate)
+        )
+
+    def _with_exact_text(self, view: ClaimView, coordinate: AcceptedCoordinate) -> ClaimView:
+        """An exact-content view with the daemon's text for its value, as get shows it.
+
+        The Claim envelope carries only the content digest. ``get`` with
+        ``detail="evidence"`` reads the whole value through the daemon's
+        exact-content reader at the same coordinate: the text, or the marker
+        that says why it is not text. The digest moves to ``content_digest``.
+        """
+
+        if view.object_kind != "exact_content":
+            return view
+        evidence = self._get(view.claim_id, "evidence", None, coordinate).evidence
+        if evidence is None:  # pragma: no cover - evidence always answers a Claim
+            return view
+        value: object = evidence.value
+        if isinstance(value, Mapping) and "exact_content" in value:
+            value = PlaybillExactContentRefV1.model_validate(value)
+        digest = evidence.content_digest
+        return replace(
+            view,
+            value=value,
+            content_digest=digest if digest is not None else cast(str | None, view.value),
+        )
 
     @staticmethod
     def _typed_claim_view(view: api.PlaybillClaimViewV2, identity: str = "") -> ClaimView:
@@ -1875,7 +1906,10 @@ class Playbill:
             if not returned.startswith(bare):
                 raise ValueError("identity batch returned a Claim outside its requested position")
         self._observe_read(result_coordinate, expected=requested)
-        return tuple(self._typed_claim_view(view) for view in result.claims)
+        return tuple(
+            self._with_exact_text(self._typed_claim_view(view), result_coordinate)
+            for view in result.claims
+        )
 
     def resolution_contracts(
         self, hypothesis: ClaimVersionReferenceV1
@@ -3259,7 +3293,13 @@ class Playbill:
         value: object
         if result.kind == "claim" and result.detail == "proof":
             view = api.PlaybillClaimViewV2.model_validate(result.proof)
-            value = self._typed_claim_view(view, identity) if detail == "summary" else view
+            value = (
+                self._with_exact_text(
+                    self._typed_claim_view(view, identity), _get_coordinate(result)
+                )
+                if detail == "summary"
+                else view
+            )
         elif result.card is not None:
             value = result.card
         else:

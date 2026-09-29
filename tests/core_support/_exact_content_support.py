@@ -24,6 +24,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.governance.keys import GeneratedKeyMaterial
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
@@ -64,6 +65,14 @@ def seed_exact_content(
     """
 
     instance, owner = initialize_local(tmp_path)
+    return instance, seed_exact_content_into(instance, owner, contents)
+
+
+def seed_exact_content_into(
+    instance: PlaybillInstance, owner: GeneratedKeyMaterial, contents: Mapping[str, bytes]
+) -> dict[str, ExactClaim]:
+    """Accept the exact-content surface and one Claim per content into ``instance``."""
+
     _seed_claim_surface(
         instance,
         owner,
@@ -109,7 +118,13 @@ def seed_exact_content(
         seeded[subject_id] = ExactClaim(
             subject=f"{EXACT_KIND}/{subject_id}", claim_id=claim_id, content=content
         )
-    return instance, seeded
+    return seeded
 
 
-__all__ = ["EXACT_KIND", "EXACT_PREDICATE", "ExactClaim", "seed_exact_content"]
+__all__ = [
+    "EXACT_KIND",
+    "EXACT_PREDICATE",
+    "ExactClaim",
+    "seed_exact_content",
+    "seed_exact_content_into",
+]
