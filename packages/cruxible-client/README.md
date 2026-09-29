@@ -635,16 +635,18 @@ Reads retained capture metadata and available bytes at pb.coordinate. Does not r
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-get(ref: str | TypedRef) -> KnowledgeCard
+get(ref: str | TypedRef, *, detail: PlaybillGetDetail = "summary", range: tuple[int, int] | str | None = None) -> KnowledgeCard
 ```
 
-Reads an exact supported artifact and wraps it in a KnowledgeCard. Typed Subject/ClaimType/Claim/Procedure/Query/Source refs select their read path; string lookup must resolve exactly.
+Reads one thing by reference; the daemon resolves the reference directly (never through search). `ref` is a typed Subject/ClaimType/Claim/Procedure/Query/Source ref (read at its coordinate) or any string an agent sees: `CLM-...` or a unique prefix, `kind/id`, a predicate (full or a unique leaf), `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, an artifact path, or a proposal id or prefix. A Claim summary is a `ClaimView`; other summaries are the values-first card (`PlaybillGetSubjectCardV1`, `PlaybillGetClaimTypeCardV1`, ...) from `cruxible_client.contracts.get_reads`; other details carry their payload (`PlaybillGetEvidenceV1`, `PlaybillGetHistoryV1`, `PlaybillGetBodyV1`, the explain dict for `why`, and for `proof` a `PlaybillClaimViewV2` on a Claim or the envelope dict otherwise).
 
-**Conditions and effects:** Ambiguous/absent matches and unsupported reference kinds refuse; inspect the returned kind before using value.
+**Conditions and effects:** An unknown or ambiguous reference refuses with `playbill.get.ref_not_found` or `playbill.get.ref_ambiguous` and the nearest names; a detail that does not apply to the kind refuses naming the ones that do. A Document body over 64 KiB needs `range`. Inspect `kind` before using `value`.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `ref` | Required | Typed artifact reference or supported identity string; see get/explain for supported kinds. |
+| `ref` | Required | Typed reference or any supported reference string. |
+| `detail` | `"summary"` | `summary`, `evidence` (Claims), `why`, `history`, `proof`, or `body` (Documents). |
+| `range` | `None` | Document body bytes as `(start, end)` or `"start:end"`; `detail="body"` only. |
 
 <a id="api-playbill-search"></a>
 

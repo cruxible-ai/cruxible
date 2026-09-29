@@ -86,6 +86,12 @@ each live Claim's value, object, verdict and status without full Claim views.
 The CLI (`playbill claim values --kind K --predicate P`) and MCP
 (`cruxible_playbill_claim_values`) expose the same read for every Subject of one
 kind.
+To read one thing you have a reference to, use `get`: `pb.get(ref,
+detail=...)`, `cruxible playbill get REF`, or `cruxible_playbill_get`. It takes
+any reference form you have seen (a Claim id or prefix, `kind/id`, a predicate,
+`Document:<name>`, a proposal id, ...), answers values first with verdict flags,
+and refuses a wrong name with the nearest names. `detail` goes deeper:
+`evidence`, `why`, `history`, `proof`, or a Document `body` by byte range.
 Use `pb.run_query(name_or_ref, parameters=...)` for named joins and filtered
 populations, checking truncation before assuming completeness.
 
