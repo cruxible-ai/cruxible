@@ -196,12 +196,58 @@ def test_the_mcp_tool_is_read_only_and_fully_typed(monkeypatch: pytest.MonkeyPat
         return found
 
     free_form = [
-        path
-        for name, prop in schema["properties"].items()
-        if name != "spec"
-        for path in untyped(prop, name)
+        path for name, prop in schema["properties"].items() for path in untyped(prop, name)
     ]
     assert free_form == []
+    # Spec mode is its own full-profile tool, so the default query tool stays small.
+    assert "spec" not in schema["properties"]
+    assert len(json.dumps(schema, separators=(",", ":"))) < 8_000
+
+    spec_schema = tools["cruxible_playbill_query_spec"].inputSchema
+    assert PERMISSION_REQUIREMENTS["cruxible_playbill_query_spec"] is PermissionMode.READ_ONLY
+    assert set(spec_schema["required"]) == {"spec"}
+    assert set(spec_schema["properties"]) == {
+        "instance_id",
+        "spec",
+        "limit",
+        "cursor",
+        "at",
+        "evaluation_time",
+    }
 
     with pytest.raises(DataValidationError, match=r"where\.0"):
         handlers.handle_playbill_query("inst", kind=SUBJECT_KIND, where=[{"field": "status"}])
+
+
+def test_the_spec_tool_answers_with_the_same_evaluation(
+    served: tuple[CruxibleClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
+    from cruxible_core.mcp import handlers
+    from cruxible_core.mcp.curation import PROFILE_DEFAULT, ToolCuration, advertised_tool_names
+    from tests.core_support._knowledge_loop_support import work_item_query
+
+    client, instance_id = served
+    spec = QueryDefinitionSpecV1.model_validate(
+        {**work_item_query("project.adhoc").model_dump(mode="json"), "pins": []}
+    )
+    through_sdk = client.query_playbill(
+        instance_id,
+        request=PlaybillQueryRequestV1(spec=spec, evaluation_time=EVALUATION_TIME),
+    )
+    for remote in (False, True):
+        monkeypatch.setattr(
+            handlers, "_get_client", lambda remote=remote: client if remote else None
+        )
+        through_tool = handlers.handle_playbill_query_spec(
+            instance_id, spec=spec, evaluation_time=EVALUATION_TIME
+        )
+        assert through_tool.receipt.mode == "spec"
+        assert through_tool.rows == through_sdk.rows
+
+    advertised = advertised_tool_names(
+        mode=PermissionMode.ADMIN,
+        registered_tools={"cruxible_playbill_query", "cruxible_playbill_query_spec"},
+        curation=ToolCuration(profile=PROFILE_DEFAULT),
+    )
+    assert advertised == {"cruxible_playbill_query"}

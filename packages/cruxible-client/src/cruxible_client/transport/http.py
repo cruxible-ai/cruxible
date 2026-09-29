@@ -1493,7 +1493,9 @@ class CruxibleClient:
         """One page of a query answer; pass ``next_cursor`` back while ``truncated``."""
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/query",
-            json=request.model_dump(mode="json", by_alias=True, exclude_defaults=True),
+            # Whole request: a spec's union members carry defaulted discriminators
+            # (``kind``) that exclude_defaults would strip.
+            json=request.model_dump(mode="json", by_alias=True),
         )
         return self._parse_model(response, contracts.PlaybillQueryResult)
 

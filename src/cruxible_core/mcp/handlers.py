@@ -67,6 +67,7 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallRequestV1,
     PlaybillProviderInstallResultV1,
 )
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
@@ -1712,15 +1713,11 @@ def handle_playbill_run_query(
     )
 
 
-def handle_playbill_query(
-    instance_id: str,
-    *,
-    evaluation_time: str | None = None,
-    **fields: Any,
-) -> contracts.PlaybillQueryResult:
-    """Build one typed ``query`` request and answer it locally or through the daemon."""
+def _playbill_query_request(
+    tool: str, evaluation_time: str | None, fields: Mapping[str, Any]
+) -> contracts.PlaybillQueryRequestV1:
     try:
-        request = contracts.PlaybillQueryRequestV1.model_validate(
+        return contracts.PlaybillQueryRequestV1.model_validate(
             {
                 **{name: value for name, value in fields.items() if value is not None},
                 "evaluation_time": parse_datetime(evaluation_time),
@@ -1731,11 +1728,39 @@ def handle_playbill_query(
             f"{'.'.join(str(part) for part in error['loc']) or 'request'}: {error['msg']}"
             for error in exc.errors()
         )
-        raise DataValidationError(f"cruxible_playbill_query: {problems}") from exc
+        raise DataValidationError(f"{tool}: {problems}") from exc
+
+
+def handle_playbill_query(
+    instance_id: str,
+    *,
+    evaluation_time: str | None = None,
+    **fields: Any,
+) -> contracts.PlaybillQueryResult:
+    """Build one typed compact or named ``query`` request and answer it."""
+    request = _playbill_query_request("cruxible_playbill_query", evaluation_time, fields)
     return _dispatch_remote_or_local(
         lambda client: client.query_playbill(instance_id, request=request),
         lambda: playbill_api.playbill_query(instance_id, request=request),
         operation_name="cruxible_playbill_query",
+    )
+
+
+def handle_playbill_query_spec(
+    instance_id: str,
+    *,
+    spec: QueryDefinitionSpecV1,
+    evaluation_time: str | None = None,
+    **fields: Any,
+) -> contracts.PlaybillQueryResult:
+    """Run one full QueryDefinition spec through the same ``query`` request path."""
+    request = _playbill_query_request(
+        "cruxible_playbill_query_spec", evaluation_time, {**fields, "spec": spec}
+    )
+    return _dispatch_remote_or_local(
+        lambda client: client.query_playbill(instance_id, request=request),
+        lambda: playbill_api.playbill_query(instance_id, request=request),
+        operation_name="cruxible_playbill_query_spec",
     )
 
 

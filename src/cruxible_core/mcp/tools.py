@@ -947,7 +947,6 @@ def register_tools(
             int, Field(ge=1, le=contracts.PLAYBILL_QUERY_MAX_LIMIT)
         ] = contracts.PLAYBILL_QUERY_DEFAULT_LIMIT,
         cursor: str | None = None,
-        spec: QueryDefinitionSpecV1 | None = None,
         name: str | None = None,
         params: dict[str, str | int | bool] | None = None,
         at: AcceptedCoordinate | str | None = None,
@@ -964,9 +963,30 @@ def register_tools(
             order_by=order_by,
             limit=limit,
             cursor=cursor,
-            spec=spec,
             name=name,
             params=params,
+            at=at,
+            evaluation_time=evaluation_time,
+        )
+
+    @_tool
+    def cruxible_playbill_query_spec(
+        instance_id: InstanceId = None,
+        *,
+        spec: QueryDefinitionSpecV1,
+        limit: Annotated[
+            int, Field(ge=1, le=contracts.PLAYBILL_QUERY_MAX_LIMIT)
+        ] = contracts.PLAYBILL_QUERY_DEFAULT_LIMIT,
+        cursor: str | None = None,
+        at: AcceptedCoordinate | str | None = None,
+        evaluation_time: str | None = None,
+    ) -> contracts.PlaybillQueryResult:
+        """Run one full QueryDefinition spec inline: the query verb's rows, flags and paging."""
+        return handlers.handle_playbill_query_spec(
+            require_instance_id(instance_id),
+            spec=spec,
+            limit=limit,
+            cursor=cursor,
             at=at,
             evaluation_time=evaluation_time,
         )

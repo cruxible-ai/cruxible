@@ -278,7 +278,9 @@ authority plane beside accepted state.
 
 ## Queries, discovery, and the floor
 
-`cruxible_playbill_query` takes exactly one mode. Compact mode names a Subject
+`cruxible_playbill_query` takes exactly one mode: compact or a query `name`
+(a full spec runs through `cruxible_playbill_query_spec`, in the `full`
+profile, so the default tool stays small). Compact mode names a Subject
 `kind` (or `ClaimType` / `Procedure` for definitions) and/or free text
 `contains`. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
 `ne`, `lt`, `lte`, `gt`, `gte`, `in` (a list), `exists` (a boolean) or
@@ -303,7 +305,8 @@ now).
 | `cruxible_playbill_list_query_definitions` | List accepted entrypoints | `READ_ONLY` |
 | `cruxible_playbill_get_query_definition` | Read one entrypoint's contract | `READ_ONLY` |
 | `cruxible_playbill_run_query` | Execute an entrypoint with a replay receipt | `READ_ONLY` |
-| `cruxible_playbill_query` | Answer any question over accepted state in one call: compact (`kind` and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`), a full `spec`, or a query `name` with `params`; rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
+| `cruxible_playbill_query` | Answer any question over accepted state in one call: compact (`kind` and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`) or a query `name` with `params`; rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
+| `cruxible_playbill_query_spec` | Run one full `QueryDefinitionSpecV1` inline (`spec`, `limit`, `cursor`, `at`, `evaluation_time`) with the same evaluation, rows, flags and paging as `cruxible_playbill_query`; `full` profile only | `READ_ONLY` |
 | `cruxible_playbill_discover` | Find interfaces and Subjects by name | `READ_ONLY` |
 | `cruxible_playbill_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue, and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types` or `queries` (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_playbill_search` | Search, list, or orient over accepted state | `READ_ONLY` |
