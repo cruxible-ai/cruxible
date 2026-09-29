@@ -478,6 +478,12 @@ def _attention(
     consumers_running: bool,
 ) -> tuple[PlaybillOrientAttentionV1, bool]:
     notes: list[str] = []
+    terminal = instance.descriptor.decommissioned
+    if terminal is not None:
+        notes.append(
+            f"instance decommissioned at {terminal.decommissioned_at} ({terminal.reason}); "
+            "reads serve, every write is refused"
+        )
     items: tuple[PlaybillNextItemV1, ...] = ()
     total = 0
     try:

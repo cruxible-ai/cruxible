@@ -280,3 +280,14 @@ def test_identity_rules_name_their_contracts_and_unknown_digests_stay_short(
             False,
         )
         assert names.name("sha256:" + "ab" * 32) == "unresolved:abababababab"
+
+
+def test_a_decommissioned_instance_still_orients_and_says_why(seeded) -> None:  # type: ignore[no-untyped-def]
+    seeded.decommission(reason="migrated to a new host", decommissioned_by="owner")
+
+    attention = service_playbill_orient(seeded, caller=OWNER).attention
+
+    assert attention is not None
+    assert any(
+        "decommissioned" in note and "migrated to a new host" in note for note in attention.notes
+    )
