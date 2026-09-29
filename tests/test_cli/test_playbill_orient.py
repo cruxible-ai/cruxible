@@ -96,3 +96,31 @@ def test_orient_refuses_a_wrong_kind_with_the_nearest_names(
     assert refused.exit_code != 0
     assert "playbill.orient.kind_not_found" in refused.output
     assert KIND in refused.output
+
+
+def test_both_kind_views_print_shared_evidence_once_and_empty_exceptions() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    kind = {
+        "kind": KIND,
+        "subjects": 2,
+        "evidence": ["feed-a", "feed-b"],
+        "predicates": [
+            {"name": "status", "type": "string", "cardinality": "one"},
+            {"name": "owner", "type": "string", "cardinality": "one", "evidence": []},
+            {"name": "note", "type": "string", "cardinality": "one", "evidence": ["other"]},
+        ],
+    }
+    for view in ({"kinds": [kind]}, {"kind_detail": {**kind, "sample_subject_ids": []}}):
+        text = _render_orient(
+            {
+                "instance": "inst",
+                "generation": 3,
+                "coordinate": {"git_oid": "a" * 64},
+                "accepted_at": "2026-09-29T00:00:00Z",
+                **view,
+            }
+        )
+        assert text.count("evidence=feed-a,feed-b") == 1
+        assert "owner  one  string  evidence=(none)" in text
+        assert "note  one  string  evidence=other" in text

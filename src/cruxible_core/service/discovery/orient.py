@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -355,17 +356,29 @@ def _kind_row(state: _State, kind: str) -> PlaybillOrientKindV1:
         ),
         key=lambda item: item.name,
     )
-    shared = {item.evidence for item in predicates}
-    evidence: tuple[str, ...] = ()
-    if len(shared) == 1 and len(predicates) > 1:
-        # Every predicate admits the same contracts: name them once, on the kind.
-        (evidence,) = shared
-        predicates = [item.model_copy(update={"evidence": ()}) for item in predicates]
+    evidence, hoisted = _hoist_evidence(predicates)
     return PlaybillOrientKindV1(
         kind=kind,
         subjects=state.subjects_by_kind.get(kind, 0),
         evidence=evidence,
-        predicates=tuple(predicates),
+        predicates=hoisted,
+    )
+
+
+def _hoist_evidence(
+    predicates: Sequence[PlaybillOrientPredicateV1],
+) -> tuple[tuple[str, ...], tuple[PlaybillOrientPredicateV1, ...]]:
+    """Name the modal set once; ties use byte order, independent of input order."""
+
+    counts = Counter(item.evidence for item in predicates if item.evidence is not None)
+    evidence = min(
+        counts,
+        key=lambda value: (-counts[value], tuple(name.encode("utf-8") for name in value)),
+        default=(),
+    )
+    return evidence, tuple(
+        item.model_copy(update={"evidence": None}) if item.evidence == evidence else item
+        for item in predicates
     )
 
 
@@ -832,10 +845,12 @@ def _kind_detail(
         ),
         key=lambda item: item.name,
     )
+    evidence, hoisted = _hoist_evidence(predicates)
     return PlaybillOrientKindDetailV1(
         kind=kind,
         subjects=state.subjects_by_kind.get(kind, 0),
-        predicates=tuple(predicates),
+        evidence=evidence,
+        predicates=hoisted,
         sample_subject_ids=samples,
     )
 

@@ -5484,8 +5484,8 @@ def _orient_predicate_line(item: Mapping[str, Any]) -> str:
         parts.append(f"claims={item['live_claims']}")
     if item.get("stale_after"):
         parts.append(f"stale_after={item['stale_after']}")
-    if item.get("evidence"):
-        parts.append("evidence=" + ",".join(item["evidence"]))
+    if item.get("evidence") is not None:
+        parts.append("evidence=" + (",".join(item["evidence"]) or "(none)"))
     return "  ".join(parts)
 
 
@@ -5515,7 +5515,11 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         )
     detail = result.get("kind_detail")
     if detail is not None:
-        lines.append(f"Kind {detail['kind']}  subjects={detail['subjects']}")
+        shared = detail.get("evidence")
+        lines.append(
+            f"Kind {detail['kind']}  subjects={detail['subjects']}"
+            + (f"  evidence={','.join(shared)}" if shared else "")
+        )
         lines.extend(f"  {_orient_predicate_line(item)}" for item in detail["predicates"])
         if detail["sample_subject_ids"]:
             lines.append("Sample subjects: " + ", ".join(detail["sample_subject_ids"]))

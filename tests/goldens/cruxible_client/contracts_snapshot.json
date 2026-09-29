@@ -27647,7 +27647,7 @@
           },
           "PlaybillOrientKindV1": {
             "additionalProperties": false,
-            "description": "One Subject kind: how many live Subjects it has and its predicates.\n\nWhen every predicate of the kind admits the same CaptureContracts, the\ncompact map names them once here as ``evidence`` and the predicates leave\ntheirs out; otherwise each predicate carries its own.",
+            "description": "One Subject kind: how many live Subjects it has and its predicates.\n\nThe most common admitted CaptureContract set is named once as ``evidence``.\nPredicates inheriting it omit their evidence; exceptions carry their own\nset, including an explicit empty list when no contracts are admitted.",
             "properties": {
               "evidence": {
                 "default": [],
@@ -27684,7 +27684,7 @@
           },
           "PlaybillOrientPredicateV1": {
             "additionalProperties": false,
-            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.",
+            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.",
             "properties": {
               "cardinality": {
                 "enum": [
@@ -27707,12 +27707,19 @@
                 "title": "Description"
               },
               "evidence": {
-                "default": [],
-                "items": {
-                  "type": "string"
-                },
-                "title": "Evidence",
-                "type": "array"
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Evidence"
               },
               "live_claims": {
                 "anyOf": [
