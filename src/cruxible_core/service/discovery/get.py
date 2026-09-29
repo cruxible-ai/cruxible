@@ -1468,12 +1468,11 @@ def service_playbill_get(
     *,
     request: PlaybillGetRequestV1,
     access: BodyAccessContext,
-    content_access: BodyAccessContext | None = None,
 ) -> PlaybillGetResultV1:
     """Resolve one reference and answer it at one ``detail`` level.
 
-    ``content_access`` reads exact-content Claim values as text (``access`` when
-    not given); without body access they show as a ``withheld`` marker.
+    ``access`` gates Document bodies. Exact-content Claim values are Claim
+    values, so every caller reads them as text.
     """
 
     continuation, at = _history_continuation(request)
@@ -1511,7 +1510,7 @@ def service_playbill_get(
     card: PlaybillGetCardV1 | None = None
     fields: dict[str, Any] = {}
     surface = request.surface
-    content = ExactContentReader(instance, access if content_access is None else content_access)
+    content = ExactContentReader(instance)
     if request.detail == "summary":
         if resolved.kind == "claim":
             card = _claim_card(

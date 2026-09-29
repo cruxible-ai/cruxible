@@ -164,11 +164,12 @@ class PlaybillExactContentRefV1(_StrictGetModel):
 
     An exact-content value reads as its UTF-8 text wherever a value is shown.
     This marker stands in for the text when there is none to show: the bytes are
-    not UTF-8 text (``binary``), the caller may not read bodies (``withheld``),
-    or the store no longer holds them (``unavailable``). It never raises.
+    not UTF-8 text (``binary``), or the store no longer holds them
+    (``unavailable``). It never raises. Every caller who may read a Claim reads
+    its exact-content value; nothing is withheld by permission.
     """
 
-    exact_content: Literal["binary", "withheld", "unavailable"]
+    exact_content: Literal["binary", "unavailable"]
     content_digest: str
     # The value's length in bytes, when it is known without reading the bytes
     # (the accepted span) or they were read.

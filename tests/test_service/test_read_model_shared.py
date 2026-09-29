@@ -360,13 +360,10 @@ def _exact_get(
     )
 
 
-def _exact_query(
-    instance: Any, access: BodyAccessContext | None = _ACCESS, **fields: Any
-) -> PlaybillQueryResult:
+def _exact_query(instance: Any, **fields: Any) -> PlaybillQueryResult:
     return service_playbill_query(
         instance,
         request=PlaybillQueryRequestV1.model_validate({"evaluation_time": _WHEN, **fields}),
-        content_access=access,
     )
 
 
@@ -464,24 +461,26 @@ def test_contains_matches_exact_content_text_never_its_digest(
     assert _exact_query(instance, contains=ruling.digest.split(":")[1][:16]).rows == ()
 
 
-def test_a_caller_who_may_not_read_bodies_sees_exact_content_withheld(
+def test_a_caller_who_may_not_read_bodies_still_reads_exact_content_as_text(
     exact_world: tuple[Any, dict[str, Any]],
 ) -> None:
-    from cruxible_client.contracts.get_reads import PlaybillExactContentRefV1
+    """Ruling exact-content-read-only: the value is a Claim value, not a body read."""
 
     instance, seeded = exact_world
     ruling = seeded["wi-42"]
+    text = _RULING.decode()
     reader = BodyAccessContext(principal_id="reader", can_read_body=False)
-    withheld = PlaybillExactContentRefV1(
-        exact_content="withheld", content_digest=ruling.digest, length=len(_RULING)
-    )
 
     card = _exact_get(instance, ruling.claim_id, access=reader).card
     assert isinstance(card, PlaybillGetClaimCardV1)
-    assert (card.value, card.content_digest) == (withheld, ruling.digest)
-    rows = _exact_query(instance, None, kind=EXACT_KIND, select=["status"]).rows
-    assert {row["subject"]: row["status"] for row in rows}[ruling.subject] == withheld
-    assert _exact_query(instance, None, contains="exactly as written").rows == ()
+    assert (card.value, card.content_digest) == (text, ruling.digest)
+    history = _exact_get(instance, ruling.claim_id, access=reader, detail="history").history
+    assert history is not None
+    assert [item.value for item in history.revisions] == [text]
+    rows = _exact_query(instance, kind=EXACT_KIND, select=["status"]).rows
+    assert {row["subject"]: row["status"] for row in rows}[ruling.subject] == text
+    (found,) = _exact_query(instance, contains="exactly as written").rows
+    assert found["claim"] == ruling.claim_id
 
 
 def test_query_reserves_no_digest_row_key() -> None:
