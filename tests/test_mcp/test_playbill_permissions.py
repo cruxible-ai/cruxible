@@ -33,6 +33,7 @@ _DEFAULT_PROFILE = {
     "cruxible_playbill_list_subjects",
     "cruxible_playbill_get_subject",
     "cruxible_playbill_run_query",
+    "cruxible_playbill_query",
     "cruxible_playbill_authoring_example",
     "cruxible_playbill_authoring_create",
     "cruxible_playbill_authoring_compile",

@@ -8,6 +8,7 @@ everyday agent loop:
 
 - orient and pick work: `cruxible_playbill_search` (its `orient` mode),
   `cruxible_playbill_next`, and `cruxible_playbill_expand`;
+- the query read verb: `cruxible_playbill_query`;
 - Claim, ClaimType, and Subject reads: `cruxible_playbill_claim_values` (a status
   table for one Subject kind), `cruxible_playbill_list_claims`,
   `cruxible_playbill_get_claim`, `cruxible_playbill_explain_claim`,
@@ -273,11 +274,30 @@ authority plane beside accepted state.
 
 ## Queries, discovery, and the floor
 
+`cruxible_playbill_query` takes exactly one mode. Compact mode names a Subject
+`kind` (or `ClaimType` / `Procedure` for definitions) and/or free text
+`contains`. Each `where` filter is `{field, <operator>: value}` with one of `eq`,
+`ne`, `lt`, `lte`, `gt`, `gte`, `in` (a list), `exists` (a boolean) or
+`contains` (case-insensitive text); filters combine as all-of. A field is a
+predicate's short name (`adoption_state`), its full name, `subject_id`, or
+`alias.field` after `follow: [{field, as}]`. Values are checked against the
+ClaimType first: an unknown kind, field or enum member, or an operator that does
+not apply, refuses with a code, the nearest valid names and a repair. `ne` means
+no value equals, so a Subject without the value matches. `contains` alone
+searches every live Claim value across kinds. Rows lead with values (an array
+for a many-valued predicate or a contested slot) and carry `flags` (`stale`,
+`contested`, `contradicted`, `unsure_hold`); without `select` a kind shows up to
+12 predicates and names the rest in `notes`. ClaimType rows name the
+CaptureContracts their evidence rules admit, never digests. `receipt` records the
+mode, the definition digest, the coordinate and the evaluation time (default
+now).
+
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_playbill_list_query_definitions` | List accepted entrypoints | `READ_ONLY` |
 | `cruxible_playbill_get_query_definition` | Read one entrypoint's contract | `READ_ONLY` |
 | `cruxible_playbill_run_query` | Execute an entrypoint with a replay receipt | `READ_ONLY` |
+| `cruxible_playbill_query` | Answer any question over accepted state in one call: compact (`kind` and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`), a full `spec`, or a query `name` with `params`; rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
 | `cruxible_playbill_discover` | Find interfaces and Subjects by name | `READ_ONLY` |
 | `cruxible_playbill_search` | Search, list, or orient over accepted state | `READ_ONLY` |
 | `cruxible_playbill_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |

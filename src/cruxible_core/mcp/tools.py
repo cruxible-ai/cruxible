@@ -15,6 +15,7 @@ from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendResultV1
 from cruxible_client.contracts.claim_reads import ClaimValuesResultV1
+from cruxible_client.contracts.compact_query import QueryFilterV1, QueryFollowV1
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
@@ -24,11 +25,13 @@ from cruxible_client.contracts.kits import (
     PlaybillKitRemoveRequestV1,
     PlaybillKitStatusV1,
 )
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
     PlaybillProviderCatalogV1,
     PlaybillProviderInstallRequestV1,
     PlaybillProviderInstallResultV1,
 )
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.curation.curation_calibration import (
@@ -852,6 +855,44 @@ def register_tools(
             parameters=parameters,
             evaluation_time=evaluation_time,
             budgets=budgets,
+        )
+
+    @_tool
+    def cruxible_playbill_query(
+        instance_id: InstanceId = None,
+        *,
+        kind: str | None = None,
+        where: list[QueryFilterV1] | None = None,
+        contains: str | None = None,
+        select: list[str] | None = None,
+        follow: list[QueryFollowV1] | None = None,
+        order_by: list[str] | None = None,
+        limit: Annotated[
+            int, Field(ge=1, le=contracts.PLAYBILL_QUERY_MAX_LIMIT)
+        ] = contracts.PLAYBILL_QUERY_DEFAULT_LIMIT,
+        cursor: str | None = None,
+        spec: QueryDefinitionSpecV1 | None = None,
+        name: str | None = None,
+        params: dict[str, str | int | bool] | None = None,
+        at: AcceptedCoordinate | str | None = None,
+        evaluation_time: str | None = None,
+    ) -> contracts.PlaybillQueryResult:
+        """Query accepted state: rows of values with flags; pass next_cursor while truncated."""
+        return handlers.handle_playbill_query(
+            require_instance_id(instance_id),
+            kind=kind,
+            where=where,
+            contains=contains,
+            select=select,
+            follow=follow,
+            order_by=order_by,
+            limit=limit,
+            cursor=cursor,
+            spec=spec,
+            name=name,
+            params=params,
+            at=at,
+            evaluation_time=evaluation_time,
         )
 
     @_tool

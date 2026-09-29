@@ -86,6 +86,7 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallRequestV1,
     PlaybillProviderInstallResultV1,
 )
+from cruxible_client.contracts.query.definitions import query_definition_path
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -206,6 +207,7 @@ from cruxible_core.service.discovery.audit import (
     service_playbill_audit,
     validate_playbill_audit_request,
 )
+from cruxible_core.service.discovery.compact_query import service_playbill_query
 from cruxible_core.service.discovery.coverage import (
     coverage_access_profile,
     service_resolve_playbill_coverage,
@@ -1869,6 +1871,27 @@ def playbill_run_query(
         paths=(result.definition_path,),
     )
     return contracts.PlaybillQueryRun.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_query(
+    instance_id: str,
+    *,
+    request: contracts.PlaybillQueryRequestV1,
+) -> contracts.PlaybillQueryResult:
+    """Answer one ``query`` call (compact, spec or named) as one page of values."""
+
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_playbill_query(get_playbill_manager().get(instance_id), request=request)
+    if result.receipt.mode == "named" and request.name is not None:
+        _record_consumed_paths(
+            instance_id,
+            operation="playbill.query.run",
+            coordinate=AcceptedCoordinate.model_validate(
+                result.receipt.coordinate.model_dump(mode="json")
+            ),
+            paths=(query_definition_path(request.name),),
+        )
+    return result
 
 
 def playbill_procedure_source_preview(

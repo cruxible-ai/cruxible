@@ -1437,6 +1437,19 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillQueryRun)
 
+    def query_playbill(
+        self,
+        instance_id: str,
+        *,
+        request: contracts.PlaybillQueryRequestV1,
+    ) -> contracts.PlaybillQueryResult:
+        """One page of a query answer; pass ``next_cursor`` back while ``truncated``."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/query",
+            json=request.model_dump(mode="json", by_alias=True, exclude_defaults=True),
+        )
+        return self._parse_model(response, contracts.PlaybillQueryResult)
+
     def preview_playbill_procedure_source(
         self, instance_id: str, *, request: ProcedureSourcePreviewRequestV1
     ) -> ProcedureSourcePreviewV1:

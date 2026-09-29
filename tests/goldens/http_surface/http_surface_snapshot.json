@@ -288,6 +288,9 @@
   "/api/v1/{instance_id}/playbill/queries/{name}/run": {
     "POST": "PlaybillQueryRun"
   },
+  "/api/v1/{instance_id}/playbill/query": {
+    "POST": "PlaybillQueryResult"
+  },
   "/api/v1/{instance_id}/playbill/resolution-contracts/query": {
     "POST": "ResolutionContractsResultV1"
   },

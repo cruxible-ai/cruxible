@@ -1631,6 +1631,33 @@ def handle_playbill_run_query(
     )
 
 
+def handle_playbill_query(
+    instance_id: str,
+    *,
+    evaluation_time: str | None = None,
+    **fields: Any,
+) -> contracts.PlaybillQueryResult:
+    """Build one typed ``query`` request and answer it locally or through the daemon."""
+    try:
+        request = contracts.PlaybillQueryRequestV1.model_validate(
+            {
+                **{name: value for name, value in fields.items() if value is not None},
+                "evaluation_time": parse_datetime(evaluation_time),
+            }
+        )
+    except ValidationError as exc:
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or 'request'}: {error['msg']}"
+            for error in exc.errors()
+        )
+        raise DataValidationError(f"cruxible_playbill_query: {problems}") from exc
+    return _dispatch_remote_or_local(
+        lambda client: client.query_playbill(instance_id, request=request),
+        lambda: playbill_api.playbill_query(instance_id, request=request),
+        operation_name="cruxible_playbill_query",
+    )
+
+
 def handle_playbill_procedure_readiness(
     instance_id: str,
     name: str,
