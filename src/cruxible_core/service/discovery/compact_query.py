@@ -27,6 +27,7 @@ listing it was cut from.
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -666,18 +667,21 @@ def _ordered_match(operator: str, left: Any, right: Any) -> bool:
         return False
 
 
-def _member_key(value: object) -> tuple[bool, object]:
+def _member_key(value: object) -> tuple[str, object]:
     """A hashable membership key over comparable forms: instants, decimals, text.
 
-    A boolean is kept apart from the integers it would otherwise equal. A value
-    that cannot be hashed (a JSON array or object) is keyed by its repr.
+    The key is (type tag, form), so no two types meet: a boolean stays apart from
+    the integers it would otherwise equal, and a JSON array or object is keyed by
+    its sorted JSON text under its own tag, never equal to a string spelling it.
     """
 
+    if isinstance(value, bool):
+        return ("boolean", value)
     try:
         hash(value)
     except TypeError:
-        return (False, repr(value))
-    return (isinstance(value, bool), value)
+        return ("json", json.dumps(value, sort_keys=True, separators=(",", ":"), default=repr))
+    return ("scalar", value)
 
 
 def _pins(vocabulary: QueryVocabulary, predicates: Sequence[str]) -> tuple[ArtifactPin, ...]:

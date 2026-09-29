@@ -514,6 +514,13 @@ def test_a_column_named_like_row_metadata_keeps_its_values(instance: Any) -> Non
         ("timestamp", ["2026-09-01T00:00:00Z"], ("2026-09-03T00:00:00Z",), False),
         ("decimal", [1, 3], ("3.0",), True),
         ("boolean", [True], (1,), False),
+        ("json", [[1]], ("[1]",), False),
+        ("json", [{"a": 1}], ("{'a': 1}",), False),
+        ("json", [{"a": 1}], ('{"a":1}',), False),
+        ("json", ["[1]"], ([1],), False),
+        ("json", [[1]], ([1],), True),
+        ("json", [{"b": [True], "a": 1}], ({"a": 1, "b": [True]},), True),
+        ("json", [{"a": [True]}], ({"a": [1]},), False),
     ],
 )
 def test_inline_in_compares_temporal_and_decimal_values(
