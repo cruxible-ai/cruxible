@@ -433,9 +433,11 @@ def test_get_and_query_show_an_exact_content_value_as_its_text(
         for rows in (compact, spec):
             row_of = rows[seeded_claim.subject]
             assert row_of["status"] == shown
-            assert row_of["content_digests"] == {"status": seeded_claim.digest}
+            # Query stays values-first: the digest is get's, not a row key.
+            assert not any("digest" in key for key in row_of)
         card = _exact_get(instance, seeded_claim.subject).card
         assert isinstance(card, PlaybillGetSubjectCardV1)
+        assert card.claims[0].content_digest == seeded_claim.digest
         assert card.claims[0].value == compact[seeded_claim.subject]["status"]
         assert card.claims[0].flags == tuple(compact[seeded_claim.subject]["flags"])
 
@@ -448,7 +450,7 @@ def test_contains_matches_exact_content_text_never_its_digest(
 
     (row,) = _exact_query(instance, contains="exactly as written").rows
     assert (row["claim"], row["value"]) == (ruling.claim_id, _RULING.decode())
-    assert row["content_digests"] == {"value": ruling.digest}
+    assert set(row) == {"subject", "subject_id", "kind", "predicate", "value", "claim", "flags"}
     (kind_row,) = _exact_query(instance, kind=EXACT_KIND, contains="exactly as written").rows
     assert kind_row["subject"] == ruling.subject
     # A digest is proof, not a value: no search matches it.
@@ -473,3 +475,11 @@ def test_a_caller_who_may_not_read_bodies_sees_exact_content_withheld(
     rows = _exact_query(instance, None, kind=EXACT_KIND, select=["status"]).rows
     assert {row["subject"]: row["status"] for row in rows}[ruling.subject] == withheld
     assert _exact_query(instance, None, contains="exactly as written").rows == ()
+
+
+def test_query_reserves_no_digest_row_key() -> None:
+    from cruxible_core.service.discovery.field_names import RESERVED_FIELD_NAMES
+
+    assert RESERVED_FIELD_NAMES == frozenset(
+        {"subject_id", "subject", "kind", "predicate", "claim", "flags"}
+    )

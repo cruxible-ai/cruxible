@@ -93,7 +93,6 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.exact_content import ExactContentReader
-from cruxible_core.service.discovery.field_names import CONTENT_DIGESTS_FIELD
 from cruxible_core.service.discovery.query import evaluate_accepted_query
 from cruxible_core.service.discovery.query_values import (
     LiveValue,
@@ -257,15 +256,14 @@ class _InlineFilter:
     value: object
 
 
-ROW_METADATA = frozenset({"subject", "subject_id", "flags", CONTENT_DIGESTS_FIELD})
+ROW_METADATA = frozenset({"subject", "subject_id", "flags"})
 
 
 def _out(name: str) -> str:
     """The row key a column's values are served under.
 
     ``subject``, ``subject_id`` and ``flags`` are row metadata on every Subject
-    row, and ``content_digests`` on a row with an exact-content column. A column
-    named like one of them keeps its values under
+    row. A column named like one of them keeps its values under
     ``value.<name>`` instead of overwriting the metadata or losing its values.
     ``_column_keys`` then makes the keys unique across the whole column set; a
     projection needs no more, since its field names are distinct identifiers.
@@ -828,7 +826,6 @@ class _RowRenderer:
                 "subject_id": label.split("/", 1)[1] if "/" in label else label,
             }
             row_flags: set[QueryFlag] = set(extra_flags[position]) if extra_flags else set()
-            digests: dict[str, object] = {}
             for column in self.columns:
                 path = row.get(column.binding)
                 if column.field is None:
@@ -845,15 +842,12 @@ class _RowRenderer:
                     row_flags.update(flags.get(item.identity, ()))
                 row_flags.update(answer_flags(info.cardinality, len(values)))
                 listed = info.cardinality == "many" or len(values) > 1
-                if info.value_type == "exact_content" and values:
-                    digests[column.name] = values if listed else values[0]
+                if info.value_type == "exact_content":
                     values = _exact_values(self.content, slot, values)
                 if listed:
                     out[column.name] = values
                 else:
                     out[column.name] = values[0] if values else None
-            if digests:
-                out[CONTENT_DIGESTS_FIELD] = digests
             out["flags"] = ordered_flags(row_flags)
             rendered.append(out)
         return rendered
@@ -1223,7 +1217,6 @@ def _contains_everywhere(
             }
             if item.exact:
                 row["value"] = summary_value(content.value(str(item.value), item.span))
-                row[CONTENT_DIGESTS_FIELD] = {"value": item.value}
             rows.append({**row, "flags": ordered_flags(marks)})
         return rows
 
@@ -1737,7 +1730,6 @@ def _engine_answer(
         rendered = renderer.render(bound, extra_flags=extra)
         for out, row in zip(rendered, rows, strict=True):
             flags = out.pop("flags")
-            digests = cast(dict[str, object], out.pop(CONTENT_DIGESTS_FIELD, {}))
             for projected in row.fields:
                 value = projected.value if projected.state == "present" else None
                 if isinstance(value, str) and value.startswith("Subject:"):
@@ -1758,12 +1750,8 @@ def _engine_answer(
                 shown = distinct(item.value for item in slot)
                 info = vocabulary.predicates[ref.predicate]
                 listed = info.cardinality == "many" or len(shown) > 1
-                if shown:
-                    digests[key] = shown if listed else shown[0]
                 values = _exact_values(content, slot, shown)
                 out[key] = values if listed else (values[0] if values else None)
-            if digests:
-                out[CONTENT_DIGESTS_FIELD] = digests
             out["flags"] = flags
         return rendered
 
