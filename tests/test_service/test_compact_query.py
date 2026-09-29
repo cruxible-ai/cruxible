@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -13,9 +13,12 @@ from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
 from cruxible_core.service.discovery import compact_query as compact_module
 from cruxible_core.service.discovery.compact_query import service_playbill_query
+from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.query_vocabulary import (
     PlaybillQueryNotFound,
     PlaybillQueryRefused,
+    PredicateInfo,
+    QueryVocabulary,
 )
 from cruxible_core.service.list_pages import PlaybillListCursorMismatch
 from tests.core_support._candidate_support import submit_query_definition_candidate
@@ -539,3 +542,58 @@ def test_named_mode_applies_the_server_ceiling(instance: Any, monkeypatch: Any) 
     assert len(result.rows) == 1
     assert result.capped == ("max_results=1",)
     assert result.truncated is True
+
+
+def _predicate_info(predicate: str, *kinds: str) -> PredicateInfo:
+    return PredicateInfo(
+        predicate=predicate,
+        claim_type=cast(Any, None),
+        claim_type_digest="sha256:" + "0" * 64,
+        value_type="string",
+        members=(),
+        cardinality="one",
+        subject_kinds=kinds,
+        object_kinds=(),
+    )
+
+
+def test_every_shown_field_name_resolves_back_to_its_predicate() -> None:
+    """Addendum 2: one naming rule, round-tripped over the whole vocabulary."""
+
+    kind = SUBJECT_KIND
+    infos = [
+        _predicate_info(PREDICATE, kind),
+        _predicate_info("other.status", kind, "other"),
+        _predicate_info(f"{kind}.other.status", kind),
+        _predicate_info("third.status", "third"),
+        _predicate_info("sec.vuln.severity", kind),
+    ]
+    vocabulary = QueryVocabulary(
+        predicates={info.predicate: info for info in infos},
+        kinds=(kind, "other", "third"),
+    )
+
+    for owner in vocabulary.kinds:
+        for info in vocabulary.predicates_of(owner):
+            shown = vocabulary.field_name(info, (owner,))
+            assert shown == short_field_name(info.predicate, owner, vocabulary.predicates)
+            resolved = vocabulary.resolve_field((owner,), shown, field_path="select[0]")
+            assert not isinstance(resolved, str) and resolved.predicate == info.predicate
+
+    assert vocabulary.field_name(vocabulary.predicates[PREDICATE], (kind,)) == "status"
+    # The short form of project.work_item.other.status is another predicate's full name.
+    collided = vocabulary.predicates[f"{kind}.other.status"]
+    assert vocabulary.field_name(collided, (kind,)) == f"{kind}.other.status"
+    # No last-segment form: `severity` is not project.work_item.severity.
+    with pytest.raises(PlaybillQueryRefused) as refused:
+        vocabulary.resolve_field((kind,), "severity", field_path="where[0].field")
+    assert refused.value.error_code == "playbill.query.unknown_field"
+    assert "sec.vuln.severity" in refused.value.nearest
+
+
+def test_query_columns_use_the_shared_short_name(instance: Any) -> None:
+    by_full = _query(instance, kind=SUBJECT_KIND, select=[PREDICATE], order_by=[f"-{PREDICATE}"])
+
+    assert [column.name for column in by_full.columns] == ["status"]
+    assert [row["status"] for row in by_full.rows] == ["ready", "blocked"]
+    assert _query(instance, kind=SUBJECT_KIND).columns[0].name == "status"

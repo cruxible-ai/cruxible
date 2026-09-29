@@ -362,22 +362,28 @@ class CompactQuery:
                     nearest=_nearest(suffix, _SUFFIXES),
                 )
             checked = self._check(name, operator, value)
-            added.append(query_filter(name, operator, checked))
+            added.append(query_filter(self._wire_field(name), operator, checked))
         return self._with(where=(*self._where, *added))
+
+    def _wire_field(self, name: str) -> str:
+        """The full predicate a World name sends, which the daemon resolves as itself."""
+
+        return self._predicate(name) or "subject_id"
 
     def select(self, *fields: str) -> CompactQuery:
         """Choose the columns, by short or full predicate name."""
 
-        for name in fields:
-            self._predicate(name)
-        return self._with(select=(*self._select, *fields))
+        wired = tuple(self._wire_field(name) for name in fields)
+        return self._with(select=(*self._select, *wired))
 
     def order_by(self, *fields: str) -> CompactQuery:
         """Order rows by fields; prefix ``-`` for descending."""
 
-        for name in fields:
-            self._predicate(name.removeprefix("-"))
-        return self._with(order_by=(*self._order_by, *fields))
+        wired = tuple(
+            ("-" if name.startswith("-") else "") + self._wire_field(name.removeprefix("-"))
+            for name in fields
+        )
+        return self._with(order_by=(*self._order_by, *wired))
 
     def limit(self, count: int) -> CompactQuery:
         return self._with(limit=count)

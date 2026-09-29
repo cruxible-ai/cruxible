@@ -29,6 +29,7 @@ from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.field_names import resolve_field, short_field_name
 
 ValueType = Literal[
     "string",
@@ -152,10 +153,6 @@ class PredicateInfo:
     object_kinds: tuple[str, ...]
 
     @property
-    def leaf(self) -> str:
-        return self.predicate.rsplit(".", 1)[-1]
-
-    @property
     def type_name(self) -> str:
         return self.value_type
 
@@ -214,6 +211,32 @@ class QueryVocabulary:
             field_path=field_path,
         )
 
+    def _resolved(self, kinds: tuple[str, ...], name: str) -> dict[str, PredicateInfo]:
+        """Every predicate one field names for any of these kinds (Addendum 2)."""
+
+        found: dict[str, PredicateInfo] = {}
+        for kind in kinds:
+            applicable = {info.predicate: info for info in self.predicates_of(kind)}
+            predicate = resolve_field(name, kind, applicable)
+            if predicate is not None:
+                found[predicate] = applicable[predicate]
+        return found
+
+    def field_name(self, info: PredicateInfo, kinds: tuple[str, ...]) -> str:
+        """How a predicate of these kinds is shown, so the name resolves back to it.
+
+        For one kind this is exactly ``short_field_name``; over several (a follow
+        target) the short form is kept only when it names no other predicate.
+        """
+
+        for kind in kinds:
+            if kind not in info.subject_kinds:
+                continue
+            short = short_field_name(info.predicate, kind, self.predicates)
+            if tuple(self._resolved(kinds, short)) == (info.predicate,):
+                return short
+        return info.predicate
+
     def resolve_field(
         self,
         kinds: tuple[str, ...],
@@ -222,30 +245,25 @@ class QueryVocabulary:
         field_path: str,
         owner: str | None = None,
     ) -> PredicateInfo | Literal["subject_id"]:
-        """Resolve a short or qualified field against the predicates of these kinds."""
+        """Resolve a field by the shared read-verb naming rule, or refuse with the nearest."""
 
         if name == SUBJECT_ID_FIELD:
             return "subject_id"
-        admitted = {info.predicate: info for kind in kinds for info in self.predicates_of(kind)}
-        if name in admitted:
-            return admitted[name]
-        by_leaf = [info for info in admitted.values() if info.leaf == name]
-        if len(by_leaf) == 1:
-            return by_leaf[0]
-        qualified = [info for info in by_leaf if info.predicate in {f"{k}.{name}" for k in kinds}]
-        if len(qualified) == 1:
-            return qualified[0]
+        found = self._resolved(kinds, name)
+        if len(found) == 1:
+            return next(iter(found.values()))
         label = owner or " / ".join(kinds)
-        if by_leaf:
+        if found:
             raise PlaybillQueryRefused(
                 "playbill.query.ambiguous_field",
                 f"{name!r} names more than one predicate of {label}",
-                nearest=tuple(sorted(info.predicate for info in by_leaf)),
+                nearest=tuple(sorted(found)),
                 repair="name the predicate in full",
                 field_path=field_path,
             )
-        leaves = {info.leaf for info in admitted.values()}
-        suggestions = nearest(name, (*leaves, *admitted, SUBJECT_ID_FIELD))
+        admitted = {info.predicate: info for kind in kinds for info in self.predicates_of(kind)}
+        shown = {self.field_name(info, kinds) for info in admitted.values()}
+        suggestions = nearest(name, (*shown, *admitted, SUBJECT_ID_FIELD))
         if name in self.predicates:
             message = f"predicate {name!r} does not apply to {label}"
         else:

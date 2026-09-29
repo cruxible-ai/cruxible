@@ -932,8 +932,8 @@ Without a subcommand, `query` answers any question over accepted state in one
 call, the same read as MCP `cruxible_playbill_query` and SDK `pb.query`. KIND is
 a Subject kind, or `ClaimType` / `Procedure` for definitions; `--contains` alone
 searches every live Claim value across kinds. `--where` filters combine as
-all-of; a field is a predicate's short name, its full name, `subject_id`, or
-`alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
+all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
+`subject_id`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
 Names and values are checked first: a wrong kind, field or enum member, or an
 operator that does not apply, refuses with its code, the nearest valid names and
 a repair. Text output is an aligned table of values and flags (`stale`,

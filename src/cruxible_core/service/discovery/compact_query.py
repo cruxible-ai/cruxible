@@ -327,7 +327,7 @@ class _CompactPlan:
                     "playbill.query.follow_not_relation",
                     f"{follow.field!r} is not a Subject-valued predicate of {self.kind}",
                     nearest=tuple(
-                        info.leaf
+                        vocabulary.field_name(info, (self.kind,))
                         for info in vocabulary.predicates_of(self.kind)
                         if info.value_type == "subject"
                     ),
@@ -369,6 +369,16 @@ class _CompactPlan:
         )
         label = SUBJECT_ID_FIELD if isinstance(info, str) else info.predicate
         return _Field(name=name, binding=ROOT, info=info, label=label)
+
+    def column_name(self, item: _Field) -> str:
+        """The column a selected field is served as: its shared short name."""
+
+        if isinstance(item.info, str):
+            return item.name
+        if item.binding == ROOT:
+            return self.vocabulary.field_name(item.info, (self.kind,))
+        follow = self.follows[item.binding]
+        return f"{follow.alias}.{self.vocabulary.field_name(item.info, follow.target_kinds)}"
 
 
 def _literal(value: object) -> QueryLiteralRefV1:
@@ -693,11 +703,14 @@ def _capped(result: ClaimQueryResultV1) -> tuple[tuple[str, ...], tuple[str, ...
 def _default_columns(
     vocabulary: QueryVocabulary, kind: str
 ) -> tuple[list[PredicateInfo], tuple[str, ...]]:
+    def shown_as(info: PredicateInfo) -> str:
+        return vocabulary.field_name(info, (kind,))
+
     predicates = sorted(
-        vocabulary.predicates_of(kind), key=lambda info: (info.leaf, info.predicate)
+        vocabulary.predicates_of(kind), key=lambda info: (shown_as(info), info.predicate)
     )
     shown = predicates[:DEFAULT_COLUMN_CAP]
-    left_out = tuple(info.leaf for info in predicates[DEFAULT_COLUMN_CAP:])
+    left_out = tuple(shown_as(info) for info in predicates[DEFAULT_COLUMN_CAP:])
     notes: tuple[str, ...] = ()
     if left_out:
         notes = (
@@ -705,11 +718,6 @@ def _default_columns(
             f"{', '.join(left_out)} (name them in select)",
         )
     return shown, notes
-
-
-def _column_name(info: PredicateInfo, kind_predicates: Sequence[PredicateInfo]) -> str:
-    leaves = [item.leaf for item in kind_predicates]
-    return info.leaf if leaves.count(info.leaf) == 1 else info.predicate
 
 
 @dataclass
@@ -850,12 +858,13 @@ def _compact_subject_query(
             resolved = plan.field(name, field_path=f"select[{index}]")
             if resolved.binding == ROOT and isinstance(resolved.info, str):
                 continue
-            columns.append(_Column(name=_out(name), binding=resolved.binding, field=resolved))
-            output.append(_column(resolved, name=_out(name)))
+            shown_name = _out(plan.column_name(resolved))
+            columns.append(_Column(name=shown_name, binding=resolved.binding, field=resolved))
+            output.append(_column(resolved, name=shown_name))
     else:
         shown, notes = _default_columns(vocabulary, plan.kind)
         for info in shown:
-            name = _column_name(info, kind_predicates)
+            name = vocabulary.field_name(info, (plan.kind,))
             resolved = _Field(name=name, binding=ROOT, info=info, label=info.predicate)
             columns.append(_Column(name=_out(name), binding=ROOT, field=resolved))
             output.append(_column(resolved, name=_out(name)))
@@ -1564,9 +1573,8 @@ def _engine_answer(
     ):
         kind = query.entry.subject_kinds[0]
         shown, notes = _default_columns(vocabulary, kind)
-        kind_predicates = vocabulary.predicates_of(kind)
         for info in shown:
-            name = _column_name(info, kind_predicates)
+            name = vocabulary.field_name(info, (kind,))
             resolved = _Field(name=name, binding=ROOT, info=info, label=info.predicate)
             renderer_columns.append(_Column(name=_out(name), binding=ROOT, field=resolved))
             output.append(_column(resolved, name=_out(name)))

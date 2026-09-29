@@ -125,12 +125,17 @@ def test_world_where_and_select_build_the_same_query(
 
     assert isinstance(query, CompactQuery)
     request = query.request()
+    # The World's short names go to the wire as full predicates, which the
+    # daemon's field-naming rule always resolves as themselves.
     assert [(item.field, item.operator, item.value) for item in request.where] == [
-        ("severity", "eq", "high"),
-        ("severity", "ne", "low"),
+        (SEVERITY, "eq", "high"),
+        (SEVERITY, "ne", "low"),
         ("subject_id", "contains", "cve"),
     ]
-    assert request.select == ("severity",)
+    assert request.select == (SEVERITY,)
+    assert world.sec.vulnerability.select("severity").order_by("-severity").request().order_by == (
+        f"-{SEVERITY}",
+    )
     assert [row["subject_id"] for row in query] == ["cve-1", "cve-2"]
     sent = client.requests[0]
     assert sent.at is not None and sent.at.git_oid == world.coordinate.git_oid
@@ -273,13 +278,14 @@ def test_a_stub_for_reserved_leaves_compiles_and_type_checks(tmp_path: Path) -> 
         status__ne="low",
         note____in=["high"],
     ).request()
+    kind = "sec.vulnerability"
     assert [(item.field, item.operator, item.value) for item in request.where] == [
-        ("self", "eq", "high"),
-        ("class", "ne", "low"),
-        ("status", "eq", "high"),
-        ("status__ne", "eq", "low"),
-        ("status", "ne", "low"),
-        ("note_", "in", ("high",)),
+        (f"{kind}.self", "eq", "high"),
+        (f"{kind}.class", "ne", "low"),
+        (f"{kind}.status", "eq", "high"),
+        (f"{kind}.status__ne", "eq", "low"),
+        (f"{kind}.status", "ne", "low"),
+        (f"{kind}.note_", "in", ("high",)),
     ]
 
 
