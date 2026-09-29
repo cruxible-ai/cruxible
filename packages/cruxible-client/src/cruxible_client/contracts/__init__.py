@@ -1676,6 +1676,8 @@ class PlaybillNextStatus(BaseModel):
     line_dispatch: PlaybillNextHealth
     consumers: PlaybillNextHealth
     held: int = Field(default=0, ge=0)
+    #: Rows left out because this caller's surface, tools or tier cannot repair them.
+    hidden: int = Field(default=0, ge=0)
 
 
 class PlaybillNextResult(BaseModel):

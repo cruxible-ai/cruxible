@@ -2035,6 +2035,11 @@ def handle_playbill_next(
     ).model_dump(mode="json")
     workspace = mcp_workspace_root()
     observation = observe_playbill_next_workspace(workspace)
+    # Rows render as MCP tool calls, and a row whose repair is a tool this
+    # session does not advertise is hidden and counted rather than shown.
+    from cruxible_core.mcp.curation import session_tool_names
+
+    tools = tuple(sorted(session_tool_names()))
 
     def remote(client: CruxibleClient) -> contracts.PlaybillNextResult:
         observed, coordinate = observe_playbill_next_workspace_with_coverage(
@@ -2054,6 +2059,8 @@ def handle_playbill_next(
             since_result_digest=since_result_digest,
             limit=limit,
             cursor=cursor,
+            caller_surface="mcp",
+            caller_tools=tools,
         )
 
     def local() -> contracts.PlaybillNextResult:
@@ -2074,6 +2081,8 @@ def handle_playbill_next(
             "since_result_digest": since_result_digest,
             "limit": limit,
             "cursor": cursor,
+            "caller_surface": "mcp",
+            "caller_tools": list(tools),
         }
         return playbill_api.playbill_next(
             instance_id,

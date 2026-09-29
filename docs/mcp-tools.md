@@ -309,6 +309,14 @@ authority plane beside accepted state.
 | `cruxible_playbill_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.playbill/floor` under the MCP workspace (status `unchanged` when it already holds this floor); `mode=status` reports whether that floor is current, stale, or absent | `READ_ONLY` |
 | `cruxible_playbill_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, `grep_results_path`, or `whole_working_set`) | `READ_ONLY` |
 
+`cruxible_playbill_next` renders each repair's `command` as the MCP tool call
+that performs it (for example `cruxible_playbill_settle(prediction_id="RSC-...")`,
+adding the observation's Claim ID), or none when its operands are local files.
+A row whose repair is a settle, Line dispatch or Line arm the session cannot
+perform -- its profile does not advertise that tool (the `default` profile
+advertises none of them), or its tier is too low -- is left out and counted in
+`status.hidden`.
+
 Lists that can outgrow one answer are paged. `proposal_list`,
 `policies_in_force` and `curation_list` take `limit` and `cursor`; a cut page
 carries top-level `truncated: true` and a `next_cursor` to pass back as `cursor`.

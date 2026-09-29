@@ -1699,3 +1699,40 @@ def test_every_next_reason_has_an_effective_named_repair(
     case_root = tmp_path / "-".join(part for part in key if part is not None)
     case_root.mkdir()
     CLOSED_LOOP_CASES[key](case_root, monkeypatch)
+
+
+def test_next_shows_a_settle_row_only_to_a_caller_who_can_settle(tmp_path: Path) -> None:
+    """R07: a row whose repair the caller cannot run is hidden and counted."""
+
+    from tests.test_consumers import test_prediction_settlement as worker
+
+    instance, _owner, _capture, _contract = worker.fixed_world(tmp_path)
+    worker.drain(instance, now=worker.FIXED_CLOSES)
+    request = _request(instance)
+
+    def settle_rows(result):  # type: ignore[no-untyped-def]
+        return [item for item in result.items if item.reason == "prediction_settleable"]
+
+    governed = service_playbill_next(instance, request=request, caller_rung=1)
+    (row,) = settle_rows(governed)
+    bound = row.detail["bound_contract_id"]
+    assert row.repair.command == f"cruxible playbill settle {bound}"
+    assert governed.status.hidden == 0
+    assert "hidden" not in governed.status.model_dump(mode="json")
+
+    read_only = service_playbill_next(instance, request=request, caller_rung=0)
+    assert settle_rows(read_only) == []
+    assert read_only.status.hidden == 1
+
+    mcp = request.model_copy(
+        update={
+            "caller_surface": "mcp",
+            "caller_tools": ("cruxible_playbill_next", "cruxible_playbill_settle"),
+        }
+    )
+    (mcp_row,) = settle_rows(service_playbill_next(instance, request=mcp, caller_rung=1))
+    assert mcp_row.repair.command == f'cruxible_playbill_settle(prediction_id="{bound}")'
+
+    default_profile = mcp.model_copy(update={"caller_tools": ("cruxible_playbill_next",)})
+    hidden = service_playbill_next(instance, request=default_profile, caller_rung=1)
+    assert settle_rows(hidden) == [] and hidden.status.hidden == 1

@@ -4542,6 +4542,11 @@ def _echo_next_status(status: contracts.PlaybillNextStatus) -> None:
         hint = None if repair is None else repair.command or repair.required_change
         label = facet.replace("_", " ")
         click.echo(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
+    if status.hidden:
+        click.echo(
+            f"Hidden: {status.hidden} rows whose repair (settle, Line dispatch or arm) "
+            "needs governed write"
+        )
 
 
 @playbill_group.group("curation")

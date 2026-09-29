@@ -1572,6 +1572,13 @@ the rows held. A hold lasts only while its basis is unchanged:
 
 A revised Claim, a later support or contradict from the same principal, or a
 lapsed validity window ends the hold, and the row returns.
+
+A row whose repair is a settle, a Line dispatch or a Line arm appears only when
+the caller can perform it: a read-only credential does not see settle or arm
+rows, nor dispatch rows for a Line that can propose or settle. `status.hidden`
+counts the rows left out, and the text output says so. Each repair's `command`
+renders for the caller's surface: a CLI command here, an MCP tool call on
+`cruxible_playbill_next`.
 Empty `items` means only that no work exists in the explicitly observed domains.
 
 Rows are typed: each carries `severity`, `reason`, `subject_identity`,
