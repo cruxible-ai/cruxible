@@ -28,8 +28,10 @@ from cruxible_client.errors import CoreError, DaemonOperationScopeError
 from cruxible_core.cli.commands._common import (
     SERVER_MODE_REQUIRED_MESSAGE,
     _emit_json,
-    _get_client,
     _root_ctx_obj,
+)
+from cruxible_core.cli.commands._common import (
+    _get_lifecycle_client as _get_client,
 )
 from cruxible_core.cli.main import handle_errors, long_running_command
 from cruxible_core.runtime.permissions import PERMISSION_MODE_NAMES
