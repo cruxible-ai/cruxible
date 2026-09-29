@@ -156,6 +156,11 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_authoring_preflight": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_authoring_rebase": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_authoring_submit": PermissionMode.GOVERNED_WRITE,
+    # The write verbs propose at GOVERNED_WRITE; each activates in the same call
+    # only when the caller's tier also admits cruxible_playbill_activate.
+    "cruxible_playbill_set": PermissionMode.GOVERNED_WRITE,
+    "cruxible_playbill_retire": PermissionMode.GOVERNED_WRITE,
+    "cruxible_playbill_write": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_resolution_contracts": PermissionMode.READ_ONLY,
     "cruxible_playbill_predict": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_settle": PermissionMode.GOVERNED_WRITE,

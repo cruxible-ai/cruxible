@@ -56,6 +56,12 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallResultV1,
 )
 from cruxible_client.contracts.types import CompilerCoordinate
+from cruxible_client.contracts.write import (
+    PlaybillRetireRequestV1,
+    PlaybillSetRequestV1,
+    PlaybillWriteRequestV1,
+    WriteOutcome,
+)
 from cruxible_client.errors import (
     ConfigError,
     CoreError,
@@ -1354,6 +1360,32 @@ class CruxibleClient:
             json=request.model_dump(mode="json", exclude_none=True),
         )
         return self._parse_model(response, PlaybillGetResultV1)
+
+    def playbill_set(self, instance_id: str, *, request: PlaybillSetRequestV1) -> WriteOutcome:
+        """Put one value in one field of one Subject; a refused write is an outcome."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/set",
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        return self._parse_model(response, WriteOutcome)
+
+    def playbill_retire(
+        self, instance_id: str, *, request: PlaybillRetireRequestV1
+    ) -> WriteOutcome:
+        """End one live Claim, named by ID or by its Subject and field."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/retire",
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        return self._parse_model(response, WriteOutcome)
+
+    def playbill_write(self, instance_id: str, *, request: PlaybillWriteRequestV1) -> WriteOutcome:
+        """Apply set, add and retire changes as one change set."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/write",
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        return self._parse_model(response, WriteOutcome)
 
     def get_playbill_claim_backings(
         self,

@@ -42,12 +42,10 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.governance.keys import GeneratedKeyMaterial
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from cruxible_core.service.authoring.write_verbs import WriteCaller
-from tests.core_support._support import client_material, initialize_local
-from tests.test_ledger.test_activation import _sign
+from tests.core_support._support import initialize_local
 
 KIND = "project.work_item"
 SUBJECTS = ("wi-1", "wi-2", "wi-3")
@@ -129,12 +127,13 @@ def _shell(subject_id: str) -> SubjectShell:
     )
 
 
-def seed_write_surface(
-    tmp_path: Path, *, self_approval: bool = True
-) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
-    """Accept the write vocabulary, three work items, and the chosen approval policy."""
+def seed_write_vocabulary(instance: PlaybillInstance, *, actor_id: str = "owner") -> None:
+    """Accept the write vocabulary and three work items into ``instance``.
 
-    instance, owner = initialize_local(tmp_path)
+    The genesis approval policy lets the proposer activate its own proposal, so
+    this is one ordinary proposal and one activation.
+    """
+
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
     for subject_id in SUBJECTS:
@@ -144,35 +143,28 @@ def seed_write_surface(
     for contract in (COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT, REPORTS):
         tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
     proposed = instance.proposal_service().submit(
-        actor=OWNER,
+        actor=AuthenticatedActor(actor_id=actor_id),
         request=ProposalAdmissionRequest(
-            target_ref="refs/proposals/owner/write-seed",
+            target_ref=f"refs/proposals/{actor_id}/write-seed",
             proposed_base_oid=base.git_oid,
         ),
         candidate_tree=tree,
         timestamp="2026-09-29T11:59:00.000000Z",
     )
     assert proposed.candidate is not None, proposed.evaluation
-    assert proposed.evaluation.evaluated_tree_oid is not None
-    bundle = instance.prepare_generation(
-        base=base,
-        candidate_tree=instance.proposal_tree(proposed.evaluation.evaluated_tree_oid),
-        candidate=proposed.candidate,
-        approvals=(
-            _sign(
-                client_material(instance.root.parent, instance),
-                proposed.candidate.candidate_digest,
-                base.semantic_root,
-            ),
-        ),
-        actor_binding=ChangeActorBinding(actor_id="owner"),
-        proposal_actor_id="owner",
-        sequence=1,
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposed.admission.proposal_id, activated_by=actor_id
     )
-    publisher = instance.activation_publisher()
-    projection = publisher.prebuild(bundle, base=base)
-    assert publisher.activate(bundle, projection, base=base).status == "accepted"
-    instance.refresh()
+    assert receipt.status == "accepted"
+
+
+def seed_write_surface(
+    tmp_path: Path, *, self_approval: bool = True
+) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
+    """A local instance holding the write vocabulary and the chosen approval policy."""
+
+    instance, owner = initialize_local(tmp_path)
+    seed_write_vocabulary(instance)
     if not self_approval:
         # The genesis policy lets a writer activate its own proposal; tightening
         # it is its own governed change.
@@ -202,4 +194,13 @@ def caller(*, may_activate: bool = True) -> WriteCaller:
     return WriteCaller(actor=OWNER, may_activate=may_activate)
 
 
-__all__ = ["CLAIM_TYPES", "KIND", "OWNER", "REPORTS", "SUBJECTS", "caller", "seed_write_surface"]
+__all__ = [
+    "CLAIM_TYPES",
+    "KIND",
+    "OWNER",
+    "REPORTS",
+    "SUBJECTS",
+    "caller",
+    "seed_write_surface",
+    "seed_write_vocabulary",
+]

@@ -105,6 +105,13 @@ from cruxible_client.contracts.types import (
     OperatingProfile,
     PrincipalRecord,
 )
+from cruxible_client.contracts.write import (
+    PlaybillRetireRequestV1,
+    PlaybillSetRequestV1,
+    PlaybillWriteRequestV1,
+    WriteOutcome,
+    as_write_request,
+)
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.claims.claim_retirement import (
     ClaimRetireResponse,
@@ -154,6 +161,7 @@ from cruxible_core.runtime.execution_policy import (
     enforce_customer_code_execution_supported,
 )
 from cruxible_core.runtime.permissions import (
+    PERMISSION_REQUIREMENTS,
     PermissionMode,
     check_permission,
     current_request_instance_scope,
@@ -184,6 +192,7 @@ from cruxible_core.service.authoring.documents import (
 from cruxible_core.service.authoring.projection_sync import (
     service_read_playbill_block_sync_backing,
 )
+from cruxible_core.service.authoring.write_verbs import WriteCaller, service_playbill_write
 from cruxible_core.service.claims.claim_reads import (
     service_read_claim_backings,
     service_read_claim_batch,
@@ -1346,6 +1355,46 @@ def playbill_retire_claim(
         actor=AuthenticatedActor(actor_id=_actor_id()),
     )
     return _CLAIM_RETIRE_RESPONSE.validate_python(result.model_dump(mode="json"))
+
+
+def _permits(tool_name: str, *, instance_id: str) -> bool:
+    """Whether the caller's tier and credential scope admit ``tool_name``, without refusing."""
+
+    if get_current_mode() < PERMISSION_REQUIREMENTS[tool_name]:
+        return False
+    scope = current_request_instance_scope()
+    return scope is None or scope == instance_id
+
+
+def _write_outcome(instance_id: str, request: PlaybillWriteRequestV1) -> WriteOutcome:
+    caller = WriteCaller(
+        actor=AuthenticatedActor(actor_id=_actor_id()),
+        may_activate=_permits("cruxible_playbill_activate", instance_id=instance_id),
+    )
+    return service_playbill_write(
+        get_playbill_manager().get(instance_id), request=request, caller=caller
+    )
+
+
+def playbill_set(instance_id: str, *, request: PlaybillSetRequestV1) -> WriteOutcome:
+    """Put one value in one field of one Subject; see ``service_playbill_write``."""
+
+    check_permission("cruxible_playbill_set", instance_id=instance_id)
+    return _write_outcome(instance_id, as_write_request(request))
+
+
+def playbill_retire(instance_id: str, *, request: PlaybillRetireRequestV1) -> WriteOutcome:
+    """End one live Claim, by ID or by its Subject and field."""
+
+    check_permission("cruxible_playbill_retire", instance_id=instance_id)
+    return _write_outcome(instance_id, as_write_request(request))
+
+
+def playbill_write(instance_id: str, *, request: PlaybillWriteRequestV1) -> WriteOutcome:
+    """Apply a batch of set, add and retire changes as one change set."""
+
+    check_permission("cruxible_playbill_write", instance_id=instance_id)
+    return _write_outcome(instance_id, request)
 
 
 def playbill_append_claim_attestation(

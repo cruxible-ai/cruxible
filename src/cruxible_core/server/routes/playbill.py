@@ -43,6 +43,12 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallResultV1,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.write import (
+    PlaybillRetireRequestV1,
+    PlaybillSetRequestV1,
+    PlaybillWriteRequestV1,
+    WriteOutcome,
+)
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime import playbill_api
@@ -1202,6 +1208,24 @@ def read_claim_values(instance_id: str, req: ClaimValuesRequestV1) -> ClaimValue
 def get_by_ref(instance_id: str, req: PlaybillGetRequestV1) -> PlaybillGetResultV1:
     """One governed thing by reference, values first; ``detail`` chooses the depth."""
     return playbill_api.playbill_get(resolve_server_instance_id(instance_id), request=req)
+
+
+@router.post("/{instance_id}/playbill/set", response_model=WriteOutcome)
+def set_value(instance_id: str, req: PlaybillSetRequestV1) -> WriteOutcome:
+    """Put one value in one field of one Subject; a refusal is an outcome, not an error."""
+    return playbill_api.playbill_set(resolve_server_instance_id(instance_id), request=req)
+
+
+@router.post("/{instance_id}/playbill/retire", response_model=WriteOutcome)
+def retire(instance_id: str, req: PlaybillRetireRequestV1) -> WriteOutcome:
+    """End one live Claim, named by ID or by its Subject and field."""
+    return playbill_api.playbill_retire(resolve_server_instance_id(instance_id), request=req)
+
+
+@router.post("/{instance_id}/playbill/write", response_model=WriteOutcome)
+def write(instance_id: str, req: PlaybillWriteRequestV1) -> WriteOutcome:
+    """Apply set, add and retire changes as one change set."""
+    return playbill_api.playbill_write(resolve_server_instance_id(instance_id), request=req)
 
 
 @router.post("/{instance_id}/playbill/claims/backings", response_model=ClaimBackingsResultV1)

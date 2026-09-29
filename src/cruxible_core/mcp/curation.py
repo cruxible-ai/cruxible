@@ -14,7 +14,7 @@ PROFILE_DEFAULT = "default"
 
 _PROFILES = (PROFILE_DEFAULT, PROFILE_FULL)
 
-#: The everyday agent loop: orient and pick work, read Claims, author, and settle.
+#: The everyday agent loop: orient and pick work, read Claims, write, and settle.
 _DEFAULT_TOOLS = frozenset(
     {
         # orient (search mode=orient), next, search, and expand
@@ -34,16 +34,10 @@ _DEFAULT_TOOLS = frozenset(
         "cruxible_playbill_run_query",
         # the query read verb
         "cruxible_playbill_query",
-        # the authoring write loop
-        "cruxible_playbill_authoring_example",
-        "cruxible_playbill_authoring_create",
-        "cruxible_playbill_authoring_compile",
-        "cruxible_playbill_authoring_preflight",
-        "cruxible_playbill_authoring_submit",
-        "cruxible_playbill_authoring_status",
-        "cruxible_playbill_authoring_get",
-        "cruxible_playbill_authoring_resume",
-        "cruxible_playbill_authoring_list_pending",
+        # the write verbs; the authoring_* intent tools stay in the full profile
+        "cruxible_playbill_set",
+        "cruxible_playbill_retire",
+        "cruxible_playbill_write",
         # proposals through activation
         "cruxible_playbill_proposal_list",
         "cruxible_playbill_review",
