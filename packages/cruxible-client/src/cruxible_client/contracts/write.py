@@ -33,6 +33,8 @@ from cruxible_client.contracts.get_reads import PlaybillGetCoordinateV1, Playbil
 SUBJECT_REF_PATTERN = r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$"
 CLAIM_ID_PATTERN = r"^(?:Claim:)?CLM-[0-9a-f]{32}$"
 CAPTURE_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
+CAPTURE_HANDLE_PATTERN = r"^CAP-[0-9a-f]{12,64}$"
+CAPTURE_REF_PATTERN = r"^(?:sha256:[0-9a-f]{64}|CAP-[0-9a-f]{12,64})$"
 FILE_ANCHOR_PATTERN = r"^[^#]+#.+$"
 _GIT_OID = re.compile(r"^[0-9a-f]{1,64}$")
 
@@ -115,11 +117,41 @@ class SelfEvidence(_StrictWriteModel):
     self: str = Field(min_length=1, description="The text that backs the value.")
 
 
+def capture_handle(digest: str, *, length: int = 12) -> str:
+    """A Capture's short handle: ``CAP-`` and the first ``length`` hex of its digest."""
+
+    return "CAP-" + digest.partition(":")[2][:length]
+
+
 class CaptureEvidence(_StrictWriteModel):
-    """An existing Capture, by digest, cited as evidence for the value."""
+    """An existing Capture, cited as evidence for the value.
+
+    ``capture`` is its digest, or its handle ``CAP-<12+ hex>``: a digest prefix
+    unique among the accepted Captures. The handle is resolved to the digest
+    before the write is lowered.
+    """
 
     kind: Literal["capture"] = "capture"
-    capture: str = Field(pattern=CAPTURE_DIGEST_PATTERN, description="sha256:<64 hex>.")
+    capture: str = Field(
+        pattern=CAPTURE_REF_PATTERN,
+        description="sha256:<64 hex>, or the handle CAP-<12+ hex> of an accepted Capture.",
+    )
+
+
+class ContractEvidence(_StrictWriteModel):
+    """The newest verified Capture of one CaptureContract about the change's Subject.
+
+    A Capture is about the Subject when an accepted Claim on that Subject cites
+    it, or when its source names the Subject itself. It is resolved to its
+    digest before the write is lowered, and the outcome names it as ``capture``.
+    """
+
+    kind: Literal["contract"] = "contract"
+    contract: str = Field(
+        min_length=1,
+        max_length=512,
+        description="A CaptureContract by name, as admitted_contracts names it.",
+    )
 
 
 class FileEvidence(_StrictWriteModel):
@@ -149,7 +181,10 @@ class FileEvidence(_StrictWriteModel):
         return self.file.partition("#")[2]
 
 
-Evidence = Annotated[SelfEvidence | CaptureEvidence | FileEvidence, Field(discriminator="kind")]
+Evidence = Annotated[
+    SelfEvidence | CaptureEvidence | FileEvidence | ContractEvidence,
+    Field(discriminator="kind"),
+]
 
 
 # -- changes --------------------------------------------------------------------
@@ -371,6 +406,11 @@ class ChangeOutcome(_StrictWriteModel):
             "otherwise as the candidate evaluation found it."
         ),
     )
+    capture: str | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="The Capture cited as evidence, as its handle CAP-<12 hex>.",
+    )
 
 
 class WriteProposalRef(_StrictWriteModel):
@@ -463,6 +503,7 @@ __all__ = [
     "CaptureEvidence",
     "Change",
     "ChangeOutcome",
+    "ContractEvidence",
     "ClaimId",
     "ClaimValue",
     "Evidence",
@@ -487,4 +528,5 @@ __all__ = [
     "WriteRole",
     "WriteStatus",
     "as_write_request",
+    "capture_handle",
 ]

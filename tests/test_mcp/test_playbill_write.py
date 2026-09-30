@@ -117,6 +117,7 @@ def test_handlers_build_typed_requests_for_the_mcp_surface(
         dry_run=True,
         at="0123456789ab",
         expect="ready",
+        evidence={"kind": "capture", "capture": "CAP-0123456789ab"},
     )
     handlers.handle_playbill_retire(
         "inst_write",
@@ -134,7 +135,12 @@ def test_handlers_build_typed_requests_for_the_mcp_surface(
                 "value": "dev.item/b",
                 "expect_absent": True,
             },
-            {"op": "set", "field": "status", "value": "done"},
+            {
+                "op": "set",
+                "field": "status",
+                "value": "done",
+                "evidence": {"kind": "contract", "contract": "repo.reports"},
+            },
         ],
         because="Linked.",
         subject="dev.item/a",
@@ -144,6 +150,7 @@ def test_handlers_build_typed_requests_for_the_mcp_surface(
     assert isinstance(set_request, PlaybillSetRequestV1)
     assert set_request.surface == "mcp" and set_request.dry_run and set_request.at == "0123456789ab"
     assert set_request.expect == "ready"
+    assert set_request.evidence.capture == "CAP-0123456789ab"  # type: ignore[union-attr]
     (retire_request,) = retires
     assert isinstance(retire_request, PlaybillRetireRequestV1) and retire_request.surface == "mcp"
     assert retire_request.expect == ("done", "ready")
@@ -153,6 +160,7 @@ def test_handlers_build_typed_requests_for_the_mcp_surface(
     assert write_request.changes[0].expect_absent  # type: ignore[union-attr]
     assert write_request.subject == "dev.item/a"
     assert write_request.changes[1].subject is None  # type: ignore[union-attr]
+    assert write_request.changes[1].evidence.contract == "repo.reports"  # type: ignore[union-attr]
 
 
 def test_a_malformed_write_names_the_json_path_and_an_example(

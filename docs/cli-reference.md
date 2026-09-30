@@ -1722,10 +1722,12 @@ scope, and operational input head remain unchanged.
 
 ~~~text
 cruxible playbill set SUBJECT FIELD VALUE --because TEXT
-  [--evidence-file PATH#ANCHOR | --capture DIGEST] [--role ROLE] [--contend] [--expect VALUE]...
+  [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
+  [--role ROLE] [--contend] [--expect VALUE]...
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible playbill add SUBJECT FIELD VALUE --because TEXT
-  [--evidence-file PATH#ANCHOR | --capture DIGEST] [--role ROLE] [--expect-absent]
+  [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
+  [--role ROLE] [--expect-absent]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible playbill retire TARGET [FIELD] --because TEXT
   [--reason was-rescinded|was-wrong|superseded] [--expect VALUE]... [--dry-run] [--no-accept]
@@ -1744,7 +1746,14 @@ number or `true`/`false` for such fields, a Subject as `kind/id`, or the text
 itself for exact content (which is also its own evidence). The default evidence
 is `--because` as self evidence; `--evidence-file` cites text found once in a
 catalogued workspace file, read on this side, and `--capture` an existing
-Capture. The write accepts in the same call when the approval policy and your
+Capture by its sha256 digest or its handle `CAP-<12+ hex>` (a digest prefix
+unique among accepted Captures; ambiguous or unknown handles refuse with the
+nearest handles). `--evidence-contract NAME` cites the newest verified Capture of
+that CaptureContract about SUBJECT: one an accepted Claim on SUBJECT cites, or
+whose own source names SUBJECT; with none it refuses
+`playbill.write.contract_capture_not_found`. Either resolves to the digest
+before the write is lowered, and the change prints the Capture as
+`evidence CAP-<12 hex>`. The write accepts in the same call when the approval policy and your
 tier allow it; otherwise it prints the eligible approvers and the approve
 command. `--no-accept` only proposes. `--dry-run` runs every check and writes
 nothing; pass its coordinate back as `--at` to refuse

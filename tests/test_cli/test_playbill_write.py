@@ -20,7 +20,14 @@ from cruxible_client.contracts.write import (
 from cruxible_core.cli.main import cli
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.write_verbs import service_playbill_write
-from tests.core_support._write_support import KIND, caller, seed_write_surface
+from tests.core_support._write_support import (
+    KIND,
+    REPORTS,
+    caller,
+    cited_captures,
+    report_evidence,
+    seed_write_surface,
+)
 
 PREFIX = ["--server-url", "http://server", "--instance-id", "inst_write"]
 WI1 = f"{KIND}/wi-1"
@@ -276,6 +283,78 @@ changes:
     orphan.write_text("because: x\nchanges:\n  - {op: set, field: status, value: done}\n")
     refused = _run("write", str(orphan))
     assert refused.exit_code == 1 and "playbill.write.subject_required" in refused.output
+
+
+def test_capture_handles_and_contract_evidence_on_set_and_add(
+    served: _ServiceClient, tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.write import PlaybillWriteRequestV1 as Write
+    from cruxible_client.contracts.write import capture_handle
+
+    seeded = service_playbill_write(
+        served.instance,
+        request=Write.model_validate(
+            {
+                "because": "The report counts it.",
+                "changes": [
+                    {
+                        "op": "set",
+                        "subject": WI1,
+                        "field": "measured",
+                        "value": 3,
+                        "evidence": report_evidence(tmp_path / "ws", "Count: 3"),
+                    }
+                ],
+            }
+        ),
+        caller=caller(),
+    )
+    (digest,) = cited_captures(served.instance, seeded.changes[0].claim or "")
+    handle = capture_handle(digest)
+
+    cited = _run("set", f"{KIND}/wi-2", "measured", "3", "--because", "x", "--capture", handle)
+    assert cited.exit_code == 0, cited.output
+    assert f"evidence {handle}" in cited.output and "verdict supported" in cited.output
+    by_contract = _run(
+        "add",
+        WI1,
+        "labels",
+        "counted",
+        "--because",
+        "x",
+        "--evidence-contract",
+        REPORTS.identity.name,
+        "--json",
+    )
+    assert by_contract.exit_code == 0, by_contract.output
+    assert json.loads(by_contract.stdout)["changes"][0]["capture"] == handle
+    change = served.requests[-1].changes[0]
+    assert change.evidence.kind == "contract"
+    missing = _run(
+        "set",
+        f"{KIND}/wi-3",
+        "measured",
+        "3",
+        "--because",
+        "x",
+        "--evidence-contract",
+        REPORTS.identity.name,
+    )
+    assert missing.exit_code == 1
+    assert "playbill.write.contract_capture_not_found" in missing.output
+    both = _run(
+        "set",
+        WI1,
+        "title",
+        "x",
+        "--because",
+        "x",
+        "--capture",
+        handle,
+        "--evidence-contract",
+        REPORTS.identity.name,
+    )
+    assert both.exit_code != 0 and "not both" in both.output
 
 
 def test_evidence_file_is_read_from_the_workspace(served: _ServiceClient, tmp_path: Path) -> None:

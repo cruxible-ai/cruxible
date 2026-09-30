@@ -3460,6 +3460,8 @@ def _write_text(outcome: WriteOutcome) -> None:
             details.append("already live")
         if change.verdict is not None:
             details.append(f"verdict {change.verdict}")
+        if change.capture is not None:
+            details.append(f"evidence {change.capture}")
         if change.retired:
             details.append(f"also retires {', '.join(change.retired)}")
         if change.contenders_created:
@@ -3521,12 +3523,26 @@ _EXPECT_HELP = (
 
 
 def _evidence_option_value(
-    evidence_file: str | None, capture: str | None, workspace_root: str
+    evidence_file: str | None,
+    capture: str | None,
+    workspace_root: str,
+    contract: str | None = None,
 ) -> dict[str, Any] | None:
-    if evidence_file is not None and capture is not None:
-        raise click.UsageError("pass --evidence-file or --capture, not both")
+    given = [
+        flag
+        for flag, value in (
+            ("--evidence-file", evidence_file),
+            ("--capture", capture),
+            ("--evidence-contract", contract),
+        )
+        if value is not None
+    ]
+    if len(given) > 1:
+        raise click.UsageError(f"pass one of {', '.join(given)}, not both")
     if capture is not None:
         return {"kind": "capture", "capture": capture}
+    if contract is not None:
+        return {"kind": "contract", "contract": contract}
     if evidence_file is None:
         return None
     try:
@@ -3549,7 +3565,16 @@ def _evidence_option_value(
     default=None,
     help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
 )
-@click.option("--capture", default=None, help="Cite an existing Capture by digest.")
+@click.option(
+    "--capture",
+    default=None,
+    help="Cite an existing Capture: its handle CAP-<12+ hex>, or its sha256 digest.",
+)
+@click.option(
+    "--evidence-contract",
+    default=None,
+    help="Cite the newest verified Capture of this CaptureContract about SUBJECT.",
+)
 @click.option("--role", default=None, help="Only when the field permits several roles.")
 @click.option("--contend", is_flag=True, help="Contest the live value instead of replacing it.")
 @click.option("--expect", "expect", multiple=True, help=_EXPECT_HELP)
@@ -3569,6 +3594,7 @@ def set_value(
     because: str,
     evidence_file: str | None,
     capture: str | None,
+    evidence_contract: str | None,
     role: str | None,
     contend: bool,
     expect: tuple[str, ...],
@@ -3592,7 +3618,9 @@ def set_value(
             "field": field,
             "value": value,
             "because": because,
-            "evidence": _evidence_option_value(evidence_file, capture, workspace_root),
+            "evidence": _evidence_option_value(
+                evidence_file, capture, workspace_root, evidence_contract
+            ),
             "role": role,
             "contend": contend,
             "expect": _expect_option_value(expect),
@@ -3619,7 +3647,16 @@ def set_value(
     default=None,
     help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
 )
-@click.option("--capture", default=None, help="Cite an existing Capture by digest.")
+@click.option(
+    "--capture",
+    default=None,
+    help="Cite an existing Capture: its handle CAP-<12+ hex>, or its sha256 digest.",
+)
+@click.option(
+    "--evidence-contract",
+    default=None,
+    help="Cite the newest verified Capture of this CaptureContract about SUBJECT.",
+)
 @click.option("--role", default=None, help="Only when the field permits several roles.")
 @click.option(
     "--expect-absent",
@@ -3642,6 +3679,7 @@ def add_value(
     because: str,
     evidence_file: str | None,
     capture: str | None,
+    evidence_contract: str | None,
     role: str | None,
     expect_absent: bool,
     workspace_root: str,
@@ -3666,7 +3704,9 @@ def add_value(
                     "subject": subject,
                     "field": field,
                     "value": value,
-                    "evidence": _evidence_option_value(evidence_file, capture, workspace_root),
+                    "evidence": _evidence_option_value(
+                        evidence_file, capture, workspace_root, evidence_contract
+                    ),
                     "role": role,
                     "expect_absent": expect_absent,
                 }

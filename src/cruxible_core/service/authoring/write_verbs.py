@@ -61,6 +61,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    classify_capture_reuse,
     foreign_source_capture_contract,
     parse_capture_envelope,
 )
@@ -97,6 +98,7 @@ from cruxible_client.contracts.write import (
     ApprovalReason,
     CaptureEvidence,
     ChangeOutcome,
+    ContractEvidence,
     ExpectedValue,
     FileEvidence,
     PlaybillWriteRequestV1,
@@ -109,6 +111,7 @@ from cruxible_client.contracts.write import (
     WriteRefusal,
     WriteStatus,
     WriteWarning,
+    capture_handle,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import ComputedPreflight
@@ -131,6 +134,13 @@ from cruxible_core.storage.cas import BodyAccessContext
 
 _AUTHORABLE_ROLES = ("normative", "observation", "environment_binding")
 _MAX_CANDIDATES = 8
+# How many of a contract's Captures about the Subject, newest first, are tried
+# for the newest one that verifies.
+_MAX_CONTRACT_CAPTURES = 32
+# How many of a contract's newest Captures no Claim on the Subject cites are
+# read to find the ones whose own source names the Subject.
+_MAX_CONTRACT_SCAN = 256
+_CONTRACT_QUALIFIER = "CaptureContract:"
 
 
 @dataclass(frozen=True)
@@ -310,6 +320,17 @@ def _default_subject(request: PlaybillWriteRequestV1, *, index: int, path: str) 
     return request.subject
 
 
+def _distinct_handles(digests: Sequence[str], *, at_least: int) -> tuple[str, ...]:
+    """Each digest's shortest handle, at least ``at_least`` hex, that tells them apart."""
+
+    length = max(12, at_least)
+    while length < 64 and len({capture_handle(item, length=length) for item in digests}) < len(
+        digests
+    ):
+        length += 1
+    return tuple(capture_handle(item, length=length) for item in digests)
+
+
 def _value_key(value: object) -> str:
     """One value's comparison key: ``1``, ``true`` and ``"1"`` stay distinct."""
 
@@ -356,6 +377,8 @@ class _Planned:
     used_contract: str | None = None
     # The slot this change was planned against, pinned through admission.
     pin: _SlotPin | None = None
+    # The Capture the evidence cites, by digest, once a handle or contract resolved.
+    capture: str | None = None
 
 
 @dataclass
@@ -779,13 +802,14 @@ class _Planner:
         index: int,
         field_name: str,
         exact: bytes | None,
+        capture: str | None,
     ) -> tuple[Any, Literal["evidence", "copy"] | None]:
         """The Claim's source and citation role for this change's evidence."""
 
         evidence = change.evidence
         path = f"changes[{index}].evidence"
-        if isinstance(evidence, CaptureEvidence):
-            return ExistingCaptureCitationSourceV1(capture_digest=evidence.capture), "evidence"
+        if capture is not None:
+            return ExistingCaptureCitationSourceV1(capture_digest=capture), "evidence"
         if isinstance(evidence, FileEvidence):
             if evidence.observation is None:
                 raise _refuse(
@@ -832,6 +856,165 @@ class _Planner:
                 field_path=path,
             )
         return SelfSourceBodyV1(content_base64=base64.b64encode(body).decode("ascii")), None
+
+    # -- Captures by handle or by contract ----------------------------------------
+
+    def cited_capture(
+        self, change: SetChange | AddChange, *, subject_path_value: str, index: int
+    ) -> str | None:
+        """The digest of the Capture this change's evidence cites, if it cites one."""
+
+        evidence = change.evidence
+        path = f"changes[{index}].evidence"
+        if isinstance(evidence, CaptureEvidence):
+            if evidence.capture.startswith("sha256:"):
+                return evidence.capture
+            return self.capture_by_handle(evidence.capture, index=index, path=f"{path}.capture")
+        if isinstance(evidence, ContractEvidence):
+            return self.capture_by_contract(
+                evidence.contract,
+                subject=_named(change.subject),
+                subject_path_value=subject_path_value,
+                index=index,
+                path=f"{path}.contract",
+            )
+        return None
+
+    def _captures_with_prefix(self, prefix: str, limit: int) -> list[str]:
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            rows = projection.typed.connection.execute(
+                "SELECT capture_digest FROM captures WHERE capture_digest >= ? "
+                "AND capture_digest < ? ORDER BY capture_digest LIMIT ?",
+                (prefix, prefix + "g", limit),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def capture_by_handle(self, handle: str, *, index: int, path: str) -> str:
+        """Resolve ``CAP-<hex>`` by unique digest prefix among the accepted Captures."""
+
+        hex_prefix = handle.removeprefix("CAP-")
+        found = self._captures_with_prefix("sha256:" + hex_prefix, _MAX_CANDIDATES + 1)
+        if len(found) == 1:
+            return found[0]
+        if found:
+            raise _refuse(
+                "playbill.write.capture_ambiguous",
+                f"{handle} is the prefix of more than one accepted Capture",
+                change=index,
+                candidates=_distinct_handles(found, at_least=len(hex_prefix) + 1),
+                repair="Pass a longer handle, or the full sha256 digest",
+                field_path=path,
+            )
+        nearest_found: list[str] = []
+        for length in range(len(hex_prefix) - 1, -1, -1):
+            nearest_found = self._captures_with_prefix(
+                "sha256:" + hex_prefix[:length], _MAX_CANDIDATES
+            )
+            if nearest_found:
+                break
+        raise _refuse(
+            "playbill.write.capture_not_found",
+            f"no accepted Capture has the handle {handle}",
+            change=index,
+            candidates=_distinct_handles(nearest_found, at_least=12),
+            repair=(
+                "Name an accepted Capture: get on a Claim with detail=evidence lists the "
+                "Captures behind it; a Capture not yet cited takes its full sha256 digest"
+            ),
+            field_path=path,
+        )
+
+    def capture_by_contract(
+        self,
+        name: str,
+        *,
+        subject: str,
+        subject_path_value: str,
+        index: int,
+        path: str,
+    ) -> str:
+        """The newest verified, citable Capture of one contract about one Subject."""
+
+        from cruxible_core.service.evidence.capture_reads import (
+            CaptureReadInvalid,
+            verify_accepted_capture,
+        )
+
+        bare = name.removeprefix(_CONTRACT_QUALIFIER)
+        qualified = _CONTRACT_QUALIFIER + bare
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            connection = projection.typed.connection
+            known = [
+                str(row[0]).removeprefix(_CONTRACT_QUALIFIER)
+                for row in connection.execute("SELECT identity FROM capture_contracts")
+            ]
+            if bare not in known:
+                raise _refuse(
+                    "playbill.write.unknown_contract",
+                    f"no accepted CaptureContract is named {bare!r}",
+                    change=index,
+                    candidates=nearest(bare, known),
+                    repair="Name a CaptureContract the field admits; orient lists them",
+                    field_path=path,
+                )
+            versions = CaptureContractNames(self.instance, self.head).lineage(qualified)
+            marks = ",".join("?" for _ in versions)
+            cited_here = (
+                "EXISTS (SELECT 1 FROM citation_uses u JOIN claims c ON c.identity = u.owner_key "
+                "WHERE u.owner_kind = 'Claim' AND u.capture_digest = p.capture_digest "
+                "AND c.subject_path = ?)"
+            )
+            # Cited by a Claim on the Subject: found by the index.
+            cited = connection.execute(
+                f"SELECT p.observed_at_us, p.capture_digest FROM captures p "
+                f"WHERE p.contract_digest IN ({marks}) AND {cited_here} "
+                "ORDER BY p.observed_at_us DESC, p.capture_digest DESC LIMIT ?",
+                (*versions, subject_path_value, _MAX_CONTRACT_CAPTURES),
+            ).fetchall()
+            # Naming the Subject in its own source: read from the newest envelopes.
+            others = connection.execute(
+                f"SELECT p.observed_at_us, p.capture_digest FROM captures p "
+                f"WHERE p.contract_digest IN ({marks}) AND NOT {cited_here} "
+                "ORDER BY p.observed_at_us DESC, p.capture_digest DESC LIMIT ?",
+                (*versions, subject_path_value, _MAX_CONTRACT_SCAN),
+            ).fetchall()
+        store = self.instance.body_store()
+        address = SemanticAddress.whole_artifact(subject_path_value).model_dump(mode="json")
+        bound = [(int(row[0]), str(row[1])) for row in cited]
+        for observed_at, digest in ((int(row[0]), str(row[1])) for row in others):
+            try:
+                envelope = parse_capture_envelope(store.read(digest, access=_VALUE_READ_ACCESS))
+            except (PlaybillError, ValueError):
+                continue
+            selector = getattr(envelope.source, "selector", None)
+            if isinstance(selector, Mapping) and selector.get("semantic_subject") == address:
+                bound.append((observed_at, digest))
+        bound.sort(reverse=True)
+        for _observed_at, digest in bound[:_MAX_CONTRACT_CAPTURES]:
+            try:
+                verified = verify_accepted_capture(
+                    self.instance, self.head, digest, access=_VALUE_READ_ACCESS
+                )
+            except (CaptureReadInvalid, ReadRefusalError):
+                continue
+            if isinstance(verified, str):
+                continue
+            reuse = classify_capture_reuse(
+                verified.envelope, contract=verified.contract, store=store, claim_id=""
+            )
+            if reuse == "shareable":
+                return digest
+        raise _refuse(
+            "playbill.write.contract_capture_not_found",
+            f"no verified Capture of {bare} is about {subject}",
+            change=index,
+            repair=(
+                f"Capture {subject} under {bare} first (a Procedure or Line that produces it, "
+                "or --evidence-file / file evidence from its source), or cite a Capture "
+                "by its CAP- handle or digest"
+            ),
+            field_path=path,
+        )
 
     # -- changes -----------------------------------------------------------------
 
@@ -889,8 +1072,9 @@ class _Planner:
         else:
             statement_object = self.literal(info, change.value, index=index, field_name=name)
             shown_after = statement_object.value
+        capture = self.cited_capture(change, subject_path_value=path, index=index)
         source, citation_role = self.source(
-            info, change, role=role, index=index, field_name=name, exact=exact
+            info, change, role=role, index=index, field_name=name, exact=exact, capture=capture
         )
         if not self.subject_exists(path) and path not in self.plan.subjects:
             if kind not in claim_type.allowed_subject_kinds:  # pragma: no cover - resolve_field
@@ -1026,8 +1210,10 @@ class _Planner:
                 "after": summary_value(shown_after),
                 "revises": revises,
                 "contenders_created": contenders,
+                "capture": None if capture is None else capture_handle(capture),
             },
             member=member,
+            capture=capture,
             slot=(path, info.predicate),
             revises=revises,
             existing=tuple(item.claim_id for item in live if item.claim_id != revises),
@@ -1497,12 +1683,11 @@ def _used_contract(
 ) -> str | None:
     if planned.used_contract is not None:
         return planned.used_contract
-    change = planned.change
-    if change is None or not isinstance(change.evidence, CaptureEvidence):
+    if planned.capture is None:
         return None
     try:
         envelope = parse_capture_envelope(
-            instance.body_store().read(change.evidence.capture, access=_VALUE_READ_ACCESS)
+            instance.body_store().read(planned.capture, access=_VALUE_READ_ACCESS)
         )
     except (PlaybillError, ValueError):
         return None
@@ -1517,7 +1702,9 @@ def _render_evidence_repair(
     contracts: Sequence[str],
 ) -> str:
     subject = _named(change.subject)
-    placeholder = f"<digest of a Capture under {' or '.join(contracts) or 'an admitted contract'}>"
+    placeholder = (
+        f"<CAP- handle of a Capture under {' or '.join(contracts) or 'an admitted contract'}>"
+    )
     value = change.value
     if surface == "cli":
         verb = "set" if isinstance(change, SetChange) else "add"

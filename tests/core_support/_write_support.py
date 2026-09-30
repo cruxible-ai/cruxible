@@ -19,6 +19,7 @@ an independent approver (``reviewer``) must sign first.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_PATH,
@@ -194,6 +195,49 @@ def seed_write_surface(
     return instance, owner
 
 
+_REPORTS_CATALOG = """\
+tag: playbill-source-catalog-v1
+catalog_kind: portable
+entries:
+  - name: repo.reports
+    locator: reports.md
+    document_id: reports
+    document_kind: note
+    title: Reports
+    media_type: text/markdown
+    compiler_profile: document-v1
+    required_tier: governed_write
+    governance_scope: [Document:reports]
+"""
+
+
+def report_evidence(workspace: Path, anchor: str) -> dict[str, Any]:
+    """File evidence under repo.reports, observed on the writer's side."""
+
+    from cruxible_client.authoring.write_evidence import observe_evidence
+    from cruxible_client.contracts.write import FileEvidence
+
+    (workspace / ".playbill").mkdir(parents=True, exist_ok=True)
+    (workspace / ".playbill" / "sources.yaml").write_text(_REPORTS_CATALOG, encoding="utf-8")
+    reports = workspace / "reports.md"
+    text = reports.read_text(encoding="utf-8") if reports.exists() else "# Reports\n"
+    reports.write_text(text + f"\n{anchor}\n", encoding="utf-8")
+    observed = observe_evidence(FileEvidence(file=f"reports.md#{anchor}"), workspace=workspace)
+    assert observed is not None
+    return observed.model_dump(mode="json")
+
+
+def cited_captures(instance: PlaybillInstance, claim: str) -> set[str]:
+    """The digests of the Captures an accepted Claim cites (a revision keeps its predecessor's)."""
+
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        rows = projection.typed.connection.execute(
+            "SELECT capture_digest FROM citation_uses WHERE owner_kind='Claim' AND owner_key=?",
+            (f"Claim:{claim}",),
+        ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
 def caller(*, may_activate: bool = True) -> WriteCaller:
     return WriteCaller(actor=OWNER, may_activate=may_activate)
 
@@ -205,6 +249,8 @@ __all__ = [
     "REPORTS",
     "SUBJECTS",
     "caller",
+    "cited_captures",
+    "report_evidence",
     "seed_write_surface",
     "seed_write_vocabulary",
 ]

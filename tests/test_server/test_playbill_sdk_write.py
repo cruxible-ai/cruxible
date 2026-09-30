@@ -14,7 +14,13 @@ from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.write import SlotRef, WriteOutcome
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
-from tests.core_support._write_support import KIND, seed_write_vocabulary
+from tests.core_support._write_support import (
+    KIND,
+    REPORTS,
+    cited_captures,
+    report_evidence,
+    seed_write_vocabulary,
+)
 
 WI1 = f"{KIND}/wi-1"
 
@@ -147,6 +153,49 @@ def test_a_batch_names_its_subject_once(pb: Playbill) -> None:
     assert caught.value.error_code == "playbill.write.subject_required"
     with pytest.raises(ValueError, match="write batch"):
         pb.changes(rationale="x", subject=WI1)  # type: ignore[call-overload]
+
+
+def test_capture_handles_and_contract_evidence_from_the_sdk(
+    pb: Playbill, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.write import (
+        CaptureEvidence,
+        ContractEvidence,
+        FileEvidence,
+        capture_handle,
+    )
+
+    workspace = pb._workspace  # noqa: SLF001
+    report_evidence(workspace, "Count: 3")
+    first = pb.set(
+        WI1, "measured", 3, because="Counted.", evidence=FileEvidence(file="reports.md#Count: 3")
+    )
+    assert first.changes[0].verdict == "supported", first
+    _client, instance_id, _key = playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    (digest,) = cited_captures(instance, first.changes[0].claim or "")
+    handle = capture_handle(digest)
+    cited = pb.set(
+        f"{KIND}/wi-2",
+        "measured",
+        3,
+        because="Same report.",
+        evidence=CaptureEvidence(capture=handle),
+    )
+    assert cited.changes[0].capture == handle
+    batch = pb.changes(because="Counted.", subject=WI1).add(
+        "labels", "counted", evidence=ContractEvidence(contract=REPORTS.identity.name)
+    )
+    assert batch.write().changes[0].capture == handle
+    with pytest.raises(WriteRefusalError) as caught:
+        pb.set(
+            f"{KIND}/wi-3",
+            "measured",
+            3,
+            because="x",
+            evidence=CaptureEvidence(capture="CAP-" + "0" * 12),
+        )
+    assert caught.value.error_code == "playbill.write.capture_not_found"
 
 
 def test_retire_dry_run_and_proposal_accept(pb: Playbill) -> None:

@@ -906,7 +906,9 @@ def register_tools(
             Field(
                 description=(
                     'Default {"kind": "self", "self": because}. Or {"kind": "capture", '
-                    '"capture": "sha256:…"}, or {"kind": "file", "file": "PATH#ANCHOR"}.'
+                    '"capture": "CAP-<12 hex>" or "sha256:…"}, {"kind": "contract", "contract": '
+                    '"<CaptureContract>"} (its newest Capture about the Subject), or '
+                    '{"kind": "file", "file": "PATH#ANCHOR"}.'
                 )
             ),
         ] = None,

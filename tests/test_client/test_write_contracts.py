@@ -173,3 +173,23 @@ def test_a_write_may_name_its_subject_once() -> None:
         PlaybillWriteRequestV1.model_validate(
             {"because": "x", "subject": "no-slash", "changes": [{"op": "retire", "target": _CLAIM}]}
         )
+
+
+def test_capture_evidence_takes_a_handle_and_contract_evidence_a_name() -> None:
+    from cruxible_client.contracts.write import ContractEvidence, capture_handle
+
+    evidence = TypeAdapter(tuple[Evidence, ...]).validate_python(
+        [
+            {"kind": "capture", "capture": "CAP-0123456789ab"},
+            {"kind": "capture", "capture": "CAP-" + "0" * 64},
+            {"kind": "contract", "contract": "repo.reports"},
+        ]
+    )
+    assert [type(item) for item in evidence] == [CaptureEvidence, CaptureEvidence, ContractEvidence]
+    for bad in ("CAP-0123", "CAP-0123456789AB", "cap-0123456789ab", "sha256:abc"):
+        with pytest.raises(ValidationError):
+            CaptureEvidence(capture=bad)
+    with pytest.raises(ValidationError):
+        TypeAdapter(Evidence).validate_python({"kind": "contract", "contract": ""})
+    assert capture_handle("sha256:" + "0123456789ab" + "f" * 52) == "CAP-0123456789ab"
+    assert capture_handle("sha256:" + "a" * 64, length=16) == "CAP-" + "a" * 16

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Literal
+
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
+    CaptureEnvelopeAny,
     classify_capture_reuse,
     parse_capture_envelope,
     verify_capture,
@@ -109,34 +113,40 @@ class _LedgerResolver:
         return content
 
 
-def service_read_playbill_capture(
+CaptureUnavailableReason = Literal[
+    "capture_unavailable", "contract_not_at_coordinate", "body_unavailable"
+]
+
+
+@dataclass(frozen=True)
+class VerifiedCapture:
+    """A Capture verified against its exact contract accepted at one coordinate."""
+
+    envelope: CaptureEnvelopeAny
+    contract: CaptureContractV1
+    contract_address: str
+
+
+def verify_accepted_capture(
     instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    digest: str,
     *,
-    request: CaptureReadRequestV1,
     access: BodyAccessContext,
-) -> CaptureReadV1:
-    # Envelopes also carry body-derived source/selector metadata. Authorize
-    # before reading either them or their bodies, including for in-process callers.
-    if not access.can_read_body:
-        raise PermissionDeniedError("cruxible_playbill_body_read", "read_only", "governed_write")
-    coordinate = (
-        instance.accepted_coordinate()
-        if request.at is None
-        else instance.resolve_accepted_coordinate(
-            **request.at.model_dump(mode="python", exclude={"tag"})
-        )
-    )
-    public = AcceptedCoordinate.from_internal(coordinate)
+) -> VerifiedCapture | CaptureUnavailableReason:
+    """Verify one retained Capture against the contract accepted at ``coordinate``.
+
+    Answers why it is unavailable when its bytes, its contract at the coordinate
+    or its committed body are missing; raises ``CaptureReadInvalid`` when it is
+    present but does not verify, and ``playbill.capture.not_a_capture`` when the
+    bytes are not a Capture envelope at all.
+    """
+
     store = instance.body_store()
-    if not store.metadata(request.capture_digest, access=access).present:
-        return CaptureReadV1(
-            capture_digest=request.capture_digest,
-            coordinate=public,
-            status="unavailable",
-            reason="capture_unavailable",
-        )
+    if not store.metadata(digest, access=access).present:
+        return "capture_unavailable"
     try:
-        raw = store.read(request.capture_digest, access=access)
+        raw = store.read(digest, access=access)
     except PlaybillError as exc:
         raise CaptureReadInvalid(f"Capture verification failed: {exc}") from exc
     try:
@@ -144,17 +154,12 @@ def service_read_playbill_capture(
     except (PlaybillError, ValueError):
         # The bytes are present and intact but are not a Capture envelope: say
         # what they are and which read answers them, not "verification failed".
-        raise _not_a_capture(instance, coordinate, request.capture_digest) from None
+        raise _not_a_capture(instance, coordinate, digest) from None
     try:
         with instance.bind_accepted_projection(coordinate) as projection:
             path = projection.citations.capture_contract_path(envelope.capture_contract_digest)
             if path is None:
-                return CaptureReadV1(
-                    capture_digest=request.capture_digest,
-                    coordinate=public,
-                    status="unavailable",
-                    reason="contract_not_at_coordinate",
-                )
+                return "contract_not_at_coordinate"
             row = projection.typed.connection.execute(
                 "SELECT identity FROM capture_contracts WHERE path=? AND artifact_digest=?",
                 (path, envelope.capture_contract_digest),
@@ -175,14 +180,9 @@ def service_read_playbill_capture(
             envelope.commitment.materialization == "cas"
             and not store.metadata(envelope.commitment.digest, access=access).present
         ):
-            return CaptureReadV1(
-                capture_digest=request.capture_digest,
-                coordinate=public,
-                status="unavailable",
-                reason="body_unavailable",
-            )
+            return "body_unavailable"
         envelope = verify_capture(
-            request.capture_digest,
+            digest,
             store=store,
             contract=contract,
             ledger_resolver=_LedgerResolver(instance),
@@ -193,6 +193,42 @@ def service_read_playbill_capture(
                 bodies=store,
             ),
         )
+    except CaptureReadInvalid:
+        raise
+    except (PlaybillError, ValueError) as exc:
+        raise CaptureReadInvalid(f"Capture verification failed: {exc}") from exc
+    return VerifiedCapture(envelope=envelope, contract=contract, contract_address=path)
+
+
+def service_read_playbill_capture(
+    instance: PlaybillInstance,
+    *,
+    request: CaptureReadRequestV1,
+    access: BodyAccessContext,
+) -> CaptureReadV1:
+    # Envelopes also carry body-derived source/selector metadata. Authorize
+    # before reading either them or their bodies, including for in-process callers.
+    if not access.can_read_body:
+        raise PermissionDeniedError("cruxible_playbill_body_read", "read_only", "governed_write")
+    coordinate = (
+        instance.accepted_coordinate()
+        if request.at is None
+        else instance.resolve_accepted_coordinate(
+            **request.at.model_dump(mode="python", exclude={"tag"})
+        )
+    )
+    public = AcceptedCoordinate.from_internal(coordinate)
+    verified = verify_accepted_capture(instance, coordinate, request.capture_digest, access=access)
+    if isinstance(verified, str):
+        return CaptureReadV1(
+            capture_digest=request.capture_digest,
+            coordinate=public,
+            status="unavailable",
+            reason=verified,
+        )
+    store = instance.body_store()
+    envelope, contract, path = verified.envelope, verified.contract, verified.contract_address
+    try:
         # An external Capture can retain exact bytes locally. Open those bytes,
         # not the remote location; the original source remains in the envelope.
         source = (

@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-30:write-ext",
-    "surface_digest": "sha256:3259b48ab141b4615827329239ad00b874f4ad2c5476b48cdc6e88e9c65925a9"
+    "surface_digest": "sha256:797d864282fe77f8f175e3b4fee604c8c33a2b96543dd9ab112e633869538f78"
   },
   "surface": {
     "cli_leaves": [
@@ -2171,7 +2171,7 @@
         "request_model": "cruxible_client.contracts.write.PlaybillRetireRequestV1",
         "request_schema_digest": "sha256:8cafc71ede2bd21e7a61915eb352194cf7659d8c3d1a38f11d93a16b2f99c456",
         "response_model": "cruxible_client.contracts.write.WriteOutcome",
-        "response_schema_digest": "sha256:30f7407d556efa0582ca65a1a6c7a5380e55214ed37b35d60e421aa668cbbc2b"
+        "response_schema_digest": "sha256:faf78f561ae96c453460e5eb326e2d7e1acfa87e54d08839d50ec063fd85b0a6"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.search",
@@ -2193,9 +2193,9 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/set",
         "request_model": "cruxible_client.contracts.write.PlaybillSetRequestV1",
-        "request_schema_digest": "sha256:89afd9a2685ac8c714b928705253bb9e61e8a4bdd776d750a0d8e844affc7fc5",
+        "request_schema_digest": "sha256:98ec20430e5d7638ba23f31855d16ed6bf1536256067351b59c158984f92bbc7",
         "response_model": "cruxible_client.contracts.write.WriteOutcome",
-        "response_schema_digest": "sha256:30f7407d556efa0582ca65a1a6c7a5380e55214ed37b35d60e421aa668cbbc2b"
+        "response_schema_digest": "sha256:faf78f561ae96c453460e5eb326e2d7e1acfa87e54d08839d50ec063fd85b0a6"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.since",
@@ -2313,9 +2313,9 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/write",
         "request_model": "cruxible_client.contracts.write.PlaybillWriteRequestV1",
-        "request_schema_digest": "sha256:7765105143aa2f39b3c93523f3eeafd720a33183c286d323dac461710af26e31",
+        "request_schema_digest": "sha256:bc6bf7098c3d75b7efc110e2d4ff560b1e2435215400e72384e989dd553054fa",
         "response_model": "cruxible_client.contracts.write.WriteOutcome",
-        "response_schema_digest": "sha256:30f7407d556efa0582ca65a1a6c7a5380e55214ed37b35d60e421aa668cbbc2b"
+        "response_schema_digest": "sha256:faf78f561ae96c453460e5eb326e2d7e1acfa87e54d08839d50ec063fd85b0a6"
       }
     ],
     "mcp_facade_operations": [
@@ -3286,7 +3286,7 @@
         ],
         "input_schema_digest": "sha256:e1b557ab0addf672106147165297b3aca0b0f261bccc2d9f4eeb9e230c408ad6",
         "name": "cruxible_playbill_retire",
-        "output_schema_digest": "sha256:a1e7fc3ca7e09a1065284b2c1d16b01debd856a21e788ba7e814259186dfe743",
+        "output_schema_digest": "sha256:659a2c896fdd4203c8ff51d512c15b1e5cdf08a0e154fdfe601609816d233b0c",
         "permission": "GOVERNED_WRITE"
       },
       {
@@ -3324,9 +3324,9 @@
         "facade_operations": [
           "playbill_set"
         ],
-        "input_schema_digest": "sha256:9e02c4f22f88e4af7f1b95f6cd5505eab27a3b99b1aac7008e5b66bd5a13eff6",
+        "input_schema_digest": "sha256:5802d0765c42cb40c5b0bc9f0c0b3f1184c2ff642d11f162c009e9f343755f6b",
         "name": "cruxible_playbill_set",
-        "output_schema_digest": "sha256:a1e7fc3ca7e09a1065284b2c1d16b01debd856a21e788ba7e814259186dfe743",
+        "output_schema_digest": "sha256:659a2c896fdd4203c8ff51d512c15b1e5cdf08a0e154fdfe601609816d233b0c",
         "permission": "GOVERNED_WRITE"
       },
       {
@@ -3425,9 +3425,9 @@
         "facade_operations": [
           "playbill_write"
         ],
-        "input_schema_digest": "sha256:2426529ef707534af24e377d4345d29d559f468a6142dcf0ed96522bc0cf48a4",
+        "input_schema_digest": "sha256:80279ec16db243e7bc37cbd7dedb358d0c5470e64654cdcf1d6a1b14eae68a83",
         "name": "cruxible_playbill_write",
-        "output_schema_digest": "sha256:a1e7fc3ca7e09a1065284b2c1d16b01debd856a21e788ba7e814259186dfe743",
+        "output_schema_digest": "sha256:659a2c896fdd4203c8ff51d512c15b1e5cdf08a0e154fdfe601609816d233b0c",
         "permission": "GOVERNED_WRITE"
       },
       {

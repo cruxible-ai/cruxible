@@ -33,6 +33,8 @@ from tests.core_support._write_support import (
     OWNER,
     REPORTS,
     caller,
+    cited_captures,
+    report_evidence,
     seed_write_surface,
 )
 
@@ -365,7 +367,7 @@ def test_every_sdk_evidence_repair_runs_against_the_real_builders(
     from cruxible_client.authoring.sdk import Playbill
     from cruxible_client.contracts.write import CaptureEvidence
 
-    digest = "sha256:" + "b" * 64
+    digest = "CAP-" + "b" * 12
     outcome = _write(
         instance,
         _set(WI1, "measured", 3),
@@ -376,7 +378,7 @@ def test_every_sdk_evidence_repair_runs_against_the_real_builders(
     assert [item.change for item in outcome.warnings] == [0, 1]
     for warning in outcome.warnings:
         assert warning.repair is not None
-        placeholder = f"<digest of a Capture under {REPORTS.identity.name}>"
+        placeholder = f"<CAP- handle of a Capture under {REPORTS.identity.name}>"
         assert placeholder in warning.repair
         pb = Playbill(
             client=_Recorder(),  # type: ignore[arg-type]
@@ -417,6 +419,116 @@ def test_evidence_required_waits_for_a_claim_type_flag(
         _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "sha256:" + "a" * 64}),
     )
     assert _refusal(captured).code != "playbill.write.evidence_required"
+
+
+def test_a_capture_handle_resolves_to_its_digest_before_lowering(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.write import capture_handle
+
+    first = _write(
+        instance, _set(WI1, "measured", 3, evidence=report_evidence(tmp_path, "Count: 3"))
+    )
+    assert first.status == "accepted", first
+    assert first.changes[0].verdict == "supported" and first.warnings == ()
+    (digest,) = cited_captures(instance, first.changes[0].claim or "")
+    handle = capture_handle(digest)
+    assert handle == "CAP-" + digest.removeprefix("sha256:")[:12]
+
+    cited = _write(
+        instance, _set(WI2, "measured", 3, evidence={"kind": "capture", "capture": handle})
+    )
+    assert cited.status == "accepted", cited
+    (change,) = cited.changes
+    assert change.capture == handle and change.verdict == "supported"
+    assert cited_captures(instance, change.claim or "") == {digest}
+    # The lowered payload names the digest, exactly as a digest-cited write would.
+    preview = _write(
+        instance,
+        _add(WI3, "labels", "urgent") | {"evidence": {"kind": "capture", "capture": digest}},
+        dry_run=True,
+    )
+    assert preview.changes[0].capture == handle
+
+    unknown = _refusal(
+        _write(
+            instance,
+            _set(WI3, "measured", 3, evidence={"kind": "capture", "capture": "CAP-" + "f" * 12}),
+        )
+    )
+    assert unknown.code == "playbill.write.capture_not_found"
+    assert unknown.field_path == "changes[0].evidence.capture"
+    assert 1 <= len(unknown.candidates) <= 8
+    assert all(item.startswith("CAP-") for item in unknown.candidates)
+
+
+def test_an_ambiguous_capture_handle_refuses_with_the_longer_handles(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prefix = "sha256:" + "a" * 12
+    found = [prefix + "0" * 52, prefix + "1" * 52]
+    monkeypatch.setattr(
+        write_verbs._Planner, "_captures_with_prefix", lambda _self, _prefix, _limit: found
+    )
+    refusal = _refusal(
+        _write(
+            instance,
+            _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "CAP-" + "a" * 12}),
+        )
+    )
+    assert refusal.code == "playbill.write.capture_ambiguous"
+    assert refusal.candidates == ("CAP-" + "a" * 12 + "0", "CAP-" + "a" * 12 + "1")
+
+
+def test_contract_evidence_cites_the_newest_capture_about_the_subject(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.write import capture_handle
+
+    older = _write(
+        instance, _set(WI1, "measured", 3, evidence=report_evidence(tmp_path, "Count: 3"))
+    )
+    newer = _write(
+        instance, _add(WI1, "labels", "four") | {"evidence": report_evidence(tmp_path, "Count: 4")}
+    )
+    assert older.status == newer.status == "accepted"
+    (newest,) = cited_captures(instance, newer.changes[0].claim or "")
+    assert {newest} != cited_captures(instance, older.changes[0].claim or "")
+
+    by_contract = {"kind": "contract", "contract": REPORTS.identity.name}
+    outcome = _write(instance, _set(WI1, "measured", 4) | {"evidence": by_contract})
+    assert outcome.status == "accepted", outcome
+    (change,) = outcome.changes
+    assert change.capture == capture_handle(newest) and change.verdict == "supported"
+    assert newest in cited_captures(instance, change.claim or "")
+    qualified = {"kind": "contract", "contract": f"CaptureContract:{REPORTS.identity.name}"}
+    assert _write(instance, _add(WI1, "labels", "again") | {"evidence": qualified}).status == (
+        "accepted"
+    )
+
+    # wi-2 has no Capture under the contract: refused, with a repair.
+    none = _refusal(_write(instance, _add(WI2, "labels", "counted") | {"evidence": by_contract}))
+    assert none.code == "playbill.write.contract_capture_not_found"
+    assert none.field_path == "changes[0].evidence.contract"
+    assert none.repair is not None and "CAP-" in none.repair
+    typo = _refusal(
+        _write(
+            instance,
+            _add(WI1, "labels", "x")
+            | {"evidence": {"kind": "contract", "contract": "repo.reprots"}},
+        )
+    )
+    assert typo.code == "playbill.write.unknown_contract"
+    # Self-source Captures are bound to their own Claim, so they are never picked.
+    self_source = {
+        "kind": "contract",
+        "contract": COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name,
+    }
+    _write(instance, _set(WI2, "title", "Named"))
+    refused = _refusal(
+        _write(instance, _set(WI2, "priority", "high", role="normative", evidence=self_source))
+    )
+    assert refused.code == "playbill.write.contract_capture_not_found"
 
 
 def test_file_evidence_must_be_observed_by_the_writer(instance: PlaybillInstance) -> None:
