@@ -47,6 +47,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "claim-type", "upgrade-evidence-rules"): "active",
     ("playbill", "block", "depublish"): "active",
     ("playbill", "set"): "active",
+    ("playbill", "add"): "active",
     ("playbill", "retire"): "active",
     ("playbill", "write"): "active",
     ("playbill", "claim", "attest"): "active",

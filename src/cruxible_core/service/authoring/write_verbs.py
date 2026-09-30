@@ -1472,15 +1472,13 @@ def _render_evidence_repair(
     placeholder = f"<digest of a Capture under {' or '.join(contracts) or 'an admitted contract'}>"
     value = change.value
     if surface == "cli":
-        if isinstance(change, SetChange):
-            return (
-                f"cruxible playbill set {shlex.quote(change.subject)} "
-                f"{shlex.quote(change.field)} {shlex.quote(str(value))} "
-                f"--because {shlex.quote(because)} --capture {placeholder}"
-            )
+        verb = "set" if isinstance(change, SetChange) else "add"
+        role = "" if change.role is None else f" --role {change.role}"
+        contend = " --contend" if isinstance(change, SetChange) and change.contend else ""
         return (
-            "cruxible playbill write FILE, with this change carrying "
-            f'"evidence": {{"kind": "capture", "capture": "{placeholder}"}}'
+            f"cruxible playbill {verb} {shlex.quote(change.subject)} "
+            f"{shlex.quote(change.field)} {shlex.quote(str(value))} "
+            f"--because {shlex.quote(because)} --capture {placeholder}{role}{contend}"
         )
     if surface == "sdk":
         # Rendered against the builder signatures: ``pb.set`` takes ``because``;

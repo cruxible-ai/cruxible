@@ -142,6 +142,56 @@ def test_expect_compares_the_value_on_set_and_retire(served: _ServiceClient) -> 
     assert ended.exit_code == 0, ended.output
 
 
+def test_add_puts_one_more_value_in_a_many_valued_field(served: _ServiceClient) -> None:
+    first = _run("add", WI1, "governs", f"{KIND}/wi-2", "--because", "Linked.")
+    assert first.exit_code == 0, first.output
+    assert "target: inst_write" in first.stderr
+    assert "add project.work_item/wi-1 governs: project.work_item/wi-2" in first.output
+    request = served.requests[-1]
+    assert isinstance(request, PlaybillWriteRequestV1) and request.surface == "cli"
+    (change,) = request.changes
+    assert change.op == "add" and not change.expect_absent  # type: ignore[union-attr]
+
+    again = _run("add", WI1, "governs", f"{KIND}/wi-2", "--because", "Again.")
+    assert again.exit_code == 0 and "already live" in again.output
+    absent = _run("add", WI1, "governs", f"{KIND}/wi-2", "--because", "Again.", "--expect-absent")
+    assert absent.exit_code == 1
+    assert "playbill.write.value_already_present (change 0)" in absent.output
+
+    preview = _run("add", WI1, "governs", f"{KIND}/wi-3", "--because", "x", "--dry-run", "--json")
+    assert preview.exit_code == 0, preview.output
+    at = json.loads(preview.stdout)["coordinate"]["git_oid"]
+    proposed = _run(
+        "add", WI1, "governs", f"{KIND}/wi-3", "--because", "x", "--no-accept", "--at", at
+    )
+    assert proposed.exit_code == 0 and "awaiting approval" in proposed.output
+    assert served.requests[-1].accept == "never" and served.requests[-1].at == at
+
+    single = _run("add", WI1, "status", "done", "--because", "x")
+    assert single.exit_code == 1 and "playbill.write.field_is_single" in single.output
+    # Captured-only field: the repair is the add command itself, with --capture.
+    labels = _run("add", WI1, "labels", "urgent", "--because", "x", "--json")
+    assert labels.exit_code == 0, labels.output
+    repair = json.loads(labels.stdout)["next"]
+    assert repair.startswith("cruxible playbill add project.work_item/wi-1 labels urgent")
+    assert "--capture" in repair
+    both = _run(
+        "add",
+        WI1,
+        "labels",
+        "x",
+        "--because",
+        "x",
+        "--capture",
+        "sha256:" + "a" * 64,
+        "--evidence-file",
+        "notes.md#x",
+    )
+    assert both.exit_code != 0 and "not both" in both.output
+    role = _run("add", WI1, "governs", f"{KIND}/wi-3", "--because", "x", "--role", "observation")
+    assert role.exit_code == 1 and "playbill.write.role_not_permitted" in role.output
+
+
 def test_retire_takes_a_claim_id_or_a_subject_and_field(served: _ServiceClient) -> None:
     status = json.loads(_run("set", WI1, "status", "ready", "--because", "x", "--json").stdout)
     title = json.loads(_run("set", WI1, "title", "Old", "--because", "x", "--json").stdout)

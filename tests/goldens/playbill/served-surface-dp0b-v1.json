@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-30:write-ext",
-    "surface_digest": "sha256:014cdd0d533ee0831240176170fb80133dd3cfdc57cc34a1b979efc2cd5b4f44"
+    "surface_digest": "sha256:d9e26ca9bd2646f93a329266ebec6b749b83d84684fb046320a0672a14d1240a"
   },
   "surface": {
     "cli_leaves": [
@@ -73,6 +73,13 @@
         "client_operations": [],
         "command": "mcp",
         "delegate": "cruxible_core.cli.commands.mcp.mcp_cmd"
+      },
+      {
+        "client_operations": [
+          "playbill_write"
+        ],
+        "command": "playbill add",
+        "delegate": "cruxible_core.cli.commands.playbill.add_value"
       },
       {
         "client_operations": [

@@ -3604,6 +3604,85 @@ def set_value(
     _finish_write(outcome, output_json=output_json)
 
 
+@playbill_group.command("add")
+@click.argument("subject")
+@click.argument("field")
+@click.argument("value")
+@click.option("--because", required=True, help="Why; also the default evidence.")
+@click.option(
+    "--evidence-file",
+    default=None,
+    help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
+)
+@click.option("--capture", default=None, help="Cite an existing Capture by digest.")
+@click.option("--role", default=None, help="Only when the field permits several roles.")
+@click.option(
+    "--expect-absent",
+    is_flag=True,
+    help="Refuse when the value is already there, instead of answering it as done.",
+)
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose source catalog --evidence-file reads.",
+)
+@_write_options
+@handle_errors
+def add_value(
+    subject: str,
+    field: str,
+    value: str,
+    because: str,
+    evidence_file: str | None,
+    capture: str | None,
+    role: str | None,
+    expect_absent: bool,
+    workspace_root: str,
+    dry_run: bool,
+    no_accept: bool,
+    at_oid: str | None,
+    output_json: bool,
+) -> None:
+    """Add VALUE to many-valued FIELD of SUBJECT (kind/id), beside the values there.
+
+    A value already there is answered as done (--expect-absent refuses instead).
+    A Subject of a known kind that does not exist yet is added. VALUE is text, as
+    for set: a Subject as kind/id for a Subject-valued field.
+    """
+
+    request = _write_request(
+        PlaybillWriteRequestV1,
+        {
+            "changes": [
+                {
+                    "op": "add",
+                    "subject": subject,
+                    "field": field,
+                    "value": value,
+                    "evidence": _evidence_option_value(evidence_file, capture, workspace_root),
+                    "role": role,
+                    "expect_absent": expect_absent,
+                }
+            ],
+            "because": because,
+            "dry_run": dry_run,
+            "accept": "never" if no_accept else "if_allowed",
+            "at": at_oid,
+        },
+        example=(
+            "cruxible playbill add dev.item/tidy-cli governs dev.item/cli-docs "
+            '--because "Linked in review."'
+        ),
+    )
+    outcome = _server_call(
+        lambda client, instance_id: client.playbill_write(instance_id, request=request),
+        command_name="playbill add",
+    )
+    _finish_write(outcome, output_json=output_json)
+
+
 @playbill_group.command("retire")
 @click.argument("target")
 @click.argument("field", required=False)

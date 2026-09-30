@@ -761,7 +761,7 @@ CLI form of the SDK's `world.values`): one row per live Claim, with its
 of `--kind` (or only the named `--subject` IDs) and the given predicates,
 without full Claim views. It refuses rather than truncates past 8192 Claims.
 
-Claims are written through `playbill set`, `retire` and `write`, or authored
+Claims are written through `playbill set`, `add`, `retire` and `write`, or authored
 through `playbill authoring create`/`compile`; the retired direct v1 proposal
 commands are not a second writer. `playbill retire` retires a Claim with its
 complete dependent Claim closure in one change set. explain returns the verdict together with the law evidence and source
@@ -1718,14 +1718,18 @@ Audit reads do not create qualifying consumption touches or change governed
 state. Follow `next_cursor` only while its accepted coordinate, evaluation time,
 scope, and operational input head remain unchanged.
 
-## playbill set, retire and write
+## playbill set, add, retire and write
 
 ~~~text
 cruxible playbill set SUBJECT FIELD VALUE --because TEXT
-  [--evidence-file PATH#ANCHOR | --capture DIGEST] [--role ROLE] [--contend]
+  [--evidence-file PATH#ANCHOR | --capture DIGEST] [--role ROLE] [--contend] [--expect VALUE]...
+  [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
+cruxible playbill add SUBJECT FIELD VALUE --because TEXT
+  [--evidence-file PATH#ANCHOR | --capture DIGEST] [--role ROLE] [--expect-absent]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible playbill retire TARGET [FIELD] --because TEXT
-  [--reason was-rescinded|was-wrong|superseded] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
+  [--reason was-rescinded|was-wrong|superseded] [--expect VALUE]... [--dry-run] [--no-accept]
+  [--at GIT_OID] [--json]
 cruxible playbill write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-accept]
   [--at GIT_OID] [--json]
 cruxible playbill write --schema
@@ -1744,12 +1748,19 @@ Capture. The write accepts in the same call when the approval policy and your
 tier allow it; otherwise it prints the eligible approvers and the approve
 command. `--no-accept` only proposes. `--dry-run` runs every check and writes
 nothing; pass its coordinate back as `--at` to refuse
-(`playbill.write.slot_changed`) if the field moved since. Each change prints
+(`playbill.write.slot_changed`) if the field moved since. `--expect VALUE` is
+the compare-and-set by value: it refuses `playbill.write.slot_changed`, showing
+what the field holds, unless it holds exactly VALUE (repeat `--expect` for every
+value of a many-valued field); it composes with `--at`. Each change prints
 before and after, its Claim and its verdict; a verdict other than `supported`
 prints a warning with its repair.
 
-`retire` ends one live Claim, named by ID or by SUBJECT FIELD when that field
-holds one value; the Claims that depend on it retire with it. `write` applies a
+`add` puts one more VALUE in a many-valued FIELD, beside the values already
+there; a value already live is answered as done, and `--expect-absent` refuses
+it instead (`playbill.write.value_already_present`). `retire` ends one live
+Claim, named by ID or by SUBJECT FIELD when that field holds one value; the
+Claims that depend on it retire with it; `--expect` compares the field's values
+as on `set`. `write` applies a
 FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":
 [...]}`, or a bare list with `--because`, each change
 `{"op": "set" | "add", "subject", "field", "value"}` or
