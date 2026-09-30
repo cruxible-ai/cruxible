@@ -89,8 +89,12 @@ from cruxible_core.service.discovery.discovery import (
 )
 from cruxible_core.service.discovery.query import _AcceptedQueryFactsRead
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
-from cruxible_core.service.floor.floor_content import current_content, review_snapshot_oid
-from cruxible_core.service.floor.floor_current import live_claims
+from cruxible_core.service.floor.floor_content import current_layer, review_snapshot_oid
+from cruxible_core.service.floor.floor_current import (
+    bodies_unchanged,
+    body_available,
+    live_claims,
+)
 from cruxible_core.storage.cas import BodyAccessContext
 
 MANIFEST_PATH = "manifest.json"
@@ -557,20 +561,27 @@ def service_export_playbill_floor(
     )
     if not external_readers:
         cached = memo_get(instance.floor_export_memo, key)
-        if isinstance(cached, dict):
-            return cached.copy()
+        # A kept export carries body-store bytes (exact-content text, Document
+        # bodies); it is served only while each body answers as it did.
+        if isinstance(cached, tuple) and bodies_unchanged(instance, cached[1]):
+            kept: dict[str, bytes] = cached[0]
+            return kept.copy()
     files: dict[str, bytes] = {}
     # The facts read's own verdict read context, reused for the current/ flags
     # within this one request so its Claims and records are read once.
     verdict_context: ClaimVerdictReadContext | None = None
     claims: tuple[ClaimArtifactAny, ...]
+    # Body-store objects the discovery cards depend on (cited Captures).
+    captures: tuple[tuple[str, bool], ...] = ()
     if with_discovery:
         structure_key = (coordinate.git_oid, body_access.principal_id, body_access.can_read_body)
         structure = (
             None if external_readers else memo_get(instance.floor_structure_memo, structure_key)
         )
-        if isinstance(structure, tuple):
-            base_files, claims = structure
+        # The coverage boundary reads Capture envelopes from the body store, so
+        # kept cards are reused only while every cited Capture answers as it did.
+        if isinstance(structure, tuple) and bodies_unchanged(instance, structure[2]):
+            base_files, claims, captures = structure
             files = base_files.copy()
         else:
             files, claims, verdict_context = _discovery_layer(
@@ -578,6 +589,12 @@ def service_export_playbill_floor(
                 coordinate=coordinate,
                 accepted=accepted,
                 external_readers=external_readers,
+            )
+            captures = tuple(
+                (digest, body_available(instance, digest))
+                for digest in sorted(
+                    {item for claim in claims for item in claim.backing.capture_digests}
+                )
             )
             if (
                 not external_readers
@@ -590,23 +607,23 @@ def service_export_playbill_floor(
                 memo_put(
                     instance.floor_structure_memo,
                     structure_key,
-                    (files.copy(), claims),
+                    (files.copy(), claims, captures),
                     capacity=2,
                 )
     else:
         claims, verdict_context = live_claims(instance, coordinate)
 
+    bodies: tuple[tuple[str, bool], ...] = ()
     if format_version == 4:
-        files.update(
-            current_content(
-                instance,
-                coordinate=coordinate,
-                claims=claims,
-                notes_oid=notes_oid,
-                access=body_access,
-                verdict_context=verdict_context,
-            )
+        layer, bodies = current_layer(
+            instance,
+            coordinate=coordinate,
+            claims=claims,
+            notes_oid=notes_oid,
+            access=body_access,
+            verdict_context=verdict_context,
         )
+        files.update(layer)
     else:
         files.update(_documents(instance, at=accepted, access=body_access))
     ordered = {path: files[path] for path in sorted(files, key=lambda item: item.encode("utf-8"))}
@@ -630,7 +647,12 @@ def service_export_playbill_floor(
     )
     result = {MANIFEST_PATH: _render(manifest.model_dump(mode="json")), **ordered}
     if not external_readers and sum(map(len, result.values())) <= 32 * 1024 * 1024:
-        memo_put(instance.floor_export_memo, key, result.copy(), capacity=2)
+        memo_put(
+            instance.floor_export_memo,
+            key,
+            (result.copy(), tuple(sorted({*bodies, *captures}))),
+            capacity=2,
+        )
     return result
 
 

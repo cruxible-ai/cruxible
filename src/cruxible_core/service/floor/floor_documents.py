@@ -46,6 +46,9 @@ class DocumentPart:
     label: str
     body: str
     provenance: bytes
+    # The body-store object this render read, and whether it was held intact;
+    # None when no body was read (withheld from this caller, or none named).
+    read_body: tuple[str, bool] | None = None
 
 
 def _fact(view: PlaybillDocumentView, schema_id: str, fact_key: str) -> object:
@@ -115,8 +118,12 @@ def render_document(
             f"media={media_type}",
         )
     )
-    body = _body_text(
-        instance, ref=ref, digest=digest if isinstance(digest, str) else None, access=access
+    named = digest if isinstance(digest, str) else None
+    body = _body_text(instance, ref=ref, digest=named, access=access)
+    read_body = (
+        None
+        if named is None or not access.can_read_body
+        else (named, not body.startswith("(body unavailable:"))
     )
     provenance = (
         pretty_json(
@@ -140,6 +147,7 @@ def render_document(
         label=label,
         body=body if body.endswith("\n") or not body else body + "\n",
         provenance=provenance,
+        read_body=read_body,
     )
 
 

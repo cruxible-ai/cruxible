@@ -33,6 +33,7 @@ from cruxible_core.service.floor.floor_current import (
     ValueRenderer,
     accepted_claim_types,
     accepted_subjects,
+    bodies_unchanged,
     claim_verdicts,
     claims_by_subject,
     floor_stamp,
@@ -244,14 +245,39 @@ def current_content(
     access: BodyAccessContext | None = None,
     verdict_context: ClaimVerdictReadContext | None = None,
 ) -> dict[str, bytes]:
+    """The grep-first layer's files; see ``current_layer``."""
+
+    return current_layer(
+        instance,
+        coordinate=coordinate,
+        claims=claims,
+        notes_oid=notes_oid,
+        access=access,
+        verdict_context=verdict_context,
+    )[0]
+
+
+def current_layer(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    claims: tuple[ClaimArtifactAny, ...],
+    notes_oid: str | None,
+    access: BodyAccessContext | None = None,
+    verdict_context: ClaimVerdictReadContext | None = None,
+) -> tuple[dict[str, bytes], tuple[tuple[str, bool], ...]]:
     """The grep-first layer: current/, INDEX, documents/ and their provenance.
 
-    Incremental: the last export's per-Subject renders are kept on the
-    instance. A later export in the same accepted history reads the member
-    paths the change records touched since then and re-renders only the
-    Subjects those changes, or a moved verdict, reach. Every file is then
-    re-stamped with the new coordinate, so identical accepted state still gives
-    identical bytes however the floor got there.
+        Also returns every body-store object the layer's bytes depend on, with
+        whether it was held intact, so a caller keeping the bytes can revalidate.
+    : current/, INDEX, documents/ and their provenance.
+
+        Incremental: the last export's per-Subject renders are kept on the
+        instance. A later export in the same accepted history reads the member
+        paths the change records touched since then and re-renders only the
+        Subjects those changes, or a moved verdict, reach. Every file is then
+        re-stamped with the new coordinate, so identical accepted state still gives
+        identical bytes however the floor got there.
     """
 
     body_access = access or BodyAccessContext(principal_id="playbill-floor")
@@ -304,6 +330,9 @@ def current_content(
                 and previous.claim_ids.get(path) == claim_ids[path]
                 and previous.verdicts.get(path) == verdict_keys[path]
                 and not any(claim_path(item) in changed for item in claim_ids[path])
+                # A render that read the body store is reused only while every
+                # body it read answers as it did, so warm and cold agree.
+                and bodies_unchanged(instance, previous.parts[path].bodies)
             }
         )
         fresh = tuple(path for path in subject_paths if path not in reusable)
@@ -354,6 +383,9 @@ def current_content(
         if changed is not None
         and previous is not None
         and not any(path.startswith("documents/") for path in changed)
+        and bodies_unchanged(
+            instance, (item.read_body for item in previous.documents if item.read_body)
+        )
         else document_parts(instance, coordinate=coordinate, access=body_access)
     )
     memo_put(
@@ -394,4 +426,12 @@ def current_content(
         }
     )
     files["README.md"] = FLOOR_README.encode()
-    return files
+    bodies = tuple(
+        sorted(
+            {
+                *(body for part in parts.values() for body in part.bodies),
+                *(item.read_body for item in documents if item.read_body is not None),
+            }
+        )
+    )
+    return files, bodies

@@ -633,3 +633,99 @@ def test_the_shared_write_records_a_profile_only_where_it_can_name_a_daemon(
         server_socket="daemon.sock",
     )
     assert configured_floor_output(named) == (".playbill/floor", ("discovery",))
+
+
+def _spoil(instance: PlaybillInstance, digest: str, how: str) -> None:
+    import os
+
+    store = instance.body_store()
+    if how == "erase":
+        assert store.erase(digest)
+        return
+    path = store._path(digest)  # the object on disk, as a rotting disk would change it
+    os.chmod(path, 0o600)
+    content = path.read_bytes()
+    path.write_bytes(bytes([content[0] ^ 1]) + content[1:])
+
+
+def _cold(instance: PlaybillInstance, **options: Any) -> dict[str, bytes]:
+    instance.floor_export_memo.clear()
+    instance.floor_structure_memo.clear()
+    instance.floor_current_memo.clear()
+    return service_export_playbill_floor(instance, **options)
+
+
+@pytest.mark.parametrize("how", ["erase", "corrupt"])
+@pytest.mark.parametrize("target", ["document", "ruling", "long-ruling"])
+def test_warm_exports_agree_with_cold_ones_after_a_body_goes_bad(
+    tmp_path: Any, how: str, target: str
+) -> None:
+    instance, _owner = seed_write_surface(tmp_path)
+    written = _write(instance, _set(WI1, "ruling", RULING), _set(WI3, "ruling", LONG_RULING))
+    _add_document(instance, "design-note", NOTE.encode())
+    warm = service_export_playbill_floor(instance, access=BODY_READER)
+    assert NOTE in warm["documents/design-note.md"].decode()
+    assert warm[f"current/{KIND}/wi-3.ruling.txt"].decode().endswith(LONG_RULING)
+
+    if target == "document":
+        digest = instance.body_store().digest_bytes(NOTE.encode()).tagged
+    else:
+        field = {"ruling": WI1, "long-ruling": WI3}[target]
+        claim_id = next(change.claim for change in written.changes if change.subject == field)
+        with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+            digest = projection.typed.source(f"Claim:{claim_id}").statement.object.content_digest
+    _spoil(instance, digest, how)
+    # The same coordinate, served from the kept export, and the next one,
+    # rendered incrementally, both match a cold export.
+    assert service_export_playbill_floor(instance, access=BODY_READER) == _cold(
+        instance, access=BODY_READER
+    )
+    service_export_playbill_floor(instance, access=BODY_READER)
+    _write(instance, _set(WI2, "status", "done"))
+    if how == "corrupt" and target != "document":
+        # A ruling's bytes are also its own evidence. At a new coordinate the
+        # shared verdict derivation re-reads that evidence and refuses a corrupt
+        # body outright, so warm and cold exports both refuse, alike.
+        from cruxible_client.contracts.errors import PlaybillCasError
+
+        with pytest.raises(PlaybillCasError) as warm_refusal:
+            service_export_playbill_floor(instance, access=BODY_READER)
+        with pytest.raises(PlaybillCasError) as cold_refusal:
+            _cold(instance, access=BODY_READER)
+        assert str(warm_refusal.value) == str(cold_refusal.value)
+        return
+    incremental = service_export_playbill_floor(instance, access=BODY_READER)
+    assert incremental == _cold(instance, access=BODY_READER)
+
+    if target == "document":
+        assert "(body unavailable:" in incremental["documents/design-note.md"].decode()
+    elif target == "ruling":
+        assert (
+            "ruling: {exact_content: unavailable"
+            in incremental[f"current/{KIND}/wi-1.yaml"].decode()
+        )
+    else:
+        assert f"current/{KIND}/wi-3.ruling.txt" not in incremental
+
+
+def _outcome(export: Any) -> object:
+    try:
+        return export()
+    except Exception as exc:  # noqa: BLE001 - the refusal itself is the outcome compared
+        return (type(exc).__name__, str(exc))
+
+
+def test_kept_discovery_cards_agree_with_cold_ones_after_a_capture_is_erased(
+    tmp_path: Any,
+) -> None:
+    instance, _owner = seed_write_surface(tmp_path)
+    written = _write(instance, _set(WI1, "status", "ready"))
+    options = {"access": BODY_READER, "include": ("discovery",)}
+    service_export_playbill_floor(instance, **options)
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        claim = projection.typed.source(f"Claim:{written.changes[0].claim}")
+    (capture,) = claim.backing.capture_digests
+    assert instance.body_store().erase(capture)
+
+    warm = _outcome(lambda: service_export_playbill_floor(instance, **options))
+    assert warm == _outcome(lambda: _cold(instance, **options))

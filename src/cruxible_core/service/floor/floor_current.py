@@ -41,7 +41,7 @@ import json
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -56,7 +56,7 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_path,
 )
-from cruxible_client.contracts.errors import ProjectionIntegrityError
+from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
 from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.primitives import pretty_json
 from cruxible_client.contracts.subjects import SubjectShell, parse_subject
@@ -213,6 +213,8 @@ class _Shown:
     text_file: tuple[str, str] | None = None
     # The value as one line of plain text, for the kind's INDEX.
     plain: str = ""
+    # An exact-content value's body digest, and whether the store held it intact.
+    body: tuple[str, bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -230,6 +232,28 @@ class SubjectPart:
     # The kind INDEX cells: a title-like value and the state-like fields.
     index_title: str = ""
     index_states: tuple[tuple[str, str], ...] = ()
+    # Every body-store object this render read, and whether it was held intact.
+    # A render is reused only while each one still answers the same.
+    bodies: tuple[tuple[str, bool], ...] = ()
+
+
+def body_available(instance: PlaybillInstance, digest: str) -> bool:
+    """Whether the body store holds ``digest`` intact, as a read would find it.
+
+    ``verify`` re-hashes only a file whose identity changed since it was last
+    verified, so an unchanged body costs one stat.
+    """
+
+    try:
+        return instance.body_store().verify(digest)
+    except (PlaybillError, OSError, ValueError):
+        return False
+
+
+def bodies_unchanged(instance: PlaybillInstance, bodies: Iterable[tuple[str, bool]]) -> bool:
+    """Whether every recorded body still answers as it did when it was rendered."""
+
+    return all(body_available(instance, digest) == held for digest, held in bodies)
 
 
 def subject_ref(path: str) -> str:
@@ -283,6 +307,7 @@ class ValueRenderer:
     """
 
     def __init__(self, instance: PlaybillInstance) -> None:
+        self._instance = instance
         self._content = ExactContentReader(instance)
 
     def shown(self, claim: ClaimArtifactAny, *, text_name: str) -> _Shown:
@@ -293,11 +318,13 @@ class ValueRenderer:
             return _Shown(yaml_scalar(other), None, note, plain=other)
         if isinstance(obj, ExactContentClaimObject):
             value = self._content.of(obj)
+            body = (obj.content_digest, body_available(self._instance, obj.content_digest))
             if not isinstance(value, str):
                 size = "null" if value.length is None else str(value.length)
                 marker = f"{{exact_content: {value.exact_content}, bytes: {size}}}"
-                return _Shown(marker, None, note, plain=marker)
-            return self.text(value, note=note, text_name=text_name)
+                return _Shown(marker, None, note, plain=marker, body=body)
+            shown = self.text(value, note=note, text_name=text_name)
+            return replace(shown, body=body)
         literal = obj.value
         if isinstance(literal, str):
             return self.text(literal, note=note, text_name=text_name)
@@ -431,6 +458,7 @@ def render_subject(
     entries: list[tuple[str, str, list[str]]] = []
     texts: list[tuple[str, str, str]] = []
     plains: dict[str, tuple[str, ...]] = {}
+    bodies: set[tuple[str, bool]] = set()
     flagged: list[tuple[str, list[FloorFlag]]] = []
     for (predicate, qualifier), members in slots.items():
         members.sort(key=lambda item: item.identity.name.encode())
@@ -466,6 +494,7 @@ def render_subject(
             (display, qualifier or "", _entry_lines(yaml_scalar(key), rendered, listed=listed))
         )
         plains[key] = tuple(value.plain for value in rendered)
+        bodies.update(value.body for value in rendered if value.body is not None)
         texts.extend(
             (value.text_file[0], f"field={key}  {value.note.split()[0]}", value.text_file[1])
             for value in rendered
@@ -525,6 +554,7 @@ def render_subject(
             if _STATE_FIELD.search(key)
         )
         + ((("lifecycle", "retired"),) if shell.lifecycle.state != "live" else ()),
+        bodies=tuple(sorted(bodies)),
     )
 
 
@@ -683,6 +713,8 @@ __all__ = [
     "current_path",
     "index_files",
     "render_index",
+    "body_available",
+    "bodies_unchanged",
     "floor_stamp",
     "live_claims",
     "literal_scalar",
