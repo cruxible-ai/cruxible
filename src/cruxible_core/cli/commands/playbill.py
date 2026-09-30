@@ -3579,6 +3579,11 @@ def _evidence_option_value(
 @click.option("--contend", is_flag=True, help="Contest the live value instead of replacing it.")
 @click.option("--expect", "expect", multiple=True, help=_EXPECT_HELP)
 @click.option(
+    "--expect-absent",
+    is_flag=True,
+    help="Refuse unless the field holds no value now (compare-and-set on an empty field).",
+)
+@click.option(
     "--workspace-root",
     default=".",
     show_default=True,
@@ -3598,6 +3603,7 @@ def set_value(
     role: str | None,
     contend: bool,
     expect: tuple[str, ...],
+    expect_absent: bool,
     workspace_root: str,
     dry_run: bool,
     no_accept: bool,
@@ -3611,6 +3617,8 @@ def set_value(
     for such fields, a Subject as kind/id, or the text itself for exact content.
     """
 
+    if expect_absent and expect:
+        raise click.UsageError("pass --expect or --expect-absent, not both")
     request = _write_request(
         PlaybillSetRequestV1,
         {
@@ -3623,7 +3631,7 @@ def set_value(
             ),
             "role": role,
             "contend": contend,
-            "expect": _expect_option_value(expect),
+            "expect": () if expect_absent else _expect_option_value(expect),
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,

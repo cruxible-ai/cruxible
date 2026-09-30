@@ -132,7 +132,16 @@ def test_dry_run_no_accept_and_at_reach_the_request(served: _ServiceClient) -> N
 
 
 def test_expect_compares_the_value_on_set_and_retire(served: _ServiceClient) -> None:
-    assert _run("set", WI1, "status", "ready", "--because", "x").exit_code == 0
+    first = _run("set", WI1, "status", "ready", "--because", "x", "--expect-absent")
+    assert first.exit_code == 0, first.output
+    assert served.requests[-1].expect == ()
+    taken = _run("set", WI1, "status", "done", "--because", "x", "--expect-absent")
+    assert taken.exit_code == 1
+    assert "holds 'ready', not [] as expected" in taken.output
+    both = _run(
+        "set", WI1, "status", "done", "--because", "x", "--expect", "ready", "--expect-absent"
+    )
+    assert both.exit_code != 0 and "not both" in both.output
     stale = _run("set", WI1, "status", "done", "--because", "x", "--expect", "blocked")
     assert stale.exit_code == 1
     assert "playbill.write.slot_changed (change 0)" in stale.output

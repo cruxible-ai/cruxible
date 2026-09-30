@@ -1723,7 +1723,7 @@ scope, and operational input head remain unchanged.
 ~~~text
 cruxible playbill set SUBJECT FIELD VALUE --because TEXT
   [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
-  [--role ROLE] [--contend] [--expect VALUE]...
+  [--role ROLE] [--contend] [--expect VALUE... | --expect-absent]
   [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
 cruxible playbill add SUBJECT FIELD VALUE --because TEXT
   [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
@@ -1760,7 +1760,8 @@ nothing; pass its coordinate back as `--at` to refuse
 (`playbill.write.slot_changed`) if the field moved since. `--expect VALUE` is
 the compare-and-set by value: it refuses `playbill.write.slot_changed`, showing
 what the field holds, unless it holds exactly VALUE (repeat `--expect` for every
-value of a many-valued field); it composes with `--at`. Each change prints
+value of a many-valued field); `--expect-absent` expects the field to hold
+nothing. Both compose with `--at`. Each change prints
 before and after, its Claim and its verdict; a verdict other than `supported`
 prints a warning with its repair.
 
