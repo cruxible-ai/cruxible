@@ -37,7 +37,7 @@ from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
-LOCAL = LineArmPrincipalV1(kind="local_operator", label="local-operator")
+LOCAL = LineArmPrincipalV1(kind="local_operator", label="owner")
 CREDENTIAL = LineArmPrincipalV1(
     kind="runtime_credential", credential_id="cred-arm", label="line-operator"
 )
@@ -82,7 +82,7 @@ def _credential(**update):  # type: ignore[no-untyped-def]
         permission_mode=PermissionMode.GOVERNED_WRITE,
         token_hash="unused",
         created_at="2026-09-01T00:00:00Z",
-        principal_id="line-operator",
+        principal_id="owner",
     )
     return record if not update else record.__class__(**{**record.__dict__, **update})
 
@@ -366,14 +366,16 @@ def test_a_slow_line_never_stalls_another_lines_drain_or_runs_twice(monkeypatch)
 def test_local_operator_arms_stop_once_the_daemon_requires_authentication(monkeypatch):
     monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: True)
     with pytest.raises(LineArmAuthorityLost) as lost:
-        arm_authority("instance", LOCAL, now=datetime.now(UTC))
+        arm_authority(_registry_instance("owner", "active"), LOCAL, now=datetime.now(UTC))
     assert lost.value.reason == "authentication_changed"
 
 
 def test_an_automatic_run_acts_as_the_arming_credential(monkeypatch):
     _credential_store(monkeypatch, _credential(instance_id="instance"))
-    actor, caller_rung = arm_authority("instance", CREDENTIAL, now=datetime.now(UTC))
-    assert (actor.actor_type, actor.actor_id) == ("service_account", "line-operator")
+    actor, caller_rung = arm_authority(
+        _registry_instance("owner", "active"), CREDENTIAL, now=datetime.now(UTC)
+    )
+    assert (actor.actor_type, actor.actor_id) == ("service_account", "owner")
     assert caller_rung == PermissionMode.GOVERNED_WRITE.value - 1
 
 
@@ -903,3 +905,80 @@ def test_an_unbound_arming_credential_stops_the_arm(tmp_path, monkeypatch):
 
     assert result is None
     assert _admissions(instance) == 0
+
+
+def _registry_instance(principal_id: str, status: str):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.types import PrincipalRecord
+
+    record = PrincipalRecord(
+        principal_id=principal_id, public_key="1" * 64, kind="ordinary", status=status
+    )
+    return SimpleNamespace(
+        descriptor=SimpleNamespace(instance_id="instance"),
+        accepted_history=lambda: [SimpleNamespace(principals=SimpleNamespace(principals=[record]))],
+    )
+
+
+def test_a_credential_arm_stops_and_revokes_once_its_principal_is_revoked(monkeypatch):
+    revoked: list[tuple[str, str]] = []
+    record = _credential(instance_id="instance", principal_id="line-operator")
+    monkeypatch.setattr(
+        line_arms,
+        "get_runtime_credential_store",
+        lambda: SimpleNamespace(
+            get=lambda _id: record,
+            revoke_credentials_of_principal=lambda *, instance_id, principal_id: revoked.append(
+                (instance_id, principal_id)
+            ),
+        ),
+    )
+
+    with pytest.raises(LineArmAuthorityLost) as lost:
+        arm_authority(
+            _registry_instance("line-operator", "revoked"), CREDENTIAL, now=datetime.now(UTC)
+        )
+
+    assert lost.value.reason == "principal_inactive"
+    assert revoked == [("instance", "line-operator")]
+
+
+def test_a_claimed_local_arm_stops_once_its_principal_is_no_longer_active(monkeypatch):
+    monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
+    claimed = LineArmPrincipalV1(kind="local_operator", label="line-operator")
+
+    with pytest.raises(LineArmAuthorityLost) as lost:
+        arm_authority(
+            _registry_instance("line-operator", "revoked"), claimed, now=datetime.now(UTC)
+        )
+
+    assert lost.value.reason == "principal_inactive"
+
+
+def test_automatic_dispatch_stops_when_the_arming_principal_is_not_registered(
+    tmp_path, monkeypatch
+):
+    instance, line, procedure, start = _armed_world(tmp_path, principal=CREDENTIAL)
+    revoked: list[str] = []
+    record = _credential(instance_id=instance.descriptor.instance_id, principal_id="ghost")
+    monkeypatch.setattr(
+        line_arms,
+        "get_runtime_credential_store",
+        lambda: SimpleNamespace(
+            get=lambda _id: record,
+            revoke_credentials_of_principal=lambda *, instance_id, principal_id: revoked.append(
+                principal_id
+            ),
+        ),
+    )
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
+
+    result = dispatch_armed_line(
+        _manager(instance), instance.descriptor.instance_id, arm, now=start + timedelta(seconds=3)
+    )
+
+    assert result is None
+    assert _admissions(instance) == 0
+    assert revoked == ["ghost"]
+    assert service_line_status(instance, line.identity.name).state != "armed"

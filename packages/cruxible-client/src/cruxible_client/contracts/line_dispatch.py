@@ -107,6 +107,7 @@ LineArmStopReasonV1 = Literal[
     "epoch_changed",
     "credential_revoked",
     "credential_unbound",
+    "principal_inactive",
     "credential_scope_changed",
     "permission_insufficient",
     "authentication_changed",

@@ -32,7 +32,7 @@ from cruxible_core.server.actor_identity import (
 from cruxible_core.server.auth import get_current_auth_context
 from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.server.credentials import get_runtime_credential_store
-from cruxible_core.service.identity import credential_unbound_refusal
+from cruxible_core.service.identity import credential_unbound_refusal, principal_refusal
 from cruxible_core.service.procedures.line_dispatch import (
     LineArmAuthorityLost,
     LineArmSegmentEnded,
@@ -75,10 +75,34 @@ def current_arm_principal() -> LineArmPrincipalV1:
     )
 
 
+def _require_active_principal(instance: Any, principal_id: str) -> None:
+    """Stop the arm unless its principal is active at the accepted head, right now.
+
+    Automatic dispatch never passes through the HTTP middleware, so it cannot
+    rely on a credential having been revoked on use: the accepted registry is
+    read here before every admission.
+    """
+
+    refusal = principal_refusal(instance, principal_id, configured=True)
+    if refusal is not None:
+        raise LineArmAuthorityLost(
+            "principal_inactive",
+            f"The arming principal {principal_id!r} is no longer an active principal "
+            f"({refusal.error_code}); rearm as an active principal to resume.",
+        )
+
+
 def arm_authority(
-    instance_id: str, principal: LineArmPrincipalV1, *, now: datetime
+    instance: Any, principal: LineArmPrincipalV1, *, now: datetime
 ) -> tuple[GovernedActorContext, int]:
-    """The actor and caller rung the arm dispatches under, or why it no longer may."""
+    """The actor and caller rung the arm dispatches under, or why it no longer may.
+
+    Rechecked before every automatic admission: the arming credential (revoked,
+    moved, downgraded or unbound) and the accepted standing of the principal
+    the arm acts as, for credential arms and auth-off claimed arms alike.
+    """
+
+    instance_id = instance.descriptor.instance_id
 
     if principal.kind == "local_operator":
         if is_server_auth_enabled():
@@ -94,6 +118,9 @@ def arm_authority(
             )
         actor = local_operator_actor_context()
         if principal.label != LOCAL_OPERATOR_ACTOR_ID:
+            # An auth-off arm made under a claimed principal acts as it only
+            # while that principal stays active.
+            _require_active_principal(instance, principal.label)
             actor = actor.model_copy(update={"actor_id": principal.label})
         return actor, mode.value - 1
     assert principal.credential_id is not None
@@ -118,6 +145,14 @@ def arm_authority(
             "credential_unbound",
             "The arming credential acts as no principal; rearm with a principal-bound one.",
         )
+    try:
+        _require_active_principal(instance, record.principal_id)
+    except LineArmAuthorityLost:
+        # Revoking a principal revokes its credentials, here as on use.
+        get_runtime_credential_store().revoke_credentials_of_principal(
+            instance_id=instance_id, principal_id=record.principal_id
+        )
+        raise
     actor = GovernedActorContext(
         actor_type="service_account",
         actor_id=record.principal_id,
@@ -155,10 +190,10 @@ def dispatch_armed_line(
     def recheck() -> tuple[GovernedActorContext, int]:
         # Each admission runs under authority resolved for it, not the first one's.
         require_active_segment(instance, arm["session_id"])
-        return arm_authority(instance_id, principal, now=now)
+        return arm_authority(instance, principal, now=now)
 
     try:
-        actor, caller_rung = arm_authority(instance_id, principal, now=now)
+        actor, caller_rung = arm_authority(instance, principal, now=now)
         try:
             reader = manager.workspace_file_reader(instance_id)
         except WorkspaceFileReadRefused:
