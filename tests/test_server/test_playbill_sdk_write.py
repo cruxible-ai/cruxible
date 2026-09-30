@@ -131,6 +131,24 @@ def test_expect_compares_by_value_on_set_retire_and_a_batch(
     assert batch.write().status == "accepted"
 
 
+def test_a_batch_names_its_subject_once(pb: Playbill) -> None:
+    pb.set(WI1, "title", "Old", because="x")
+    batch = pb.changes(because="Triaged.", subject=WI1)
+    batch.set("status", "ready").add("governs", f"{KIND}/wi-2")
+    batch.set("status", "done", subject=f"{KIND}/wi-3").retire(SlotRef(field="title"))
+    assert "subject='project.work_item/wi-1'" in repr(batch)
+    outcome = batch.write()
+    assert outcome.status == "accepted", outcome
+    assert [item.subject for item in outcome.changes] == [WI1, WI1, f"{KIND}/wi-3", WI1]
+    with pytest.raises(TypeError, match="names its subject once"):
+        batch.set(WI1, "status", "ready", subject=WI1)  # type: ignore[call-overload]
+    with pytest.raises(WriteRefusalError) as caught:
+        pb.changes(because="No subject.").set("status", "ready").write()
+    assert caught.value.error_code == "playbill.write.subject_required"
+    with pytest.raises(ValueError, match="write batch"):
+        pb.changes(rationale="x", subject=WI1)  # type: ignore[call-overload]
+
+
 def test_retire_dry_run_and_proposal_accept(pb: Playbill) -> None:
     claim = pb.set(WI1, "title", "Old", because="x").changes[0].claim
     assert claim is not None

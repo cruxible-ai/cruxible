@@ -158,7 +158,10 @@ Evidence = Annotated[SelfEvidence | CaptureEvidence | FileEvidence, Field(discri
 class SlotRef(_StrictWriteModel):
     """One field of one Subject: the slot a single-value Claim fills."""
 
-    subject: SubjectRef
+    subject: SubjectRef | None = Field(
+        default=None,
+        description="The Subject as kind/id; default: the write's own subject.",
+    )
     field: FieldName
 
 
@@ -170,7 +173,10 @@ class SetChange(_StrictWriteModel):
     """
 
     op: Literal["set"] = "set"
-    subject: SubjectRef
+    subject: SubjectRef | None = Field(
+        default=None,
+        description="The Subject as kind/id; default: the write's own subject.",
+    )
     field: FieldName
     value: ClaimValue
     role: WriteRole | None = Field(
@@ -188,7 +194,10 @@ class AddChange(_StrictWriteModel):
     """Add one more value to a many-valued field, beside the values already there."""
 
     op: Literal["add"] = "add"
-    subject: SubjectRef
+    subject: SubjectRef | None = Field(
+        default=None,
+        description="The Subject as kind/id; default: the write's own subject.",
+    )
     field: FieldName
     value: ClaimValue
     role: WriteRole | None = Field(
@@ -297,6 +306,13 @@ class PlaybillRetireRequestV1(_WriteRequestBase):
 
 class PlaybillWriteRequestV1(_WriteRequestBase):
     tag: Literal["playbill-write-request-v1"] = "playbill-write-request-v1"
+    subject: SubjectRef | None = Field(
+        default=None,
+        description=(
+            "The Subject every change that names none is about; a change's own "
+            "subject overrides it."
+        ),
+    )
     changes: tuple[Change, ...] = Field(min_length=1, max_length=500)
 
 

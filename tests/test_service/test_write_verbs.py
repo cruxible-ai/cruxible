@@ -826,6 +826,45 @@ def test_a_contender_after_the_expect_check_still_refuses_at_admission(
     _no_proposal_to_activate(instance)
 
 
+# -- the write's default subject ------------------------------------------------------
+
+
+def test_changes_that_name_no_subject_take_the_writes_own(instance: PlaybillInstance) -> None:
+    _write(instance, _set(WI1, "title", "Old"))
+    outcome = _write(
+        instance,
+        {"op": "set", "field": "status", "value": "ready"},
+        {"op": "add", "field": "governs", "value": WI3},
+        {"op": "set", "subject": WI2, "field": "status", "value": "done"},
+        {"op": "retire", "target": {"field": "title"}},
+        subject=WI1,
+    )
+    assert outcome.status == "accepted", outcome
+    assert [item.subject for item in outcome.changes] == [WI1, WI1, WI2, WI1]
+    assert _values(instance, WI1, "status") == ["ready"]
+    assert _values(instance, WI1, "governs") == [WI3]
+    assert _values(instance, WI2, "status") == ["done"]
+    assert _values(instance, WI1, "title") == []
+
+
+def test_a_change_with_no_subject_and_no_default_refuses_by_name(
+    instance: PlaybillInstance,
+) -> None:
+    refusal = _refusal(
+        _write(
+            instance, _set(WI1, "status", "ready"), {"op": "add", "field": "governs", "value": WI2}
+        )
+    )
+    assert refusal.code == "playbill.write.subject_required"
+    assert (refusal.change, refusal.field_path) == (1, "changes[1].subject")
+    retire = _refusal(_write(instance, {"op": "retire", "target": {"field": "title"}}))
+    assert retire.code == "playbill.write.subject_required"
+    assert retire.field_path == "changes[0].target.subject"
+    assert _write(
+        instance, {"op": "retire", "target": {"field": "title"}}, dry_run=True
+    ).status == ("would_refuse")
+
+
 # -- dry runs (R12) -----------------------------------------------------------------
 
 

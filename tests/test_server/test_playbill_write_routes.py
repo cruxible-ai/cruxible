@@ -102,6 +102,32 @@ def test_expect_travels_on_every_write_route(
     assert retired["status"] == "accepted", retired
 
 
+def test_the_write_route_takes_a_default_subject(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _key = playbill_http
+    _seed(client, instance_id)
+    base = f"/api/v1/{instance_id}/playbill"
+    written = client.post(
+        f"{base}/write",
+        json={
+            "because": "x",
+            "subject": WI1,
+            "changes": [
+                {"op": "set", "field": "status", "value": "ready"},
+                {"op": "add", "field": "governs", "value": f"{KIND}/wi-2"},
+            ],
+        },
+    ).json()
+    assert written["status"] == "accepted", written
+    assert {item["subject"] for item in written["changes"]} == {WI1}
+    orphan = client.post(
+        f"{base}/write",
+        json={"because": "x", "changes": [{"op": "set", "field": "status", "value": "done"}]},
+    ).json()
+    assert orphan["refusal"]["code"] == "playbill.write.subject_required", orphan
+
+
 def test_a_refused_write_is_an_outcome_and_a_malformed_one_is_a_422(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:

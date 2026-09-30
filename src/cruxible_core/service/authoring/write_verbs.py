@@ -265,6 +265,51 @@ def _coerce_text(value: object, info: PredicateInfo) -> object:
     return value
 
 
+def _named(subject: str | None) -> str:
+    """A change's Subject, once the write's default subject has been filled in."""
+
+    assert subject is not None, "the default subject is filled in before planning"
+    return subject
+
+
+def _with_default_subject(request: PlaybillWriteRequestV1) -> PlaybillWriteRequestV1:
+    """Give every change that names no Subject the write's own ``subject``.
+
+    A change's own subject overrides the default. A change with neither
+    refuses ``playbill.write.subject_required`` before anything is planned.
+    """
+
+    changes: list[SetChange | AddChange | RetireChange] = []
+    for index, change in enumerate(request.changes):
+        if isinstance(change, RetireChange):
+            target = change.target
+            if isinstance(target, SlotRef) and target.subject is None:
+                owner = _default_subject(request, index=index, path=f"changes[{index}].target")
+                change = change.model_copy(
+                    update={"target": target.model_copy(update={"subject": owner})}
+                )
+        elif change.subject is None:
+            owner = _default_subject(request, index=index, path=f"changes[{index}]")
+            change = change.model_copy(update={"subject": owner})
+        changes.append(change)
+    return request.model_copy(update={"changes": tuple(changes)})
+
+
+def _default_subject(request: PlaybillWriteRequestV1, *, index: int, path: str) -> str:
+    if request.subject is None:
+        raise _refuse(
+            "playbill.write.subject_required",
+            f"change {index} names no Subject, and the write has no default subject",
+            change=index,
+            repair=(
+                "Name the Subject on the change as kind/id, or give the write a "
+                "top-level subject for every change that names none"
+            ),
+            field_path=f"{path}.subject",
+        )
+    return request.subject
+
+
 def _value_key(value: object) -> str:
     """One value's comparison key: ``1``, ``true`` and ``"1"`` stay distinct."""
 
@@ -792,13 +837,14 @@ class _Planner:
 
     def claim_change(self, index: int, change: SetChange | AddChange) -> _Planned:
         prefix = f"changes[{index}]"
+        subject = _named(change.subject)
         kind, subject_id, path = self.resolve_subject(
-            change.subject, index=index, path=f"{prefix}.subject"
+            subject, index=index, path=f"{prefix}.subject"
         )
         info = self.resolve_field(kind, change.field, index=index, path=f"{prefix}.field")
         claim_type = info.claim_type
         name = self.field_name(info, kind)
-        label = f"{change.subject} {name}"
+        label = f"{subject} {name}"
         if isinstance(change, SetChange) and claim_type.cardinality == "many":
             raise _refuse(
                 "playbill.write.field_is_many",
@@ -876,7 +922,7 @@ class _Planner:
             else:
                 self.check_slot_unchanged(
                     index=index,
-                    subject=change.subject,
+                    subject=subject,
                     field_name=name,
                     subject_path_value=path,
                     predicate=info.predicate,
@@ -927,7 +973,7 @@ class _Planner:
                     index=index,
                     op=change.op,
                     outcome={
-                        "subject": change.subject,
+                        "subject": subject,
                         "field": name,
                         "predicate": info.predicate,
                         "before": summary_value(present.value),
@@ -973,7 +1019,7 @@ class _Planner:
             index=index,
             op=change.op,
             outcome={
-                "subject": change.subject,
+                "subject": subject,
                 "field": name,
                 "predicate": info.predicate,
                 "before": summary_value(before),
@@ -999,8 +1045,9 @@ class _Planner:
         prefix = f"changes[{index}].target"
         target = change.target
         if isinstance(target, SlotRef):
+            owner = _named(target.subject)
             kind, _subject_id, path = self.resolve_subject(
-                target.subject, index=index, path=f"{prefix}.subject"
+                owner, index=index, path=f"{prefix}.subject"
             )
             info = self.resolve_field(kind, target.field, index=index, path=f"{prefix}.field")
             name = self.field_name(info, kind)
@@ -1009,7 +1056,7 @@ class _Planner:
             # what it holds now makes the retire empty or ambiguous.
             self.check_expected(
                 index=index,
-                label=f"{target.subject} {name}",
+                label=f"{owner} {name}",
                 info=info,
                 field_name=name,
                 expect=change.expect,
@@ -1017,7 +1064,7 @@ class _Planner:
             )
             self.check_slot_unchanged(
                 index=index,
-                subject=target.subject,
+                subject=owner,
                 field_name=name,
                 subject_path_value=path,
                 predicate=info.predicate,
@@ -1026,21 +1073,21 @@ class _Planner:
             if not live:
                 raise _refuse(
                     "playbill.write.slot_empty",
-                    f"{target.subject} {name} holds no live value to retire",
+                    f"{owner} {name} holds no live value to retire",
                     change=index,
-                    repair=f"Read it first: {_render_get(self.request.surface, target.subject)}",
+                    repair=f"Read it first: {_render_get(self.request.surface, owner)}",
                     field_path=prefix,
                 )
             if len(live) > 1:
                 raise _refuse(
                     "playbill.write.slot_ambiguous",
-                    f"{target.subject} {name} holds {len(live)} values; name the one to retire",
+                    f"{owner} {name} holds {len(live)} values; name the one to retire",
                     change=index,
                     candidates=tuple(item.claim_id for item in live),
                     repair="Retire one of the listed Claims by ID",
                     field_path=prefix,
                 )
-            return live[0].claim_id, target.subject, name, info.predicate, live[0].value
+            return live[0].claim_id, owner, name, info.predicate, live[0].value
         claim_id = _bare(target)
         content = self.instance.blob_at(self.head.git_oid, claim_path(claim_id))
         if content is None:
@@ -1469,6 +1516,7 @@ def _render_evidence_repair(
     because: str,
     contracts: Sequence[str],
 ) -> str:
+    subject = _named(change.subject)
     placeholder = f"<digest of a Capture under {' or '.join(contracts) or 'an admitted contract'}>"
     value = change.value
     if surface == "cli":
@@ -1476,14 +1524,14 @@ def _render_evidence_repair(
         role = "" if change.role is None else f" --role {change.role}"
         contend = " --contend" if isinstance(change, SetChange) and change.contend else ""
         return (
-            f"cruxible playbill {verb} {shlex.quote(change.subject)} "
+            f"cruxible playbill {verb} {shlex.quote(subject)} "
             f"{shlex.quote(change.field)} {shlex.quote(str(value))} "
             f"--because {shlex.quote(because)} --capture {placeholder}{role}{contend}"
         )
     if surface == "sdk":
         # Rendered against the builder signatures: ``pb.set`` takes ``because``;
         # a batch ``add`` does not, so it goes on ``pb.changes`` instead.
-        arguments = [json.dumps(change.subject), json.dumps(change.field), json.dumps(value)]
+        arguments = [json.dumps(subject), json.dumps(change.field), json.dumps(value)]
         options = [f"evidence=CaptureEvidence(capture={json.dumps(placeholder)})"]
         if change.role is not None:
             options.append(f"role={json.dumps(change.role)}")
@@ -1501,13 +1549,13 @@ def _render_evidence_repair(
     evidence = json.dumps({"kind": "capture", "capture": placeholder})
     if isinstance(change, SetChange):
         return (
-            f"cruxible_playbill_set(subject={json.dumps(change.subject)}, "
+            f"cruxible_playbill_set(subject={json.dumps(subject)}, "
             f"field={json.dumps(change.field)}, value={json.dumps(value)}, "
             f"because={json.dumps(because)}, evidence={evidence})"
         )
     item = {
         "op": "add",
-        "subject": change.subject,
+        "subject": subject,
         "field": change.field,
         "value": value,
         "evidence": {"kind": "capture", "capture": placeholder},
@@ -1757,6 +1805,7 @@ def _service_write(
         )
 
     try:
+        request = _with_default_subject(request)
         read_at = resolve_read_coordinate(instance, request.at) if request.at is not None else head
         plan = _Planner(instance, head=head, read_at=read_at, request=request).build()
         if all(item.member is None for item in plan.changes) and not plan.subjects:

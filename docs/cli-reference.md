@@ -1765,7 +1765,10 @@ FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":
 [...]}`, or a bare list with `--because`, each change
 `{"op": "set" | "add", "subject", "field", "value"}` or
 `{"op": "retire", "target"}`. `add` puts one more value in a many-valued field;
-two adds on one field land in one change set. `--schema` prints what FILE
+two adds on one field land in one change set. A top-level `"subject"` is the
+Subject of every change that names none (a retire's target may then be
+`{"field": ...}`); a change's own subject overrides it, and a change with
+neither refuses `playbill.write.subject_required`. `--schema` prints what FILE
 holds. A refusal prints its code, the nearest valid names and the repair, and
 exits 1.
 

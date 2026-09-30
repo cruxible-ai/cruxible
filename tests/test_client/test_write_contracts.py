@@ -152,3 +152,24 @@ def test_expect_is_one_value_or_every_value_and_travels_through_the_batch() -> N
     assert lowered.changes[0].expect == "w"  # type: ignore[union-attr]
     retired = as_write_request(PlaybillRetireRequestV1(target=_CLAIM, because="y", expect=["w"]))
     assert retired.changes[0].expect == ("w",)  # type: ignore[union-attr]
+
+
+def test_a_write_may_name_its_subject_once() -> None:
+    request = PlaybillWriteRequestV1.model_validate(
+        {
+            "because": "x",
+            "subject": "dev.item/a",
+            "changes": [
+                {"op": "set", "field": "status", "value": "done"},
+                {"op": "retire", "target": {"field": "status"}},
+            ],
+        }
+    )
+    assert request.subject == "dev.item/a"
+    assert request.changes[0].subject is None  # type: ignore[union-attr]
+    target = request.changes[1].target  # type: ignore[union-attr]
+    assert isinstance(target, SlotRef) and target.subject is None
+    with pytest.raises(ValidationError):
+        PlaybillWriteRequestV1.model_validate(
+            {"because": "x", "subject": "no-slash", "changes": [{"op": "retire", "target": _CLAIM}]}
+        )

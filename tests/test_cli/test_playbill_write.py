@@ -211,7 +211,7 @@ def test_write_applies_a_file_of_changes_and_prints_its_schema(
     schema = _run("write", "--schema")
     assert schema.exit_code == 0, schema.output
     printed = json.loads(schema.stdout)
-    assert set(printed["properties"]) == {"because", "changes"}
+    assert set(printed["properties"]) == {"because", "subject", "changes"}
 
     changes = tmp_path / "changes.yaml"
     changes.write_text(
@@ -241,6 +241,41 @@ def test_write_applies_a_file_of_changes_and_prints_its_schema(
     refused = _run("write", str(bad))
     assert refused.exit_code != 0
     assert "not a valid write file" in refused.output and "--schema" in refused.output
+
+
+def test_a_write_file_names_its_subject_once(served: _ServiceClient, tmp_path: Path) -> None:
+    schema = json.loads(_run("write", "--schema").stdout)
+    assert "subject" in schema["properties"]
+    changes = tmp_path / "about-wi-1.yaml"
+    changes.write_text(
+        f"""\
+because: Triaged.
+subject: {WI1}
+changes:
+  - op: set
+    field: status
+    value: ready
+  - op: add
+    field: governs
+    value: {KIND}/wi-2
+  - op: set
+    subject: {KIND}/wi-3
+    field: status
+    value: done
+""",
+        encoding="utf-8",
+    )
+    result = _run("write", str(changes))
+    assert result.exit_code == 0, result.output
+    assert "set project.work_item/wi-1 status: ready" in result.output
+    assert "add project.work_item/wi-1 governs" in result.output
+    assert "set project.work_item/wi-3 status: done" in result.output
+    assert served.requests[-1].subject == WI1
+
+    orphan = tmp_path / "orphan.yaml"
+    orphan.write_text("because: x\nchanges:\n  - {op: set, field: status, value: done}\n")
+    refused = _run("write", str(orphan))
+    assert refused.exit_code == 1 and "playbill.write.subject_required" in refused.output
 
 
 def test_evidence_file_is_read_from_the_workspace(served: _ServiceClient, tmp_path: Path) -> None:

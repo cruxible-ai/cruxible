@@ -109,6 +109,7 @@ from cruxible_client.contracts.write import (
     PlaybillRetireRequestV1,
     PlaybillSetRequestV1,
     PlaybillWriteRequestV1,
+    SubjectRef,
     WriteOutcome,
 )
 from cruxible_client.errors import DataValidationError
@@ -3409,6 +3410,10 @@ class _WriteFileV1(BaseModel):
     because: str | None = Field(
         default=None, min_length=1, description="Why; --because overrides it."
     )
+    subject: SubjectRef | None = Field(
+        default=None,
+        description="The Subject (kind/id) of every change that names none.",
+    )
     changes: list[Change] = Field(min_length=1)
 
 
@@ -3760,7 +3765,8 @@ def write_changes(
 
     FILE (YAML or JSON) holds {"because": ..., "changes": [...]}, or a bare list
     of changes with --because. Each change is {"op": "set" | "add", "subject",
-    "field", "value"} or {"op": "retire", "target"}; --schema prints the schema.
+    "field", "value"} or {"op": "retire", "target"}; a top-level "subject" is
+    the Subject of every change that names none. --schema prints the schema.
     """
 
     if schema:
@@ -3789,6 +3795,7 @@ def write_changes(
         PlaybillWriteRequestV1,
         {
             "changes": observe_changes(parsed.changes, workspace=Path(workspace_root)),
+            "subject": parsed.subject,
             "because": rationale,
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",

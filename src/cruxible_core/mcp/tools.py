@@ -1028,6 +1028,15 @@ def register_tools(
             ),
         ],
         because: Annotated[str, Field(description="Why: the change set's rationale.")],
+        subject: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "The Subject (kind/id) of every change that names none; a change's own "
+                    "subject overrides it."
+                )
+            ),
+        ] = None,
         dry_run: Annotated[
             bool, Field(description="Run every check up to the commit; write nothing.")
         ] = False,
@@ -1045,6 +1054,7 @@ def register_tools(
             require_instance_id(instance_id),
             changes=changes,
             because=because,
+            subject=subject,
             dry_run=dry_run,
             accept=accept,
             at=at,

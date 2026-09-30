@@ -65,7 +65,7 @@ def _object_properties(schema: dict[str, Any], defs: dict[str, Any]) -> list[dic
         (
             "cruxible_playbill_write",
             ["changes", "because"],
-            {"instance_id", "changes", "because", "dry_run", "accept", "at"},
+            {"instance_id", "changes", "because", "subject", "dry_run", "accept", "at"},
         ),
     ],
 )
@@ -133,9 +133,11 @@ def test_handlers_build_typed_requests_for_the_mcp_surface(
                 "field": "governs",
                 "value": "dev.item/b",
                 "expect_absent": True,
-            }
+            },
+            {"op": "set", "field": "status", "value": "done"},
         ],
         because="Linked.",
+        subject="dev.item/a",
     )
 
     (set_request,) = sets
@@ -149,6 +151,8 @@ def test_handlers_build_typed_requests_for_the_mcp_surface(
     assert isinstance(write_request, PlaybillWriteRequestV1)
     assert write_request.changes[0].op == "add"
     assert write_request.changes[0].expect_absent  # type: ignore[union-attr]
+    assert write_request.subject == "dev.item/a"
+    assert write_request.changes[1].subject is None  # type: ignore[union-attr]
 
 
 def test_a_malformed_write_names_the_json_path_and_an_example(
