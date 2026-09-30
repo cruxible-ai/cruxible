@@ -27,6 +27,14 @@ def test_http_orient_answers_the_map_rendered_for_the_requested_surface(
         "documents",
         "queries",
         "interfaces",
+        # Operational families: counted in the map, paged by their own section.
+        "lines",
+        "captures",
+        "capture_contracts",
+        "resolution_contracts",
+        "mandates",
+        "runs",
+        "running",
     }
     assert body["you"]["actor"] is not None
     # Optional parts that do not apply are absent, never null.

@@ -64,7 +64,14 @@ from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV2,
     summarize_playbill_next,
 )
-from cruxible_core.service.discovery.runs import run_rows
+from cruxible_core.service.discovery.operational import (
+    capture_contract_rows,
+    capture_rows,
+    line_rows,
+    mandate_rows,
+    prediction_rows,
+)
+from cruxible_core.service.discovery.runs import run_counts, run_rows
 from cruxible_core.service.list_pages import (
     ListContinuation,
     PlaybillListCursorMismatch,
@@ -763,8 +770,22 @@ def service_playbill_orient(
         return _runs_section(
             instance, base, served=served, continuation=continuation, limit=limit, surface=surface
         )
+    if section == "captures":
+        return _captures_section(
+            instance,
+            base,
+            coordinate=coordinate,
+            served=served,
+            continuation=continuation,
+            limit=limit,
+            surface=surface,
+        )
     if section is not None:
-        rows, keys, first_ref = _section_rows(state, section)
+        rows, keys, first_ref = (
+            _operational_rows(instance, coordinate, section, evaluation_time=moment)
+            if section in _OPERATIONAL_SECTIONS
+            else _section_rows(state, section)
+        )
         page, next_cursor = _page(
             rows, keys, view=view, served=served, continuation=continuation, limit=limit
         )
@@ -826,6 +847,13 @@ def service_playbill_orient(
         calls.append(_Call("orient", (("section", "queries"),)))
     if state.interfaces:
         calls.append(_Call("orient", (("section", "interfaces"),)))
+    counts = _operational_counts(instance, coordinate)
+    # Operational families are listed by count, never inlined; point at the
+    # two an agent most often needs: runs in flight and the Lines.
+    if counts["running"]:
+        calls.append(_Call("orient", (("section", "runs"),)))
+    if counts["lines"]:
+        calls.append(_Call("orient", (("section", "lines"),)))
     if next_cursor is not None:
         calls.append(_Call("orient", (("cursor", next_cursor),)))
     live_procedures = sum(item.lifecycle == "live" for item in state.procedures)
@@ -839,6 +867,7 @@ def service_playbill_orient(
             documents=len(state.documents),
             queries=len(state.queries),
             interfaces=len(state.interfaces),
+            **counts,
         ),
         queries=state.queries[:PLAYBILL_ORIENT_DEFAULT_QUERIES],
         attention=attention,
@@ -849,6 +878,106 @@ def service_playbill_orient(
 
 
 _KEYSET = "keyset"
+_OPERATIONAL_SECTIONS: frozenset[str] = frozenset(
+    {"lines", "capture_contracts", "predictions", "mandates"}
+)
+
+
+def _operational_counts(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+) -> dict[str, int]:
+    """Counts of each operational family: index counts only, never a row."""
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        connection = projection.typed.connection
+
+        def count(sql: str) -> int:
+            return int(connection.execute(sql).fetchone()[0])
+
+        counts = {
+            "lines": count("SELECT count(*) FROM lines WHERE lifecycle='live'"),
+            "captures": count("SELECT count(*) FROM captures"),
+            "capture_contracts": count(
+                "SELECT count(*) FROM capture_contracts WHERE lifecycle='live'"
+            ),
+            "resolution_contracts": count(
+                "SELECT count(*) FROM resolution_contracts WHERE lifecycle='live'"
+            ),
+            "mandates": count("SELECT count(*) FROM procedure_mandates WHERE lifecycle='live'"),
+        }
+    counts["runs"], counts["running"] = run_counts(instance)
+    return counts
+
+
+def _operational_rows(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    section: str,
+    *,
+    evaluation_time: datetime,
+) -> tuple[tuple[Any, ...], list[str], Any]:
+    """An accepted operational family's rows, their keys, and each row's get reference.
+
+    Operational state (arm state, pending counts, bound windows) is read only
+    at the current head.
+    """
+
+    at_head = coordinate.git_oid == instance.accepted_coordinate().git_oid
+    if section == "lines":
+        lines = line_rows(instance, coordinate, evaluation_time=evaluation_time, at_head=at_head)
+        return lines, [row.line for row in lines], lambda row: row.line
+    if section == "capture_contracts":
+        contracts = capture_contract_rows(instance, coordinate)
+        return contracts, [row.contract for row in contracts], lambda row: row.contract
+    if section == "predictions":
+        predictions = prediction_rows(instance, coordinate, at_head=at_head)
+        return predictions, [row.contract for row in predictions], lambda row: row.contract
+    mandates = mandate_rows(instance, coordinate, evaluation_time=evaluation_time)
+    return (
+        mandates,
+        [row.mandate for row in mandates],
+        lambda row: "Mandate:" + row.mandate.removeprefix("ProcedureMandate:"),
+    )
+
+
+def _captures_section(
+    instance: PlaybillInstance,
+    base: dict[str, Any],
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    served: AcceptedCoordinate,
+    continuation: ListContinuation | None,
+    limit: int,
+    surface: PlaybillOrientSurface,
+) -> PlaybillOrientResultV1:
+    after = _keyset_after(continuation)
+    if after is not None and (len(after) != 2 or not after[0].isdigit()):
+        raise PlaybillListCursorMismatch(
+            f"{PlaybillListCursorMismatch.error_code}: the cursor is malformed; "
+            "orient again without a cursor"
+        )
+    rows, stop = capture_rows(
+        instance,
+        coordinate,
+        limit=limit,
+        after=None if after is None else (after[0], after[1]),
+    )
+    next_cursor = (
+        None
+        if stop is None
+        else _keyset_cursor(view="captures", served=served, last_key=[stop[0], stop[1]])
+    )
+    calls = [_Call("get", (("ref", rows[0].capture),))] if rows else []
+    if next_cursor is not None:
+        calls.append(_Call("orient", (("section", "captures"), ("cursor", next_cursor))))
+    return PlaybillOrientResultV1(
+        **base,
+        section="captures",
+        captures=rows,
+        truncated=next_cursor is not None,
+        next_cursor=next_cursor,
+        next=tuple(render_orient_call(call, surface) for call in calls),
+    )
 
 
 def _keyset_cursor(*, view: str, served: AcceptedCoordinate, last_key: Sequence[str]) -> str:

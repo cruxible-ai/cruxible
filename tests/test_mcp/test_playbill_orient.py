@@ -85,6 +85,11 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
         "queries",
         "interfaces",
         "runs",
+        "lines",
+        "captures",
+        "capture_contracts",
+        "predictions",
+        "mandates",
     ]
     # `at` is a Git OID string or a declared coordinate object, never a free-form dict.
     coordinate = schema["$defs"]["PlaybillAcceptedCoordinate"]

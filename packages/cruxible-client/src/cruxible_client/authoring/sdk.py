@@ -3560,7 +3560,8 @@ class Playbill:
         predicates that point at it (``incoming``: follow one with
         ``query(kind, follow=[(predicate, alias, "reverse")])``); ``section``
         pages documents, procedures, claim_types, queries or interfaces (the
-        provider interfaces a Procedure can call). Follow
+        provider interfaces a Procedure can call), or an operational family:
+        runs, lines, captures, capture_contracts, predictions or mandates. Follow
         ``next_cursor`` while ``truncated``.
         """
 

@@ -148,7 +148,12 @@
         "claim_types",
         "queries",
         "interfaces",
-        "runs"
+        "runs",
+        "lines",
+        "captures",
+        "capture_contracts",
+        "predictions",
+        "mandates"
       ]
     },
     "PlaybillOrientSurface": {
@@ -27265,6 +27270,52 @@
             "default": null
           }
         },
+        "capture_contracts": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "capture_contracts",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientCaptureContractV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capture Contracts"
+          }
+        },
+        "captures": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "captures",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientCaptureV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Captures"
+          }
+        },
         "claim_types": {
           "default": null,
           "default_json_serializable": true,
@@ -27417,6 +27468,52 @@
             "title": "Kinds"
           }
         },
+        "lines": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lines",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientLineV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lines"
+          }
+        },
+        "mandates": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "mandates",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientMandateV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mandates"
+          }
+        },
         "mirror_url": {
           "default": null,
           "default_json_serializable": true,
@@ -27471,6 +27568,29 @@
             ],
             "default": null,
             "title": "Next Cursor"
+          }
+        },
+        "predictions": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "predictions",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientPredictionV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Predictions"
           }
         },
         "procedures": {
@@ -27558,7 +27678,12 @@
                   "claim_types",
                   "queries",
                   "interfaces",
-                  "runs"
+                  "runs",
+                  "lines",
+                  "captures",
+                  "capture_contracts",
+                  "predictions",
+                  "mandates"
                 ],
                 "type": "string"
               },
@@ -27657,7 +27782,20 @@
           },
           "PlaybillOrientArtifactCountsV1": {
             "additionalProperties": false,
+            "description": "How many of each family exist; each operational family is its own section.\n\n``lines``, ``capture_contracts``, ``resolution_contracts`` and ``mandates``\ncount accepted artifacts, ``captures`` the Captures accepted Claims cite,\nand ``runs`` / ``running`` the Procedure runs admitted and still running.",
             "properties": {
+              "capture_contracts": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Capture Contracts",
+                "type": "integer"
+              },
+              "captures": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Captures",
+                "type": "integer"
+              },
               "claim_types": {
                 "minimum": 0,
                 "title": "Claim Types",
@@ -27673,6 +27811,18 @@
                 "title": "Interfaces",
                 "type": "integer"
               },
+              "lines": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Lines",
+                "type": "integer"
+              },
+              "mandates": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Mandates",
+                "type": "integer"
+              },
               "procedures": {
                 "minimum": 0,
                 "title": "Procedures",
@@ -27681,6 +27831,24 @@
               "queries": {
                 "minimum": 0,
                 "title": "Queries",
+                "type": "integer"
+              },
+              "resolution_contracts": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Resolution Contracts",
+                "type": "integer"
+              },
+              "running": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Running",
+                "type": "integer"
+              },
+              "runs": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Runs",
                 "type": "integer"
               }
             },
@@ -27730,6 +27898,73 @@
               "open_proposals"
             ],
             "title": "PlaybillOrientAttentionV1",
+            "type": "object"
+          },
+          "PlaybillOrientCaptureContractV1": {
+            "additionalProperties": false,
+            "properties": {
+              "admitted_by": {
+                "minimum": 0,
+                "title": "Admitted By",
+                "type": "integer"
+              },
+              "contract": {
+                "title": "Contract",
+                "type": "string"
+              },
+              "grade": {
+                "title": "Grade",
+                "type": "string"
+              },
+              "lifecycle": {
+                "title": "Lifecycle",
+                "type": "string"
+              },
+              "version": {
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "contract",
+              "version",
+              "lifecycle",
+              "grade",
+              "admitted_by"
+            ],
+            "title": "PlaybillOrientCaptureContractV1",
+            "type": "object"
+          },
+          "PlaybillOrientCaptureV1": {
+            "additionalProperties": false,
+            "properties": {
+              "capture": {
+                "title": "Capture",
+                "type": "string"
+              },
+              "citing": {
+                "minimum": 0,
+                "title": "Citing",
+                "type": "integer"
+              },
+              "contract": {
+                "title": "Contract",
+                "type": "string"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture",
+              "contract",
+              "observed_at",
+              "citing"
+            ],
+            "title": "PlaybillOrientCaptureV1",
             "type": "object"
           },
           "PlaybillOrientDocumentV1": {
@@ -27912,6 +28147,126 @@
             "title": "PlaybillOrientKindV1",
             "type": "object"
           },
+          "PlaybillOrientLineV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arm": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "running",
+                      "stalled",
+                      "stopped",
+                      "disarmed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Arm"
+              },
+              "authority": {
+                "enum": [
+                  "observe",
+                  "propose",
+                  "settle"
+                ],
+                "title": "Authority",
+                "type": "string"
+              },
+              "due": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Due",
+                "type": "integer"
+              },
+              "lifecycle": {
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "Lifecycle",
+                "type": "string"
+              },
+              "line": {
+                "title": "Line",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "trigger": {
+                "title": "Trigger",
+                "type": "string"
+              },
+              "waiting": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Waiting",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "line",
+              "lifecycle",
+              "procedure",
+              "authority",
+              "trigger"
+            ],
+            "title": "PlaybillOrientLineV1",
+            "type": "object"
+          },
+          "PlaybillOrientMandateV1": {
+            "additionalProperties": false,
+            "properties": {
+              "expires_at": {
+                "format": "date-time",
+                "title": "Expires At",
+                "type": "string"
+              },
+              "grants": {
+                "enum": [
+                  "propose",
+                  "settle"
+                ],
+                "title": "Grants",
+                "type": "string"
+              },
+              "mandate": {
+                "title": "Mandate",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "active",
+                  "expiring",
+                  "expired",
+                  "not_yet_valid",
+                  "suspended",
+                  "retired"
+                ],
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "required": [
+              "mandate",
+              "procedure",
+              "grants",
+              "state",
+              "expires_at"
+            ],
+            "title": "PlaybillOrientMandateV1",
+            "type": "object"
+          },
           "PlaybillOrientPredicateV1": {
             "additionalProperties": false,
             "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.",
@@ -28057,6 +28412,61 @@
               "type"
             ],
             "title": "PlaybillOrientPredicateV1",
+            "type": "object"
+          },
+          "PlaybillOrientPredictionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "title": "Contract",
+                "type": "string"
+              },
+              "hypothesis": {
+                "title": "Hypothesis",
+                "type": "string"
+              },
+              "next_close": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next Close"
+              },
+              "open": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Open",
+                "type": "integer"
+              },
+              "resolved": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Resolved",
+                "type": "integer"
+              },
+              "settleable": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Settleable",
+                "type": "integer"
+              },
+              "window": {
+                "title": "Window",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract",
+              "hypothesis",
+              "window"
+            ],
+            "title": "PlaybillOrientPredictionV1",
             "type": "object"
           },
           "PlaybillOrientProcedureV1": {
@@ -28237,7 +28647,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``queries``, ``interfaces`` or ``runs``), paged.\n\n``next`` is rendered for the requesting surface.",
+        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``queries``, ``interfaces``, or an operational family:\n  ``runs``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), paged. The default map counts the\n  operational families under ``artifacts`` and never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
         "properties": {
           "accepted_at": {
             "format": "date-time",
@@ -28265,6 +28675,36 @@
               }
             ],
             "default": null
+          },
+          "capture_contracts": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientCaptureContractV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capture Contracts"
+          },
+          "captures": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientCaptureV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Captures"
           },
           "claim_types": {
             "anyOf": [
@@ -28354,6 +28794,36 @@
             "default": null,
             "title": "Kinds"
           },
+          "lines": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientLineV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lines"
+          },
+          "mandates": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientMandateV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mandates"
+          },
           "mirror_url": {
             "anyOf": [
               {
@@ -28385,6 +28855,21 @@
             ],
             "default": null,
             "title": "Next Cursor"
+          },
+          "predictions": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientPredictionV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Predictions"
           },
           "procedures": {
             "anyOf": [
@@ -28440,7 +28925,12 @@
                   "claim_types",
                   "queries",
                   "interfaces",
-                  "runs"
+                  "runs",
+                  "lines",
+                  "captures",
+                  "capture_contracts",
+                  "predictions",
+                  "mandates"
                 ],
                 "type": "string"
               },

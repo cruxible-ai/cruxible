@@ -72,3 +72,22 @@ def test_http_serves_the_runs_section_and_refuses_an_unknown_run(
     assert missing.status_code == 404, missing.text
     assert missing.json()["error_code"] == "playbill.get.ref_not_found"
     assert missing.json()["repair"]["arguments"] == {"section": "runs"}
+
+
+def test_http_orient_serves_every_operational_section_and_counts_them(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _key = playbill_http
+    url = f"/api/v1/{instance_id}/playbill/orient"
+
+    for section in ("lines", "captures", "capture_contracts", "predictions", "mandates"):
+        answered = client.get(url, params={"section": section})
+        assert answered.status_code == 200, answered.text
+        assert answered.json()["section"] == section
+        assert answered.json()[section] == []
+
+    counts = client.get(url).json()["artifacts"]
+    assert {"lines", "captures", "capture_contracts", "resolution_contracts", "mandates"} <= set(
+        counts
+    )
+    assert counts["runs"] == counts["running"] == 0

@@ -1846,7 +1846,15 @@ elapsed time (against the read's evaluation time while it runs, the measured
 wall clock once it finished), the last finished nodes, the Line, occurrence and
 arm that admitted it, and the receipt digest once it is terminal. Per-node
 durations are not shown: every journal record of a run carries the run's
-evaluation instant. Kinds page the same way
+evaluation instant.
+The other operational sections page the same way: `lines` (each Line's
+Procedure, trigger, authority, latest arm state and due/waiting counts),
+`captures` (the Captures accepted Claims cite, newest first, keyset-paged,
+each as its `CAP-` handle), `capture_contracts` (version, grade, how many
+ClaimTypes admit each), `predictions` (each live ResolutionContract with its
+bound windows by status and the next close) and `mandates` (grant, state and
+expiry). The default map counts each family under `Artifacts` and never
+inlines their rows; each section suggests the `get` of its first row. Kinds page the same way
 when there are more than `--limit`. `--at` reads an earlier accepted generation.
 `--json` returns the whole structured answer, including the coordinate and
 generation.
