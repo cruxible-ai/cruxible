@@ -108,7 +108,11 @@ from cruxible_core.service.discovery.read_flags import (
     unsure_holds,
     verdict_flags,
 )
-from cruxible_core.service.discovery.runs import procedure_run_card, run_ids_with_prefix
+from cruxible_core.service.discovery.runs import (
+    procedure_run_card,
+    procedure_run_proof,
+    run_ids_with_prefix,
+)
 from cruxible_core.service.list_pages import (
     ListContinuation,
     PlaybillListCursorMismatch,
@@ -1598,8 +1602,21 @@ def _proof(
     *,
     evaluation_time: datetime,
     access: BodyAccessContext,
+    viewer: OperationalViewer | None = None,
 ) -> dict[str, Any]:
     at = AcceptedCoordinate.from_internal(coordinate)
+    # A run id and a Capture digest are bare identities, not `Kind:name`.
+    if resolved.kind == "procedure_run":
+        return procedure_run_proof(instance, resolved.identity, viewer=viewer)
+    if resolved.kind == "capture":
+        envelope = parse_capture_envelope(
+            instance.body_store().read(resolved.identity, access=_SERVICE_ACCESS)
+        )
+        return {
+            "coordinate": at.model_dump(mode="json"),
+            "capture_digest": resolved.identity,
+            "envelope": envelope.model_dump(mode="json"),
+        }
     name = _name(resolved.identity) if resolved.kind != "proposal" else resolved.identity
     if resolved.kind == "claim":
         from cruxible_core.service.claims.claims import service_get_playbill_claim
@@ -1653,23 +1670,6 @@ def _proof(
             "path": row.path if row else None,
             "artifact_digest": row.artifact_digest if row else None,
             "envelope": None if source is None else source.model_dump(mode="json"),
-        }
-    if resolved.kind == "procedure_run":
-        from cruxible_core.service.procedures.procedure_runs import (
-            service_get_playbill_procedure_run,
-        )
-
-        return service_get_playbill_procedure_run(instance, run_id=resolved.identity).model_dump(
-            mode="json"
-        )
-    if resolved.kind == "capture":
-        envelope = parse_capture_envelope(
-            instance.body_store().read(resolved.identity, access=_SERVICE_ACCESS)
-        )
-        return {
-            "coordinate": at.model_dump(mode="json"),
-            "capture_digest": resolved.identity,
-            "envelope": envelope.model_dump(mode="json"),
         }
     # Proposals are operational: the status entry and the retained records.
     return {
@@ -1858,7 +1858,12 @@ def service_playbill_get(
         )
     elif request.detail == "proof":
         fields["proof"] = _proof(
-            instance, coordinate, resolved, evaluation_time=evaluation_time, access=access
+            instance,
+            coordinate,
+            resolved,
+            evaluation_time=evaluation_time,
+            access=access,
+            viewer=viewer,
         )
         if resolved.kind == "procedure_run":
             fields["live"] = live_view(instance, ("proof",))

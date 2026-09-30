@@ -351,6 +351,43 @@ def procedure_run_card(
     )
 
 
+def procedure_run_proof(
+    instance: PlaybillInstance, run_id: str, *, viewer: OperationalViewer | None
+) -> dict[str, object]:
+    """A run's full served state, with its arming credential withheld as on the card.
+
+    An armed run acts as its arming credential's label, which the state's
+    attribution and receipt both carry. For a reader who may not see that
+    credential the attribution's actor is withheld and the receipt is replaced
+    by a marker; ``receipt_digest`` still names the exact receipt.
+    """
+
+    from cruxible_core.service.procedures.procedure_runs import (
+        service_get_playbill_procedure_run,
+    )
+
+    state = service_get_playbill_procedure_run(instance, run_id=run_id)
+    proof: dict[str, object] = state.model_dump(mode="json")
+    line = None
+    records = procedure_run_journal(instance)
+    if records is not None:
+        locators, _more = records.index.run_locators(_stream(instance), limit=1, run_id=run_id)
+        if locators:
+            admission = parse_admission_payload(
+                _payload(instance, locators[0].admission_payload_digest)
+            ).admission
+            candidate = getattr(admission, "line_identity", None)
+            line = candidate if isinstance(candidate, ArtifactIdentity) else None
+            trigger = _run_trigger(instance, run_id, line, admission.occurrence_id, viewer)
+            if trigger is not None and trigger.armed_by_withheld:
+                attribution = proof.get("attribution")
+                if isinstance(attribution, dict):
+                    proof["attribution"] = {**attribution, "actor_id": None}
+                if proof.get("receipt") is not None:
+                    proof["receipt"] = {"withheld": "names the arming credential"}
+    return proof
+
+
 def _current_node(
     instance: PlaybillInstance,
     journal: LocalJournalBackend,
@@ -394,6 +431,7 @@ __all__ = [
     "final_status",
     "procedure_run_card",
     "procedure_run_journal",
+    "procedure_run_proof",
     "run_counts",
     "run_ids_with_prefix",
     "run_row",

@@ -137,3 +137,36 @@ def test_the_runtime_get_passes_the_authenticated_viewer(monkeypatch: pytest.Mon
         playbill_api.playbill_get("inst", request=PlaybillGetRequestV1(ref="Line:x"))
 
     assert seen["viewer"] == OperationalViewer(credential_id="cred-reader", admin=False)
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_a_run_proof_reads_live_and_withholds_another_principals_credential(
+    credential_world,  # type: ignore[no-untyped-def]
+    historical: bool,
+) -> None:
+    """Regression (review r2): a run's proof raised IndexError on its bare RUN- id."""
+
+    instance, _line, run_id, _when = credential_world
+    at = instance.accepted_history()[0].oid if historical else None
+
+    hidden = _get(instance, f"ProcedureRun:{run_id}", None, detail="proof", at=at)
+
+    assert hidden.proof is not None and hidden.proof["run_id"] == run_id
+    assert hidden.live is not None and hidden.live.fields == ("proof",)
+    assert hidden.live.as_of.generation == instance.accepted_history()[-1].sequence
+    dumped = str(hidden.proof)
+    assert "line-operator" not in dumped and "cred-arm" not in dumped
+    assert hidden.proof["attribution"]["actor_id"] is None
+    assert hidden.proof["receipt"] == {"withheld": "names the arming credential"}
+    assert hidden.proof["receipt_digest"] is not None
+
+    shown = _get(
+        instance,
+        f"ProcedureRun:{run_id}",
+        OperationalViewer(credential_id="cred-arm", admin=False),
+        detail="proof",
+        at=at,
+    )
+    assert shown.proof is not None
+    assert shown.proof["attribution"]["actor_id"] == "line-operator"
+    assert shown.proof["receipt"]["attribution"]["actor_id"] == "line-operator"
