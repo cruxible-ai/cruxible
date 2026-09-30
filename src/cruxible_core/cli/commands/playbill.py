@@ -22,7 +22,6 @@ from cruxible_client import (
     CruxibleClient,
     activate_with_workspace_refresh,
     contracts,
-    materialize_playbill_floor,
     observe_playbill_next_workspace,
 )
 from cruxible_client._error_base import CoreError, printable
@@ -58,12 +57,13 @@ from cruxible_client.authoring.sources import (
 )
 from cruxible_client.authoring.workspace import (
     PlaybillWorkspaceAttachmentError,
+    floor_export_parts,
     observe_playbill_next_workspace_with_coverage,
     observe_playbill_projection_coverage,
-    record_playbill_floor_output,
     validate_playbill_workspace_config_write,
     workspace_floor_freshness,
     write_playbill_workspace_config,
+    write_workspace_floor,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
@@ -6202,24 +6202,24 @@ def export_floor(
     include: tuple[contracts.PlaybillFloorExportPart, ...] = (
         ("discovery",) if with_discovery else ()
     )
-    parts: dict[str, Any] = {"include": include} if include else {}
-    result = _server_call(
-        lambda client, instance_id: client.export_playbill_floor(instance_id, **parts),
-        command_name="playbill floor export",
-    )
     workspace_resolution = _local_git_workspace_root()
     _emit_git_workspace_note(workspace_resolution)
     workspace_root = workspace_resolution.workspace_root
     if workspace_root is None:
         raise click.UsageError("playbill floor export must run inside one Git worktree")
-    written = materialize_playbill_floor(workspace_root, export=result, force=force)
-    written = _with_git_workspace_note(written)
-    record_playbill_floor_output(
-        workspace_root,
-        instance_id=_require_instance_id(),
-        include=include,
-        **_workspace_config_transport(),
+    transport = _workspace_config_transport()
+    result, written = _server_call(
+        lambda client, instance_id: write_workspace_floor(
+            lambda: client.export_playbill_floor(instance_id, **floor_export_parts(include)),
+            instance_id=instance_id,
+            workspace=workspace_root,
+            include=include,
+            force=force,
+            **transport,
+        ),
+        command_name="playbill floor export",
     )
+    written = _with_git_workspace_note(written)
     if output_json:
         payload = dict(result.manifest)
         if written.git_workspace_note is not None:

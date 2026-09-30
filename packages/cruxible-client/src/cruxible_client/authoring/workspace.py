@@ -814,6 +814,54 @@ def materialize_playbill_floor(
     )
 
 
+def floor_export_parts(
+    include: Sequence[contracts.PlaybillFloorExportPart],
+) -> dict[str, Any]:
+    """Keyword arguments naming opt-in parts, empty for the default floor.
+
+    A client that predates opt-in parts is only ever asked for the default.
+    """
+
+    return {"include": tuple(sorted(set(include)))} if include else {}
+
+
+def write_workspace_floor(
+    export_floor: Callable[[], contracts.PlaybillFloorExport],
+    *,
+    instance_id: str,
+    workspace: str | Path,
+    include: Sequence[contracts.PlaybillFloorExportPart] = (),
+    force: bool = True,
+    server_url: str | None = None,
+    server_socket: str | None = None,
+) -> tuple[contracts.PlaybillFloorExport, contracts.PlaybillWorkspaceFloorWriteResult]:
+    """Write an exported floor into the workspace and record its refresh profile.
+
+    The one write path every surface (CLI, MCP) takes, so a floor written with
+    opt-in parts is refreshed with the same parts after an activation.
+    ``export_floor`` exports exactly ``include`` (see ``floor_export_parts``).
+    The profile is recorded into an existing coverage config, or a new one
+    naming the given transport; with neither, there is no daemon to name and
+    nothing is recorded.
+    """
+
+    export = export_floor()
+    written = materialize_playbill_floor(workspace, export=export, force=force)
+    if (
+        (_workspace_root(workspace) / _CONFIG_PATH).exists()
+        or server_url is not None
+        or server_socket is not None
+    ):
+        record_playbill_floor_output(
+            workspace,
+            instance_id=instance_id,
+            server_url=server_url,
+            server_socket=server_socket,
+            include=include,
+        )
+    return export, written
+
+
 def inspect_workspace_floor(
     workspace: str | Path,
     *,
@@ -1599,8 +1647,7 @@ def refresh_workspace_floor(
         relative_path, include = configured
         # Only a profile with opt-in parts names them, so a client that predates
         # them keeps refreshing the default floor.
-        parts: dict[str, Any] = {"include": include} if include else {}
-        export = client.export_playbill_floor(instance_id, at=at, **parts)
+        export = client.export_playbill_floor(instance_id, at=at, **floor_export_parts(include))
         if at is not None and export.coordinate != at:
             raise PlaybillWorkspaceError("floor export differs from requested coordinate")
         written = materialize_playbill_floor(workspace, export=export)
@@ -1688,7 +1735,9 @@ __all__ = [
     "observe_playbill_projection_coverage",
     "materialize_playbill_floor",
     "configured_floor_output",
+    "floor_export_parts",
     "record_playbill_floor_output",
+    "write_workspace_floor",
     "refresh_workspace_floor",
     "validate_playbill_workspace_config_write",
     "verified_floor_files",

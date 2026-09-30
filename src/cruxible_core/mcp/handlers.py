@@ -16,7 +16,6 @@ from cruxible_client import (
     activate_with_workspace_refresh,
     contracts,
     inspect_workspace_floor,
-    materialize_playbill_floor,
     observe_playbill_next_workspace,
 )
 from cruxible_client.authoring.attestations import (
@@ -33,8 +32,10 @@ from cruxible_client.authoring.sources import (
     mapped_root_aliases,
 )
 from cruxible_client.authoring.workspace import (
+    floor_export_parts,
     observe_playbill_next_workspace_with_coverage,
     workspace_floor_freshness,
+    write_workspace_floor,
 )
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
@@ -2728,17 +2729,39 @@ def handle_playbill_floor_export(
             mcp_git_workspace_root(),
             current_coordinate=search.coordinate,
         )
-    workspace = mcp_git_workspace_root() if mode == "write" else None
-    parts: dict[str, Any] = {"include": include} if include else {}
-    export = _dispatch_remote_or_local(
-        lambda client: client.export_playbill_floor(instance_id, **parts),
-        lambda: playbill_api.playbill_export_floor(instance_id, **parts),
-        operation_name="cruxible_playbill_floor_export",
+    parts = floor_export_parts(include)
+    if mode == "bytes":
+        return _dispatch_remote_or_local(
+            lambda client: client.export_playbill_floor(instance_id, **parts),
+            lambda: playbill_api.playbill_export_floor(instance_id, **parts),
+            operation_name="cruxible_playbill_floor_export",
+        )
+    # The CLI's write path: export, write, and record the refresh profile with
+    # its opt-in parts, naming the daemon this MCP server talks to.
+    workspace = mcp_git_workspace_root()
+    settings = resolve_server_settings()
+    transport = (
+        {"server_socket": settings.server_socket}
+        if settings.enabled and settings.server_socket
+        else {"server_url": settings.server_url}
+        if settings.enabled and settings.server_url
+        else {}
     )
-    if workspace is None:
-        return export
-    return materialize_playbill_floor(
-        workspace,
-        export=export,
-        force=force,
+
+    def write(
+        export_floor: Callable[[], contracts.PlaybillFloorExport],
+    ) -> contracts.PlaybillWorkspaceFloorWriteResult:
+        return write_workspace_floor(
+            export_floor,
+            instance_id=instance_id,
+            workspace=workspace,
+            include=include,
+            force=force,
+            **transport,
+        )[1]
+
+    return _dispatch_remote_or_local(
+        lambda client: write(lambda: client.export_playbill_floor(instance_id, **parts)),
+        lambda: write(lambda: playbill_api.playbill_export_floor(instance_id, **parts)),
+        operation_name="cruxible_playbill_floor_export",
     )

@@ -606,3 +606,30 @@ def test_every_handle_the_floor_prints_resolves_through_get(world: dict[str, Any
             access=BodyAccessContext(principal_id="owner"),
         )
         assert result.card is not None, ref
+
+
+def test_the_shared_write_records_a_profile_only_where_it_can_name_a_daemon(
+    world: dict[str, Any], tmp_path: Any
+) -> None:
+    from cruxible_client.authoring.workspace import configured_floor_output, write_workspace_floor
+
+    files = world["readable"]
+
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    export, written = write_workspace_floor(
+        lambda: _export_envelope(files), instance_id="inst_floor", workspace=bare
+    )
+    assert written.file_count == len(files) and export.manifest["format"].endswith("-v4")
+    assert not (bare / ".playbill/coverage.json").exists()
+
+    named = tmp_path / "named"
+    named.mkdir()
+    write_workspace_floor(
+        lambda: _export_envelope(files),
+        instance_id="inst_floor",
+        workspace=named,
+        include=("discovery",),
+        server_socket="daemon.sock",
+    )
+    assert configured_floor_output(named) == (".playbill/floor", ("discovery",))
