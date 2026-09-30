@@ -248,3 +248,31 @@ def test_restart_and_status_use_the_local_secret_with_no_env_credential(
     assert status.exit_code == 0, status.output
     assert "Auth enabled: yes" in status.output
     assert "the-secret" not in restart.output + status.output
+
+
+@pytest.mark.parametrize(
+    ("recorded", "client_url", "released"),
+    [
+        ("127.0.0.1:8100", "http://127.0.0.1:8100", True),
+        ("::1:8100", "http://[::1]:8100", True),
+        # IPv4 and IPv6 loopback can host different listeners on one port, and
+        # localhost may resolve to either: no alias counts as the bound endpoint.
+        ("127.0.0.1:8100", "http://localhost:8100", False),
+        ("127.0.0.1:8100", "http://[::1]:8100", False),
+        ("localhost:8100", "http://127.0.0.1:8100", False),
+        ("127.0.0.1:8100", "http://127.0.0.1:8101", False),
+    ],
+)
+def test_the_secret_follows_only_the_exact_bound_endpoint(
+    tmp_path: Path, recorded: str, client_url: str, released: bool
+) -> None:
+    state_root, lock = _held_secret(tmp_path, recorded)
+    try:
+        secret = read_local_bootstrap_secret(
+            state_root, server_url=client_url, server_socket=None, prove=_genuine
+        )
+    finally:
+        assert lock is not None
+        lock.release()
+
+    assert (secret == "the-secret") is released

@@ -158,7 +158,10 @@ restart keeps the same secret. `server status`, `server restart` and
 `server stop` use that file by default when no `CRUXIBLE_SERVER_BEARER_TOKEN` is
 set, so a local restart needs no credential typed in. The secret is never sent
 to any other process: a live daemon must hold the state-root lock right now, the
-lock must record exactly the transport the command is about to use, and the
+lock must record exactly the transport the command is about to use (the socket
+path, or the bound host and port as written: `localhost`, `127.0.0.1` and `::1`
+are different endpoints, since IPv4 and IPv6 loopback can host different
+listeners on one port), and the
 daemon answering there must first prove it already holds the secret (it answers
 a fresh random challenge on the credential-free `POST /operator-proof` with an
 HMAC under the secret, which reveals nothing). A stale lock left by a stopped or

@@ -29,7 +29,6 @@ from cruxible_core.server.state_lock import read_state_lock, state_lock_holder_i
 
 BOOTSTRAP_SECRET_FILE = "bootstrap-secret"
 _BOOTSTRAP_SECRET_ENV = "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET"
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def bootstrap_secret_path(state_root: Path) -> Path:
@@ -101,11 +100,10 @@ def _same_transport(recorded: str, *, server_url: str | None, server_socket: str
     split = urlsplit(server_url)
     if split.hostname is None or split.port is None or str(split.port) != port:
         return False
-    client_host = split.hostname.lower()
-    recorded_host = host.strip("[]").lower()
-    return client_host == recorded_host or (
-        client_host in _LOOPBACK_HOSTS and recorded_host in _LOOPBACK_HOSTS
-    )
+    # Exactly the endpoint the daemon bound, never an alias: IPv4 and IPv6
+    # loopback can host different listeners on one port, and a name such as
+    # localhost may resolve to either of them.
+    return split.hostname.lower() == host.strip("[]").lower()
 
 
 _PROOF_DOMAIN = b"cruxible-operator-proof-v1:"
