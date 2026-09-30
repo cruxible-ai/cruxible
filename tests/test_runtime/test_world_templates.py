@@ -28,6 +28,7 @@ from tests.core_support._knowledge_loop_support import (
     TIMESTAMP,
     activate,
     authoring,
+    seed_claims,
     seed_claims_into,
 )
 from tests.core_support._support import (
@@ -264,3 +265,12 @@ def test_a_destination_that_already_holds_a_world_is_not_overwritten(tmp_path: P
     (tmp_path / "copy" / template.value.managed).mkdir(parents=True)
 
     assert copy_template(template, tmp_path / "copy") is None
+
+
+def test_seed_claims_serves_its_two_accepted_claims_from_a_copy(tmp_path: Path) -> None:
+    instance, owner = seed_claims(tmp_path)
+
+    assert len(instance.accepted_history()) == 4
+    assert instance.root.is_relative_to(tmp_path.resolve())
+    assert owner.private_key_path.is_relative_to(tmp_path)
+    assert owner.private_key_path.is_file()

@@ -39,7 +39,14 @@ from tests.core_support._claim_authoring_support import (
     DirectClaimAuthoringV1,
     service_propose_playbill_claim,
 )
-from tests.core_support._support import client_material, initialize_local
+from tests.core_support._support import (
+    TemplateWorld,
+    client_material,
+    initialize_fresh,
+    initialize_local,
+    template_world,
+)
+from tests.core_support._world_templates import TEMPLATES
 from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 from tests.test_claims.test_claims import _claim_type
 from tests.test_ledger.test_activation import _sign
@@ -122,11 +129,27 @@ def activate(
 def seed_claims(
     tmp_path: Path, *, claim_type_override: ClaimType | None = None
 ) -> tuple[PlaybillInstance, GeneratedKeyMaterial]:
-    """Return an instance holding two accepted work-item status Claims."""
+    """Return an instance holding two accepted work-item status Claims.
 
+    Without an override the world is a copy of a session template (see
+    `tests/core_support/_world_templates.py`).
+    """
+
+    if claim_type_override is None:
+        template = TEMPLATES.template(("seeded",), _seeded_template)
+        if template is not None:
+            opened = template_world(template, tmp_path)
+            if opened is not None:
+                return opened
     instance, owner = initialize_local(tmp_path)
     seed_claims_into(instance, owner, claim_type_override=claim_type_override)
     return instance, owner
+
+
+def _seeded_template(root: Path) -> TemplateWorld:
+    instance, owner = initialize_fresh(root)
+    seed_claims_into(instance, owner)
+    return TemplateWorld.capture(instance, owner)
 
 
 def seed_claims_into(
