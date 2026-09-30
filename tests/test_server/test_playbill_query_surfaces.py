@@ -199,6 +199,8 @@ def test_the_mcp_tool_is_read_only_and_fully_typed(monkeypatch: pytest.MonkeyPat
         path for name, prop in schema["properties"].items() for path in untyped(prop, name)
     ]
     assert free_form == []
+    follow = schema["$defs"]["QueryFollowV1"]["properties"]["direction"]
+    assert follow["enum"] == ["forward", "reverse"] and follow["default"] == "forward"
     # Spec mode is its own full-profile tool, so the default query tool stays small.
     assert "spec" not in schema["properties"]
     assert len(json.dumps(schema, separators=(",", ":"))) < 8_000

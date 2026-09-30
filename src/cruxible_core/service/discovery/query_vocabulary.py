@@ -31,7 +31,7 @@ from cruxible_core.service.discovery.field_names import (
     resolve_field_in,
     short_field_name,
 )
-from cruxible_core.service.read_refusals import ReadRefusalError, nearest
+from cruxible_core.service.read_refusals import NEAREST_LIMIT, ReadRefusalError, nearest
 
 ValueType = Literal[
     "string",
@@ -165,6 +165,34 @@ class QueryVocabulary:
             info for _name, info in sorted(self.predicates.items()) if kind in info.subject_kinds
         )
 
+    def incoming(self, kind: str) -> tuple[PredicateInfo, ...]:
+        """The Subject-valued predicates whose values may name Subjects of ``kind``.
+
+        These are the reverse follows from ``kind`` (``orient(kind=K)`` lists
+        them as ``incoming``). A predicate admitting no object kinds admits no
+        Subject objects, so it points at nothing.
+        """
+
+        return tuple(
+            info
+            for _name, info in sorted(self.predicates.items())
+            if info.value_type == "subject" and kind in info.object_kinds
+        )
+
+    def resolve_incoming(self, kind: str, name: str) -> tuple[PredicateInfo, ...]:
+        """Every incoming predicate of ``kind`` a reverse-follow field names.
+
+        The shared naming rule applies to the SOURCE kind: a full predicate name
+        wins, otherwise ``source + "." + name`` for each kind that carries an
+        incoming predicate. One result means resolved; several are ambiguous.
+        """
+
+        applicable: dict[str, dict[str, PredicateInfo]] = {}
+        for info in self.incoming(kind):
+            for source in info.subject_kinds:
+                applicable.setdefault(source, {})[info.predicate] = info
+        return tuple(self.predicates[item] for item in resolve_field_in(name, applicable))
+
     def require_kind(self, kind: str, *, field_path: str = "kind") -> str:
         if kind in self.kinds:
             return kind
@@ -221,8 +249,8 @@ class QueryVocabulary:
         if found:
             raise query_refusal(
                 "playbill.query.ambiguous_field",
-                f"{name!r} names more than one predicate of {label}",
-                nearest=tuple(sorted(found)),
+                f"{name!r} names {len(found)} predicates of {label}",
+                nearest=tuple(sorted(found))[:NEAREST_LIMIT],
                 repair="name the predicate in full",
                 field_path=field_path,
             )

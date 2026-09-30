@@ -4035,6 +4035,54 @@ def _validation_problems(exc: ValidationError) -> str:
     )
 
 
+_FOLLOW_OPTIONS = {"--follow": "forward", "--follow-in": "reverse"}
+
+
+def _follow_order(
+    raw: Sequence[str], forward: Sequence[str], reverse: Sequence[str]
+) -> list[tuple[str, str]]:
+    """Every follow as (option, spec), in command-line order.
+
+    The order is read back from the raw arguments and used only when it names
+    exactly the specs click parsed; otherwise forward follows come first.
+    """
+
+    parsed = [
+        *(("--follow", item) for item in forward),
+        *(("--follow-in", item) for item in reverse),
+    ]
+    seen: list[tuple[str, str]] = []
+    index = 0
+    while index < len(raw):
+        token = raw[index]
+        name, equals, value = token.partition("=")
+        if name in _FOLLOW_OPTIONS and equals:
+            seen.append((name, value))
+        elif token in _FOLLOW_OPTIONS and index + 1 < len(raw):
+            seen.append((token, raw[index + 1]))
+            index += 1
+        index += 1
+    if all(
+        [item for item in seen if item[0] == option] == [i for i in parsed if i[0] == option]
+        for option in _FOLLOW_OPTIONS
+    ):
+        return seen
+    return parsed
+
+
+def _follow_entry(spec: str, option: str) -> dict[str, str]:
+    field, _, alias = spec.partition(":")
+    if not field or not alias:
+        example = "dev.batch.delivers:batch" if option == "--follow-in" else "closed_by:batch"
+        raise click.BadParameter(
+            f"{spec!r} is not field:alias, for example {example}", param_hint=option
+        )
+    entry = {"field": field, "as": alias}
+    if _FOLLOW_OPTIONS[option] == "reverse":
+        entry["direction"] = "reverse"
+    return entry
+
+
 @playbill_group.group("query", cls=_QueryGroup, invoke_without_command=True, no_args_is_help=False)
 @click.option(
     "--where",
@@ -4044,7 +4092,21 @@ def _validation_problems(exc: ValidationError) -> str:
 )
 @click.option("--contains", default=None, help="Case-insensitive text in any live Claim value.")
 @click.option("--select", "select_fields", multiple=True, help="Columns: a,b (repeatable).")
-@click.option("--follow", "follow_specs", multiple=True, help="Follow a relation: field:alias.")
+@click.option(
+    "--follow",
+    "follow_specs",
+    multiple=True,
+    help="Follow a relation forward (repeatable): field:alias, a predicate of KIND.",
+)
+@click.option(
+    "--follow-in",
+    "follow_in_specs",
+    multiple=True,
+    help=(
+        "Follow a relation backwards (repeatable): field:alias, another kind's predicate "
+        "that points at KIND, e.g. dev.batch.delivers:batch."
+    ),
+)
 @click.option("--order-by", "order_fields", multiple=True, help="Order: f or -f (repeatable).")
 @click.option("--limit", type=click.IntRange(1, contracts.PLAYBILL_QUERY_MAX_LIMIT), default=None)
 @click.option("--cursor", default=None, help="Continue a truncated page.")
@@ -4073,6 +4135,7 @@ def query_group(
     contains: str | None,
     select_fields: tuple[str, ...],
     follow_specs: tuple[str, ...],
+    follow_in_specs: tuple[str, ...],
     order_fields: tuple[str, ...],
     limit: int | None,
     cursor: str | None,
@@ -4097,15 +4160,12 @@ def query_group(
         where = [parse_where(expression) for expression in where_expressions]
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="--where") from exc
-    follow: list[dict[str, str]] = []
-    for item in follow_specs:
-        field, _, alias = item.partition(":")
-        if not field or not alias:
-            raise click.BadParameter(
-                f"{item!r} is not field:alias, for example closed_by:batch",
-                param_hint="--follow",
-            )
-        follow.append({"field": field, "as": alias})
+    follow = [
+        _follow_entry(spec, option)
+        for option, spec in _follow_order(
+            ctx.meta.get("playbill_query_args", []), follow_specs, follow_in_specs
+        )
+    ]
     params: dict[str, object] | None = None
     if param_pairs:
         params = {}
@@ -5530,6 +5590,8 @@ def _render_orient(result: Mapping[str, Any]) -> str:
             + (f"  evidence={','.join(shared)}" if shared else "")
         )
         lines.extend(f"  {_orient_predicate_line(item)}" for item in detail["predicates"])
+        if detail.get("incoming"):
+            lines.append("Incoming (--follow-in): " + ", ".join(detail["incoming"]))
         if detail["sample_subject_ids"]:
             lines.append("Sample subjects: " + ", ".join(detail["sample_subject_ids"]))
     section = result.get("section")

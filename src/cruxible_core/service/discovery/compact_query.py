@@ -46,6 +46,7 @@ from cruxible_client.contracts.compact_query import (
     QueryFilterOperator,
     QueryFilterV1,
     QueryFlag,
+    QueryFollowDirection,
     QueryMode,
 )
 from cruxible_client.contracts.get_reads import summary_value
@@ -131,7 +132,12 @@ from cruxible_core.service.list_pages import (
     list_snapshot,
     page_after_boundary,
 )
-from cruxible_core.service.read_refusals import nearest, resolve_read_coordinate
+from cruxible_core.service.read_refusals import (
+    NEAREST_LIMIT,
+    ReadRefusalError,
+    nearest,
+    resolve_read_coordinate,
+)
 
 LIST_NAME = "query"
 COMPACT_QUERY_MAX_RESULTS = 5000
@@ -235,9 +241,19 @@ class _Field:
 
 @dataclass(frozen=True)
 class _Follow:
+    """One follow hop: ``forward`` along the kind's predicate, or ``reverse`` into it."""
+
     alias: str
     info: PredicateInfo
     target_kinds: tuple[str, ...]
+    direction: QueryFollowDirection = "forward"
+
+    @property
+    def lowered_targets(self) -> tuple[str, ...]:
+        """The Subject kinds the traversal step admits at the far end."""
+
+        kinds = self.info.object_kinds if self.direction == "forward" else self.info.subject_kinds
+        return tuple(sorted(kinds))
 
 
 @dataclass(frozen=True)
@@ -362,21 +378,12 @@ class _CompactPlan:
         roots = {name.split(".", 1)[0] for name in (*vocabulary.predicates, *vocabulary.kinds)}
         for index, follow in enumerate(request.follow):
             path = f"follow[{index}]"
-            resolved = vocabulary.resolve_field(
-                (self.kind,), follow.field, field_path=f"{path}.field", owner=self.kind
-            )
-            if isinstance(resolved, str) or resolved.value_type != "subject":
-                raise query_refusal(
-                    "playbill.query.follow_not_relation",
-                    f"{follow.field!r} is not a Subject-valued predicate of {self.kind}",
-                    nearest=tuple(
-                        vocabulary.field_name(info, (self.kind,))
-                        for info in vocabulary.predicates_of(self.kind)
-                        if info.value_type == "subject"
-                    ),
-                    repair="follow a predicate whose values are Subjects",
-                    field_path=f"{path}.field",
-                )
+            if follow.direction == "reverse":
+                resolved = self._incoming(follow.field, field_path=f"{path}.field")
+                targets = resolved.subject_kinds
+            else:
+                resolved = self._outgoing(follow.field, field_path=f"{path}.field")
+                targets = resolved.object_kinds or vocabulary.kinds
             alias = follow.as_
             try:
                 binding_name(alias)
@@ -395,8 +402,80 @@ class _CompactPlan:
                     repair='pick a short alias such as "parent"',
                     field_path=f"{path}.as",
                 )
-            targets = resolved.object_kinds or vocabulary.kinds
-            self.follows[alias] = _Follow(alias=alias, info=resolved, target_kinds=targets)
+            self.follows[alias] = _Follow(
+                alias=alias, info=resolved, target_kinds=targets, direction=follow.direction
+            )
+
+    def _outgoing(self, name: str, *, field_path: str) -> PredicateInfo:
+        """A forward follow: a Subject-valued predicate of the kind itself."""
+
+        relations = tuple(
+            self.vocabulary.field_name(info, (self.kind,))
+            for info in self.vocabulary.predicates_of(self.kind)
+            if info.value_type == "subject"
+        )
+        incoming = self.vocabulary.resolve_incoming(self.kind, name)
+        try:
+            resolved = self.vocabulary.resolve_field(
+                (self.kind,), name, field_path=field_path, owner=self.kind
+            )
+        except ReadRefusalError:
+            if len(incoming) != 1:
+                raise
+            resolved = incoming[0]
+        if (
+            isinstance(resolved, str)
+            or resolved.value_type != "subject"
+            or self.kind not in resolved.subject_kinds
+        ):
+            repair = "follow a predicate whose values are Subjects"
+            if len(incoming) == 1:
+                repair = (
+                    f"{incoming[0].predicate} points at {self.kind}; follow it backwards "
+                    'with direction "reverse"'
+                )
+            raise query_refusal(
+                "playbill.query.follow_not_relation",
+                f"{name!r} is not a Subject-valued predicate of {self.kind}",
+                nearest=nearest(name, relations) or relations[:NEAREST_LIMIT],
+                repair=repair,
+                field_path=field_path,
+            )
+        return resolved
+
+    def _incoming(self, name: str, *, field_path: str) -> PredicateInfo:
+        """A reverse follow: another kind's Subject-valued predicate naming this kind."""
+
+        found = self.vocabulary.resolve_incoming(self.kind, name)
+        if len(found) == 1:
+            return found[0]
+        if found:
+            raise query_refusal(
+                "playbill.query.ambiguous_field",
+                f"{name!r} names {len(found)} predicates that point at {self.kind}",
+                nearest=tuple(sorted(info.predicate for info in found))[:NEAREST_LIMIT],
+                repair="name the predicate in full",
+                field_path=field_path,
+            )
+        incoming = tuple(info.predicate for info in self.vocabulary.incoming(self.kind))
+        if not incoming:
+            message = f"no Subject-valued predicate points at {self.kind}"
+        elif name in self.vocabulary.predicates:
+            message = f"predicate {name!r} does not name {self.kind} Subjects"
+        else:
+            message = f"no predicate named {name!r} points at {self.kind}"
+        raise query_refusal(
+            "playbill.query.follow_not_incoming",
+            message,
+            nearest=nearest(name, incoming) or incoming[:NEAREST_LIMIT],
+            repair=(
+                f"follow backwards along a predicate whose values are {self.kind} Subjects "
+                f"(orient kind={self.kind} lists them as incoming)"
+                if incoming
+                else "follow forward instead, or query the other kind"
+            ),
+            field_path=field_path,
+        )
 
     def field(self, name: str, *, field_path: str) -> _Field:
         head, _, rest = name.partition(".")
@@ -1013,9 +1092,9 @@ def _compact_subject_query(
                 binding=follow.alias,
                 from_binding=ROOT,
                 predicate=follow.info.predicate,
-                direction="forward",
+                direction=follow.direction,
                 required=False,
-                target_subject_kinds=tuple(sorted(follow.info.object_kinds)),
+                target_subject_kinds=follow.lowered_targets,
             )
             for follow in follows
         ),
@@ -1071,6 +1150,14 @@ def _compact_subject_query(
             },
         )
     keys = [tuple(row.get(binding) or "" for binding in bindings) for row in candidates]
+    if follows and not orderings:
+        # Rows about one Subject belong together: with no order_by, a follow
+        # answer sorts by the queried Subject, then each follow alias in request
+        # order (an unbound alias first). The key is the page key, so cursors
+        # continue this same total order.
+        order = sorted(range(len(keys)), key=keys.__getitem__)
+        candidates = [candidates[index] for index in order]
+        keys = [keys[index] for index in order]
     return _Answer(
         mode="inline",
         kind=plan.kind,

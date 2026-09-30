@@ -4,7 +4,8 @@
 kinds with their counts and compact predicate descriptors, how many of each
 artifact family exist, the named queries, who the caller is and whether it can
 author, what needs attention, and runnable follow-up calls. ``orient(kind=K)``
-widens one kind to every predicate in full plus sample Subject IDs, and
+widens one kind to every predicate in full, the predicates that point at it
+(``incoming``, its reverse follows) and sample Subject IDs, and
 ``orient(section=S)`` pages one artifact family as compact rows, including the
 provider interfaces a Procedure can call.
 
@@ -104,8 +105,15 @@ class PlaybillOrientKindV1(_StrictOrientModel):
 
 
 class PlaybillOrientKindDetailV1(PlaybillOrientKindV1):
-    """One kind in full, with a few Subject IDs to read next."""
+    """One kind in full, with a few Subject IDs to read next.
 
+    ``incoming`` names, in full, the Subject-valued predicates of other kinds
+    whose values may name this kind's Subjects: the reverse follows a ``query``
+    on this kind can take (``follow`` with ``direction: "reverse"``). It is
+    omitted when nothing points at the kind.
+    """
+
+    incoming: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
     sample_subject_ids: tuple[str, ...] = ()
 
 

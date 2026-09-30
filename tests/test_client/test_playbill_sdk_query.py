@@ -113,6 +113,31 @@ def test_query_returns_a_result_page_that_continues_and_prints(
     assert "sec.vulnerability/cve-2  high      stale" in table
 
 
+def test_query_follows_backwards_from_a_tuple_a_mapping_or_the_model(
+    connection: tuple[Playbill, _QueryClient],
+) -> None:
+    playbill, client = connection
+
+    playbill.query(
+        "dev.roadmap_item",
+        follow=[
+            ("dev.batch.delivers", "batch", "reverse"),
+            ("refines", "parent"),
+            {"field": "governs", "as": "decision", "direction": "reverse"},
+            api.QueryFollowV1(field="blocks", as_="blocker", direction="reverse"),
+        ],
+    )
+
+    assert [(item.field, item.as_, item.direction) for item in client.requests[0].follow] == [
+        ("dev.batch.delivers", "batch", "reverse"),
+        ("refines", "parent", "forward"),
+        ("governs", "decision", "reverse"),
+        ("blocks", "blocker", "reverse"),
+    ]
+    with pytest.raises(ValueError, match="direction"):
+        playbill.query("dev.roadmap_item", follow=[("x", "y", "sideways")])  # type: ignore[list-item]
+
+
 def test_world_where_and_select_build_the_same_query(
     connection: tuple[Playbill, _QueryClient],
 ) -> None:
