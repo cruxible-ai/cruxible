@@ -360,7 +360,11 @@ state either way, but drops a repair the session cannot perform and says
 `repair_hidden: true` with the same `repair_requires`. The `default` profile
 advertises neither `cruxible_playbill_settle` nor the Line tools, for example:
 a stopped Line arm still shows as `consumer_stalled`, its repair withheld with
-`because: ["profile"]`.
+`because: ["profile"]`. A session that cannot author on the instance at all (an
+unbound credential, or a principal that is not configured, registered or
+active) has every writing repair withheld with `because` including
+`"authoring"` and `authoring_refusal` carrying the same code, detail and repair
+`whoami` reports.
 
 Lists that can outgrow one answer are paged. `proposal_list`,
 `policies_in_force` and `curation_list` take `limit` and `cursor`; a cut page

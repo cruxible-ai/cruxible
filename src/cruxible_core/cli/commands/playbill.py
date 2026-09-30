@@ -5689,6 +5689,10 @@ def _next_requirement_hint(requires: contracts.PlaybillNextRepairRequirement | N
         needs.append(f"the {requires.tier} tier")
     if "profile" in requires.because:
         needs.append(f"the {requires.profile} MCP tool profile")
+    refusal = requires.authoring_refusal
+    if "authoring" in requires.because and refusal is not None:
+        # The identity repair comes first: no tier helps a caller that cannot author.
+        needs.insert(0, f"a caller that can author ({refusal.code}: {refusal.detail})")
     return f"{requires.tool} needs " + " and ".join(needs)
 
 

@@ -1714,8 +1714,11 @@ governed write; a Line dispatch needs what the Line's runs need). When the
 caller cannot perform a row's repair, or a nested finding's, the row stays: its
 `repair` is withheld (`null`) and `repair_requires` names the `tool`, the `tier`
 it runs at, and `because` (`tier`, or `profile` when an MCP session's tool
-profile does not advertise it; `profile: "full"` does). The text output prints
-`repair withheld: <tool> needs the <tier> tier`. Nothing is left out, so
+profile does not advertise it; `profile: "full"` does; or `authoring` when the
+caller cannot author on the instance at all, with `authoring_refusal` carrying
+the code, detail and repair `whoami` reports). The text output prints
+`repair withheld: <tool> needs the <tier> tier`, led by the identity repair
+when authoring gates it. Nothing is left out, so
 `status.hidden` stays 0. A status facet (the compiler, floor, ledger mirror and
 so on) always reports its state; when its repair is one the caller cannot
 perform, the repair is dropped and the facet carries `repair_hidden: true` and

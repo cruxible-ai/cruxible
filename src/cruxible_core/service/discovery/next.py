@@ -80,6 +80,7 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1, ProcedureMandateV2
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
@@ -558,6 +559,8 @@ class PlaybillNextRepairV1(_StrictNextModel):
 #: The permission tiers a repair can need, by name (``PermissionMode`` lowercased).
 NextRepairTier: TypeAlias = Literal["read_only", "governed_write", "graph_write", "admin"]
 _TIER_BY_RUNG: tuple[NextRepairTier, ...] = ("read_only", "governed_write", "graph_write", "admin")
+#: Why a repair is withheld from this caller.
+NextRepairGate: TypeAlias = Literal["tier", "profile", "authoring"]
 
 
 class PlaybillNextRepairRequirementV1(_StrictNextModel):
@@ -567,7 +570,10 @@ class PlaybillNextRepairRequirementV1(_StrictNextModel):
     real whoever reads it. Only the repair is withheld, and this says why --
     the permission ``tier`` the repair's ``tool`` runs at, and/or the MCP tool
     ``profile`` that advertises it (``full`` advertises every tool; the CLI
-    runs every repair a tier allows).
+    runs every repair a tier allows). ``authoring`` is a caller that cannot
+    author on this instance at all -- an unbound credential, a principal that
+    is not configured, registered or active, or a decommissioned instance --
+    and ``authoring_refusal`` carries whoami's code, detail and repair.
     """
 
     tag: Literal["playbill-next-repair-requirement-v1"] = "playbill-next-repair-requirement-v1"
@@ -575,12 +581,19 @@ class PlaybillNextRepairRequirementV1(_StrictNextModel):
     tool: str
     tier: NextRepairTier
     profile: Literal["full"] | None = Field(default=None, exclude_if=lambda value: value is None)
-    because: tuple[Literal["tier", "profile"], ...] = Field(min_length=1)
+    because: tuple[NextRepairGate, ...] = Field(min_length=1)
+    authoring_refusal: PlaybillAuthoringRefusalV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def _profile(self) -> "PlaybillNextRepairRequirementV1":
         if ("profile" in self.because) != (self.profile is not None):
             raise ValueError("a next repair requirement names a profile exactly when it needs one")
+        if ("authoring" in self.because) != (self.authoring_refusal is not None):
+            raise ValueError(
+                "a next repair requirement names the authoring refusal exactly when it needs one"
+            )
         return self
 
 
@@ -931,6 +944,9 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "hand_edit": None,
 }
 _GOVERNED_WRITE_RUNG = 1
+#: Repairs whose served door writes nothing and so never meets the principal
+#: boundary; every other served repair is refused to a caller that cannot author.
+_AUTHORING_FREE_REPAIRS = frozenset({"playbill.floor.export"})
 
 
 def _tool_rung(tool: str) -> int:
@@ -4656,11 +4672,13 @@ class _CallerView:
         surface: NextCallerSurface | None,
         tools: tuple[str, ...] | None,
         caller_rung: int | None,
+        authoring_refusal: PlaybillAuthoringRefusalV1 | None = None,
     ) -> None:
         self.instance = instance
         self.surface = surface
         self.tools = None if tools is None else frozenset(tools)
         self.caller_rung = caller_rung
+        self.authoring_refusal = authoring_refusal
         self._line_rungs: dict[str, int] = {}
 
     def _required_rung(self, repair: PlaybillNextRepairV1, tool: str) -> int:
@@ -4693,14 +4711,19 @@ class _CallerView:
         if tool is None:
             return None
         unadvertised = self.surface == "mcp" and self.tools is not None and tool not in self.tools
-        if self.caller_rung is None and not unadvertised:
+        unauthored = (
+            self.authoring_refusal is not None and repair.operation not in _AUTHORING_FREE_REPAIRS
+        )
+        if self.caller_rung is None and not unadvertised and not unauthored:
             return None
         rung = self._required_rung(repair, tool)
-        because: list[Literal["tier", "profile"]] = []
+        because: list[NextRepairGate] = []
         if self.caller_rung is not None and self.caller_rung < rung:
             because.append("tier")
         if unadvertised:
             because.append("profile")
+        if unauthored:
+            because.append("authoring")
         if not because:
             return None
         return PlaybillNextRepairRequirementV1(
@@ -4709,6 +4732,7 @@ class _CallerView:
             tier=_TIER_BY_RUNG[min(rung, len(_TIER_BY_RUNG) - 1)],
             profile="full" if unadvertised else None,
             because=tuple(because),
+            authoring_refusal=self.authoring_refusal if unauthored else None,
         )
 
     def can_run(self, repair: PlaybillNextRepairV1) -> bool:
@@ -4822,6 +4846,7 @@ def _next_queue(
     caller_principal_id: str | None,
     caller_rung: int | None,
     read_context: ClaimVerdictReadContext | None = None,
+    caller_authoring_refusal: PlaybillAuthoringRefusalV1 | None = None,
 ) -> _NextQueue:
     """The single fold for full next and its bounded attention summary."""
 
@@ -4952,6 +4977,7 @@ def _next_queue(
         surface=request.caller_surface,
         tools=request.caller_tools,
         caller_rung=caller_rung,
+        authoring_refusal=caller_authoring_refusal,
     )
     holds = (
         _Holds(
@@ -5036,6 +5062,7 @@ def service_playbill_next(
     consumers_running: bool = False,
     caller_principal_id: str | None = None,
     caller_rung: int | None = None,
+    caller_authoring_refusal: PlaybillAuthoringRefusalV1 | None = None,
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
     """Fold accepted state and explicit client observations into one repair queue.
 
@@ -5046,13 +5073,20 @@ def service_playbill_next(
     request's ``caller_tools`` does not list, stays in the queue with its repair
     withheld and ``repair_requires`` naming the tool and the tier or profile it
     needs. ``None`` is an in-process caller that holds every tier.
+    `caller_authoring_refusal` is why that caller cannot author here (whoami's
+    refusal, less the tier, which `caller_rung` already gates): every repair
+    that writes is then withheld with it, since running it would be refused.
     """
 
     continuation = None if request.cursor is None else _continuation_of(request.cursor)
     if continuation is not None:
         request = _continued(request, continuation)
     queue = _next_queue(
-        instance, request=request, caller_principal_id=caller_principal_id, caller_rung=caller_rung
+        instance,
+        request=request,
+        caller_principal_id=caller_principal_id,
+        caller_rung=caller_rung,
+        caller_authoring_refusal=caller_authoring_refusal,
     )
     coordinate = queue.coordinate
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
@@ -5158,7 +5192,11 @@ def service_playbill_next(
     result_digest = playbill_next_result_digest(provisional)
     full = result_model.model_validate({**values, "result_digest": result_digest})
     scope = _queue_scope(
-        instance, request, caller_principal_id=caller_principal_id, caller_rung=caller_rung
+        instance,
+        request,
+        caller_principal_id=caller_principal_id,
+        caller_rung=caller_rung,
+        caller_authoring_refusal=caller_authoring_refusal,
     )
     _remember_queue(result_digest, full.items, scope=scope)
     answer = (
@@ -5187,6 +5225,7 @@ def _queue_scope(
     *,
     caller_principal_id: str | None,
     caller_rung: int | None = None,
+    caller_authoring_refusal: PlaybillAuthoringRefusalV1 | None = None,
 ) -> str:
     return typed_digest(
         Sha256Value,
@@ -5200,6 +5239,9 @@ def _queue_scope(
             "caller_surface": request.caller_surface,
             "caller_tools": None if request.caller_tools is None else sorted(request.caller_tools),
             "caller_rung": caller_rung,
+            "caller_authoring_refusal": (
+                None if caller_authoring_refusal is None else caller_authoring_refusal.code
+            ),
         },
     ).tagged
 

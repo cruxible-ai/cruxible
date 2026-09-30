@@ -83,6 +83,7 @@ from cruxible_client.contracts.predictions import (
     PlaybillSettleResultV2,
 )
 from cruxible_client.contracts.primitives import new_id
+from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
 from cruxible_client.contracts.procedures.artifacts import procedure_path
 from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourcePreviewRequestV1,
@@ -2397,6 +2398,23 @@ def playbill_line_run(
     return contracts.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))
 
 
+def _caller_authoring_refusal(instance_id: str) -> PlaybillAuthoringRefusalV1 | None:
+    """Why this caller cannot author here, as whoami reports it, less the tier.
+
+    ``next`` gates each repair's tier itself; this is the rest -- an unbound
+    credential, an unconfigured, unregistered or inactive principal, or a
+    decommissioned instance -- which refuses every repair that writes.
+    """
+
+    try:
+        refusal = playbill_whoami(instance_id).authoring_refusal
+    except AuthenticationError:
+        return None
+    if refusal is None or refusal.code == "playbill.identity.permission_insufficient":
+        return None
+    return refusal
+
+
 def playbill_next(
     instance_id: str,
     *,
@@ -2420,6 +2438,7 @@ def playbill_next(
         caller_principal_id=None if actor is None else actor.actor_id,
         consumers_running=get_playbill_manager().consumer_runner.running,
         caller_rung=get_current_mode().value - 1,
+        caller_authoring_refusal=_caller_authoring_refusal(instance_id),
     )
     return contracts.PlaybillNextResult.model_validate(result.model_dump(mode="json"))
 

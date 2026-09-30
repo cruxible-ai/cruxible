@@ -24826,6 +24826,80 @@
       },
       "json_schema": {
         "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
+          "PlaybillAuthoringRefusalV1": {
+            "additionalProperties": false,
+            "description": "Why this actor cannot author, and the runnable repair.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "playbill.identity.credential_unbound",
+                  "playbill.identity.principal_unconfigured",
+                  "playbill.identity.principal_absent",
+                  "playbill.identity.principal_revoked",
+                  "playbill.identity.permission_insufficient",
+                  "playbill.instance.decommissioned"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "repair"
+            ],
+            "title": "PlaybillAuthoringRefusalV1",
+            "type": "object"
+          },
           "PlaybillNextRepair": {
             "additionalProperties": false,
             "properties": {
@@ -24886,13 +24960,25 @@
           },
           "PlaybillNextRepairRequirement": {
             "additionalProperties": false,
-            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair.",
             "properties": {
+              "authoring_refusal": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "because": {
                 "items": {
                   "enum": [
                     "tier",
-                    "profile"
+                    "profile",
+                    "authoring"
                   ],
                   "type": "string"
                 },
@@ -24963,6 +25049,26 @@
               "because"
             ],
             "title": "PlaybillNextRepairRequirement",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
             "type": "object"
           }
         },
@@ -25155,6 +25261,80 @@
       },
       "json_schema": {
         "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
+          "PlaybillAuthoringRefusalV1": {
+            "additionalProperties": false,
+            "description": "Why this actor cannot author, and the runnable repair.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "playbill.identity.credential_unbound",
+                  "playbill.identity.principal_unconfigured",
+                  "playbill.identity.principal_absent",
+                  "playbill.identity.principal_revoked",
+                  "playbill.identity.permission_insufficient",
+                  "playbill.instance.decommissioned"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "repair"
+            ],
+            "title": "PlaybillAuthoringRefusalV1",
+            "type": "object"
+          },
           "PlaybillNextRepair": {
             "additionalProperties": false,
             "properties": {
@@ -25215,13 +25395,25 @@
           },
           "PlaybillNextRepairRequirement": {
             "additionalProperties": false,
-            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair.",
             "properties": {
+              "authoring_refusal": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "because": {
                 "items": {
                   "enum": [
                     "tier",
-                    "profile"
+                    "profile",
+                    "authoring"
                   ],
                   "type": "string"
                 },
@@ -25292,6 +25484,26 @@
               "because"
             ],
             "title": "PlaybillNextRepairRequirement",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
             "type": "object"
           }
         },
@@ -25509,6 +25721,80 @@
       },
       "json_schema": {
         "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
+          "PlaybillAuthoringRefusalV1": {
+            "additionalProperties": false,
+            "description": "Why this actor cannot author, and the runnable repair.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "playbill.identity.credential_unbound",
+                  "playbill.identity.principal_unconfigured",
+                  "playbill.identity.principal_absent",
+                  "playbill.identity.principal_revoked",
+                  "playbill.identity.permission_insufficient",
+                  "playbill.instance.decommissioned"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "repair"
+            ],
+            "title": "PlaybillAuthoringRefusalV1",
+            "type": "object"
+          },
           "PlaybillNextFinding": {
             "additionalProperties": false,
             "description": "One more finding about the same underlying fact as the row that carries it.",
@@ -25663,13 +25949,25 @@
           },
           "PlaybillNextRepairRequirement": {
             "additionalProperties": false,
-            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair.",
             "properties": {
+              "authoring_refusal": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "because": {
                 "items": {
                   "enum": [
                     "tier",
-                    "profile"
+                    "profile",
+                    "authoring"
                   ],
                   "type": "string"
                 },
@@ -25740,6 +26038,26 @@
               "because"
             ],
             "title": "PlaybillNextRepairRequirement",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
             "type": "object"
           }
         },
@@ -26002,6 +26320,25 @@
     },
     "PlaybillNextRepairRequirement": {
       "fields": {
+        "authoring_refusal": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "authoring_refusal",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "because": {
           "has_default": false,
           "has_default_factory": false,
@@ -26011,7 +26348,8 @@
             "items": {
               "enum": [
                 "tier",
-                "profile"
+                "profile",
+                "authoring"
               ],
               "type": "string"
             },
@@ -26111,14 +26449,122 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
+          "PlaybillAuthoringRefusalV1": {
+            "additionalProperties": false,
+            "description": "Why this actor cannot author, and the runnable repair.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "playbill.identity.credential_unbound",
+                  "playbill.identity.principal_unconfigured",
+                  "playbill.identity.principal_absent",
+                  "playbill.identity.principal_revoked",
+                  "playbill.identity.permission_insufficient",
+                  "playbill.instance.decommissioned"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "repair"
+            ],
+            "title": "PlaybillAuthoringRefusalV1",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
-        "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+        "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair.",
         "properties": {
+          "authoring_refusal": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "because": {
             "items": {
               "enum": [
                 "tier",
-                "profile"
+                "profile",
+                "authoring"
               ],
               "type": "string"
             },
@@ -26393,6 +26839,40 @@
       },
       "json_schema": {
         "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -26430,6 +26910,46 @@
               "compiler_digest"
             ],
             "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillAuthoringRefusalV1": {
+            "additionalProperties": false,
+            "description": "Why this actor cannot author, and the runnable repair.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "playbill.identity.credential_unbound",
+                  "playbill.identity.principal_unconfigured",
+                  "playbill.identity.principal_absent",
+                  "playbill.identity.principal_revoked",
+                  "playbill.identity.permission_insufficient",
+                  "playbill.instance.decommissioned"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "repair"
+            ],
+            "title": "PlaybillAuthoringRefusalV1",
             "type": "object"
           },
           "PlaybillNextFinding": {
@@ -26742,13 +27262,25 @@
           },
           "PlaybillNextRepairRequirement": {
             "additionalProperties": false,
-            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair.",
             "properties": {
+              "authoring_refusal": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "because": {
                 "items": {
                   "enum": [
                     "tier",
-                    "profile"
+                    "profile",
+                    "authoring"
                   ],
                   "type": "string"
                 },
@@ -26884,6 +27416,26 @@
               "consumers"
             ],
             "title": "PlaybillNextStatus",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
             "type": "object"
           }
         },
@@ -27147,6 +27699,80 @@
       },
       "json_schema": {
         "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
+          "PlaybillAuthoringRefusalV1": {
+            "additionalProperties": false,
+            "description": "Why this actor cannot author, and the runnable repair.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "playbill.identity.credential_unbound",
+                  "playbill.identity.principal_unconfigured",
+                  "playbill.identity.principal_absent",
+                  "playbill.identity.principal_revoked",
+                  "playbill.identity.permission_insufficient",
+                  "playbill.instance.decommissioned"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "repair"
+            ],
+            "title": "PlaybillAuthoringRefusalV1",
+            "type": "object"
+          },
           "PlaybillNextHealth": {
             "additionalProperties": false,
             "description": "One environment facet: its state, what it saw, and the repair if it needs one.",
@@ -27258,13 +27884,25 @@
           },
           "PlaybillNextRepairRequirement": {
             "additionalProperties": false,
-            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, the MCP tool\n``profile`` that advertises it, and/or ``authoring`` when this caller cannot\nauthor here at all; ``authoring_refusal`` then carries whoami's code,\ndetail and repair.",
             "properties": {
+              "authoring_refusal": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "because": {
                 "items": {
                   "enum": [
                     "tier",
-                    "profile"
+                    "profile",
+                    "authoring"
                   ],
                   "type": "string"
                 },
@@ -27335,6 +27973,26 @@
               "because"
             ],
             "title": "PlaybillNextRepairRequirement",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
             "type": "object"
           }
         },

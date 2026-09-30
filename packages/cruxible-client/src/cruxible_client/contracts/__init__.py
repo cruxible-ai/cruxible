@@ -1641,8 +1641,10 @@ class PlaybillNextRepairRequirement(BaseModel):
     """What running a withheld repair needs that this caller does not have.
 
     The row stays in the queue; only its repair is withheld. ``because`` names
-    the gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool
-    ``profile`` that advertises it.
+    the gate: the permission ``tier`` the ``tool`` runs at, the MCP tool
+    ``profile`` that advertises it, and/or ``authoring`` when this caller cannot
+    author here at all; ``authoring_refusal`` then carries whoami's code,
+    detail and repair.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1652,7 +1654,8 @@ class PlaybillNextRepairRequirement(BaseModel):
     tool: str
     tier: Literal["read_only", "governed_write", "graph_write", "admin"]
     profile: Literal["full"] | None = None
-    because: list[Literal["tier", "profile"]]
+    because: list[Literal["tier", "profile", "authoring"]]
+    authoring_refusal: PlaybillAuthoringRefusalV1 | None = None
 
 
 class PlaybillNextFinding(BaseModel):
