@@ -62,6 +62,16 @@ ClaimValue = bool | int | float | str
 """A scalar value. A Subject-valued field takes the Subject as kind/id; an
 exact-content field takes the text itself."""
 
+ExpectedValue = ClaimValue | tuple[ClaimValue, ...]
+"""What a field must hold for a write to go ahead: one value, or every live
+value of the field as a list (``[]`` when it must hold none)."""
+
+_EXPECT_DESCRIPTION = (
+    "Compare-and-set: the value the field holds now, as you read it (a list of "
+    "every live value for a many-valued field; [] for none). If it holds anything "
+    "else the write refuses playbill.write.slot_changed, showing what it holds."
+)
+
 WriteRole = Literal["normative", "observation", "environment_binding"]
 WriteAccept = Literal["if_allowed", "never"]
 WriteRetireReason = Literal["was-rescinded", "was-wrong", "superseded"]
@@ -171,6 +181,7 @@ class SetChange(_StrictWriteModel):
         default=None, description="Default: the write's `because` as self evidence."
     )
     contend: bool = False
+    expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
 
 
 class AddChange(_StrictWriteModel):
@@ -186,6 +197,13 @@ class AddChange(_StrictWriteModel):
     )
     evidence: Evidence | None = Field(
         default=None, description="Default: the write's `because` as self evidence."
+    )
+    expect_absent: bool = Field(
+        default=False,
+        description=(
+            "Refuse playbill.write.value_already_present when the value is already "
+            "live, instead of answering it as already done."
+        ),
     )
 
 
@@ -206,6 +224,7 @@ class RetireChange(_StrictWriteModel):
             "superseded: it stood, but the shape it was stated in no longer does."
         ),
     )
+    expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
 
 
 Change = Annotated[SetChange | AddChange | RetireChange, Field(discriminator="op")]
@@ -252,6 +271,7 @@ class PlaybillSetRequestV1(_WriteRequestBase):
     role: WriteRole | None = None
     evidence: Evidence | None = None
     contend: bool = False
+    expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
 
     def change(self) -> SetChange:
         return SetChange(
@@ -261,6 +281,7 @@ class PlaybillSetRequestV1(_WriteRequestBase):
             role=self.role,
             evidence=self.evidence,
             contend=self.contend,
+            expect=self.expect,
         )
 
 
@@ -268,9 +289,10 @@ class PlaybillRetireRequestV1(_WriteRequestBase):
     tag: Literal["playbill-retire-request-v1"] = "playbill-retire-request-v1"
     target: ClaimId | SlotRef
     reason: WriteRetireReason = "was-rescinded"
+    expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
 
     def change(self) -> RetireChange:
-        return RetireChange(target=self.target, reason=self.reason)
+        return RetireChange(target=self.target, reason=self.reason, expect=self.expect)
 
 
 class PlaybillWriteRequestV1(_WriteRequestBase):
@@ -428,6 +450,7 @@ __all__ = [
     "ClaimId",
     "ClaimValue",
     "Evidence",
+    "ExpectedValue",
     "FieldName",
     "FileEvidence",
     "PlaybillRetireRequestV1",

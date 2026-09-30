@@ -124,6 +124,24 @@ def test_dry_run_no_accept_and_at_reach_the_request(served: _ServiceClient) -> N
     assert request.accept == "never" and request.at == at
 
 
+def test_expect_compares_the_value_on_set_and_retire(served: _ServiceClient) -> None:
+    assert _run("set", WI1, "status", "ready", "--because", "x").exit_code == 0
+    stale = _run("set", WI1, "status", "done", "--because", "x", "--expect", "blocked")
+    assert stale.exit_code == 1
+    assert "playbill.write.slot_changed (change 0)" in stale.output
+    assert "holds 'ready', not 'blocked' as expected" in stale.output
+    assert served.requests[-1].expect == "blocked"
+    done = _run("set", WI1, "status", "done", "--because", "x", "--expect", "ready")
+    assert done.exit_code == 0, done.output
+    assert "set project.work_item/wi-1 status: ready -> done" in done.output
+
+    many = _run("retire", WI1, "status", "--because", "x", "--expect", "done", "--expect", "ready")
+    assert many.exit_code == 1 and "holds 'done'" in many.output
+    assert served.requests[-1].expect == ("done", "ready")
+    ended = _run("retire", WI1, "status", "--because", "x", "--expect", "done")
+    assert ended.exit_code == 0, ended.output
+
+
 def test_retire_takes_a_claim_id_or_a_subject_and_field(served: _ServiceClient) -> None:
     status = json.loads(_run("set", WI1, "status", "ready", "--because", "x", "--json").stdout)
     title = json.loads(_run("set", WI1, "title", "Old", "--because", "x", "--json").stdout)

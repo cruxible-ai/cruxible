@@ -51,6 +51,7 @@ def _object_properties(schema: dict[str, Any], defs: dict[str, Any]) -> list[dic
                 "evidence",
                 "role",
                 "contend",
+                "expect",
                 "dry_run",
                 "accept",
                 "at",
@@ -59,7 +60,7 @@ def _object_properties(schema: dict[str, Any], defs: dict[str, Any]) -> list[dic
         (
             "cruxible_playbill_retire",
             ["target", "because"],
-            {"instance_id", "target", "because", "reason", "dry_run", "accept", "at"},
+            {"instance_id", "target", "because", "reason", "expect", "dry_run", "accept", "at"},
         ),
         (
             "cruxible_playbill_write",
@@ -115,24 +116,39 @@ def test_handlers_build_typed_requests_for_the_mcp_surface(
         because="Shipped.",
         dry_run=True,
         at="0123456789ab",
+        expect="ready",
     )
     handlers.handle_playbill_retire(
-        "inst_write", target={"subject": "dev.item/a", "field": "status"}, because="Gone."
+        "inst_write",
+        target={"subject": "dev.item/a", "field": "status"},
+        because="Gone.",
+        expect=["done", "ready"],
     )
     handlers.handle_playbill_write(
         "inst_write",
-        changes=[{"op": "add", "subject": "dev.item/a", "field": "governs", "value": "dev.item/b"}],
+        changes=[
+            {
+                "op": "add",
+                "subject": "dev.item/a",
+                "field": "governs",
+                "value": "dev.item/b",
+                "expect_absent": True,
+            }
+        ],
         because="Linked.",
     )
 
     (set_request,) = sets
     assert isinstance(set_request, PlaybillSetRequestV1)
     assert set_request.surface == "mcp" and set_request.dry_run and set_request.at == "0123456789ab"
+    assert set_request.expect == "ready"
     (retire_request,) = retires
     assert isinstance(retire_request, PlaybillRetireRequestV1) and retire_request.surface == "mcp"
+    assert retire_request.expect == ("done", "ready")
     (write_request,) = writes
     assert isinstance(write_request, PlaybillWriteRequestV1)
     assert write_request.changes[0].op == "add"
+    assert write_request.changes[0].expect_absent  # type: ignore[union-attr]
 
 
 def test_a_malformed_write_names_the_json_path_and_an_example(

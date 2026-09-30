@@ -98,6 +98,39 @@ def test_a_batch_writes_two_adds_and_a_retire_as_one_change_set(pb: Playbill) ->
     assert isinstance(pb.changes(), ChangeSetDraft)
 
 
+def test_expect_compares_by_value_on_set_retire_and_a_batch(
+    pb: Playbill, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    pb.set(WI1, "status", "ready", because="Checked.", expect=[])
+    client, instance_id, _key = playbill_http
+    _sdk(client, instance_id, tmp_path, name="other").set(
+        WI1, "status", "blocked", because="Someone else."
+    )
+    with pytest.raises(WriteRefusalError) as caught:
+        pb.set(WI1, "status", "done", because="Stale.", expect="ready", at=None)
+    assert caught.value.error_code == "playbill.write.slot_changed"
+    assert "holds 'blocked'" in str(caught.value)
+    replaced = pb.set(WI1, "status", "done", because="Seen.", expect="blocked", at=None)
+    assert replaced.status == "accepted" and replaced.changes[0].before == "blocked"
+
+    linked = (
+        pb.changes(because="Linked.")
+        .add(WI1, "governs", f"{KIND}/wi-2", expect_absent=True)
+        .write()
+    )
+    assert linked.status == "accepted", linked
+    with pytest.raises(WriteRefusalError) as present:
+        pb.changes(because="Again.").add(WI1, "governs", f"{KIND}/wi-2", expect_absent=True).write()
+    assert present.value.error_code == "playbill.write.value_already_present"
+    ended = pb.retire(SlotRef(subject=WI1, field="status"), because="Withdrawn.", expect="done")
+    assert ended.status == "accepted", ended
+    batch = pb.changes(because="Unlinked.").retire(
+        SlotRef(subject=WI1, field="governs"), expect=[f"{KIND}/wi-2"]
+    )
+    assert batch.changes[0].expect == (f"{KIND}/wi-2",)  # type: ignore[union-attr]
+    assert batch.write().status == "accepted"
+
+
 def test_retire_dry_run_and_proposal_accept(pb: Playbill) -> None:
     claim = pb.set(WI1, "title", "Old", because="x").changes[0].claim
     assert claim is not None

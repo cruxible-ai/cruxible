@@ -52,6 +52,56 @@ def test_set_retire_and_write_answer_outcomes(
     assert retired.json()["changes"][0]["claim"] == claim
 
 
+def test_expect_travels_on_every_write_route(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _key = playbill_http
+    _seed(client, instance_id)
+    base = f"/api/v1/{instance_id}/playbill"
+    post = lambda route, body: client.post(f"{base}/{route}", json=body).json()  # noqa: E731
+
+    first = post("set", {"subject": WI1, "field": "status", "value": "ready", "because": "x"})
+    assert first["status"] == "accepted", first
+    stale = post(
+        "set",
+        {"subject": WI1, "field": "status", "value": "done", "because": "x", "expect": "blocked"},
+    )
+    assert stale["refusal"]["code"] == "playbill.write.slot_changed", stale
+    assert stale["refusal"]["field_path"] == "changes[0].expect"
+    added = post(
+        "write",
+        {
+            "because": "x",
+            "changes": [
+                {
+                    "op": "add",
+                    "subject": WI1,
+                    "field": "governs",
+                    "value": f"{KIND}/wi-2",
+                    "expect_absent": True,
+                },
+                {
+                    "op": "set",
+                    "subject": WI1,
+                    "field": "status",
+                    "value": "done",
+                    "expect": "ready",
+                },
+            ],
+        },
+    )
+    assert added["status"] == "accepted", added
+    retired = post(
+        "retire",
+        {
+            "target": {"subject": WI1, "field": "governs"},
+            "because": "x",
+            "expect": [f"{KIND}/wi-2"],
+        },
+    )
+    assert retired["status"] == "accepted", retired
+
+
 def test_a_refused_write_is_an_outcome_and_a_malformed_one_is_a_422(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:

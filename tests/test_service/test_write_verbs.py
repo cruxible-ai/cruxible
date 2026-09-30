@@ -713,6 +713,119 @@ def test_one_write_may_retire_one_contender_and_replace_the_other(
     assert _refusal(twice).code == "playbill.write.claim_changed_twice"
 
 
+# -- expect: compare-and-set by value ------------------------------------------------
+
+
+def test_set_with_expect_replaces_only_the_value_it_expected(instance: PlaybillInstance) -> None:
+    first = _write(instance, _set(WI1, "status", "ready", expect=[]))
+    assert first.status == "accepted", first
+    head = instance.accepted_coordinate().git_oid
+
+    refused = _write(instance, _set(WI1, "status", "done", expect="blocked"))
+    refusal = _refusal(refused)
+    assert refusal.code == "playbill.write.slot_changed"
+    assert refusal.field_path == "changes[0].expect"
+    assert "holds 'ready', not 'blocked' as expected" in refusal.message
+    assert refusal.candidates == (first.changes[0].claim,)
+    assert refusal.repair is not None and '"ready"' in refusal.repair
+    assert instance.accepted_coordinate().git_oid == head
+    assert _refusal(_write(instance, _set(WI1, "status", "done", expect=[]))).code == (
+        "playbill.write.slot_changed"
+    )
+
+    replaced = _write(instance, _set(WI1, "status", "done", expect="ready"))
+    assert replaced.status == "accepted", replaced
+    assert replaced.changes[0].revises == first.changes[0].claim
+    assert _values(instance, WI1, "status") == ["done"]
+
+    empty = _refusal(_write(instance, _set(WI2, "status", "done", expect="ready")))
+    assert empty.code == "playbill.write.slot_changed" and "holds no value" in empty.message
+
+
+def test_expect_is_checked_like_a_value_before_it_is_compared(instance: PlaybillInstance) -> None:
+    member = _refusal(_write(instance, _set(WI1, "status", "done", expect="dne")))
+    assert member.code == "playbill.write.value_not_member"
+    assert member.field_path == "changes[0].expect"
+    # The CLI's text spelling of an integer is read by the field's type.
+    assert _write(instance, _set(WI1, "measured", 3)).status == "accepted"
+    assert _write(instance, _set(WI1, "measured", 4, expect="3")).status == "accepted"
+    wrong = _refusal(_write(instance, _set(WI1, "measured", 5, expect="3")))
+    assert wrong.code == "playbill.write.slot_changed" and "holds 4" in wrong.message
+
+
+def test_retire_with_expect_compares_every_live_value_of_the_slot(
+    instance: PlaybillInstance,
+) -> None:
+    links = _write(instance, _add(WI1, "governs", WI2), _add(WI1, "governs", WI3))
+    by_value = {item.after: item.claim for item in links.changes}
+    partial = _refusal(_write(instance, {"op": "retire", "target": by_value[WI2], "expect": [WI2]}))
+    assert partial.code == "playbill.write.slot_changed"
+    assert set(partial.candidates) == set(by_value.values())
+    retired = _write(instance, {"op": "retire", "target": by_value[WI2], "expect": [WI3, WI2]})
+    assert retired.status == "accepted", retired
+    assert _values(instance, WI1, "governs") == [WI3]
+
+    _write(instance, _set(WI1, "title", "Old"))
+    slot = {"subject": WI1, "field": "title"}
+    stale = _refusal(_write(instance, {"op": "retire", "target": slot, "expect": "New"}))
+    assert stale.code == "playbill.write.slot_changed" and "holds 'Old'" in stale.message
+    ended = _write(instance, {"op": "retire", "target": slot, "expect": "Old"})
+    assert ended.status == "accepted", ended
+
+
+def test_add_with_expect_absent_refuses_what_would_be_already_done(
+    instance: PlaybillInstance,
+) -> None:
+    first = _write(instance, {**_add(WI1, "governs", WI2), "expect_absent": True})
+    assert first.status == "accepted", first
+    again = _refusal(_write(instance, {**_add(WI1, "governs", WI2), "expect_absent": True}))
+    assert again.code == "playbill.write.value_already_present"
+    assert again.candidates == (first.changes[0].claim,)
+    assert again.field_path == "changes[0].expect_absent"
+    # Without it, the same add is answered as done.
+    assert _write(instance, _add(WI1, "governs", WI2)).changes[0].already_live
+
+
+def test_expect_composes_with_the_read_coordinate(instance: PlaybillInstance) -> None:
+    _write(instance, _set(WI1, "status", "ready"))
+    read_at = instance.accepted_coordinate().git_oid
+    # Unmoved since the read, and holding what was expected: accepted.
+    assert _write(instance, _set(WI1, "status", "blocked", expect="ready"), at=read_at).status == (
+        "accepted"
+    )
+    # Moved back to the expected value since the read: the value matches, but the
+    # read coordinate still refuses the slot that moved.
+    _write(instance, _set(WI1, "status", "ready"), because="Back again.")
+    moved = _refusal(_write(instance, _set(WI1, "status", "done", expect="ready"), at=read_at))
+    assert moved.code == "playbill.write.slot_changed" and "after your read" in moved.message
+
+
+def test_a_contender_after_the_expect_check_still_refuses_at_admission(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The matched Claim IDs are pinned, so a value joining the slot later refuses."""
+
+    ready = _write(instance, _set(WI1, "status", "ready")).changes[0].claim
+    real = write_verbs._coordinator
+    landed: list[bool] = []
+
+    def coordinator(target: PlaybillInstance, claim_ids: Any) -> Any:
+        if not landed:
+            landed.append(True)
+            _contend(target)
+        return real(target, claim_ids)
+
+    monkeypatch.setattr(write_verbs, "_coordinator", coordinator)
+    outcome = _write(instance, _set(WI1, "status", "done", expect="ready"))
+    assert landed
+    refusal = _refusal(outcome)
+    assert refusal.code == "playbill.write.slot_changed", refusal
+    assert outcome.proposal is None
+    assert _values(instance, WI1, "status") == ["blocked", "ready"]
+    assert ready in _live_status_claims(instance)
+    _no_proposal_to_activate(instance)
+
+
 # -- dry runs (R12) -----------------------------------------------------------------
 
 

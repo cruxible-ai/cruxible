@@ -87,6 +87,7 @@ from cruxible_client.contracts.get_reads import (
     PlaybillReadSurface,
     summary_value,
 )
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_client.contracts.temporal import utc_now
@@ -96,6 +97,7 @@ from cruxible_client.contracts.write import (
     ApprovalReason,
     CaptureEvidence,
     ChangeOutcome,
+    ExpectedValue,
     FileEvidence,
     PlaybillWriteRequestV1,
     RetireChange,
@@ -263,6 +265,12 @@ def _coerce_text(value: object, info: PredicateInfo) -> object:
     return value
 
 
+def _value_key(value: object) -> str:
+    """One value's comparison key: ``1``, ``true`` and ``"1"`` stay distinct."""
+
+    return canonical_json(value)
+
+
 # -- planning ------------------------------------------------------------------------
 
 
@@ -338,14 +346,16 @@ class _Planner:
             self._subject_exists[path] = self.instance.blob_at(self.head.git_oid, path) is not None
         return self._subject_exists[path]
 
-    def slot_claims(self, subject_path_value: str, predicate: str) -> tuple[_SlotClaim, ...]:
-        """The live unqualified Claims of one slot at the head, with their shown values."""
+    def slot_claims(
+        self, subject_path_value: str, predicate: str, qualifier: str | None = None
+    ) -> tuple[_SlotClaim, ...]:
+        """The live Claims of one slot at the head, with their shown values."""
 
         with self.instance.bind_accepted_projection(self.head) as projection:
             rows = projection.typed.connection.execute(
                 "SELECT identity, artifact_digest FROM claims WHERE subject_path=? "
-                "AND predicate=? AND qualifier IS NULL AND lifecycle='live' ORDER BY identity",
-                (subject_path_value, predicate),
+                "AND predicate=? AND qualifier IS ? AND lifecycle='live' ORDER BY identity",
+                (subject_path_value, predicate, qualifier),
             ).fetchall()
         wanted = {str(row[0]): str(row[1]) for row in rows}
         if not wanted:
@@ -450,6 +460,85 @@ class _Planner:
             repair="Re-set it to replace it, or set it with contend: true to contest it",
         )
 
+    def expected_keys(
+        self, info: PredicateInfo, expect: ExpectedValue, *, index: int, field_name: str
+    ) -> dict[str, object]:
+        """The values ``expect`` names, checked like values and keyed for comparison."""
+
+        path = f"changes[{index}].expect"
+        items = expect if isinstance(expect, tuple) else (expect,)
+        found: dict[str, object] = {}
+        for item in items:
+            shown: object
+            if info.claim_type.object_kind == "literal":
+                shown = self.literal(
+                    info, item, index=index, field_name=field_name, path=path
+                ).value
+            elif isinstance(item, str) and item:
+                # A Subject as kind/id, or exact content as its text: compared as
+                # written, so a value no Claim holds is simply not what it holds.
+                shown = item
+            else:
+                taken = (
+                    "a Subject as kind/id" if info.claim_type.object_kind == "subject" else "text"
+                )
+                raise _refuse(
+                    "playbill.write.value_type_mismatch",
+                    f"{field_name} takes {taken}, so expect {item!r} can never match it",
+                    change=index,
+                    repair=f"Pass expect as {taken}",
+                    field_path=path,
+                )
+            found[_value_key(shown)] = shown
+        return found
+
+    def check_expected(
+        self,
+        *,
+        index: int,
+        label: str,
+        info: PredicateInfo,
+        field_name: str,
+        expect: ExpectedValue | None,
+        live: tuple[_SlotClaim, ...],
+    ) -> None:
+        """Compare-and-set: refuse unless the slot holds exactly the values expected.
+
+        The comparison is by value, at the head the write is planned at. When it
+        holds, the slot expectation the plan already pins carries exactly the
+        live Claim IDs that matched, so a Claim joining or leaving the slot after
+        this check still refuses the write at admission or settlement.
+        """
+
+        if expect is None:
+            return
+        wanted = self.expected_keys(info, expect, index=index, field_name=field_name)
+        holds = {_value_key(item.value): item.value for item in live}
+        if set(wanted) == set(holds):
+            return
+        current = [summary_value(item.value) for item in live]
+        now = (
+            "holds no value"
+            if not current
+            else f"holds {current[0]!r}"
+            if len(current) == 1
+            else f"holds {current!r}"
+        )
+        expected = [summary_value(value) for value in wanted.values()]
+        spelled = expected[0] if isinstance(expect, str | int | float | bool) else expected
+        repair_value: object = None if not current else current[0] if len(current) == 1 else current
+        raise _refuse(
+            "playbill.write.slot_changed",
+            f"{label} {now}, not {spelled!r} as expected",
+            change=index,
+            candidates=tuple(item.claim_id for item in live),
+            repair=(
+                "Read it again; to write over what it holds now, expect "
+                + ("[]" if repair_value is None else json.dumps(repair_value))
+            ),
+            field_path=f"changes[{index}].expect",
+        )
+
     # -- vocabulary --------------------------------------------------------------
 
     def resolve_subject(self, subject: str, *, index: int, path: str) -> tuple[str, str, str]:
@@ -531,9 +620,15 @@ class _Planner:
     # -- values ------------------------------------------------------------------
 
     def literal(
-        self, info: PredicateInfo, value: object, *, index: int, field_name: str
+        self,
+        info: PredicateInfo,
+        value: object,
+        *,
+        index: int,
+        field_name: str,
+        path: str | None = None,
     ) -> LiteralClaimObject:
-        path = f"changes[{index}].value"
+        path = path or f"changes[{index}].value"
         value = _coerce_text(value, info)
         if isinstance(value, float):
             if not value.is_integer():
@@ -768,6 +863,14 @@ class _Planner:
         before: object = None
         contenders: tuple[str, ...] = ()
         if isinstance(change, SetChange):
+            self.check_expected(
+                index=index,
+                label=label,
+                info=info,
+                field_name=name,
+                expect=change.expect,
+                live=live,
+            )
             if change.contend:
                 contenders = tuple(item.claim_id for item in live)
             else:
@@ -807,6 +910,16 @@ class _Planner:
                 ),
                 None,
             )
+            if present is not None and change.expect_absent:
+                raise _refuse(
+                    "playbill.write.value_already_present",
+                    f"{label} already holds {summary_value(present.value)!r} as "
+                    f"{present.claim_id}, and the add expected it absent",
+                    change=index,
+                    candidates=(present.claim_id,),
+                    repair="Leave it out, or drop expect_absent to accept it as already done",
+                    field_path=f"changes[{index}].expect_absent",
+                )
             if present is not None:
                 # Adding what is already there is done already: an idempotent
                 # success, with nothing to submit for this change.
@@ -894,6 +1007,14 @@ class _Planner:
             live = self.slot_claims(path, info.predicate) if self.subject_exists(path) else ()
             # A slot that moved since the read is named as moved first, before
             # what it holds now makes the retire empty or ambiguous.
+            self.check_expected(
+                index=index,
+                label=f"{target.subject} {name}",
+                info=info,
+                field_name=name,
+                expect=change.expect,
+                live=live,
+            )
             self.check_slot_unchanged(
                 index=index,
                 subject=target.subject,
@@ -964,13 +1085,30 @@ class _Planner:
                         candidates=(claim_id,),
                         repair="Read it again, then retire it at the new coordinate",
                     )
-        value: object = None
-        if claim.statement.qualifier is None and retired_info is not None:
-            for item in self.slot_claims(
-                claim.statement.subject.artifact_path, retired_info.predicate
-            ):
-                if item.claim_id == claim_id:
-                    value = item.value
+        live = self.slot_claims(
+            claim.statement.subject.artifact_path,
+            claim.statement.predicate,
+            claim.statement.qualifier,
+        )
+        if change.expect is not None:
+            if retired_info is None:
+                raise _refuse(
+                    "playbill.write.unknown_field",
+                    f"{claim_id} states {claim.statement.predicate}, which no live ClaimType "
+                    "defines, so its values cannot be compared",
+                    change=index,
+                    repair="Retire it without expect",
+                    field_path=f"changes[{index}].expect",
+                )
+            self.check_expected(
+                index=index,
+                label=f"{subject} {name}",
+                info=retired_info,
+                field_name=name,
+                expect=change.expect,
+                live=live,
+            )
+        value = next((item.value for item in live if item.claim_id == claim_id), None)
         return claim_id, subject, name, claim.statement.predicate, value
 
     def retire_change(self, index: int, change: RetireChange) -> _Planned:

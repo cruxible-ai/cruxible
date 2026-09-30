@@ -234,6 +234,7 @@ from cruxible_client.contracts.write import (
     Change,
     ClaimValue,
     Evidence,
+    ExpectedValue,
     PlaybillRetireRequestV1,
     PlaybillSetRequestV1,
     PlaybillWriteRequestV1,
@@ -1243,6 +1244,21 @@ def _write_value(value: ClaimValue | SubjectRef | LiteralValue) -> ClaimValue:
     return value
 
 
+WriteExpect = (
+    ClaimValue | SubjectRef | LiteralValue | Sequence[ClaimValue | SubjectRef | LiteralValue]
+)
+
+
+def _write_expect(expect: WriteExpect | None) -> ExpectedValue | None:
+    """``expect`` on the wire: one value, or every live value as a tuple."""
+
+    if expect is None:
+        return None
+    if isinstance(expect, bool | int | float | str | SubjectRef | LiteralValue):
+        return _write_value(expect)
+    return tuple(_write_value(item) for item in expect)
+
+
 def _write_target(target: str | ClaimRef | SlotRef) -> str | SlotRef:
     if isinstance(target, ClaimRef):
         return target.address
@@ -1271,6 +1287,7 @@ class WriteBatch:
         evidence: Evidence | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
+        expect: WriteExpect | None = None,
     ) -> WriteBatch:
         self.changes.append(
             SetChange(
@@ -1280,6 +1297,7 @@ class WriteBatch:
                 evidence=evidence,
                 role=role,
                 contend=contend,
+                expect=_write_expect(expect),
             )
         )
         return self
@@ -1292,6 +1310,7 @@ class WriteBatch:
         *,
         evidence: Evidence | None = None,
         role: WriteRole | None = None,
+        expect_absent: bool = False,
     ) -> WriteBatch:
         self.changes.append(
             AddChange(
@@ -1300,6 +1319,7 @@ class WriteBatch:
                 value=_write_value(value),
                 evidence=evidence,
                 role=role,
+                expect_absent=expect_absent,
             )
         )
         return self
@@ -1310,9 +1330,15 @@ class WriteBatch:
         *,
         because: str | None = None,
         reason: WriteRetireReason = "was-rescinded",
+        expect: WriteExpect | None = None,
     ) -> WriteBatch:
         self.changes.append(
-            RetireChange(target=_write_target(target), because=because, reason=reason)
+            RetireChange(
+                target=_write_target(target),
+                because=because,
+                reason=reason,
+                expect=_write_expect(expect),
+            )
         )
         return self
 
@@ -2458,6 +2484,7 @@ class Playbill:
         evidence: Evidence | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
+        expect: WriteExpect | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
@@ -2468,7 +2495,9 @@ class Playbill:
         kind is added. It accepts in the same call when policy lets you
         (``accept="never"`` only proposes); ``dry_run`` checks everything and
         writes nothing. By default it refuses when the field changed since this
-        context's coordinate. A refusal raises ``WriteRefusalError``; check
+        context's coordinate; ``expect`` compares by value instead: it refuses
+        unless the field holds that value now (a list for several, ``[]`` for
+        none). A refusal raises ``WriteRefusalError``; check
         ``outcome.warnings`` for a verdict that is not supported.
         """
 
@@ -2480,6 +2509,7 @@ class Playbill:
             evidence=evidence,
             role=role,
             contend=contend,
+            expect=_write_expect(expect),
             dry_run=dry_run,
             accept=accept,
             at=self._write_at(at),
@@ -2497,19 +2527,23 @@ class Playbill:
         *,
         because: str,
         reason: WriteRetireReason = "was-rescinded",
+        expect: WriteExpect | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
     ) -> WriteOutcome:
         """End one live Claim, named by ID or ``SlotRef(subject=..., field=...)``.
 
-        Claims that depend on it retire with it, in one change set.
+        Claims that depend on it retire with it, in one change set. ``expect``
+        refuses unless its field holds that value now (every live value, as a
+        list, for a many-valued field).
         """
 
         request = PlaybillRetireRequestV1(
             target=_write_target(target),
             because=because,
             reason=reason,
+            expect=_write_expect(expect),
             dry_run=dry_run,
             accept=accept,
             at=self._write_at(at),

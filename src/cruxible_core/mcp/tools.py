@@ -42,6 +42,7 @@ from cruxible_client.contracts.write import (
     Change,
     ClaimValue,
     Evidence,
+    ExpectedValue,
     SlotRef,
     WriteAccept,
     WriteOutcome,
@@ -917,6 +918,15 @@ def register_tools(
             bool,
             Field(description="Contest the live value instead of replacing it."),
         ] = False,
+        expect: Annotated[
+            ExpectedValue | None,
+            Field(
+                description=(
+                    "Compare-and-set: the value you read (a list for several, [] for none); "
+                    "refuses slot_changed, showing the value, if the field holds another."
+                )
+            ),
+        ] = None,
         dry_run: Annotated[
             bool, Field(description="Run every check up to the commit; write nothing.")
         ] = False,
@@ -944,6 +954,7 @@ def register_tools(
             evidence=evidence,
             role=role,
             contend=contend,
+            expect=expect,
             dry_run=dry_run,
             accept=accept,
             at=at,
@@ -969,6 +980,15 @@ def register_tools(
                 description=("was-rescinded (withdrawn), was-wrong (it was false), or superseded.")
             ),
         ] = "was-rescinded",
+        expect: Annotated[
+            ExpectedValue | None,
+            Field(
+                description=(
+                    "Compare-and-set: the field's live value (every live value, as a list, "
+                    "for a many-valued field); refuses slot_changed if it holds another."
+                )
+            ),
+        ] = None,
         dry_run: Annotated[
             bool, Field(description="Run every check up to the commit; write nothing.")
         ] = False,
@@ -987,6 +1007,7 @@ def register_tools(
             target=target,
             because=because,
             reason=reason,
+            expect=expect,
             dry_run=dry_run,
             accept=accept,
             at=at,

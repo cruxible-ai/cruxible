@@ -128,3 +128,27 @@ def test_one_slot_ref_names_a_subject_field_and_procedure_slots_are_named_apart(
     assert not hasattr(sdk_types, "SlotRef")
     assert not hasattr(sdk, "WriteSlotRef")
     assert cruxible_client.ProcedureSlotRef is sdk_types.ProcedureSlotRef
+
+
+def test_expect_is_one_value_or_every_value_and_travels_through_the_batch() -> None:
+    one = SetChange(subject="dev.item/a", field="n", value=2, expect=1)
+    assert one.expect == 1 and not isinstance(one.expect, bool)
+    flag = SetChange(subject="dev.item/a", field="f", value=False, expect=True)
+    assert flag.expect is True
+    many = TypeAdapter(Change).validate_python(
+        {"op": "retire", "target": _CLAIM, "expect": ["dev.item/b", "dev.item/c"]}
+    )
+    assert isinstance(many, RetireChange) and many.expect == ("dev.item/b", "dev.item/c")
+    none = SetChange(subject="dev.item/a", field="f", value="x", expect=[])
+    assert none.expect == ()
+    assert SetChange(subject="dev.item/a", field="f", value="x").expect is None
+    add = AddChange(subject="dev.item/a", field="g", value="dev.item/b", expect_absent=True)
+    assert add.expect_absent
+    with pytest.raises(ValidationError):
+        SetChange(subject="dev.item/a", field="f", value="x", expect={"nested": 1})  # type: ignore[arg-type]
+    lowered = as_write_request(
+        PlaybillSetRequestV1(subject="dev.item/a", field="f", value="x", because="y", expect="w")
+    )
+    assert lowered.changes[0].expect == "w"  # type: ignore[union-attr]
+    retired = as_write_request(PlaybillRetireRequestV1(target=_CLAIM, because="y", expect=["w"]))
+    assert retired.changes[0].expect == ("w",)  # type: ignore[union-attr]

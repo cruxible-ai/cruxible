@@ -228,8 +228,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "the live value (no Claim ID needed), adds a missing Subject of a known kind, and "
         "accepts in the same call when policy lets you; otherwise it answers awaiting_approval "
         "with the approve call. dry_run previews without writing; pass the coordinate you read "
-        "at as `at` to refuse if the field changed since. Check each change's verdict and "
-        "the warnings."
+        "at as `at` to refuse if the field changed since, or the value you read as `expect` "
+        "(compare-and-set). Check each change's verdict and the warnings."
     ),
     "cruxible_playbill_retire": (
         "Use to end one live Claim: by Claim ID, or by Subject and field when it holds one "

@@ -3501,6 +3501,20 @@ def _write_request(model: type[ResultT], fields: Mapping[str, Any], *, example: 
         ) from None
 
 
+def _expect_option_value(values: tuple[str, ...]) -> str | tuple[str, ...] | None:
+    """``--expect`` given once is the value; given again, every live value."""
+
+    if not values:
+        return None
+    return values[0] if len(values) == 1 else values
+
+
+_EXPECT_HELP = (
+    "Refuse unless the field holds this value now (compare-and-set); repeat it "
+    "for every value of a many-valued field."
+)
+
+
 def _evidence_option_value(
     evidence_file: str | None, capture: str | None, workspace_root: str
 ) -> dict[str, Any] | None:
@@ -3533,6 +3547,7 @@ def _evidence_option_value(
 @click.option("--capture", default=None, help="Cite an existing Capture by digest.")
 @click.option("--role", default=None, help="Only when the field permits several roles.")
 @click.option("--contend", is_flag=True, help="Contest the live value instead of replacing it.")
+@click.option("--expect", "expect", multiple=True, help=_EXPECT_HELP)
 @click.option(
     "--workspace-root",
     default=".",
@@ -3551,6 +3566,7 @@ def set_value(
     capture: str | None,
     role: str | None,
     contend: bool,
+    expect: tuple[str, ...],
     workspace_root: str,
     dry_run: bool,
     no_accept: bool,
@@ -3574,6 +3590,7 @@ def set_value(
             "evidence": _evidence_option_value(evidence_file, capture, workspace_root),
             "role": role,
             "contend": contend,
+            "expect": _expect_option_value(expect),
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,
@@ -3598,6 +3615,7 @@ def set_value(
     show_default=True,
     help="was-rescinded: withdrawn; was-wrong: it was false; superseded: its shape is gone.",
 )
+@click.option("--expect", "expect", multiple=True, help=_EXPECT_HELP)
 @_write_options
 @handle_errors
 def retire(
@@ -3605,6 +3623,7 @@ def retire(
     field: str | None,
     because: str,
     reason: str,
+    expect: tuple[str, ...],
     dry_run: bool,
     no_accept: bool,
     at_oid: str | None,
@@ -3621,6 +3640,7 @@ def retire(
             "target": target if field is None else {"subject": target, "field": field},
             "because": because,
             "reason": reason,
+            "expect": _expect_option_value(expect),
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,
