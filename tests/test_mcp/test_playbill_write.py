@@ -233,3 +233,20 @@ entries:
     change = writes[0].changes[0]
     assert isinstance(change, SetChange) and isinstance(change.evidence, FileEvidence)
     assert change.evidence.observation == observed.observation
+
+
+def test_write_tool_outputs_declare_each_warning_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+    tools = {item.name: item for item in asyncio.run(create_server().list_tools())}
+    for name in ("cruxible_playbill_set", "cruxible_playbill_retire", "cruxible_playbill_write"):
+        schema = tools[name].outputSchema
+        assert schema is not None
+        defs = schema.get("$defs", {})
+        verdict = defs["VerdictNotSupportedWarning"]
+        newer = defs["NewerCaptureNotCitableWarning"]
+        assert verdict["properties"]["code"]["const"] == "playbill.write.verdict_not_supported"
+        assert newer["properties"]["code"]["const"] == "playbill.write.newer_capture_not_citable"
+        assert "verdict" in verdict["required"] and "capture" not in verdict["properties"]
+        assert "capture" in newer["required"] and "verdict" not in newer["properties"]

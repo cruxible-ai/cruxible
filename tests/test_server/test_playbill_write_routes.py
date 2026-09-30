@@ -225,3 +225,18 @@ def test_the_dedicated_claim_retire_route_is_gone(
         json={"mode": "preflight"},
     )
     assert response.status_code in {404, 405}
+
+
+def test_the_openapi_outcome_declares_each_warning_variant(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, _instance_id, _key = playbill_http
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    outcome = schemas["WriteOutcome"]
+    items = outcome["properties"]["warnings"]["items"]
+    assert items["discriminator"]["propertyName"] == "code"
+    verdict = schemas["VerdictNotSupportedWarning"]
+    newer = schemas["NewerCaptureNotCitableWarning"]
+    assert "verdict" in verdict["required"] and "capture" not in verdict["properties"]
+    assert "capture" in newer["required"] and "verdict" not in newer["properties"]
+    assert "WriteWarning" not in schemas

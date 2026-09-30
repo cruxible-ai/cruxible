@@ -193,3 +193,84 @@ def test_capture_evidence_takes_a_handle_and_contract_evidence_a_name() -> None:
         TypeAdapter(Evidence).validate_python({"kind": "contract", "contract": ""})
     assert capture_handle("sha256:" + "0123456789ab" + "f" * 52) == "CAP-0123456789ab"
     assert capture_handle("sha256:" + "a" * 64, length=16) == "CAP-" + "a" * 16
+
+
+def test_a_warning_is_one_flat_variant_per_code() -> None:
+    from cruxible_client.contracts.write import (
+        NewerCaptureNotCitableWarning,
+        VerdictNotSupportedWarning,
+        WriteWarning,
+    )
+
+    adapter = TypeAdapter(WriteWarning)
+    verdict = adapter.validate_python(
+        {
+            "code": "playbill.write.verdict_not_supported",
+            "change": 0,
+            "verdict": "uncovered",
+            "message": "m",
+        }
+    )
+    assert isinstance(verdict, VerdictNotSupportedWarning)
+    newer = adapter.validate_python(
+        {
+            "code": "playbill.write.newer_capture_not_citable",
+            "change": 0,
+            "capture": "CAP-0123456789ab",
+            "message": "m",
+        }
+    )
+    assert isinstance(newer, NewerCaptureNotCitableWarning)
+    invalid = [
+        # An R05 warning without the verdict it is about.
+        {"code": "playbill.write.verdict_not_supported", "change": 0, "message": "m"},
+        # An uncitable-Capture warning with a verdict and no Capture.
+        {
+            "code": "playbill.write.newer_capture_not_citable",
+            "change": 0,
+            "verdict": "uncovered",
+            "message": "m",
+        },
+        # Each variant forbids the other's field.
+        {
+            "code": "playbill.write.verdict_not_supported",
+            "change": 0,
+            "verdict": "uncovered",
+            "capture": "CAP-0123456789ab",
+            "message": "m",
+        },
+        {
+            "code": "playbill.write.newer_capture_not_citable",
+            "change": 0,
+            "capture": "sha256:" + "0" * 64,
+            "message": "m",
+        },
+        {"code": "playbill.write.something_else", "change": 0, "message": "m"},
+    ]
+    for payload in invalid:
+        with pytest.raises(ValidationError):
+            adapter.validate_python(payload)
+        with pytest.raises(ValidationError):
+            WriteOutcome.model_validate(
+                {
+                    "status": "accepted",
+                    "coordinate": {"git_oid": "0123456789ab", "generation": 1},
+                    "warnings": [payload],
+                }
+            )
+
+
+def test_the_outcome_schema_discriminates_warnings_by_code() -> None:
+    schema = WriteOutcome.model_json_schema()
+    defs = schema["$defs"]
+    items = schema["properties"]["warnings"]["items"]
+    assert items["discriminator"]["propertyName"] == "code"
+    assert set(items["discriminator"]["mapping"]) == {
+        "playbill.write.verdict_not_supported",
+        "playbill.write.newer_capture_not_citable",
+    }
+    verdict = defs["VerdictNotSupportedWarning"]
+    newer = defs["NewerCaptureNotCitableWarning"]
+    assert "verdict" in verdict["required"] and "capture" not in verdict["properties"]
+    assert "capture" in newer["required"] and "verdict" not in newer["properties"]
+    assert verdict["additionalProperties"] is False and newer["additionalProperties"] is False

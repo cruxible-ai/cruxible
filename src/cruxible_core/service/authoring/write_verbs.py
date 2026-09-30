@@ -101,11 +101,13 @@ from cruxible_client.contracts.write import (
     ContractEvidence,
     ExpectedValue,
     FileEvidence,
+    NewerCaptureNotCitableWarning,
     PlaybillWriteRequestV1,
     RetireChange,
     SelfEvidence,
     SetChange,
     SlotRef,
+    VerdictNotSupportedWarning,
     WriteOutcome,
     WriteProposalRef,
     WriteRefusal,
@@ -1108,8 +1110,7 @@ class _Planner:
                 continue
             if uncitable is not None and uncitable.envelope.observed_at > item.envelope.observed_at:
                 self.plan.notes.append(
-                    WriteWarning(
-                        code="playbill.write.newer_capture_not_citable",
+                    NewerCaptureNotCitableWarning(
                         change=index,
                         capture=capture_handle(uncitable.digest),
                         message=(
@@ -1933,8 +1934,7 @@ def _with_verdicts(
             else None
         )
         warnings.append(
-            WriteWarning(
-                code="playbill.write.verdict_not_supported",
+            VerdictNotSupportedWarning(
                 change=planned.index,
                 claim=outcome.claim,
                 verdict=verdict,
@@ -1952,7 +1952,7 @@ def _first_repair(warnings: Sequence[WriteWarning]) -> str | None:
         (
             item.repair
             for item in warnings
-            if item.repair is not None and item.code == "playbill.write.verdict_not_supported"
+            if isinstance(item, VerdictNotSupportedWarning) and item.repair is not None
         ),
         None,
     )

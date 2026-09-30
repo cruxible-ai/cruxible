@@ -739,7 +739,8 @@ def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
         item for item in outcome.warnings if item.code != "playbill.write.verdict_not_supported"
     ]
     assert note.code == "playbill.write.newer_capture_not_citable"
-    assert (note.change, note.capture, note.verdict) == (0, capture_handle(canonical), None)
+    assert (note.change, note.capture) == (0, capture_handle(canonical))  # type: ignore[union-attr]
+    assert "verdict" not in note.model_dump(mode="json")
     assert capture_handle(older) in note.message and "canonical value" in note.message
     assert outcome.next != note.repair
     # A dry run says the same.

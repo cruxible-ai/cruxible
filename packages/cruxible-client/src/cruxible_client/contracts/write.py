@@ -434,31 +434,49 @@ class ApprovalNeeded(_StrictWriteModel):
     activate: str = Field(description="The call that accepts it once approved.")
 
 
-class WriteWarning(_StrictWriteModel):
-    """Something the write did that the writer did not ask for, said plainly.
+class VerdictNotSupportedWarning(_StrictWriteModel):
+    """The written Claim's verdict is not ``supported``; the write still lands.
 
-    ``playbill.write.verdict_not_supported``: the written Claim's verdict is not
-    ``supported`` -- for example ``uncovered`` because the ClaimType's evidence
-    policy does not admit the evidence given. The write still lands.
-
-    ``playbill.write.newer_capture_not_citable``: contract evidence cited an
-    older Capture because the newest one (``capture``) is not committed as
-    exact bytes, so no Claim can cite it.
+    For example ``uncovered``, because the ClaimType's evidence policy does not
+    admit the evidence given (R05). ``repair`` is the write again with admitted
+    evidence, and becomes the outcome's ``next``.
     """
 
-    code: str
+    code: Literal["playbill.write.verdict_not_supported"] = "playbill.write.verdict_not_supported"
     change: int
     claim: str | None = Field(default=None, exclude_if=_omit_none)
-    verdict: str | None = Field(default=None, exclude_if=_omit_none)
-    capture: str | None = Field(
-        default=None,
-        exclude_if=_omit_none,
-        description="The Capture the warning is about, as its handle CAP-<12 hex>.",
-    )
+    verdict: str
     message: str
     admitted_contracts: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
     used_contract: str | None = Field(default=None, exclude_if=_omit_none)
     repair: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class NewerCaptureNotCitableWarning(_StrictWriteModel):
+    """Contract evidence cited an older Capture: the newest cannot back a Claim.
+
+    ``capture`` is that newest Capture. It is not committed as exact bytes, so no
+    Claim can map a source span onto it; the write cited the change's
+    ``capture`` instead.
+    """
+
+    code: Literal["playbill.write.newer_capture_not_citable"] = (
+        "playbill.write.newer_capture_not_citable"
+    )
+    change: int
+    capture: str = Field(
+        pattern=CAPTURE_HANDLE_PATTERN,
+        description="The newest Capture, which no Claim can cite, as its handle CAP-<12 hex>.",
+    )
+    message: str
+    repair: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+WriteWarning = Annotated[
+    VerdictNotSupportedWarning | NewerCaptureNotCitableWarning,
+    Field(discriminator="code"),
+]
+"""Something the write did that the writer did not ask for, said plainly."""
 
 
 class WriteRefusal(_StrictWriteModel):
@@ -521,6 +539,7 @@ __all__ = [
     "ExpectedValue",
     "FieldName",
     "FileEvidence",
+    "NewerCaptureNotCitableWarning",
     "PlaybillRetireRequestV1",
     "PlaybillSetRequestV1",
     "PlaybillWriteRequestV1",
@@ -530,6 +549,7 @@ __all__ = [
     "AddChange",
     "SlotRef",
     "SubjectRef",
+    "VerdictNotSupportedWarning",
     "WriteAccept",
     "WriteOp",
     "WriteOutcome",
