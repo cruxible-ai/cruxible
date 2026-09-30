@@ -30,10 +30,11 @@ was selected, and entering one workspace never retargets another.
 `--principal-id` (or `CRUXIBLE_PRINCIPAL_ID`) names the principal this process
 acts as; the CLI, SDK (`Playbill.connect(principal_id=...)`) and MCP server all
 send it with every request. The daemon checks that it names a registered, active
-principal on the instance and attributes the work to it; an unregistered or
-revoked ID is refused (`playbill.identity.principal_absent` /
-`principal_revoked`) with the command that repairs it, except by `whoami` and
-`orient`, which explain the refusal. With daemon auth off the principal ID is a
+principal on the instance before any write and attributes the work to it; an
+unregistered or revoked ID is refused on writes (`playbill.identity.principal_absent`
+/ `principal_revoked`) with the command that repairs it. Reads stay open, so an
+agent can read (and `whoami` explains its standing) while its registration
+awaits activation. With daemon auth off the principal ID is a
 claim of identity, not authentication: every process of the same OS user is
 equally trusted and could claim any principal. With auth on the bearer
 credential decides who acts, and a principal ID that disagrees with it is refused

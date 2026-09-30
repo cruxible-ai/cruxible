@@ -93,7 +93,7 @@ def test_init_names_the_owner_mismatch_and_the_command_that_repairs_it(
     assert body["repair"]["operation"] == "playbill.init"
 
 
-def test_an_unregistered_claim_is_refused_everywhere_but_the_identity_reads(
+def test_an_unregistered_claim_reads_but_is_refused_every_write(
     daemon: tuple[TestClient, Path], tmp_path: Path
 ) -> None:
     client, managed = daemon
@@ -102,17 +102,27 @@ def test_an_unregistered_claim_is_refused_everywhere_but_the_identity_reads(
 
     listed = client.get(f"/api/v1/{INSTANCE}/playbill/principals", headers=mallory)
     who = client.get(f"/api/v1/{INSTANCE}/playbill/whoami", headers=mallory)
+    withdrawn = client.post(
+        f"/api/v1/{INSTANCE}/playbill/proposals/sha256:{'0' * 64}/withdraw",
+        json={"reason": "not mine"},
+        headers=mallory,
+    )
+    created = _create(client, mallory)
 
-    assert listed.status_code == 403
-    assert listed.json()["error_code"] == "playbill.identity.principal_absent"
-    assert "cruxible playbill principal add mallory --key-dir DIR" in listed.json()["message"]
-    assert listed.json()["repair"] == {
-        "operation": "playbill.principal.add",
-        "arguments": {"principal_id": "mallory"},
-    }
+    # Reads stay open: an agent reads while its registration awaits activation.
+    assert listed.status_code == 200, listed.text
     assert who.status_code == 200, who.text
     assert who.json()["actor_id"] == "mallory"
     assert who.json()["principal_registration_status"] == "absent"
+    for refused in (withdrawn, created):
+        assert refused.status_code == 403  # type: ignore[attr-defined]
+        body = refused.json()  # type: ignore[attr-defined]
+        assert body["error_code"] == "playbill.identity.principal_absent"
+        assert "cruxible playbill principal add mallory --key-dir DIR" in body["message"]
+        assert body["repair"] == {
+            "operation": "playbill.principal.add",
+            "arguments": {"principal_id": "mallory"},
+        }
 
 
 def test_a_malformed_claim_is_refused_before_it_names_anyone(

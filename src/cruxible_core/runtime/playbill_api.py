@@ -263,7 +263,7 @@ from cruxible_core.service.evidence.source_catalog import (
     service_propose_playbill_source_bundle,
 )
 from cruxible_core.service.floor.floor import MANIFEST_PATH, service_export_playbill_floor
-from cruxible_core.service.identity import credential_unbound_refusal
+from cruxible_core.service.identity import credential_unbound_refusal, principal_refusal
 from cruxible_core.service.kits import (
     service_add_kit,
     service_build_kit,
@@ -399,10 +399,37 @@ def _unbound_credential() -> ResolvedAuthContext | None:
     return None
 
 
-def _actor_id() -> str:
-    """Use credential-derived request identity at every Playbill write boundary."""
+def _write_actor_context(instance_id: str) -> GovernedActorContext | None:
+    """The request's actor at a write boundary, refused if its claim cannot write here.
+
+    A configured principal ID (an auth-off daemon's claim) must name a registered,
+    active principal before it writes; reads stay open, so an agent can read
+    while its registration awaits activation. A bearer credential's principal is
+    checked when the credential authenticates.
+    """
 
     actor = _actor_context()
+    auth_context = get_current_auth_context()
+    if (
+        actor is not None
+        and auth_context is not None
+        and auth_context.credential_type == "principal_claim"
+    ):
+        try:
+            instance = get_playbill_manager().get(instance_id)
+        except PlaybillBootstrapError:
+            # No registry exists before init; init checks the owner it names.
+            return actor
+        refusal = principal_refusal(instance, actor.actor_id, configured=True)
+        if refusal is not None:
+            raise refusal
+    return actor
+
+
+def _actor_id(instance_id: str) -> str:
+    """Use credential-derived request identity at every Playbill write boundary."""
+
+    actor = _write_actor_context(instance_id)
     if actor is None:
         unbound = _unbound_credential()
         if unbound is not None:
@@ -483,7 +510,7 @@ def playbill_init(
     # it is the operator, and it acts as no principal. Every other caller must
     # itself be one of the owners it names.
     operator_designates = _unbound_credential() is not None
-    actor_id = None if operator_designates else _actor_id()
+    actor_id = None if operator_designates else _actor_id(instance_id)
     if not principals:
         raise PlaybillBootstrapError("bootstrap requires at least one client principal")
     ordinary = {
@@ -571,7 +598,7 @@ def playbill_instance_decommission(
 
     check_permission("cruxible_playbill_instance_decommission", instance_id=instance_id)
     instance = get_playbill_manager().get(instance_id)
-    record = instance.decommission(reason=reason, decommissioned_by=_actor_id())
+    record = instance.decommission(reason=reason, decommissioned_by=_actor_id(instance_id))
     return contracts.PlaybillInstanceDecommissionResultV1(
         instance_id=instance_id,
         reason=record.reason,
@@ -680,7 +707,7 @@ def playbill_provider_install(
             manager.get(instance_id),
             operator=manager.provider_runtime_operator(),
             request=request,
-            actor_id=_actor_id(),
+            actor_id=_actor_id(instance_id),
             timestamp=canonical_candidate_timestamp(utc_now()),
         ),
     )
@@ -711,7 +738,7 @@ def playbill_kit_add(
         lambda: service_add_kit(
             get_playbill_manager().get(instance_id),
             request,
-            actor_id=_actor_id(),
+            actor_id=_actor_id(instance_id),
             timestamp=canonical_candidate_timestamp(utc_now()),
         ),
     )
@@ -723,7 +750,7 @@ def playbill_evidence_rules_upgrade(instance_id: str) -> EvidenceRuleUpgradeResu
         "evidence rule upgrade",
         lambda: service_upgrade_evidence_rules(
             get_playbill_manager().get(instance_id),
-            actor_id=_actor_id(),
+            actor_id=_actor_id(instance_id),
             timestamp=canonical_candidate_timestamp(utc_now()),
         ),
     )
@@ -738,7 +765,7 @@ def playbill_kit_remove(
         lambda: service_remove_kit(
             get_playbill_manager().get(instance_id),
             request,
-            actor_id=_actor_id(),
+            actor_id=_actor_id(instance_id),
             timestamp=canonical_candidate_timestamp(utc_now()),
         ),
     )
@@ -770,7 +797,7 @@ def playbill_propose_document(
         lambda: service_propose_playbill_document(
             get_playbill_manager().get(instance_id),
             shell=shell,
-            actor_id=_actor_id(),
+            actor_id=_actor_id(instance_id),
             proposal_name=proposal_name,
             timestamp=canonical_candidate_timestamp(utc_now()),
             source_compilation_digest=source_compilation_digest,
@@ -796,7 +823,7 @@ def playbill_propose_compiler_upgrade(
             get_playbill_manager().get(instance_id),
             target=target,
             base=base,
-            actor_id=_actor_id(),
+            actor_id=_actor_id(instance_id),
             proposal_name=proposal_name,
             timestamp=canonical_candidate_timestamp(utc_now()),
         ),
@@ -817,7 +844,7 @@ def playbill_propose_principal_change(
         lambda: service_propose_playbill_principal_change(
             get_playbill_manager().get(instance_id),
             principal=principal,
-            actor_id=_actor_id(),
+            actor_id=_actor_id(instance_id),
             proposal_name=proposal_name,
             timestamp=canonical_candidate_timestamp(utc_now()),
             base=base,
@@ -891,7 +918,7 @@ def playbill_readmit_proposal(
     result = service_readmit_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
-        actor_id=_actor_id(),
+        actor_id=_actor_id(instance_id),
     )
     return contracts.PlaybillProposalReadmitResult.model_validate(result.model_dump(mode="json"))
 
@@ -905,7 +932,7 @@ def playbill_withdraw_proposal(
     result = service_withdraw_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
-        actor_id=_actor_id(),
+        actor_id=_actor_id(instance_id),
         reason=reason,
         withdrawn_at=canonical_candidate_timestamp(utc_now()),
         # No bound instance scope IS the daemon-wide operator credential (or an
@@ -1055,7 +1082,7 @@ def playbill_submit_approval(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
         attestation=attestation,
-        authenticated_submitter=_actor_id(),
+        authenticated_submitter=_actor_id(instance_id),
     )
     return contracts.PlaybillApprovalReceipt.model_validate(result.model_dump(mode="json"))
 
@@ -1065,7 +1092,7 @@ def playbill_activate(
     proposal_id: str,
 ) -> contracts.PlaybillActivationReceipt:
     check_permission("cruxible_playbill_activate", instance_id=instance_id)
-    activated_by = _actor_id()
+    activated_by = _actor_id(instance_id)
     result = service_activate_playbill_proposal(
         get_playbill_manager().get(instance_id),
         proposal_id=proposal_id,
@@ -1200,7 +1227,7 @@ def playbill_propose_source_bundle(
             get_playbill_manager().get(instance_id),
             bundle=bundle,
             source_name=source_name,
-            actor_id=_actor_id(),
+            actor_id=_actor_id(instance_id),
             proposal_name=proposal_name,
             timestamp=canonical_candidate_timestamp(utc_now()),
         ),
@@ -1301,7 +1328,7 @@ def playbill_propose_claim_type(
         lambda: service_propose_playbill_claim_type(
             instance,
             claim_type=claim_type,
-            actor_id=_actor_id(),
+            actor_id=_actor_id(instance_id),
             proposal_name=proposal_name,
             timestamp=canonical_candidate_timestamp(utc_now()),
             base=base,
@@ -1326,7 +1353,7 @@ def playbill_propose_claim_type_input(
         lambda: service_propose_playbill_claim_type_input(
             get_playbill_manager().get(instance_id),
             input=input,
-            actor_id=_actor_id(),
+            actor_id=_actor_id(instance_id),
             proposal_name=proposal_name,
             timestamp=canonical_candidate_timestamp(utc_now()),
         ),
@@ -1345,7 +1372,7 @@ def playbill_migrate_claim_type(
     result = service_migrate_claim_type(
         get_playbill_manager().get(instance_id),
         request=request,
-        actor=AuthenticatedActor(actor_id=_actor_id()),
+        actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
     )
     return _CLAIM_TYPE_MIGRATION_RESPONSE.validate_python(result.model_dump(mode="json"))
 
@@ -1390,7 +1417,7 @@ def playbill_retire_claim(
         get_playbill_manager().get(instance_id),
         claim_id=claim_id,
         request=request,
-        actor=AuthenticatedActor(actor_id=_actor_id()),
+        actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
     )
     return _CLAIM_RETIRE_RESPONSE.validate_python(result.model_dump(mode="json"))
 
@@ -1404,7 +1431,7 @@ def playbill_append_claim_attestation(
     return service_append_claim_attestation(
         get_playbill_manager().get(instance_id),
         request=request,
-        actor_id=_actor_id(),
+        actor_id=_actor_id(instance_id),
     )
 
 
@@ -1418,7 +1445,7 @@ def playbill_recover_claim_attestations(instance_id: str) -> None:
 def _authoring_coordinator(
     instance_id: str,
 ) -> tuple[AuthoringIntentCoordinator, AuthenticatedActor]:
-    actor = AuthenticatedActor(actor_id=_actor_id())
+    actor = AuthenticatedActor(actor_id=_actor_id(instance_id))
     instance = get_playbill_manager().get(instance_id)
     return AuthoringIntentCoordinator.for_instance(instance), actor
 
@@ -1474,7 +1501,7 @@ def playbill_predict(
     """Submit a governed test of an already accepted hypothesis."""
 
     check_permission("cruxible_playbill_predict", instance_id=instance_id)
-    actor_context = _actor_context()
+    actor_context = _write_actor_context(instance_id)
     if actor_context is None:
         raise AuthenticationError("Prediction authoring requires an authenticated actor identity")
     return service_predict_playbill(
@@ -1494,7 +1521,7 @@ def playbill_settle_prediction(
     """Settle one prediction through admission or retained terminal authority."""
 
     check_permission("cruxible_playbill_settle", instance_id=instance_id)
-    actor_context = _actor_context()
+    actor_context = _write_actor_context(instance_id)
     if actor_context is None:
         raise AuthenticationError("Prediction settlement requires an authenticated actor identity")
     return service_settle_playbill_prediction(
@@ -2029,7 +2056,7 @@ def playbill_procedure_bind(
         get_playbill_manager().get(instance_id),
         name=name,
         request=request,
-        actor=AuthenticatedActor(actor_id=_actor_id()),
+        actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
         timestamp=canonical_candidate_timestamp(utc_now()),
     )
     return contracts.PlaybillProcedureBindResult.model_validate(result.model_dump(mode="json"))
@@ -2078,7 +2105,7 @@ def playbill_procedure_run(
             get_playbill_manager().get(instance_id), name, request.at
         ),
     )
-    actor = _actor_context()
+    actor = _write_actor_context(instance_id)
     if actor is None:
         raise AuthenticationError("Procedure run requires an authenticated actor identity")
     manager = get_playbill_manager()
@@ -2147,7 +2174,7 @@ def playbill_procedure_measure(
     """
 
     check_permission("cruxible_playbill_procedure_measure", instance_id=instance_id)
-    actor_context = _actor_context()
+    actor_context = _write_actor_context(instance_id)
     if actor_context is None:
         raise AuthenticationError("Measurement evaluation requires an authenticated actor identity")
     return service_measure_playbill_procedure(
@@ -2180,7 +2207,7 @@ def playbill_line_arm(instance_id: str, line: str) -> contracts.LineArmV1:
     """Arm a Line forward-only under the calling credential."""
 
     check_permission("cruxible_playbill_line_arm", instance_id=instance_id)
-    actor = _actor_context()
+    actor = _write_actor_context(instance_id)
     if actor is None:
         raise AuthenticationError("Arming requires an authenticated actor identity")
     from cruxible_core.runtime.line_arms import current_arm_principal
@@ -2201,7 +2228,7 @@ def playbill_line_disarm(instance_id: str, line: str) -> contracts.LineArmV1:
     """Stop a Line admitting work on its own; admitted runs are not cancelled."""
 
     check_permission("cruxible_playbill_line_disarm", instance_id=instance_id)
-    actor = _actor_context()
+    actor = _write_actor_context(instance_id)
     if actor is None:
         raise AuthenticationError("Disarming requires an authenticated actor identity")
     from cruxible_core.service.procedures.line_dispatch import service_disarm_line
@@ -2224,7 +2251,7 @@ def playbill_line_evaluate(
     instance_id: str, line: str, *, request: contracts.LineEvaluateRequestV1
 ) -> contracts.LineTriggerCheckResultV1:
     check_permission("cruxible_playbill_line_evaluate", instance_id=instance_id)
-    actor = _actor_context()
+    actor = _write_actor_context(instance_id)
     if actor is None:
         raise AuthenticationError("Historical evaluation requires an authenticated actor identity")
     from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
@@ -2253,7 +2280,7 @@ def playbill_line_dispatch(
         instance_id,
         lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line),
     )
-    actor = _actor_context()
+    actor = _write_actor_context(instance_id)
     if actor is None:
         raise AuthenticationError("Dispatch requires an authenticated actor identity")
     from cruxible_core.service.procedures.line_dispatch import service_dispatch_line
@@ -2302,7 +2329,7 @@ def playbill_line_run(
         instance_id,
         lambda: line_run_target_rung(get_playbill_manager().get(instance_id), line_identity_digest),
     )
-    actor = _actor_context()
+    actor = _write_actor_context(instance_id)
     if actor is None:
         raise AuthenticationError("Line run requires an authenticated actor identity")
     manager = get_playbill_manager()
@@ -2389,8 +2416,8 @@ def playbill_audit(
     return contracts.PlaybillAuditResult.model_validate(result.model_dump(mode="json"))
 
 
-def _curation_actor() -> GovernedActorContext:
-    actor = _actor_context()
+def _curation_actor(instance_id: str) -> GovernedActorContext:
+    actor = _write_actor_context(instance_id)
     if actor is None:
         raise AuthenticationError("Playbill curation actions require an attributed actor")
     return actor
@@ -2412,7 +2439,7 @@ def playbill_curation_overrule(
     result = service_overrule_playbill_curation(
         get_playbill_manager().get(instance_id),
         request=parsed,
-        actor_context=_curation_actor(),
+        actor_context=_curation_actor(instance_id),
     )
     return contracts.PlaybillCurationActionResult.model_validate(result.model_dump(mode="json"))
 
@@ -2433,7 +2460,7 @@ def playbill_curation_accept_fixed(
     result = service_accept_fixed_playbill_curation(
         get_playbill_manager().get(instance_id),
         request=parsed,
-        actor_context=_curation_actor(),
+        actor_context=_curation_actor(instance_id),
     )
     return contracts.PlaybillCurationActionResult.model_validate(result.model_dump(mode="json"))
 
@@ -2454,7 +2481,7 @@ def playbill_curation_suppress(
     result = service_suppress_playbill_curation(
         get_playbill_manager().get(instance_id),
         request=parsed,
-        actor_context=_curation_actor(),
+        actor_context=_curation_actor(instance_id),
     )
     return contracts.PlaybillCurationActionResult.model_validate(result.model_dump(mode="json"))
 

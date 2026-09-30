@@ -338,7 +338,7 @@ async def list_principals(instance_id: str) -> contracts.PlaybillPrincipalList:
     response_model=contracts.PlaybillWhoAmI,
 )
 async def whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
-    return playbill_api.playbill_whoami(resolve_server_instance_id(instance_id, identity_read=True))
+    return playbill_api.playbill_whoami(resolve_server_instance_id(instance_id))
 
 
 @router.get(
@@ -380,7 +380,7 @@ async def orient(
     if at is not None and coordinate is not None:
         raise PlaybillFormatError("orient takes at or the four coordinate fields, not both")
     return playbill_api.playbill_orient(
-        resolve_server_instance_id(instance_id, identity_read=True),
+        resolve_server_instance_id(instance_id),
         kind=kind,
         section=section,
         limit=limit,

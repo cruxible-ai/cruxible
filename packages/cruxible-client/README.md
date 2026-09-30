@@ -105,7 +105,7 @@ checks run.
 | Setting | Default / behavior |
 |---|---|
 | `CRUXIBLE_SERVER_BEARER_TOKEN` | Used when `token` is omitted; never creates a principal or grants rights. |
-| `CRUXIBLE_PRINCIPAL_ID` | Used when `principal_id` is omitted; the daemon checks it is a registered, active principal and attributes the session to it. |
+| `CRUXIBLE_PRINCIPAL_ID` | Used when `principal_id` is omitted; the daemon checks it is a registered, active principal before any write and attributes the session to it; reads stay open. |
 | `CRUXIBLE_CLI_CONTEXT_PATH` | Otherwise `~/.cruxible/client-context.json`. |
 | `CRUXIBLE_CLIENT_TIMEOUT_S` | Ordinary HTTP read/write timeout: 180 seconds; connect/pool: 5 seconds. |
 | Default access profile | `sdk-default`, classes `("instance", "public")`, disclose restricted existence `True`. |

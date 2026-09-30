@@ -53,7 +53,7 @@ export CRUXIBLE_PRINCIPAL_ID=me
 ~~~
 
 Every later command, SDK session and MCP server sends `CRUXIBLE_PRINCIPAL_ID`,
-and the daemon attributes the work to that principal after checking it is
+and the daemon attributes writes to that principal after checking it is
 registered and active. With auth off this is a claim of identity, not
 authentication: every process of your OS user is equally trusted. Approvals
 are still signed with the principal's private key.

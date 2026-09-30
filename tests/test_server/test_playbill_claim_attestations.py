@@ -35,7 +35,7 @@ def attestation_http(
     get_playbill_manager().clear()
     get_registry().create_governed_instance_with_id(instance.descriptor.instance_id)
     get_playbill_manager().register(instance.descriptor.instance_id, instance)
-    monkeypatch.setattr(playbill_api, "_actor_id", lambda: "owner")
+    monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "owner")
     with TestClient(create_app()) as client:
         yield client, instance, claim_id, owner
     get_playbill_manager().clear()
@@ -67,7 +67,7 @@ def test_http_actor_relay_and_malformed_request_are_typed(
 ) -> None:
     client, instance, claim_id, owner = attestation_http
     request = _request(instance, owner, claim_id, tmp_path)
-    monkeypatch.setattr(playbill_api, "_actor_id", lambda: "reviewer")
+    monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "reviewer")
     relay = client.post(
         f"/api/v1/{instance.descriptor.instance_id}/playbill/claim-attestations",
         json=request.model_dump(mode="json"),

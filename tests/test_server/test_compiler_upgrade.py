@@ -43,7 +43,7 @@ def test_upgrade_surfaces_create_the_same_reviewable_proposal(
     before = instance.accepted_coordinate()
     base = PlaybillAcceptedCoordinate.from_internal(before)
     monkeypatch.setattr(playbill_api.get_playbill_manager(), "get", lambda _: instance)
-    monkeypatch.setattr(playbill_api, "_actor_id", lambda: "owner")
+    monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "owner")
     client = CruxibleClient(base_url="http://testserver")
     client._client.close()
     client._client = host_client
@@ -112,7 +112,7 @@ def test_upgrade_to_the_current_compiler_is_a_coded_400_not_a_500(
     before = instance.accepted_coordinate()
     base = PlaybillAcceptedCoordinate.from_internal(before)
     monkeypatch.setattr(playbill_api.get_playbill_manager(), "get", lambda _: instance)
-    monkeypatch.setattr(playbill_api, "_actor_id", lambda: "owner")
+    monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "owner")
 
     response = host_client.post(
         f"/api/v1/{instance_id}/playbill/compiler/proposals",
