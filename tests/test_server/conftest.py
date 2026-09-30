@@ -15,7 +15,7 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
-from tests.core_support._support import restamp_state_root
+from tests.core_support._support import build_inputs, restamp_state_root
 from tests.core_support._world_templates import TEMPLATES, copy_template
 
 
@@ -100,7 +100,7 @@ def _playbill_http(
     """
 
     template = TEMPLATES.template(
-        ("playbill_http", require_independent_approval),
+        ("playbill_http", require_independent_approval, build_inputs()),
         lambda root: _build_http_world(root, require_independent_approval),
     )
     copied = None if template is None else copy_template(template, tmp_path)

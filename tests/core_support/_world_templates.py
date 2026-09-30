@@ -19,13 +19,18 @@ Equivalence rules:
   current test. The second world a test builds gets a different template from
   the first, so two worlds in one test still have different keys and genesis
   coordinates, as two fresh builds would.
+- **Inputs key the world.** Callers put every immutable input a build reads
+  into its shape (timestamps, the compiler coordinate, the seeded policies, the
+  runtime version), so a constant reassigned without any patch machinery
+  builds its own world instead of reusing one built from other inputs.
 - **Clean builds only.** A test that patches the runtime (an older compiler, a
   poisoned Git environment, a stricter init) before asking for a world wants
   the patch to shape that build, and a build can reach patched code from any
   thread (the HTTP host initializes on the TestClient's). So the rule does not
   try to work out what a build touched: while any ``MonkeyPatch`` holds a live
-  attribute patch or non-environment item patch (other than the session's own
-  isolation seams in ``_ISOLATION_SEAMS``), or has changed the Git-relevant
+  attribute patch or non-environment item patch, while any ``unittest.mock``
+  patch is active (other than the session's own isolation seams in
+  ``_ISOLATION_SEAMS``), or while something has changed the Git-relevant
   environment, or a module-level callable no longer matches the session
   baseline, every request builds fresh and no template is built or used.
 - **Opt out.** ``CRUXIBLE_TEST_FRESH_WORLDS=1`` disables templates entirely and
@@ -49,6 +54,7 @@ from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generic, TypeVar
+from unittest import mock
 
 import pytest
 
@@ -105,6 +111,42 @@ if not getattr(pytest.MonkeyPatch.__init__, "_world_templates_tracked", False):
 
     _tracked_init._world_templates_tracked = True  # type: ignore[attr-defined]
     pytest.MonkeyPatch.__init__ = _tracked_init  # type: ignore[method-assign]
+
+# Every unittest.mock patch currently entered (decorator, context manager or
+# start/stop), by patcher identity, described by its target.
+_LIVE_MOCKS: dict[int, str] = {}
+_mock_patch: Any = getattr(mock, "_patch")
+_mock_patch_dict: Any = getattr(mock, "_patch_dict")
+if not getattr(_mock_patch.__enter__, "_world_templates_tracked", False):
+    _original_patch_enter = _mock_patch.__enter__
+    _original_patch_exit = _mock_patch.__exit__
+    _original_dict_patch = _mock_patch_dict._patch_dict
+    _original_dict_unpatch = _mock_patch_dict._unpatch_dict
+
+    def _tracked_patch_enter(self: Any) -> Any:
+        result = _original_patch_enter(self)
+        _LIVE_MOCKS[id(self)] = f"mock {_owner(self.target)}.{self.attribute}"
+        return result
+
+    def _tracked_patch_exit(self: Any, *exc_info: Any) -> Any:
+        _LIVE_MOCKS.pop(id(self), None)
+        return _original_patch_exit(self, *exc_info)
+
+    def _tracked_dict_patch(self: Any) -> Any:
+        result = _original_dict_patch(self)
+        if self.in_dict is not os.environ:  # the environment check covers os.environ
+            _LIVE_MOCKS[id(self)] = "mock dict"
+        return result
+
+    def _tracked_dict_unpatch(self: Any) -> Any:
+        _LIVE_MOCKS.pop(id(self), None)
+        return _original_dict_unpatch(self)
+
+    _tracked_patch_enter._world_templates_tracked = True  # type: ignore[attr-defined]
+    _mock_patch.__enter__ = _tracked_patch_enter
+    _mock_patch.__exit__ = _tracked_patch_exit
+    _mock_patch_dict._patch_dict = _tracked_dict_patch
+    _mock_patch_dict._unpatch_dict = _tracked_dict_unpatch
 
 
 @dataclass(frozen=True)
@@ -237,6 +279,9 @@ class WorldTemplates:
                     return f"monkeypatch item {key!r}"
                 if isinstance(key, str) and _relevant_env(key):
                     return f"monkeypatch env {key}"
+        live_mocks = tuple(_LIVE_MOCKS.values())
+        if live_mocks:
+            return live_mocks[0]
         for owner, namespace, name, value in self._callables or ():
             if namespace.get(name, _MISSING) is not value and (owner, name) not in _ISOLATION_SEAMS:
                 return f"replaced callable {owner}.{name}"

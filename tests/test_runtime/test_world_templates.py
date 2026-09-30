@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
 
 import cruxible_core.runtime.instance as instance_module
+import tests.core_support._support as support_module
 from cruxible_core.compiler.compiler import P2_B5_COMPILER
 from cruxible_core.ledger.checkpoints import CHECKPOINT_DIRECTORY
 from cruxible_core.ledger.recovery import RecoveredInstanceState
@@ -281,3 +284,64 @@ def test_seed_claims_serves_its_two_accepted_claims_from_a_copy(tmp_path: Path) 
     assert instance.root.is_relative_to(tmp_path.resolve())
     assert owner.private_key_path.is_relative_to(tmp_path)
     assert owner.private_key_path.is_file()
+
+
+_PATCHED_TIMESTAMP = "2020-01-02T03:04:05+00:00"
+
+
+def _genesis_time(instance: PlaybillInstance) -> str:
+    return subprocess.run(
+        [
+            "git",
+            "--git-dir",
+            str(instance.root / "ledger.git"),
+            "log",
+            "-1",
+            "--format=%cI",
+            instance.descriptor.genesis.git_oid,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def test_a_constant_mock_patched_during_the_first_build_is_never_shared(tmp_path: Path) -> None:
+    templates = WorldTemplates()
+    templates.configure(tmp_path / "templates")
+    with mock.patch.object(support_module, "FIXED_TIMESTAMP", _PATCHED_TIMESTAMP):
+        assert templates.template(("private",), _genesis) is None
+    assert not (tmp_path / "templates").exists()
+
+    clean = templates.template(("private",), _genesis)
+    assert clean is not None
+    assert _genesis_time(_reopened(clean.root, clean.value)) == "2026-08-10T12:00:00Z"
+    with mock.patch.object(support_module, "FIXED_TIMESTAMP", _PATCHED_TIMESTAMP):
+        assert templates.template(("private",), _genesis) is None
+
+
+def test_a_constant_reassigned_after_a_clean_build_does_not_reuse_it(tmp_path: Path) -> None:
+    """A plain reassignment is no patch anyone can see, so the inputs key the world."""
+
+    templates = WorldTemplates()
+    templates.configure(tmp_path / "templates")
+    shared = support_module.TEMPLATES
+    original = support_module.FIXED_TIMESTAMP
+    (tmp_path / "clean").mkdir()
+    (tmp_path / "patched").mkdir()
+    # Direct assignment, not monkeypatch: a live MonkeyPatch would force a fresh
+    # world by itself and hide what this pins.
+    support_module.TEMPLATES = templates
+    try:
+        clean, _owner = initialize_local(tmp_path / "clean")
+        templates._ordinal_test = None  # the next request is a later test's first world
+        support_module.FIXED_TIMESTAMP = _PATCHED_TIMESTAMP
+        try:
+            patched, _owner = initialize_local(tmp_path / "patched")
+        finally:
+            support_module.FIXED_TIMESTAMP = original
+    finally:
+        support_module.TEMPLATES = shared
+
+    assert _genesis_time(clean) == "2026-08-10T12:00:00Z"
+    assert _genesis_time(patched) == "2020-01-02T03:04:05Z"

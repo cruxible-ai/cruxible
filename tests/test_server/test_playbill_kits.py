@@ -68,7 +68,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._pc_c_support import capture_contract
-from tests.core_support._support import restamp_state_root
+from tests.core_support._support import build_inputs, restamp_state_root
 from tests.core_support._world_templates import TEMPLATES, copy_template
 
 SEATS = "acme.account.seats"
@@ -302,7 +302,7 @@ def _open_worlds(
     """The pair, copied from this process's template pair when one applies."""
 
     template = TEMPLATES.template(
-        ("kit_worlds", independent), lambda root: _build_worlds(root, independent)
+        ("kit_worlds", independent, build_inputs()), lambda root: _build_worlds(root, independent)
     )
     copied = None if template is None else copy_template(template, tmp_path)
     if template is None or copied is None:

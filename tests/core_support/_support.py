@@ -44,7 +44,7 @@ def initialize_local(
     """
 
     template = TEMPLATES.template(
-        ("genesis", object_format),
+        ("genesis", object_format, build_inputs()),
         lambda root: TemplateWorld.capture(*initialize_fresh(root, object_format=object_format)),
     )
     if template is not None:
@@ -52,6 +52,27 @@ def initialize_local(
         if opened is not None:
             return opened
     return initialize_fresh(tmp_path, object_format=object_format)
+
+
+def build_inputs() -> tuple[str, ...]:
+    """Every immutable input a world build reads besides its own arguments.
+
+    Templates are keyed by these values as they stand at request time, so a
+    constant reassigned without patch machinery gets a world built from it.
+    """
+
+    import cruxible_core
+    import cruxible_core.ledger.bootstrap as bootstrap_module
+    import cruxible_core.runtime.instance as instance_module
+
+    return (
+        cruxible_core.__version__,
+        FIXED_TIMESTAMP,
+        repr(instance_module.current_compiler_coordinate()),
+        repr(instance_module.seeded_procedure_runtime_policy()),
+        repr(bootstrap_module.seeded_procedure_runtime_policy()),
+        repr(instance_module.initial_authority_matrix()),
+    )
 
 
 def initialize_fresh(

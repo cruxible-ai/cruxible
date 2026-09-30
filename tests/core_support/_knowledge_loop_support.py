@@ -41,6 +41,7 @@ from tests.core_support._claim_authoring_support import (
 )
 from tests.core_support._support import (
     TemplateWorld,
+    build_inputs,
     client_material,
     initialize_fresh,
     initialize_local,
@@ -136,7 +137,7 @@ def seed_claims(
     """
 
     if claim_type_override is None:
-        template = TEMPLATES.template(("seeded",), _seeded_template)
+        template = TEMPLATES.template(_seeded_shape(), _seeded_template)
         if template is not None:
             opened = template_world(template, tmp_path, warm=True)
             if opened is not None:
@@ -144,6 +145,19 @@ def seed_claims(
     instance, owner = initialize_local(tmp_path)
     seed_claims_into(instance, owner, claim_type_override=claim_type_override)
     return instance, owner
+
+
+def _seeded_shape() -> tuple[object, ...]:
+    """The seeded world's key: the build inputs plus every constant seeding reads."""
+
+    return (
+        "seeded",
+        build_inputs(),
+        TIMESTAMP,
+        SUBJECT_KIND,
+        PREDICATE,
+        claim_type_digest(_claim_type()).tagged,
+    )
 
 
 def _seeded_template(root: Path) -> TemplateWorld:
