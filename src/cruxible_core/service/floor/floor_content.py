@@ -25,12 +25,14 @@ from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.floor.floor_current import (
     PROVENANCE_SUBJECTS_PREFIX,
+    SubjectPart,
     ValueRenderer,
     accepted_claim_types,
     accepted_subjects,
     claim_verdicts,
     claims_by_subject,
     floor_stamp,
+    index_files,
     render_subject,
     stamped,
 )
@@ -56,6 +58,8 @@ verbs. The floor does no matching of its own: grep is the search.
   problems (stale, contested, contradicted, uncovered, unsure_hold) as of
   that coordinate.
 - `current/<kind>/<id>.<field>.txt`: a text value too long to inline, whole.
+- `current/<kind>/INDEX`: one tab-separated line per Subject of that kind: its
+  ref, a title-like value, and its state-like fields.
 - `documents/<name>.<ext>`: each Document, a one-line header and its body.
 
 ## The loop
@@ -167,6 +171,7 @@ def current_content(
     files: dict[str, bytes] = {}
     relevant_changes: dict[int, tuple[AcceptedGenerationLocation, ChangeSetRecordAnyVersion]] = {}
     records = instance.retained_record_reader()
+    parts: list[SubjectPart] = []
     with instance.accepted_history_reader(
         at=AcceptedCoordinate.from_internal(coordinate)
     ) as history:
@@ -184,6 +189,7 @@ def current_content(
                 history=history,
             )
             files.update(stamped(part, stamp))
+            parts.append(part)
             files[f"{PROVENANCE_SUBJECTS_PREFIX}{part.ref}.json"] = part.provenance
             for sequence in part.sequences:
                 if sequence not in relevant_changes:
@@ -192,6 +198,7 @@ def current_content(
                         generation,
                         history.read_generation_record(sequence, records),
                     )
+    files.update(index_files(parts, stamp))
     for document in document_parts(
         instance,
         coordinate=coordinate,

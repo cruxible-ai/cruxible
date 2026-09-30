@@ -207,6 +207,8 @@ class _Shown:
     note: str
     # A text too long to inline: its sibling file's name and its text.
     text_file: tuple[str, str] | None = None
+    # The value as one line of plain text, for the kind's INDEX.
+    plain: str = ""
 
 
 @dataclass(frozen=True)
@@ -221,6 +223,9 @@ class SubjectPart:
     sequences: tuple[int, ...]
     # Full-text sibling files: (file name beside the current/ file, header, text).
     texts: tuple[tuple[str, str, str], ...] = ()
+    # The kind INDEX cells: a title-like value and the state-like fields.
+    index_title: str = ""
+    index_states: tuple[tuple[str, str], ...] = ()
 
 
 def subject_ref(path: str) -> str:
@@ -284,30 +289,32 @@ class ValueRenderer:
         obj = claim.statement.object
         note = _note(claim)
         if isinstance(obj, SubjectClaimObject):
-            return _Shown(yaml_scalar(subject_ref(obj.address.artifact_path)), None, note)
+            other = subject_ref(obj.address.artifact_path)
+            return _Shown(yaml_scalar(other), None, note, plain=other)
         if isinstance(obj, ExactContentClaimObject):
             value = self._content.of(obj)
             if not isinstance(value, str):
                 size = "null" if value.length is None else str(value.length)
                 marker = f"{{exact_content: {value.exact_content}, bytes: {size}}}"
-                return _Shown(marker, None, note)
+                return _Shown(marker, None, note, plain=marker)
             return self.text(value, note=note, text_name=text_name)
         literal = obj.value
         if isinstance(literal, str):
             return self.text(literal, note=note, text_name=text_name)
-        return _Shown(literal_scalar(literal), None, note)
+        scalar = literal_scalar(literal)
+        return _Shown(scalar, None, note, plain=scalar)
 
     def text(self, value: str, *, note: str, text_name: str) -> _Shown:
         encoded = len(value.encode("utf-8"))
         lines = value.count("\n") + 1
         if encoded > INLINE_TEXT_BYTES or lines > INLINE_TEXT_LINES:
             marker = f"{{full_text: {text_name}, bytes: {encoded}, lines: {lines}}}"
-            return _Shown(marker, None, note, text_file=(text_name, value))
+            return _Shown(marker, None, note, text_file=(text_name, value), plain=value)
         if "\n" in value:
             block = _block(value)
             if block is not None:
-                return _Shown(None, block, note)
-        return _Shown(yaml_scalar(value), None, note)
+                return _Shown(None, block, note, plain=value)
+        return _Shown(yaml_scalar(value), None, note, plain=value)
 
 
 def text_file_name(ref: str, key: str, claim: ClaimArtifactAny | None) -> str:
@@ -340,6 +347,69 @@ def _entry_lines(key: str, values: Sequence[_Shown], *, listed: bool) -> list[st
     return lines
 
 
+_TITLE_FIELDS = ("title", "name", "label", "summary", "headline")
+_TITLE_FIELD = re.compile(r"(^|_)(title|name)$")
+_STATE_FIELD = re.compile(r"(^|_)(state|status|stage|phase)$")
+INDEX_NAME = "INDEX"
+_INDEX_TITLE_CHARS = 120
+
+
+def _one_line(text: str, limit: int = _INDEX_TITLE_CHARS) -> str:
+    line = " ".join(text.replace("\t", " ").split("\n", 1)[0].split())
+    return line if len(line) <= limit else line[: limit - 3] + "..."
+
+
+def _index_title(plains: Mapping[str, tuple[str, ...]]) -> str:
+    """The Subject's title-like value: ``title`` first, then other names."""
+
+    ranked = sorted(
+        (key for key in plains if key in _TITLE_FIELDS or _TITLE_FIELD.search(key)),
+        key=lambda key: (
+            _TITLE_FIELDS.index(key) if key in _TITLE_FIELDS else len(_TITLE_FIELDS),
+            key.encode(),
+        ),
+    )
+    for key in ranked:
+        values = plains[key]
+        if len(values) == 1 and values[0]:
+            return _one_line(values[0])
+    return ""
+
+
+def render_index(kind: str, parts: Sequence[SubjectPart], stamp: FloorStamp) -> bytes:
+    """``current/<kind>/INDEX``: one line per Subject, ref, title and states.
+
+    Columns are tab-separated: the ref, a title-like field's value (or ``-``),
+    and ``field=value`` for each state-like field, ``; ``-separated.
+    """
+
+    rows = sorted(parts, key=lambda part: part.ref.encode())
+    lines = [
+        f"# {kind} INDEX  {len(rows)} subjects  columns: ref, title, states  {stamp.at}",
+        *(
+            "\t".join(
+                (
+                    part.ref,
+                    part.index_title or "-",
+                    "; ".join(f"{key}={value}" for key, value in part.index_states) or "-",
+                )
+            )
+            for part in rows
+        ),
+    ]
+    return "".join(f"{line}\n" for line in lines).encode("utf-8")
+
+
+def index_files(parts: Iterable[SubjectPart], stamp: FloorStamp) -> dict[str, bytes]:
+    by_kind: dict[str, list[SubjectPart]] = defaultdict(list)
+    for part in parts:
+        by_kind[part.kind].append(part)
+    return {
+        f"{CURRENT_PREFIX}{kind}/{INDEX_NAME}": render_index(kind, members, stamp)
+        for kind, members in by_kind.items()
+    }
+
+
 def render_subject(
     *,
     path: str,
@@ -360,6 +430,7 @@ def render_subject(
         slots[(claim.statement.predicate, claim.statement.qualifier)].append(claim)
     entries: list[tuple[str, str, list[str]]] = []
     texts: list[tuple[str, str, str]] = []
+    plains: dict[str, tuple[str, ...]] = {}
     flagged: list[tuple[str, list[FloorFlag]]] = []
     for (predicate, qualifier), members in slots.items():
         members.sort(key=lambda item: item.identity.name.encode())
@@ -394,6 +465,7 @@ def render_subject(
         entries.append(
             (display, qualifier or "", _entry_lines(yaml_scalar(key), rendered, listed=listed))
         )
+        plains[key] = tuple(value.plain for value in rendered)
         texts.extend(
             (value.text_file[0], f"field={key}  {value.note.split()[0]}", value.text_file[1])
             for value in rendered
@@ -446,6 +518,13 @@ def render_subject(
         provenance=provenance,
         sequences=tuple(sorted(sequences)),
         texts=tuple(sorted(texts)),
+        index_title=_index_title(plains),
+        index_states=tuple(
+            (key, "|".join(_one_line(value) for value in plains[key]))
+            for key in sorted(plains, key=lambda item: item.encode())
+            if _STATE_FIELD.search(key)
+        )
+        + ((("lifecycle", "retired"),) if shell.lifecycle.state != "live" else ()),
     )
 
 
@@ -570,6 +649,8 @@ __all__ = [
     "claim_verdicts",
     "claims_by_subject",
     "current_path",
+    "index_files",
+    "render_index",
     "floor_stamp",
     "literal_scalar",
     "render_subject",

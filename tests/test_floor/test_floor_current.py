@@ -381,3 +381,26 @@ def test_every_floor_reader_still_verifies_the_export(
     assert (workspace / ".playbill/floor/current" / KIND / "wi-1.yaml").read_bytes() == files[
         f"current/{KIND}/wi-1.yaml"
     ]
+
+
+def test_each_kind_has_an_index_line_per_subject(world: dict[str, Any]) -> None:
+    instance: PlaybillInstance = world["instance"]
+    header, *rows = world["files"][f"current/{KIND}/INDEX"].decode().splitlines()
+    assert header == (
+        f"# {KIND} INDEX  3 subjects  columns: ref, title, states  "
+        f"at {instance.accepted_coordinate().git_oid} gen {len(instance.accepted_history()) - 1}"
+    )
+    assert rows == [
+        f"{WI1}\tTidy the CLI: part #1\tstatus=ready",
+        f"{WI2}\t-\tstatus=blocked|done",
+        f"{WI3}\t-\t-",
+    ]
+
+
+def test_the_index_title_prefers_title_and_keeps_one_line() -> None:
+    from cruxible_core.service.floor.floor_current import _index_title
+
+    assert _index_title({"name": ("n",), "title": ("Line one\nline two",)}) == "Line one"
+    assert _index_title({"task_title": ("T",), "status": ("s",)}) == "T"
+    assert _index_title({"labels": ("a", "b")}) == ""
+    assert len(_index_title({"title": ("x" * 500,)})) == 120
