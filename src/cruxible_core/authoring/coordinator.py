@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Literal, cast
@@ -79,6 +80,7 @@ from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
+    ProposalHeadMovedError,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import dry_run_bodies
@@ -898,35 +900,24 @@ class AuthoringIntentCoordinator:
 
             certificate = computed.result.certificate
             handoff = prepared.handoff(authoring_operation(self.instance, preflighted))
-            result = self.instance.proposal_service().submit(
-                actor=actor,
-                request=ProposalAdmissionRequest(
-                    target_ref=certificate.proposal_ref,
-                    proposed_base_oid=certificate.accepted_coordinate.git_oid,
-                    # The one door that carries prose today. Every other submit call
-                    # site authors on the author's behalf -- a migration, a seed, a
-                    # retirement -- and has no sentence of theirs to pass on, so it
-                    # keeps the derived subject.
-                    rationale=(
-                        preflighted.payload.rationale
-                        if isinstance(preflighted.payload, ChangeSetAuthoringPayloadV1)
-                        else None
-                    ),
-                ),
-                candidate_tree=handoff.submission_tree
-                if handoff is not None and handoff.submission_tree is not None
-                else {
-                    path: content
-                    for path, content in computed.evaluated_tree.items()
-                    if not is_candidate_card_path(path)
-                },
-                timestamp=current.canonical_timestamp,
-                prepared=handoff,
-            )
-            if result.candidate is None:
+            bound = certificate.accepted_coordinate
+
+            def at_certificate(
+                evaluated_at: AcceptedProjectionCoordinate, _tree: Mapping[str, bytes]
+            ) -> None:
+                # Preflight checked everything the intent asserts -- slot
+                # membership included -- at the certificate coordinate. Admission
+                # at any other head would evaluate without those checks, so it is
+                # refused here, before evaluation; the service then holds this
+                # head unchanged through publication.
+                if AcceptedCoordinate.from_internal(evaluated_at) != bound:
+                    raise ProposalHeadMovedError(
+                        "accepted main moved after preflight; preflight again at the current head"
+                    )
+                return None
+
+            def moved_on() -> AuthoringSubmitResultV1:
                 latest = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
-                if latest == certificate.accepted_coordinate:
-                    raise RuntimeError("submit broke its unchanged-coordinate preflight binding")
                 status = CandidateStatusV1(
                     state="conflicted_after_rebase",
                     current_accepted_coordinate=latest,
@@ -942,10 +933,41 @@ class AuthoringIntentCoordinator:
                 return AuthoringSubmitResultV1(
                     intent=preflighted.model_copy(update={"candidate_status": status}),
                     status=status,
-                    workspace_advertisement=result.workspace_advertisement,
+                    workspace_advertisement=self.instance.advertise_workspace(),
                 )
-            if result.candidate.candidate_digest != computed.evaluation.candidate.candidate_digest:
-                raise RuntimeError("submit candidate differs from its binding preflight")
+
+            try:
+                result = self.instance.proposal_service().submit(
+                    actor=actor,
+                    request=ProposalAdmissionRequest(
+                        target_ref=certificate.proposal_ref,
+                        proposed_base_oid=certificate.accepted_coordinate.git_oid,
+                        # The one door that carries prose today. Every other submit call
+                        # site authors on the author's behalf -- a migration, a seed, a
+                        # retirement -- and has no sentence of theirs to pass on, so it
+                        # keeps the derived subject.
+                        rationale=(
+                            preflighted.payload.rationale
+                            if isinstance(preflighted.payload, ChangeSetAuthoringPayloadV1)
+                            else None
+                        ),
+                    ),
+                    candidate_tree=handoff.submission_tree
+                    if handoff is not None and handoff.submission_tree is not None
+                    else {
+                        path: content
+                        for path, content in computed.evaluated_tree.items()
+                        if not is_candidate_card_path(path)
+                    },
+                    timestamp=current.canonical_timestamp,
+                    prepared=handoff,
+                    expected_candidate_digest=computed.evaluation.candidate.candidate_digest,
+                    authorize=at_certificate,
+                )
+            except ProposalHeadMovedError:
+                return moved_on()
+            if result.candidate is None:  # pragma: no cover - the digest is bound above
+                raise RuntimeError("submit broke its unchanged-coordinate preflight binding")
 
             operation_key = typed_digest(
                 Sha256Value,

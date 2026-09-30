@@ -552,6 +552,38 @@ def test_a_contender_joining_the_slot_before_admission_refuses_the_retire_unprop
     _no_proposal_to_activate(instance)
 
 
+@pytest.mark.parametrize("pinned", [False, True], ids=["unpinned", "pinned"])
+def test_a_contender_between_preflight_and_admission_publishes_nothing(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch, pinned: bool
+) -> None:
+    """Admission is bound to the coordinate preflight checked the slot at."""
+
+    from cruxible_core.proposals.proposals import ProposalService
+
+    ready = _write(instance, _set(WI1, "status", "ready")).changes[0].claim
+    read_at = instance.accepted_coordinate().git_oid
+    submit = ProposalService.submit
+    landed: list[bool] = []
+
+    def submitting(self: ProposalService, **kwargs: Any) -> Any:
+        # Preflight has passed; the contender lands before the service reads
+        # the coordinate it would evaluate and publish at.
+        if not landed and str(kwargs["request"].target_ref).split("/")[-1].startswith("intent-"):
+            landed.append(True)
+            _contend(instance)
+        return submit(self, **kwargs)
+
+    monkeypatch.setattr(ProposalService, "submit", submitting)
+    options = {"at": read_at} if pinned else {}
+    outcome = _write(instance, _RETIRE_BY_SLOT, **options)
+    assert landed
+    assert _refusal(outcome).code == "playbill.write.slot_changed", outcome
+    assert outcome.proposal is None
+    assert _values(instance, WI1, "status") == ["blocked", "ready"]
+    assert ready in _live_status_claims(instance)
+    _no_proposal_to_activate(instance)
+
+
 def _live_status_claims(instance: PlaybillInstance) -> set[str]:
     return {
         item.identity.removeprefix("Claim:")

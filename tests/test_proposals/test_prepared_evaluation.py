@@ -261,9 +261,12 @@ def test_fresh_cas_failure_reenters_evaluator_and_refuses_publication(world, mon
     monkeypatch.setattr(type(coordinator), "_compute_and_bind_preflight", bind)
     monkeypatch.setattr(preflight, "evaluate_proposal_tree", counted)
     monkeypatch.setattr(proposals, "evaluate_proposal_tree", counted)
-    # Preserve the coordinator's existing unchanged-coordinate integrity error.
-    with pytest.raises(RuntimeError, match="unchanged-coordinate preflight binding"):
+    # A fresh evaluation that differs from the bound preflight is refused
+    # before publication: the actor's proposal ref never moves.
+    with pytest.raises(proposals.ProposalCandidateMismatchError):
         coordinator.submit(intent.intent_id, actor=actor)
+    ref = preflight.authoring_proposal_ref(actor.actor_id, intent.intent_id)
+    assert original_service().transport.read_proposal_ref(ref) is None
     assert len(calls) == 2
     assert instance.prepared_evaluations.status()["invalidated"] == 1
     assert calls[-1]["bodies"].verify("missing") is False
