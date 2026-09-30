@@ -950,20 +950,22 @@ class _Planner:
             hex_prefix=hex_prefix,
             nearest=_MAX_CANDIDATES,
         )
-        if not inventory.complete:
+        if not inventory.complete or len(inventory.captures) > _MAX_HANDLE_SCAN:
+            # Out of budget, a Capture past the limit could match too: the scan
+            # never calls what it verified so far unique.
+            what = (
+                "objects under it than one lookup examines"
+                if not inventory.complete
+                else f"more than {_MAX_HANDLE_SCAN} Captures under it to verify"
+            )
             raise _refuse(
                 "playbill.write.capture_scan_exhausted",
-                f"{handle} was not resolved: the body store holds more objects under it "
-                "than one lookup examines",
+                f"{handle} was not resolved: the body store holds {what}",
                 change=index,
                 repair="Pass a longer handle, or the full sha256 digest",
                 field_path=path,
             )
-        found = [
-            item.digest
-            for item in inventory.captures[:_MAX_HANDLE_SCAN]
-            if self._verified_capture(item.digest)
-        ]
+        found = [item.digest for item in inventory.captures if self._verified_capture(item.digest)]
         if len(found) == 1:
             return found[0]
         if found:

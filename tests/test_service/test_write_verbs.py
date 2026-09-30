@@ -542,6 +542,31 @@ def _contract_of(instance: PlaybillInstance, digest: str) -> str:
     )
 
 
+def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real prefix scan runs out: that is never taken as a unique match."""
+
+    from cruxible_client.contracts.errors import WriteRefusalError
+
+    for index, subject in enumerate((WI1, WI2, WI3)):
+        assert _write(instance, _set(subject, "title", f"T{index}")).status == "accepted"
+    head = instance.accepted_coordinate()
+    planner = write_verbs._Planner(
+        instance,
+        head=head,
+        read_at=head,
+        request=PlaybillWriteRequestV1.model_validate(
+            {"because": "x", "changes": [_set(WI1, "title", "x")]}
+        ),
+    )
+    monkeypatch.setattr(write_verbs, "_MAX_HANDLE_SCAN", 1)
+    with pytest.raises(WriteRefusalError) as caught:
+        planner.capture_by_handle("CAP-", index=0, path="changes[0].evidence.capture")
+    assert caught.value.error_code == "playbill.write.capture_scan_exhausted"
+    assert "longer handle" in (caught.value.repair_line or "")
+
+
 def test_a_handle_in_a_crowded_shard_stops_at_the_work_limit(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
