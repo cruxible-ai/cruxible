@@ -108,9 +108,16 @@ class TemplateWorld:
 
 
 def template_world(
-    template: Template[TemplateWorld], tmp_path: Path
+    template: Template[TemplateWorld], tmp_path: Path, *, warm: bool = False
 ) -> tuple[PlaybillInstance, GeneratedKeyMaterial] | None:
-    """Copy ``template`` under ``tmp_path`` and reopen it, or ``None`` if it cannot."""
+    """Copy ``template`` under ``tmp_path`` and reopen it, or ``None`` if it cannot.
+
+    A genesis build hands back a freshly opened instance, and so does its copy.
+    A build that went on writing (``warm``) hands back an instance whose
+    history index and head projection it already synced and verified in this
+    process; the copy does the same reads before it is returned, so counted
+    verifications start from the same place.
+    """
 
     copied = copy_template(template, tmp_path)
     if copied is None:
@@ -119,6 +126,11 @@ def template_world(
     world = template.value
     instance = PlaybillInstance.open(copied / world.managed, trust_root=world.trust_root)
     restamp_proposal_index(instance)
+    if warm:
+        with instance.accepted_history_reader():
+            pass
+        with instance.bind_accepted_projection(instance.accepted_coordinate()):
+            pass
     owner = GeneratedKeyMaterial(
         principal=world.owner.principal,
         private_key_path=tmp_path / world.owner_private,

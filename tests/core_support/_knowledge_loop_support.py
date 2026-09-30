@@ -138,7 +138,7 @@ def seed_claims(
     if claim_type_override is None:
         template = TEMPLATES.template(("seeded",), _seeded_template)
         if template is not None:
-            opened = template_world(template, tmp_path)
+            opened = template_world(template, tmp_path, warm=True)
             if opened is not None:
                 return opened
     instance, owner = initialize_local(tmp_path)
