@@ -250,6 +250,13 @@ class ClaimTypeSuccessionInput(_StrictInputModel):
     kind: Literal["claim_type_succession"]
     successor: ClaimType
     dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = ()
+    carry_all: bool = Field(
+        default=False,
+        description=(
+            "Carry every closure member dependents does not name to the successor, computed "
+            "by the daemon (retired Claims included); dependents then names only exceptions."
+        ),
+    )
 
 
 class ClaimRetirementInput(_StrictInputModel):
@@ -710,6 +717,7 @@ def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChan
         return ClaimTypeSuccessionMemberV1(
             successor=member.successor,
             dependents=member.dependents,
+            carry_all=member.carry_all,
         )
     if isinstance(member, ClaimRetirementInput):
         return ClaimRetirementMemberV1(

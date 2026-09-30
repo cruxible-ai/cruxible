@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-30:operational-reads",
-    "surface_digest": "sha256:da1680f9598df32d84c6dc976d1d8b128cb0f0e5f4070532f14de3e5193a644c"
+    "surface_digest": "sha256:da3044dc6e95749bf7cb62659c72d6959755b1342b1f455e5737bdafe9a710c6"
   },
   "surface": {
     "cli_leaves": [
@@ -1020,7 +1020,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/authoring/compile",
         "request_model": "types.UnionType[cruxible_client.contracts.authoring.models.AuthoringIntentCompileRequestV1,cruxible_client.contracts.authoring.models.AuthoringIntentCompileRequestV2,cruxible_client.contracts.authoring.models.AuthoringIntentCompileRequestV3,cruxible_core.server.playbill_request_models.PlaybillAuthoringInputCompileRequest]",
-        "request_schema_digest": "sha256:190944cfb13fa6af52410c9d17ecde60693bc21937ce8a1180f1936c8d72004e",
+        "request_schema_digest": "sha256:7b084e848bd889af855a64f1745dc880e624ff9fc421a2659413ebf9780d82ce",
         "response_model": "cruxible_client.contracts.PlaybillAuthoringPreflightResult",
         "response_schema_digest": "sha256:b9f02d5722b1d00d38928913ddeb114c6bd94722d3cd2b140d89e0c2258d41c5"
       },
@@ -1045,7 +1045,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/authoring/intents",
         "request_model": "types.UnionType[cruxible_client.contracts.authoring.models.AuthoringIntentCreateRequestV1,cruxible_client.contracts.authoring.models.AuthoringIntentCreateRequestV2,cruxible_client.contracts.authoring.models.AuthoringIntentCreateRequestV3,cruxible_core.server.playbill_request_models.PlaybillAuthoringInputCreateRequest]",
-        "request_schema_digest": "sha256:5930cf9039f8b8a9bc29dd8ff816b28ae326a575513494a39854f928a9e25a66",
+        "request_schema_digest": "sha256:bc2daa1b3626d8a8027f2481a00ca1227469a5edef9215c200633370d446774c",
         "response_model": "cruxible_client.contracts.PlaybillAuthoringIntentView",
         "response_schema_digest": "sha256:b98e5e1e66a92716bb3a2fb66e34d8bbdc88f87a7ad1725e122f63317691888f"
       },
@@ -1141,7 +1141,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/authoring/submit",
         "request_model": "cruxible_client.contracts.authoring.models.AuthoringIntentCompileRequestV3",
-        "request_schema_digest": "sha256:7a8bc6ec793aa52c2959384943033f57c1f68daca93041e906e7697ea34552aa",
+        "request_schema_digest": "sha256:87c882a75234b2aecb334337cd35d58e713edaf1e90fc49696c03400e58175d9",
         "response_model": "cruxible_client.contracts.PlaybillAuthoringSubmitResult",
         "response_schema_digest": "sha256:95f2938151d682b26ff0e7493f39e050be8b183ec705aa7adddc49750e4d34bf"
       },
@@ -2471,7 +2471,7 @@
         "facade_operations": [
           "playbill_authoring_compile_input"
         ],
-        "input_schema_digest": "sha256:aa4d1c4c5ea7bd1dfa5f98db555912b166c1c64f3792b755f0d0ab4d3545f1a8",
+        "input_schema_digest": "sha256:01d14c5994e0f84dbba9b07519b7650b678ac347a1703a2b9a85701787efa0d5",
         "name": "cruxible_playbill_authoring_compile",
         "output_schema_digest": "sha256:6f61a0f07462d83d0b3cc433dfd7094642914fffb8bcfa10bb75cd233724dc66",
         "permission": "GOVERNED_WRITE"
@@ -2481,7 +2481,7 @@
         "facade_operations": [
           "playbill_authoring_create_input"
         ],
-        "input_schema_digest": "sha256:4cac05cc4ffdc0ccb31851580991fdc1527acf345d5fd8769c894d6c7d3169e8",
+        "input_schema_digest": "sha256:6445a4da1863c1f2d278aa8e3778a8d9bf88a22c8905e6251e02aa92847391b3",
         "name": "cruxible_playbill_authoring_create",
         "output_schema_digest": "sha256:b98e5e1e66a92716bb3a2fb66e34d8bbdc88f87a7ad1725e122f63317691888f",
         "permission": "GOVERNED_WRITE"
@@ -2491,7 +2491,7 @@
         "facade_operations": [],
         "input_schema_digest": "sha256:01efc13aceaa8f849ad9a7da4d583dd488f04a646f2a9691aa7b833e3413a5b4",
         "name": "cruxible_playbill_authoring_example",
-        "output_schema_digest": "sha256:434b517aef67d673467be32b9bbb9b3c26806adfc455ddfe54d930a9540a63f0",
+        "output_schema_digest": "sha256:adc7ab3695d5a4a0bf3b758e7995695dd2a006fe9c9bd74c6703dd1c6801fdda",
         "permission": "READ_ONLY"
       },
       {

@@ -100,7 +100,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:3eac20eb4da469ef34b4e36e8e10c1b7285058848ad02a52480f464d8dde2ac7"
+    "sha256:ffb45bbb77e6d721e80c6c1e53b758b7ad599c4946b465045035447258291fdc"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -1258,6 +1258,11 @@ class ClaimTypeSuccessionMemberV1(_StrictAuthoringModel):
     )
     successor: ClaimType
     dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = ()
+    #: Carry every closure member `dependents` does not name to the successor,
+    #: computed by the daemon from the staged tree (retired Claims included).
+    #: `dependents` then names only the exceptions: a `retire` or `re_author`.
+    #: Absent from the wire when false, so an exact member's bytes never move.
+    carry_all: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @field_validator("successor")
     @classmethod
