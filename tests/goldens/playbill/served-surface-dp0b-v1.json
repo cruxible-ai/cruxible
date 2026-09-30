@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-30:write-ext",
-    "surface_digest": "sha256:c33a25a310dcb8af82888ebb72181f21d612fa9a5f6095d4cf7020983c44f494"
+    "surface_digest": "sha256:8c6730c6945254b2030040500b46d40ac808b36da29c6dbcf222b98b02ba3a3e"
   },
   "surface": {
     "cli_leaves": [
@@ -2193,7 +2193,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/set",
         "request_model": "cruxible_client.contracts.write.PlaybillSetRequestV1",
-        "request_schema_digest": "sha256:bffa683419d2325fea3160b1825c003bb34f267648091aeeabdd2f948bf47de6",
+        "request_schema_digest": "sha256:d4fdb0a7620d7646883d0046fd5f7cce5387fe57e962a5dbe88a4745112ecdb6",
         "response_model": "cruxible_client.contracts.write.WriteOutcome",
         "response_schema_digest": "sha256:faf78f561ae96c453460e5eb326e2d7e1acfa87e54d08839d50ec063fd85b0a6"
       },
@@ -2313,7 +2313,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/write",
         "request_model": "cruxible_client.contracts.write.PlaybillWriteRequestV1",
-        "request_schema_digest": "sha256:f065e6b9d405f061a25690dd61fd7e6c57c5abde8819b25f07b863be309dc290",
+        "request_schema_digest": "sha256:729284ee7a5c0d296885b050994add9e334ae18fe277b75cc6877380e1a0f083",
         "response_model": "cruxible_client.contracts.write.WriteOutcome",
         "response_schema_digest": "sha256:faf78f561ae96c453460e5eb326e2d7e1acfa87e54d08839d50ec063fd85b0a6"
       }
@@ -3324,7 +3324,7 @@
         "facade_operations": [
           "playbill_set"
         ],
-        "input_schema_digest": "sha256:c313d72dd38a00d2e8f3d259a39ccbd02af635dcf01970e0522ff5e654e50855",
+        "input_schema_digest": "sha256:3dd8f61176d0283d1e9617b217d358a41213b9e3e52f4fc50ce6bcd8bb74527c",
         "name": "cruxible_playbill_set",
         "output_schema_digest": "sha256:659a2c896fdd4203c8ff51d512c15b1e5cdf08a0e154fdfe601609816d233b0c",
         "permission": "GOVERNED_WRITE"
@@ -3425,7 +3425,7 @@
         "facade_operations": [
           "playbill_write"
         ],
-        "input_schema_digest": "sha256:c1be80c6de44fa026bfcb13df07502e46eca026632e3ec8a67ac8d4408ed7520",
+        "input_schema_digest": "sha256:0fcfb656cd797322e7435b3611903a219595388009c7b543bdf7efd3227c28b9",
         "name": "cruxible_playbill_write",
         "output_schema_digest": "sha256:659a2c896fdd4203c8ff51d512c15b1e5cdf08a0e154fdfe601609816d233b0c",
         "permission": "GOVERNED_WRITE"
