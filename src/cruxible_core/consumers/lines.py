@@ -1,10 +1,11 @@
 """Armed Lines as a consumer kind: forward-only, governed.
 
-An arm follows its Line's trigger events and cadence from the moment it is
-armed, and after a restart only from then on: what it did not match stays for
-explicit dispatch. Its runs are governed, admitted under the arming credential
-it rechecks before every admission (`runtime/line_arms.py`), inside the arm
-boundary a disarm or rollover is ordered against.
+An arm follows the events and cadences of the Trigger artifacts aimed at its
+Line from the moment it is armed, and after a restart only from then on: what
+it did not match stays for explicit dispatch. Its runs are governed, admitted
+under the arming credential it rechecks before every admission
+(`runtime/line_arms.py`), inside the arm boundary a disarm or rollover is
+ordered against.
 """
 
 from __future__ import annotations

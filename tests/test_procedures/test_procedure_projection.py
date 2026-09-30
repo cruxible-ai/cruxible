@@ -17,7 +17,7 @@ from cruxible_client.contracts.procedures.line_specs import render_line_spec
 from cruxible_client.contracts.projection_extensions import ProjectionFactClassification
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.compiler.compiler import (
-    AUTHORITY_VERBS_COMPILER,
+    GOVERNED_TRIGGERS_COMPILER,
     P2_B0_COMPILER,
     P2_B1_COMPILER,
     P2_B2_COMPILER,
@@ -93,7 +93,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     assert P2_B2_COMPILER != P2_B4_COMPILER
     assert P2_B4_COMPILER != P2_B4_UNIT2_COMPILER
     assert P2_B4_UNIT2_COMPILER != P2_B5_COMPILER
-    assert current_compiler_coordinate() == AUTHORITY_VERBS_COMPILER
+    assert current_compiler_coordinate() == GOVERNED_TRIGGERS_COMPILER
     assert (
         projection_registry_for_compiler(PC_HR_COMPILER).supports(
             "playbill.provider.runtime",

@@ -208,6 +208,13 @@ CLAIM_EVIDENCE_ARTIFACT_KINDS = ArtifactKindRegistry(SDK_SOURCE_ARTIFACT_KINDS.e
 SOURCE_CHECKED_ARTIFACT_KINDS = ArtifactKindRegistry(CLAIM_EVIDENCE_ARTIFACT_KINDS.entries())
 TRIGGER_CAPTURE_ARTIFACT_KINDS = ArtifactKindRegistry(SOURCE_CHECKED_ARTIFACT_KINDS.entries())
 AUTHORITY_VERBS_ARTIFACT_KINDS = ArtifactKindRegistry(TRIGGER_CAPTURE_ARTIFACT_KINDS.entries())
+GOVERNED_TRIGGERS_ARTIFACT_KINDS = ArtifactKindRegistry(
+    (
+        *AUTHORITY_VERBS_ARTIFACT_KINDS.entries(),
+        ArtifactPathKind("trigger", re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")),
+    )
+)
+_REVISION_31_AND_LATER = (AUTHORITY_VERBS_ARTIFACT_KINDS, GOVERNED_TRIGGERS_ARTIFACT_KINDS)
 
 
 RegisteredPathKind = Literal[
@@ -231,6 +238,7 @@ RegisteredPathKind = Literal[
     "query-definition",
     "source-acquisition-policy",
     "subject",
+    "trigger",
 ]
 
 
@@ -635,6 +643,7 @@ def parse_projection_tree(
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
+                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                 ) and (
                     runtime_policy.result_bytes_cap is not None
                     or runtime_policy.repeat_attempts_cap is not None
@@ -659,6 +668,43 @@ def parse_projection_tree(
                             artifact_digest=digest,
                         ),
                     )
+                )
+                continue
+            if kind == "trigger":
+                from cruxible_client.contracts.triggers import parse_trigger, trigger_digest
+
+                trigger = parse_trigger(content, path=path, codec=artifact_codec)
+                identity = trigger.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                digest = trigger_digest(trigger).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity,
+                        kind,
+                        trigger.artifact_format,
+                        path,
+                        digest,
+                        trigger.lifecycle.predecessor_digest,
+                        projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=file_digest(content).tagged,
+                            artifact_digest=digest,
+                        ),
+                    )
+                )
+                if trigger.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                        role=pin.role,
+                    )
+                    for pin in trigger.pins
                 )
                 continue
             if kind == "resolution-contract":
@@ -963,7 +1009,7 @@ def parse_projection_tree(
                     ) from exc
                 if (
                     claim_type.artifact_format == "playbill-claim-type-v6"
-                    and artifact_kinds is not AUTHORITY_VERBS_ARTIFACT_KINDS
+                    and artifact_kinds not in _REVISION_31_AND_LATER
                 ):
                     raise ProjectionFormatError(
                         "identity evidence rules (ClaimType v6) require compiler revision 31"
@@ -976,6 +1022,7 @@ def parse_projection_tree(
                         SOURCE_CHECKED_ARTIFACT_KINDS,
                         TRIGGER_CAPTURE_ARTIFACT_KINDS,
                         AUTHORITY_VERBS_ARTIFACT_KINDS,
+                        GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError(
@@ -1096,6 +1143,7 @@ def parse_projection_tree(
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
+                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "Provider v3 requires the provider-package compiler"
@@ -1232,6 +1280,7 @@ def parse_projection_tree(
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
+                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError(
                         "ProviderInterface v2 requires the provider-package compiler"
@@ -1376,7 +1425,7 @@ def parse_projection_tree(
                 )
                 if (
                     isinstance(procedure_mandate, ProcedureMandateV2)
-                    and artifact_kinds is not AUTHORITY_VERBS_ARTIFACT_KINDS
+                    and artifact_kinds not in _REVISION_31_AND_LATER
                 ):
                     raise ProjectionFormatError("ProcedureMandate v2 requires compiler revision 31")
                 resources = (
@@ -1391,6 +1440,7 @@ def parse_projection_tree(
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
+                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                 ) and _requires_resource_budgets(resources.model_dump(mode="json")):
                     raise ProjectionFormatError(
                         "resource mandate budgets require compiler revision 26"
@@ -1459,6 +1509,7 @@ def parse_projection_tree(
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
+                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                 ) and (
                     procedure.definition.budget.max_result_bytes is not None
                     or procedure.definition.hard_caps.max_result_bytes is not None
@@ -1476,6 +1527,7 @@ def parse_projection_tree(
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
+                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                 ):
                     raise ProjectionFormatError("graph-v5 requires the provider-contract compiler")
                 if (
@@ -1483,7 +1535,7 @@ def parse_projection_tree(
                         getattr(node, "kind", None) == "settle_change_set"
                         for node in procedure.definition.nodes
                     )
-                    and artifact_kinds is not AUTHORITY_VERBS_ARTIFACT_KINDS
+                    and artifact_kinds not in _REVISION_31_AND_LATER
                 ):
                     raise ProjectionFormatError("settle_change_set requires compiler revision 31")
                 if int(procedure.definition.graph_format) == 6:
@@ -1493,6 +1545,7 @@ def parse_projection_tree(
                         SOURCE_CHECKED_ARTIFACT_KINDS,
                         TRIGGER_CAPTURE_ARTIFACT_KINDS,
                         AUTHORITY_VERBS_ARTIFACT_KINDS,
+                        GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                     ):
                         raise ProjectionFormatError("graph-v6 requires compiler revision 27")
                     from cruxible_client.contracts.procedures.models import ProcedureDefinitionV6
@@ -1509,6 +1562,7 @@ def parse_projection_tree(
                             SOURCE_CHECKED_ARTIFACT_KINDS,
                             TRIGGER_CAPTURE_ARTIFACT_KINDS,
                             AUTHORITY_VERBS_ARTIFACT_KINDS,
+                            GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                         )
                     ):
                         raise ProjectionFormatError("source-v2 requires compiler revision 29")
@@ -1727,24 +1781,34 @@ def parse_projection_tree(
                 continue
             if kind == "line":
                 from cruxible_client.contracts.procedures.line_specs import (
+                    EMBEDDED_TRIGGER_LINE_FORMATS,
                     LineSpecV3,
                     LineSpecV4,
                     LineSpecV5,
+                    LineSpecV6,
                     line_spec_digest,
                     parse_line_spec,
                 )
 
                 line = parse_line_spec(content, path=path, codec=artifact_codec)
+                if artifact_kinds is GOVERNED_TRIGGERS_ARTIFACT_KINDS:
+                    # An embedded-trigger Line survives only as retired history.
+                    if (
+                        line.artifact_format in EMBEDDED_TRIGGER_LINE_FORMATS
+                        and line.lifecycle.state != "retired"
+                    ):
+                        raise ProjectionFormatError(
+                            "compiler revision 32 admits a Line that embeds its trigger only "
+                            "as retired history; a live Line is v6 and Triggers aim at it"
+                        )
+                elif isinstance(line, LineSpecV6):
+                    raise ProjectionFormatError("Line v6 requires compiler revision 32")
                 if isinstance(line, LineSpecV4) and artifact_kinds not in (
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                    AUTHORITY_VERBS_ARTIFACT_KINDS,
-                    AUTHORITY_VERBS_ARTIFACT_KINDS,
+                    *_REVISION_31_AND_LATER,
                 ):
                     raise ProjectionFormatError("Line v4 requires the trigger-Capture compiler")
-                if (
-                    isinstance(line, LineSpecV5)
-                    and artifact_kinds is not AUTHORITY_VERBS_ARTIFACT_KINDS
-                ):
+                if isinstance(line, LineSpecV5) and artifact_kinds not in _REVISION_31_AND_LATER:
                     raise ProjectionFormatError("Line v5 requires compiler revision 31")
                 # Older Lines allowed opaque budget keys. Interpret this key only
                 # in the successor compiler, preserving historical acceptance.
@@ -1755,6 +1819,7 @@ def parse_projection_tree(
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
                     AUTHORITY_VERBS_ARTIFACT_KINDS,
+                    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                 ) and isinstance(line.budgets, dict):
                     result_budget = line.budgets.get("max_result_bytes")
                     if "max_result_bytes" in line.budgets and (
@@ -1774,7 +1839,7 @@ def parse_projection_tree(
                     CLAIM_EVIDENCE_ARTIFACT_KINDS,
                     SOURCE_CHECKED_ARTIFACT_KINDS,
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,
-                    AUTHORITY_VERBS_ARTIFACT_KINDS,
+                    *_REVISION_31_AND_LATER,
                 ):
                     raise ProjectionFormatError(
                         "Line v3 requires the independent-resolution compiler"
@@ -1879,6 +1944,7 @@ def parse_projection_tree(
                         SOURCE_CHECKED_ARTIFACT_KINDS,
                         TRIGGER_CAPTURE_ARTIFACT_KINDS,
                         AUTHORITY_VERBS_ARTIFACT_KINDS,
+                        GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                     )
                 ):
                     raise ProjectionFormatError(

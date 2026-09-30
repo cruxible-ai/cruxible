@@ -263,7 +263,7 @@ def test_a_decommissioned_instance_blocks_in_the_status_header(tmp_path: Path) -
 def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER, TRIGGER_CAPTURE_COMPILER
+    from cruxible_core.compiler.compiler import GOVERNED_TRIGGERS_COMPILER, TRIGGER_CAPTURE_COMPILER
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from tests.test_ledger.test_compiler_upgrade import approve, old_instance, propose
 
@@ -272,12 +272,12 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
     assert behind.compiler.state == "upgrade_available"
     assert behind.compiler.repair is not None
     assert behind.compiler.repair.command == (
-        f"cruxible playbill compiler upgrade --to {AUTHORITY_VERBS_COMPILER.rule_digest} "
-        "--name upgrade-to-authority-verbs-settle-mandates-v1"
+        f"cruxible playbill compiler upgrade --to {GOVERNED_TRIGGERS_COMPILER.rule_digest} "
+        "--name upgrade-to-governed-triggers-v1"
     )
     assert _attention(behind) == (("compiler", behind.compiler),)
 
-    proposal = propose(instance, AUTHORITY_VERBS_COMPILER)
+    proposal = propose(instance, GOVERNED_TRIGGERS_COMPILER)
     approve(instance, proposal, reviewer)
     assert (
         service_activate_playbill_proposal(
@@ -404,19 +404,19 @@ def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.line_dispatch import LineEvaluateRequestV1
     from cruxible_client.contracts.procedures.line_specs import (
-        CaptureLandingTriggerPolicyV2,
         line_spec_digest,
         line_spec_path,
         render_line_spec,
     )
+    from cruxible_client.contracts.triggers import CaptureLandingScheduleV1
     from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+    from tests.support.lines import line_trigger, successor, trigger_members
     from tests.test_indexes.test_resolution_contracts import _accept_tree
-    from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
+    from tests.test_procedures.test_line_triggers import SELECTOR, TRIGGER, capture, line_world
     from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
-    instance, line, procedure, owner = line_world(
-        tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR), with_owner=True
-    )
+    schedule = CaptureLandingScheduleV1(event=SELECTOR)
+    instance, line, procedure, owner = line_world(tmp_path, schedule, with_owner=True)
     capture(instance, procedure)
     now = READ_TIME + timedelta(seconds=2)
     service_evaluate_line(
@@ -437,6 +437,14 @@ def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[line_spec_path(line.identity.name)] = render_line_spec(retired)
+    # A Line retires with the Triggers aimed at it.
+    tree.update(
+        trigger_members(
+            successor(
+                line_trigger(TRIGGER, line=line.identity.name, schedule=schedule), state="retired"
+            )
+        )
+    )
     _accept_tree(
         instance, owner, tree, timestamp="2026-08-28T15:02:00.000000Z", proposal_name="retire-line"
     )

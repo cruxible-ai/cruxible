@@ -202,27 +202,17 @@ def test_resume_restores_server_revision_without_repeating_work(pb, monkeypatch,
 
 
 def test_line_trigger_input_is_an_explicit_authoring_decision(pb):
-    from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.authoring.models import LineAuthoringPayloadV1
-    from cruxible_client.contracts.procedures.line_specs import CaptureLandingTriggerPolicyV2
-    from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
 
-    trigger = CaptureLandingTriggerPolicyV2(
-        event=CaptureEventSelectorV1(
-            capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="feed"),
-            capture_contract_digest="sha256:" + "a" * 64,
-        )
-    )
     draft = pb.changes(rationale="Consume each observed feed")
     draft.line(
         name="consume-feed",
         procedure="consume",
         acquisition_policy="feed-policy",
         max_authority="observe",
-        trigger_policy=trigger,
         trigger_input="feed",
     )
     line = next(
         m for m in draft._compiled().payload.members if isinstance(m, LineAuthoringPayloadV1)
     )
-    assert line.trigger_input == "feed" and line.trigger_policy == trigger
+    assert line.trigger_input == "feed" and "trigger_policy" not in line.model_dump()

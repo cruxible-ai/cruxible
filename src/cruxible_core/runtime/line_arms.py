@@ -156,6 +156,7 @@ def dispatch_armed_line(
             workspace_file_reader=reader,
             session_id=arm["session_id"],
             pinned_line_artifact_digest=arm["line_artifact_digest"],
+            pinned_trigger_pins=arm.get("trigger_pins", {}),
             before_admission=recheck,
         )
     except LineArmSegmentEnded:

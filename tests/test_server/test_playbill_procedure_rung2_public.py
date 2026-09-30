@@ -442,7 +442,6 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             "procedure_name": PROCEDURE_NAME,
             "acquisition_policy_name": POLICY_NAME,
             "requested_terminal_rung": 2,
-            "trigger_policy": {"tag": "playbill-manual-trigger-v1", "kind": "manual"},
         },
         {
             "tag": "playbill-procedure-mandate-authoring-payload-v1",

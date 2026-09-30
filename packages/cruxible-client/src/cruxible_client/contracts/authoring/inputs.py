@@ -57,7 +57,6 @@ from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.procedures.line_specs import ManualTriggerPolicyV1, TriggerPolicyV2
 from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
@@ -292,11 +291,12 @@ class AcquisitionPolicyInput(_StrictInputModel):
 
 
 class LineInput(_StrictInputModel):
-    """One Line: a trigger that runs an accepted or same-set Procedure.
+    """One Line: a stable instantiation of an accepted or same-set Procedure.
 
     Lowering resolves the named Procedure and acquisition policy into exact
-    pins. A Line that proposes or settles also needs a live ProcedureMandate
-    covering its Procedure before it can run; an observe-only Line needs none.
+    pins. A Line runs when run explicitly, or when a Trigger aimed at it fires.
+    A Line that proposes or settles also needs a live ProcedureMandate covering
+    its Procedure before it can run; an observe-only Line needs none.
     """
 
     kind: Literal["line"]
@@ -307,10 +307,6 @@ class LineInput(_StrictInputModel):
         description=(
             "SourceAcquisitionPolicy name; required only when the Procedure has Source nodes."
         ),
-    )
-    trigger_policy: TriggerPolicyV2 = Field(
-        default_factory=ManualTriggerPolicyV1,
-        description="When the Line runs; manual (run or dispatch explicitly) by default.",
     )
     max_authority: Literal["observe", "propose", "settle"] | None = Field(
         default=None,
@@ -692,7 +688,6 @@ def _line_payload(value: LineInput) -> LineAuthoringPayloadV1:
         procedure_name=value.procedure_name,
         acquisition_policy_name=value.acquisition_policy_name,
         max_authority=value.max_authority,
-        trigger_policy=value.trigger_policy,
         trigger_input=value.trigger_input,
         parameters=value.parameters,
         budgets=value.budgets,

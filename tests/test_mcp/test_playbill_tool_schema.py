@@ -53,6 +53,7 @@ def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation()
         "trigger_event",
         "instance_id",
         "line",
+        "trigger",
         "evaluation_time",
         "occurrence_id",
     }

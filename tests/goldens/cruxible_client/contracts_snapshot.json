@@ -19,6 +19,7 @@
       "values": [
         "disarmed",
         "line_changed",
+        "trigger_changed",
         "epoch_changed",
         "credential_revoked",
         "credential_scope_changed",
@@ -169,7 +170,7 @@
         "query_evaluation_policy",
         "document_activation_policy",
         "procedure_activation_policy",
-        "line_trigger_policy"
+        "trigger_schedule"
       ]
     },
     "ProcedureMeasurementRefusalCodeV1": {
@@ -1511,6 +1512,7 @@
                 "enum": [
                   "disarmed",
                   "line_changed",
+                  "trigger_changed",
                   "epoch_changed",
                   "credential_revoked",
                   "credential_scope_changed",
@@ -1547,6 +1549,22 @@
             "default": null,
             "description": "Reads VALIDITY WINDOW.",
             "title": "Stopped At"
+          }
+        },
+        "triggers": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "triggers",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/LineTriggerVersionV1"
+            },
+            "title": "Triggers",
+            "type": "array"
           }
         }
       },
@@ -1587,10 +1605,30 @@
             ],
             "title": "LineArmPrincipalV1",
             "type": "object"
+          },
+          "LineTriggerVersionV1": {
+            "additionalProperties": false,
+            "description": "One exact version of a live Trigger aimed at a Line.",
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "trigger": {
+                "title": "Trigger",
+                "type": "string"
+              }
+            },
+            "required": [
+              "trigger",
+              "artifact_digest"
+            ],
+            "title": "LineTriggerVersionV1",
+            "type": "object"
           }
         },
         "additionalProperties": false,
-        "description": "One Line's automatic dispatch: armed forward-only, or why it stopped.\n\nAn armed Line admits the occurrences its daemon matched since it was armed\nor last restarted, under the pinned Line version and the arming credential.\nOccurrences matched before a restart, or by explicit evaluation, stay\npending for explicit dispatch.",
+        "description": "One Line's automatic dispatch: armed forward-only, or why it stopped.\n\nAn armed Line admits the occurrences its daemon matched since it was armed\nor last restarted, under the pinned Line version, the exact Trigger versions\naimed at it when it was armed, and the arming credential. Occurrences\nmatched before a restart, or by explicit evaluation, stay pending for\nexplicit dispatch.",
         "properties": {
           "arm_id": {
             "title": "Arm Id",
@@ -1681,6 +1719,7 @@
                 "enum": [
                   "disarmed",
                   "line_changed",
+                  "trigger_changed",
                   "epoch_changed",
                   "credential_revoked",
                   "credential_scope_changed",
@@ -1709,6 +1748,14 @@
             "default": null,
             "description": "Reads VALIDITY WINDOW.",
             "title": "Stopped At"
+          },
+          "triggers": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/LineTriggerVersionV1"
+            },
+            "title": "Triggers",
+            "type": "array"
           }
         },
         "required": [
@@ -2343,7 +2390,7 @@
           "required": false,
           "schema": {
             "default": false,
-            "description": "Explicitly retry one closed or blocked occurrence against the current Line version in the same epoch.",
+            "description": "Explicitly retry one closed or blocked occurrence against the current Line version in the same epoch, while its Trigger still aims at the Line unchanged.",
             "title": "Retry",
             "type": "boolean"
           }
@@ -2373,7 +2420,7 @@
           },
           "retry": {
             "default": false,
-            "description": "Explicitly retry one closed or blocked occurrence against the current Line version in the same epoch.",
+            "description": "Explicitly retry one closed or blocked occurrence against the current Line version in the same epoch, while its Trigger still aims at the Line unchanged.",
             "title": "Retry",
             "type": "boolean"
           }
@@ -3049,11 +3096,21 @@
           "required": true,
           "schema": {
             "enum": [
+              "cadence",
               "capture_landing",
               "window_close"
             ],
             "title": "Kind",
             "type": "string"
+          }
+        },
+        "trigger": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "trigger",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ArtifactIdentity"
           }
         },
         "window": {
@@ -3078,6 +3135,26 @@
       },
       "json_schema": {
         "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
           "BoundObservationWindowV1": {
             "additionalProperties": false,
             "description": "Exact boundaries retained at admission, including the verified event anchor.",
@@ -3148,7 +3225,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Semantic cause of one occurrence, independent of its dispatch instant.",
+        "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence tick binds no event\nor window: its instant is the occurrence's own evaluation instant.",
         "properties": {
           "event": {
             "anyOf": [
@@ -3163,11 +3240,15 @@
           },
           "kind": {
             "enum": [
+              "cadence",
               "capture_landing",
               "window_close"
             ],
             "title": "Kind",
             "type": "string"
+          },
+          "trigger": {
+            "$ref": "#/$defs/ArtifactIdentity"
           },
           "window": {
             "anyOf": [
@@ -3182,13 +3263,15 @@
           }
         },
         "required": [
-          "kind"
+          "kind",
+          "trigger"
         ],
         "title": "LineTriggerBindingV1",
         "type": "object"
       },
       "required_fields": [
-        "kind"
+        "kind",
+        "trigger"
       ]
     },
     "LineTriggerCheckRequestV1": {
@@ -3484,6 +3567,22 @@
             "title": "Status",
             "type": "string"
           }
+        },
+        "triggers": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "triggers",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/LineTriggerVersionV1"
+            },
+            "title": "Triggers",
+            "type": "array"
+          }
         }
       },
       "json_schema": {
@@ -3524,6 +3623,26 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
           "BoundObservationWindowV1": {
             "additionalProperties": false,
             "description": "Exact boundaries retained at admission, including the verified event anchor.",
@@ -3561,7 +3680,7 @@
           },
           "LineTriggerBindingV1": {
             "additionalProperties": false,
-            "description": "Semantic cause of one occurrence, independent of its dispatch instant.",
+            "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence tick binds no event\nor window: its instant is the occurrence's own evaluation instant.",
             "properties": {
               "event": {
                 "anyOf": [
@@ -3576,11 +3695,15 @@
               },
               "kind": {
                 "enum": [
+                  "cadence",
                   "capture_landing",
                   "window_close"
                 ],
                 "title": "Kind",
                 "type": "string"
+              },
+              "trigger": {
+                "$ref": "#/$defs/ArtifactIdentity"
               },
               "window": {
                 "anyOf": [
@@ -3595,7 +3718,8 @@
               }
             },
             "required": [
-              "kind"
+              "kind",
+              "trigger"
             ],
             "title": "LineTriggerBindingV1",
             "type": "object"
@@ -3666,6 +3790,26 @@
               "eligible_at"
             ],
             "title": "LineTriggerOccurrenceV1",
+            "type": "object"
+          },
+          "LineTriggerVersionV1": {
+            "additionalProperties": false,
+            "description": "One exact version of a live Trigger aimed at a Line.",
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "trigger": {
+                "title": "Trigger",
+                "type": "string"
+              }
+            },
+            "required": [
+              "trigger",
+              "artifact_digest"
+            ],
+            "title": "LineTriggerVersionV1",
             "type": "object"
           },
           "TriggerEventReferenceV1": {
@@ -3783,6 +3927,14 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "triggers": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/LineTriggerVersionV1"
+            },
+            "title": "Triggers",
+            "type": "array"
           }
         },
         "required": [
@@ -3910,6 +4062,26 @@
       },
       "json_schema": {
         "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
           "BoundObservationWindowV1": {
             "additionalProperties": false,
             "description": "Exact boundaries retained at admission, including the verified event anchor.",
@@ -3947,7 +4119,7 @@
           },
           "LineTriggerBindingV1": {
             "additionalProperties": false,
-            "description": "Semantic cause of one occurrence, independent of its dispatch instant.",
+            "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence tick binds no event\nor window: its instant is the occurrence's own evaluation instant.",
             "properties": {
               "event": {
                 "anyOf": [
@@ -3962,11 +4134,15 @@
               },
               "kind": {
                 "enum": [
+                  "cadence",
                   "capture_landing",
                   "window_close"
                 ],
                 "title": "Kind",
                 "type": "string"
+              },
+              "trigger": {
+                "$ref": "#/$defs/ArtifactIdentity"
               },
               "window": {
                 "anyOf": [
@@ -3981,7 +4157,8 @@
               }
             },
             "required": [
-              "kind"
+              "kind",
+              "trigger"
             ],
             "title": "LineTriggerBindingV1",
             "type": "object"
@@ -4091,6 +4268,54 @@
         "binding",
         "eligible_at",
         "occurrence_id"
+      ]
+    },
+    "LineTriggerVersionV1": {
+      "fields": {
+        "artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Artifact Digest",
+            "type": "string"
+          }
+        },
+        "trigger": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "trigger",
+          "required": true,
+          "schema": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One exact version of a live Trigger aimed at a Line.",
+        "properties": {
+          "artifact_digest": {
+            "title": "Artifact Digest",
+            "type": "string"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trigger",
+          "artifact_digest"
+        ],
+        "title": "LineTriggerVersionV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_digest",
+        "trigger"
       ]
     },
     "ObservationSettlementEvidenceV2": {
@@ -7494,40 +7719,6 @@
             "title": "BoundedWindowCoherenceV1",
             "type": "object"
           },
-          "CadenceTriggerPolicyV1": {
-            "additionalProperties": false,
-            "description": "A cadence trigger whose period is part of the accepted Line artifact.\n\n``cadence_policy_digest`` still pins the governing Policy exactly, but the\nPolicy pin target kind has no ledger artifact envelope, so nothing in an\naccepted tree can be read for the period. The period therefore lives here,\non the artifact the registry does produce, and is accepted, digested, and\nsucceeded with the Line itself.",
-            "properties": {
-              "cadence_policy_digest": {
-                "title": "Cadence Policy Digest",
-                "type": "string"
-              },
-              "interval_seconds": {
-                "description": "Reads VALIDITY WINDOW.",
-                "exclusiveMinimum": 0,
-                "title": "Interval Seconds",
-                "type": "integer"
-              },
-              "kind": {
-                "const": "cadence",
-                "default": "cadence",
-                "title": "Kind",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-cadence-trigger-v1",
-                "default": "playbill-cadence-trigger-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "cadence_policy_digest",
-              "interval_seconds"
-            ],
-            "title": "CadenceTriggerPolicyV1",
-            "type": "object"
-          },
           "CanonicalDurationV1": {
             "additionalProperties": false,
             "properties": {
@@ -7547,76 +7738,6 @@
               "microseconds"
             ],
             "title": "CanonicalDurationV1",
-            "type": "object"
-          },
-          "CaptureEventSelectorV1": {
-            "additionalProperties": false,
-            "description": "Match a durable produced-capture event, never an accepted-head change.",
-            "properties": {
-              "capture_contract_digest": {
-                "title": "Capture Contract Digest",
-                "type": "string"
-              },
-              "capture_contract_identity": {
-                "$ref": "#/$defs/ArtifactIdentity"
-              }
-            },
-            "required": [
-              "capture_contract_identity",
-              "capture_contract_digest"
-            ],
-            "title": "CaptureEventSelectorV1",
-            "type": "object"
-          },
-          "CaptureEventWindowV1": {
-            "additionalProperties": false,
-            "properties": {
-              "duration_seconds": {
-                "description": "Reads VALIDITY WINDOW.",
-                "exclusiveMinimum": 0,
-                "title": "Duration Seconds",
-                "type": "integer"
-              },
-              "event": {
-                "$ref": "#/$defs/CaptureEventSelectorV1"
-              },
-              "kind": {
-                "const": "capture_event",
-                "default": "capture_event",
-                "title": "Kind",
-                "type": "string"
-              }
-            },
-            "required": [
-              "event",
-              "duration_seconds"
-            ],
-            "title": "CaptureEventWindowV1",
-            "type": "object"
-          },
-          "CaptureLandingTriggerPolicyV2": {
-            "additionalProperties": false,
-            "properties": {
-              "event": {
-                "$ref": "#/$defs/CaptureEventSelectorV1"
-              },
-              "kind": {
-                "const": "capture_landing",
-                "default": "capture_landing",
-                "title": "Kind",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-capture-landing-trigger-v2",
-                "default": "playbill-capture-landing-trigger-v2",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "required": [
-              "event"
-            ],
-            "title": "CaptureLandingTriggerPolicyV2",
             "type": "object"
           },
           "CarriedContractInput": {
@@ -8982,35 +9103,6 @@
             "title": "ExistingCaptureInput",
             "type": "object"
           },
-          "FixedWindowV1": {
-            "additionalProperties": false,
-            "properties": {
-              "duration_seconds": {
-                "description": "Reads VALIDITY WINDOW.",
-                "exclusiveMinimum": 0,
-                "title": "Duration Seconds",
-                "type": "integer"
-              },
-              "kind": {
-                "const": "fixed",
-                "default": "fixed",
-                "title": "Kind",
-                "type": "string"
-              },
-              "starts_at": {
-                "description": "Reads VALIDITY WINDOW.",
-                "format": "date-time",
-                "title": "Starts At",
-                "type": "string"
-              }
-            },
-            "required": [
-              "starts_at",
-              "duration_seconds"
-            ],
-            "title": "FixedWindowV1",
-            "type": "object"
-          },
           "FreezeRequirementV1": {
             "additionalProperties": false,
             "properties": {
@@ -9201,7 +9293,7 @@
           },
           "LineInput": {
             "additionalProperties": false,
-            "description": "One Line: a trigger that runs an accepted or same-set Procedure.\n\nLowering resolves the named Procedure and acquisition policy into exact\npins. A Line that proposes or settles also needs a live ProcedureMandate\ncovering its Procedure before it can run; an observe-only Line needs none.",
+            "description": "One Line: a stable instantiation of an accepted or same-set Procedure.\n\nLowering resolves the named Procedure and acquisition policy into exact\npins. A Line runs when run explicitly, or when a Trigger aimed at it fires.\nA Line that proposes or settles also needs a live ProcedureMandate covering\nits Procedure before it can run; an observe-only Line needs none.",
             "properties": {
               "acquisition_policy_name": {
                 "anyOf": [
@@ -9291,33 +9383,6 @@
                 ],
                 "default": null,
                 "title": "Trigger Input"
-              },
-              "trigger_policy": {
-                "description": "When the Line runs; manual (run or dispatch explicitly) by default.",
-                "discriminator": {
-                  "mapping": {
-                    "cadence": "#/$defs/CadenceTriggerPolicyV1",
-                    "capture_landing": "#/$defs/CaptureLandingTriggerPolicyV2",
-                    "manual": "#/$defs/ManualTriggerPolicyV1",
-                    "window_close": "#/$defs/WindowCloseTriggerPolicyV2"
-                  },
-                  "propertyName": "kind"
-                },
-                "oneOf": [
-                  {
-                    "$ref": "#/$defs/CadenceTriggerPolicyV1"
-                  },
-                  {
-                    "$ref": "#/$defs/CaptureLandingTriggerPolicyV2"
-                  },
-                  {
-                    "$ref": "#/$defs/WindowCloseTriggerPolicyV2"
-                  },
-                  {
-                    "$ref": "#/$defs/ManualTriggerPolicyV1"
-                  }
-                ],
-                "title": "Trigger Policy"
               }
             },
             "required": [
@@ -9438,25 +9503,6 @@
               "change_kinds"
             ],
             "title": "MandateScopeAuthoringV1",
-            "type": "object"
-          },
-          "ManualTriggerPolicyV1": {
-            "additionalProperties": false,
-            "properties": {
-              "kind": {
-                "const": "manual",
-                "default": "manual",
-                "title": "Kind",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-manual-trigger-v1",
-                "default": "playbill-manual-trigger-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ManualTriggerPolicyV1",
             "type": "object"
           },
           "ProcedureHardCapsV3": {
@@ -11688,46 +11734,6 @@
               "subject_id"
             ],
             "title": "SubjectShell",
-            "type": "object"
-          },
-          "WindowCloseTriggerPolicyV2": {
-            "additionalProperties": false,
-            "properties": {
-              "kind": {
-                "const": "window_close",
-                "default": "window_close",
-                "title": "Kind",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-window-close-trigger-v2",
-                "default": "playbill-window-close-trigger-v2",
-                "title": "Tag",
-                "type": "string"
-              },
-              "window": {
-                "discriminator": {
-                  "mapping": {
-                    "capture_event": "#/$defs/CaptureEventWindowV1",
-                    "fixed": "#/$defs/FixedWindowV1"
-                  },
-                  "propertyName": "kind"
-                },
-                "oneOf": [
-                  {
-                    "$ref": "#/$defs/FixedWindowV1"
-                  },
-                  {
-                    "$ref": "#/$defs/CaptureEventWindowV1"
-                  }
-                ],
-                "title": "Window"
-              }
-            },
-            "required": [
-              "window"
-            ],
-            "title": "WindowCloseTriggerPolicyV2",
             "type": "object"
           },
           "WorkingSelectionInput": {
@@ -28284,7 +28290,7 @@
               "query_evaluation_policy",
               "document_activation_policy",
               "procedure_activation_policy",
-              "line_trigger_policy"
+              "trigger_schedule"
             ],
             "title": "Policy Kind",
             "type": "string"
@@ -28355,7 +28361,7 @@
               "query_evaluation_policy",
               "document_activation_policy",
               "procedure_activation_policy",
-              "line_trigger_policy"
+              "trigger_schedule"
             ],
             "title": "Policy Kind",
             "type": "string"
@@ -28554,7 +28560,7 @@
                   "query_evaluation_policy",
                   "document_activation_policy",
                   "procedure_activation_policy",
-                  "line_trigger_policy"
+                  "trigger_schedule"
                 ],
                 "title": "Policy Kind",
                 "type": "string"
@@ -44956,7 +44962,7 @@
           },
           "LineTriggerBindingV1": {
             "additionalProperties": false,
-            "description": "Semantic cause of one occurrence, independent of its dispatch instant.",
+            "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence tick binds no event\nor window: its instant is the occurrence's own evaluation instant.",
             "properties": {
               "event": {
                 "anyOf": [
@@ -44971,11 +44977,15 @@
               },
               "kind": {
                 "enum": [
+                  "cadence",
                   "capture_landing",
                   "window_close"
                 ],
                 "title": "Kind",
                 "type": "string"
+              },
+              "trigger": {
+                "$ref": "#/$defs/ArtifactIdentity"
               },
               "window": {
                 "anyOf": [
@@ -44990,7 +45000,8 @@
               }
             },
             "required": [
-              "kind"
+              "kind",
+              "trigger"
             ],
             "title": "LineTriggerBindingV1",
             "type": "object"

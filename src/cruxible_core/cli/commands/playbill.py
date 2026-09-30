@@ -4750,6 +4750,11 @@ def dispatch_line(
 
 @line_group.command("run")
 @click.argument("line")
+@click.option(
+    "--trigger",
+    default=None,
+    help="The Trigger this occurrence fires on; omit for a Line no Trigger aims at.",
+)
 @click.option("--occurrence-id", default=None, help="Assert the daemon-derived occurrence id.")
 @click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
 @click.option(
@@ -4768,6 +4773,7 @@ def dispatch_line(
 @handle_errors
 def run_line(
     line: str,
+    trigger: str | None,
     occurrence_id: str | None,
     evaluation_time: str | None,
     output_json: bool,
@@ -4781,6 +4787,7 @@ def run_line(
     request = LineRunRequestV1.model_validate(
         {
             "line": line,
+            "trigger": trigger,
             "occurrence_id": occurrence_id,
             "evaluation_time": evaluation_time,
             "resolution_contract": resolution_contract,
@@ -4791,6 +4798,7 @@ def run_line(
         lambda client, instance_id: client.run_playbill_line(
             instance_id,
             line,
+            trigger=request.trigger,
             occurrence_id=request.occurrence_id,
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,

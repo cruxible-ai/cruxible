@@ -15,7 +15,7 @@ from cruxible_client.contracts.line_dispatch import (
     LineDispatchRequestV1,
     LineEvaluateRequestV1,
 )
-from cruxible_client.contracts.procedures.line_specs import CaptureLandingTriggerPolicyV2
+from cruxible_client.contracts.triggers import CadenceScheduleV1, CaptureLandingScheduleV1
 from cruxible_core.consumers.lines import LINE_ARMS
 from cruxible_core.consumers.protocol import ConsumerWork
 from cruxible_core.consumers.runner import ConsumerRunner
@@ -57,7 +57,7 @@ def _admissions(instance) -> int:  # type: ignore[no-untyped-def]
 
 
 def _armed_world(tmp_path, *, principal=LOCAL):  # type: ignore[no-untyped-def]
-    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
     start = READ_TIME + timedelta(seconds=10)
     service_arm_line(
         instance,
@@ -111,7 +111,7 @@ def test_an_armed_line_admits_the_occurrence_its_daemon_matched(tmp_path, monkey
 
 
 def test_the_daemon_listener_runs_armed_work_on_its_own(tmp_path, monkeypatch):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
     monkeypatch.setattr(
         "cruxible_core.consumers.runner.get_registry",
         lambda: SimpleNamespace(
@@ -174,7 +174,7 @@ def test_a_restart_keeps_the_arm_forward_only_and_leaves_earlier_work_explicit(t
 
 
 def test_arming_never_drains_a_backlog_that_explicit_evaluation_left(tmp_path):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
     capture(instance, procedure)
     now = READ_TIME + timedelta(seconds=2)
     service_evaluate_line(
@@ -490,7 +490,7 @@ def test_a_same_epoch_revision_accepted_during_matching_never_runs_under_the_old
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, line, procedure, owner = line_world(
-        tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
     )
     service_arm_line(
         instance,
@@ -537,12 +537,7 @@ def test_a_same_epoch_revision_accepted_during_matching_never_runs_under_the_old
 
 
 def _cadence_world(tmp_path):  # type: ignore[no-untyped-def]
-    from cruxible_client.contracts.procedures.line_specs import CadenceTriggerPolicyV1
-
-    return line_world(
-        tmp_path,
-        CadenceTriggerPolicyV1(interval_seconds=60, cadence_policy_digest="sha256:" + "d" * 64),
-    )
+    return line_world(tmp_path, CadenceScheduleV1(interval_seconds=60))
 
 
 def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp_path):
@@ -828,7 +823,7 @@ def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tm
         LineRunNotAccepted,
     )
 
-    instance, line, _procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
     name = line.identity.name
 
     with pytest.raises(LineNeverArmed) as never:
@@ -849,7 +844,7 @@ def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tm
 
 
 def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
-    instance, line, _procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
     name = line.identity.name
     start = READ_TIME + timedelta(seconds=10)
 
@@ -885,3 +880,150 @@ def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
     stopped = disarmed.model_copy(update={"outcome": None})
     assert repeat.model_copy(update={"outcome": None}) == stopped
     assert service_line_status(instance, name) == stopped
+
+
+def test_a_line_with_two_triggers_runs_each_ones_occurrences_exactly_once(tmp_path):
+    from tests.support.lines import line_trigger
+    from tests.test_procedures.test_line_triggers import TRIGGER
+
+    ticking = "trigger-test-tick"
+    instance, line, procedure = line_world(
+        tmp_path,
+        None,
+        triggers=(
+            line_trigger(
+                TRIGGER, line="trigger-test", schedule=CaptureLandingScheduleV1(event=SELECTOR)
+            ),
+            line_trigger(
+                ticking, line="trigger-test", schedule=CadenceScheduleV1(interval_seconds=60)
+            ),
+        ),
+    )
+    start = READ_TIME + timedelta(seconds=10)
+    armed = service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+    )
+    assert [item.trigger for item in armed.triggers] == [
+        f"Trigger:{ticking}",
+        f"Trigger:{TRIGGER}",
+    ]
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
+    result = dispatch_armed_line(
+        _manager(instance), instance.descriptor.instance_id, arm, now=start + timedelta(seconds=3)
+    )
+    # The first tick and the landing are two occurrences, one per Trigger.
+    assert result is not None and [item.status for item in result.items] == ["admitted"] * 2
+    assert _admissions(instance) == 2
+    journal, _ = _journal(instance)
+    from cruxible_core.service.procedures.procedure_runs import _stored_line_admission
+
+    fired = sorted(
+        admission.trigger_binding.trigger.name
+        for stored in journal.select_records(_stream(instance), event_kind="admission_bound")
+        if (admission := _stored_line_admission(instance, stored)) is not None
+    )
+    assert fired == [ticking, TRIGGER]
+
+    # Each Trigger keeps its own chain: the landing trigger firing again does not
+    # push the cadence back, and nothing already admitted runs twice.
+    capture(instance, procedure, at=start + timedelta(seconds=30))
+    _match(instance, start + timedelta(seconds=31))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=31))
+    dispatch_armed_line(
+        _manager(instance), instance.descriptor.instance_id, arm, now=start + timedelta(seconds=32)
+    )
+    assert _admissions(instance) == 3
+    _match(instance, start + timedelta(seconds=63))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=63))
+    ticked = dispatch_armed_line(
+        _manager(instance), instance.descriptor.instance_id, arm, now=start + timedelta(seconds=63)
+    )
+    assert ticked is not None and [item.status for item in ticked.items] == ["admitted"]
+    assert _admissions(instance) == 4
+
+
+@pytest.mark.parametrize("change", ["added", "rescheduled", "retired"])
+def test_a_trigger_change_while_armed_stops_the_arm_before_anything_runs(tmp_path, change):
+    from cruxible_core.service.procedures.procedure_runs import line_triggers
+    from tests.support.lines import line_trigger, successor, trigger_members
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_procedures.test_line_triggers import TRIGGER
+
+    instance, line, procedure, owner = line_world(
+        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+    )
+    start = READ_TIME + timedelta(seconds=10)
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+    )
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
+
+    current = line_trigger(
+        TRIGGER, line=line.identity.name, schedule=CaptureLandingScheduleV1(event=SELECTOR)
+    )
+    changed = {
+        "added": line_trigger(
+            "another", line=line.identity.name, schedule=CadenceScheduleV1(interval_seconds=60)
+        ),
+        "rescheduled": successor(current, schedule=CadenceScheduleV1(interval_seconds=60)),
+        "retired": successor(current, state="retired"),
+    }[change]
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree.update(trigger_members(changed))
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-08-28T15:02:00.000000Z", proposal_name="retrigger"
+    )
+
+    # Work matched under the old Triggers never runs automatically once they change.
+    assert (
+        dispatch_armed_line(
+            _manager(instance),
+            instance.descriptor.instance_id,
+            arm,
+            now=start + timedelta(seconds=3),
+        )
+        is None
+    )
+    assert _admissions(instance) == 0
+    status = service_line_status(instance, line.identity.name)
+    assert (status.state, status.stop_reason) == ("stopped", "trigger_changed")
+    assert status.pending_explicit == 1
+
+    # Rearming binds the arm to the Triggers that aim at the Line now.
+    rearmed = service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start + timedelta(seconds=4),
+        daemon_id="daemon",
+    )
+    assert rearmed.outcome == "armed" and rearmed.state == "armed"
+    assert [item.trigger for item in rearmed.triggers] == [
+        item.trigger.identity.qualified
+        for item in line_triggers(
+            instance, _accepted_line(instance, line), coordinate=instance.accepted_coordinate()
+        )
+    ]
+
+
+def _accepted_line(instance, line):  # type: ignore[no-untyped-def]
+    from cruxible_core.service.procedures.procedure_runs import _accepted_line_by_reference
+
+    return _accepted_line_by_reference(
+        instance, coordinate=instance.accepted_coordinate(), reference=line.identity.name
+    )

@@ -12,13 +12,13 @@ from cruxible_client.contracts.line_dispatch import (
     LineDispatchRequestV1,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    CaptureLandingTriggerPolicyV2,
     LineSpecV4,
-    LineSpecV5,
+    LineSpecV6,
     line_spec_path,
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
+from cruxible_client.contracts.triggers import CaptureLandingScheduleV1, WindowCloseScheduleV1
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.procedures.execution import parse_admission_payload
 from cruxible_core.service.procedures.line_dispatch import (
@@ -33,6 +33,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     service_run_playbill_line,
 )
 from cruxible_core.storage.cas import BodyAccessContext
+from tests.support.lines import line_trigger, trigger_members
 from tests.test_procedures.test_procedure_source_runs import (
     NOW,
     RELATIVE_PATH,
@@ -48,6 +49,7 @@ from tests.test_procedures.test_procedure_source_runs import (
 )
 
 LOCAL_OPERATOR = LineArmPrincipalV1(kind="local_operator", label="local-operator")
+TRIGGER = "trigger-source-trigger"
 
 
 def world(tmp_path, *, window=False, line_budget=None, with_owner=False, **kwargs):
@@ -58,20 +60,18 @@ def world(tmp_path, *, window=False, line_budget=None, with_owner=False, **kwarg
         capture_contract_digest=capture_contract_digest(contract).tagged,
     )
     original = _served_line(procedure, policy)
-    trigger = CaptureLandingTriggerPolicyV2(event=selector)
+    schedule = CaptureLandingScheduleV1(event=selector)
     if window:
-        from cruxible_client.contracts.procedures.line_specs import WindowCloseTriggerPolicyV2
         from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
 
-        trigger = WindowCloseTriggerPolicyV2(
+        schedule = WindowCloseScheduleV1(
             window=CaptureEventWindowV1(event=selector, duration_seconds=60)
         )
-    line = LineSpecV4.model_validate(
+    line = LineSpecV6.model_validate(
         {
             **original.model_dump(mode="python"),
-            "artifact_format": "playbill-line-v4",
-            "trigger_policy": trigger,
             "trigger_input": SOURCE_ALIAS,
+            "trigger_event": selector,
             "pins": tuple(
                 sorted(
                     (
@@ -104,6 +104,7 @@ def world(tmp_path, *, window=False, line_budget=None, with_owner=False, **kwarg
         {
             line_spec_path(line.identity.name): render_line_spec(line),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
+            **trigger_members(line_trigger(TRIGGER, line=line.identity.name, schedule=schedule)),
         },
         name="trigger-source-line",
     )
@@ -119,7 +120,7 @@ def run_line(instance, line, event, at=NOW + timedelta(seconds=2)):
     return service_run_playbill_line(
         instance,
         path_identity_digest=line.identity.name,
-        request=LineRunRequestV1(line=line.identity.name, trigger_event=event),
+        request=LineRunRequestV1(line=line.identity.name, trigger=TRIGGER, trigger_event=event),
         actor_context=_actor(instance),
         caller_rung=2,
         daemon_clock=_TestClock(at),
@@ -284,6 +285,7 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
         return
     else:
         # Exercise the admission budget independently of acquisition-time provider caps.
+        from cruxible_client.contracts.artifacts import ArtifactIdentity
         from cruxible_client.contracts.procedures.windows import LineTriggerBindingV1
         from cruxible_core.service.procedures.procedure_runs import (
             _accepted_procedure,
@@ -300,7 +302,11 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
                 instance,
                 line=line,
                 procedure=accepted,
-                binding=LineTriggerBindingV1(kind="capture_landing", event=event),
+                binding=LineTriggerBindingV1(
+                    kind="capture_landing",
+                    trigger=ArtifactIdentity(kind="Trigger", name=TRIGGER),
+                    event=event,
+                ),
                 contracts={capture_contract_digest(contract).tagged: contract},
                 policy=_policy(),
                 evaluation_time=now,
@@ -344,13 +350,12 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
     from cruxible_client.contracts.authoring.models import LineAuthoringPayloadV1
     from cruxible_client.contracts.errors import ProjectionFormatError
     from cruxible_client.contracts.procedures.line_specs import (
-        ManualTriggerPolicyV1,
         evaluate_line_spec_law,
         parse_line_spec,
     )
     from cruxible_core.authoring.lowering import _render_line_member
     from cruxible_core.compiler.compiler import (
-        SOURCE_CHECKED_COMPILER,
+        AUTHORITY_VERBS_COMPILER,
         artifact_kinds_for_compiler,
         projection_registry_for_compiler,
     )
@@ -359,34 +364,43 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
 
     instance, _, line = world(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    # Authoring uses the same optional binding and emits the successor only when requested.
+    # Authoring declares the event the trigger input accepts, read from its Source.
     payload = LineAuthoringPayloadV1(
         name="second-consumer",
         procedure_name=line.procedure.target.name,
         acquisition_policy_name=line.acquisition_policy.target.name,
         max_authority="observe",
-        trigger_policy=line.trigger_policy,
         trigger_input=SOURCE_ALIAS,
     )
     path, raw, _ = _render_line_member(payload, tree=tree)
     authored = parse_line_spec(raw, path=path)
-    assert isinstance(authored, LineSpecV5) and authored.trigger_input == SOURCE_ALIAS
-    with pytest.raises(ValidationError, match="Capture event trigger"):
-        LineSpecV4.model_validate(
-            {**line.model_dump(mode="python"), "trigger_policy": ManualTriggerPolicyV1()}
-        )
+    assert isinstance(authored, LineSpecV6) and authored.trigger_input == SOURCE_ALIAS
+    assert authored.trigger_event == line.trigger_event
+    with pytest.raises(ValidationError, match="trigger_event come together"):
+        LineSpecV6.model_validate({**line.model_dump(mode="python"), "trigger_event": None})
     accepted = _accepted_procedure(
         instance, coordinate=instance.accepted_coordinate(), name=line.procedure.target.name
     )
+    wrong = line.trigger_event.model_copy(update={"capture_contract_digest": "sha256:" + "b" * 64})
     for bad in (
         line.model_copy(update={"trigger_input": "result"}),
-        line.model_copy(
-            update={
-                "trigger_policy": CaptureLandingTriggerPolicyV2(
-                    event=line.trigger_policy.event.model_copy(
-                        update={"capture_contract_digest": "sha256:" + "b" * 64}
+        LineSpecV6.model_validate(
+            {
+                **line.model_dump(mode="python"),
+                "trigger_event": wrong,
+                "pins": tuple(
+                    sorted(
+                        (
+                            *(p for p in line.pins if p.role != "trigger-capture-contract"),
+                            ArtifactPin(
+                                role="trigger-capture-contract",
+                                target=wrong.capture_contract_identity,
+                                artifact_digest=wrong.capture_contract_digest,
+                            ),
+                        ),
+                        key=lambda p: (p.role, p.target.qualified, p.artifact_digest),
                     )
-                )
+                ),
             }
         ),
     ):
@@ -399,11 +413,11 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
         )
         assert verdict.verdict == "refused"
         assert verdict.diagnostics[0].code == "playbill.line.trigger_input_mismatch"
-    with pytest.raises(ProjectionFormatError, match="Line v4 requires"):
+    with pytest.raises(ProjectionFormatError, match="Line v6 requires compiler revision 32"):
         parse_projection_tree(
             {line_spec_path(line.identity.name): render_line_spec(line)},
-            registry=projection_registry_for_compiler(SOURCE_CHECKED_COMPILER),
-            artifact_kinds=artifact_kinds_for_compiler(SOURCE_CHECKED_COMPILER),
+            registry=projection_registry_for_compiler(AUTHORITY_VERBS_COMPILER),
+            artifact_kinds=artifact_kinds_for_compiler(AUTHORITY_VERBS_COMPILER),
         )
 
 
@@ -624,13 +638,12 @@ def test_over_budget_occurrence_closes_then_requires_successor_for_retry(tmp_pat
     assert admission(instance, retried.run_id).admission.trigger_binding.event == first_event
 
 
-def test_line_v5_states_its_authority_as_a_verb_and_defaults_to_the_procedure(tmp_path):
+def test_line_v6_states_its_authority_as_a_verb_and_defaults_to_the_procedure(tmp_path):
     import json
 
     from cruxible_client.contracts.authoring.models import LineAuthoringPayloadV1
     from cruxible_client.contracts.procedures.line_specs import (
         AUTHORITY_RUNG,
-        ManualTriggerPolicyV1,
         line_requested_rung,
         parse_line_spec,
     )
@@ -648,14 +661,14 @@ def test_line_v5_states_its_authority_as_a_verb_and_defaults_to_the_procedure(tm
             name="manual-consumer",
             procedure_name=line.procedure.target.name,
             acquisition_policy_name=line.acquisition_policy.target.name,
-            trigger_policy=ManualTriggerPolicyV1(),
         ),
         tree=tree,
     )
     manual = parse_line_spec(raw, path=path)
-    assert isinstance(manual, LineSpecV5) and manual.trigger_input is None
+    assert isinstance(manual, LineSpecV6) and manual.trigger_input is None
     wire = json.loads(raw)
-    assert "requested_terminal_rung" not in wire and wire["max_authority"] == manual.max_authority
+    assert "requested_terminal_rung" not in wire and "trigger_policy" not in wire
+    assert wire["max_authority"] == manual.max_authority
     assert AUTHORITY_RUNG[manual.max_authority] == capability == line_requested_rung(manual)
 
     # The law's capability check reads the same internal value the verb maps to.
@@ -663,50 +676,105 @@ def test_line_v5_states_its_authority_as_a_verb_and_defaults_to_the_procedure(tm
     assert line_requested_rung(manual.model_copy(update={"max_authority": above})) > capability
 
 
-def test_a_revision_30_line_v4_survives_the_revision_31_succession(tmp_path):
-    from cruxible_client.contracts.authoring.models import LineAuthoringPayloadV1
+def _embedded_trigger_line(line: LineSpecV6, *, retired: bool = False) -> LineSpecV4:
+    """The same Line as the revision-30 wire that embedded its trigger."""
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.procedures.line_specs import CaptureLandingTriggerPolicyV2
+
+    value = line.model_dump(mode="python")
+    for field in ("max_authority", "trigger_event", "artifact_format"):
+        value.pop(field)
+    return LineSpecV4.model_validate(
+        {
+            **value,
+            "artifact_format": "playbill-line-v4",
+            "trigger_policy": CaptureLandingTriggerPolicyV2(event=line.trigger_event),
+            "requested_terminal_rung": 1,
+            "lifecycle": ArtifactLifecycle(state="retired" if retired else "live"),
+        }
+    )
+
+
+def test_embedded_trigger_lines_stay_history_across_the_revision_32_cut(tmp_path):
     from cruxible_client.contracts.errors import ProjectionFormatError
     from cruxible_client.contracts.procedures.line_specs import (
         line_requested_rung,
         line_spec_digest,
         parse_line_spec,
     )
-    from cruxible_core.authoring.lowering import _render_line_member
     from cruxible_core.compiler.compiler import (
         AUTHORITY_VERBS_COMPILER,
+        GOVERNED_TRIGGERS_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
         artifact_kinds_for_compiler,
         projection_registry_for_compiler,
     )
     from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 
-    instance, _, line = world(tmp_path)
+    _instance, _, line = world(tmp_path)
+    legacy = _embedded_trigger_line(line)
     path = line_spec_path(line.identity.name)
-    content = render_line_spec(line)
+    content = render_line_spec(legacy)
     # The v4 wire is unchanged: numeric rung, required trigger input, same digest.
     reparsed = parse_line_spec(content, path=path)
-    assert isinstance(reparsed, LineSpecV4) and reparsed == line
-    assert line_spec_digest(reparsed) == line_spec_digest(line)
-    assert line_requested_rung(reparsed) == line.requested_terminal_rung
-    for compiler in (TRIGGER_CAPTURE_COMPILER, AUTHORITY_VERBS_COMPILER):
-        parse_projection_tree(
-            {path: content},
+    assert isinstance(reparsed, LineSpecV4) and reparsed == legacy
+    assert line_spec_digest(reparsed) == line_spec_digest(legacy)
+    assert line_requested_rung(reparsed) == 1
+
+    def project(compiler, member):  # type: ignore[no-untyped-def]
+        return parse_projection_tree(
+            {path: render_line_spec(member)},
             registry=projection_registry_for_compiler(compiler),
             artifact_kinds=artifact_kinds_for_compiler(compiler),
         )
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    v5_path, v5, _ = _render_line_member(
-        LineAuthoringPayloadV1(
-            name="verb-line",
-            procedure_name=line.procedure.target.name,
-            acquisition_policy_name=line.acquisition_policy.target.name,
-            trigger_policy=line.trigger_policy,
-        ),
-        tree=tree,
-    )
-    with pytest.raises(ProjectionFormatError, match="Line v5 requires compiler revision 31"):
-        parse_projection_tree(
-            {v5_path: v5},
-            registry=projection_registry_for_compiler(TRIGGER_CAPTURE_COMPILER),
-            artifact_kinds=artifact_kinds_for_compiler(TRIGGER_CAPTURE_COMPILER),
+
+    for compiler in (TRIGGER_CAPTURE_COMPILER, AUTHORITY_VERBS_COMPILER):
+        project(compiler, legacy)
+    # Revision 32 keeps an embedded-trigger Line only as retired history.
+    with pytest.raises(ProjectionFormatError, match="only as retired history"):
+        project(GOVERNED_TRIGGERS_COMPILER, legacy)
+    project(GOVERNED_TRIGGERS_COMPILER, _embedded_trigger_line(line, retired=True))
+    project(GOVERNED_TRIGGERS_COMPILER, line)
+
+
+def test_a_line_that_binds_its_trigger_capture_accepts_only_triggers_on_that_event(tmp_path):
+    from cruxible_client.contracts.triggers import CadenceScheduleV1
+    from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+
+    instance, _root, line = world(tmp_path)
+
+    def submit(trigger, name):  # type: ignore[no-untyped-def]
+        base = instance.accepted_coordinate()
+        tree = instance.tree_at(base.git_oid)
+        tree.update(trigger_members(trigger))
+        return instance.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=ProposalAdmissionRequest(
+                target_ref=f"refs/proposals/owner/{name}", proposed_base_oid=base.git_oid
+            ),
+            candidate_tree=tree,
+            timestamp="2026-08-21T12:30:00.000000Z",
         )
+
+    ticking = submit(
+        line_trigger(
+            "consume-hourly",
+            line=line.identity.name,
+            schedule=CadenceScheduleV1(interval_seconds=3600),
+        ),
+        "tick",
+    )
+    assert ticking.candidate is None
+    assert [item.code for item in ticking.evaluation.diagnostics] == [
+        "playbill.trigger.event_not_accepted"
+    ]
+    second = submit(
+        line_trigger(
+            "consume-again",
+            line=line.identity.name,
+            schedule=CaptureLandingScheduleV1(event=line.trigger_event),
+        ),
+        "again",
+    )
+    assert second.candidate is not None, second.evaluation.diagnostics

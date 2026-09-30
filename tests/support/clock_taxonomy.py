@@ -218,6 +218,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("LineEgressReadingV1", "sequence"): "SETTLEMENT ORDER",
     ("LineRunRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("CadenceTriggerPolicyV1", "interval_seconds"): "VALIDITY WINDOW",
+    ("CadenceScheduleV1", "interval_seconds"): "VALIDITY WINDOW",
     ("WindowCloseTriggerPolicyV1", "window_seconds"): "VALIDITY WINDOW",
     ("MemberLawEvaluationV2", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillAuditCursor", "evaluation_time"): "EVALUATION INSTANT",

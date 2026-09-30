@@ -1953,10 +1953,12 @@ def handle_playbill_line_run(
     evaluation_time: str | None = None,
     resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
     trigger_event: contracts.TriggerEventReferenceV1 | None = None,
+    trigger: str | None = None,
 ) -> contracts.PlaybillProcedureRunState:
     request = LineRunRequestV1.model_validate(
         {
             "line": line,
+            "trigger": trigger,
             "resolution_contract": resolution_contract,
             "trigger_event": trigger_event,
             "occurrence_id": occurrence_id,
@@ -1970,6 +1972,7 @@ def handle_playbill_line_run(
             instance_id,
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,
+            trigger=trigger,
             line=line,
             occurrence_id=request.occurrence_id,
             evaluation_time=(

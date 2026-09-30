@@ -27,8 +27,7 @@ from cruxible_client.contracts.procedure_mandates import (
 )
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1, render_procedure
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpecV1,
-    ManualTriggerPolicyV1,
+    LineSpecV6,
     line_identity_digest,
     line_spec_digest,
     line_spec_path,
@@ -80,7 +79,7 @@ def _served_line(
     *,
     accepted: AcceptedProcedureV1,
     policy: SourceAcquisitionPolicyV1,
-) -> LineSpecV1:
+) -> LineSpecV6:
     procedure_pin = ArtifactPin(
         role="procedure",
         target=accepted.procedure.identity,
@@ -91,15 +90,15 @@ def _served_line(
         target=policy.identity,
         artifact_digest=acquisition_policy_digest(policy).tagged,
     )
-    return LineSpecV1(
+    return LineSpecV6(
         identity=ArtifactIdentity(kind="Line", name=name),
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={"status": "open"},
         slot_bindings=(),
-        trigger_policy=ManualTriggerPolicyV1(),
         acquisition_policy=policy_pin,
-        requested_terminal_rung=2,
+        max_authority="propose",
+        provider_implementation_closures=(),
         budgets={
             "max_capture_bytes": 0,
             "max_items": 100,

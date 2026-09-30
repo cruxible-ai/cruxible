@@ -45,6 +45,7 @@ from cruxible_client.contracts.providers import (
 from cruxible_core.compiler.compiler import (
     AUTHORITY_VERBS_COMPILER,
     CLAIM_EVIDENCE_COMPILER,
+    GOVERNED_TRIGGERS_COMPILER,
     PROVIDER_PACKAGE_COMPILER,
     RESOURCE_BUDGET_COMPILER,
     SDK_SOURCE_COMPILER,
@@ -381,6 +382,7 @@ def service_install_provider(
         SOURCE_CHECKED_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
         AUTHORITY_VERBS_COMPILER,
+        GOVERNED_TRIGGERS_COMPILER,
     ):
         raise ConfigError(
             "provider installation requires an explicit upgrade to the package compiler"

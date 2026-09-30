@@ -29,6 +29,7 @@ from cruxible_core.compiler.projection_artifacts import (
     ATTESTATION_ARTIFACT_KINDS,
     AUTHORITY_VERBS_ARTIFACT_KINDS,
     CLAIM_EVIDENCE_ARTIFACT_KINDS,
+    GOVERNED_TRIGGERS_ARTIFACT_KINDS,
     ONTOLOGY_ARTIFACT_KINDS,
     P2_B0_ARTIFACT_KINDS,
     P2_B1_ARTIFACT_KINDS,
@@ -180,6 +181,14 @@ AUTHORITY_VERBS_COMPILER = _coordinate(
     candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
 )
 
+# Revision 32: every trigger is a governed Trigger artifact aimed at a Line or an
+# internal action, and a Line (v6) no longer embeds its own.
+GOVERNED_TRIGGERS_COMPILER = _coordinate(
+    projection_content="claims-procedures-runtime-v1",
+    semantic_revision=32,
+    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
+)
+
 # The renderer a coordinate commits to is resolved from the coordinate itself,
 # never from a second copy of its preimage. A duplicated preimage with its own
 # revision literal silently returns None the moment the revision is succeeded,
@@ -199,6 +208,7 @@ _CARD_RENDERER_BY_COMPILER: dict[str, str] = {
     SOURCE_CHECKED_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
     TRIGGER_CAPTURE_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
     AUTHORITY_VERBS_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
+    GOVERNED_TRIGGERS_COMPILER.rule_digest: CARD_RENDERER_DIGEST,
 }
 
 
@@ -241,6 +251,7 @@ SUPPORTED_COMPILERS = (
     SOURCE_CHECKED_COMPILER,
     TRIGGER_CAPTURE_COMPILER,
     AUTHORITY_VERBS_COMPILER,
+    GOVERNED_TRIGGERS_COMPILER,
 )
 # Immutable human-facing revision labels.  The digest remains the authority;
 # these labels are display metadata and must never be inferred from the moving
@@ -276,6 +287,7 @@ COMPILER_REVISION_LABELS = {
     SOURCE_CHECKED_COMPILER: "checked-procedure-source-v2",
     TRIGGER_CAPTURE_COMPILER: "line-trigger-capture-input-v1",
     AUTHORITY_VERBS_COMPILER: "authority-verbs-settle-mandates-v1",
+    GOVERNED_TRIGGERS_COMPILER: "governed-triggers-v1",
 }
 PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
     {
@@ -299,17 +311,20 @@ PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
         SOURCE_CHECKED_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
         AUTHORITY_VERBS_COMPILER,
+        GOVERNED_TRIGGERS_COMPILER,
     }
 )
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
-    return AUTHORITY_VERBS_COMPILER
+    return GOVERNED_TRIGGERS_COMPILER
 
 
 def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindRegistry:
     """Return the frozen ledger path grammar selected by one compiler."""
 
+    if compiler == GOVERNED_TRIGGERS_COMPILER:
+        return GOVERNED_TRIGGERS_ARTIFACT_KINDS
     if compiler == AUTHORITY_VERBS_COMPILER:
         return AUTHORITY_VERBS_ARTIFACT_KINDS
     if compiler == TRIGGER_CAPTURE_COMPILER:
@@ -382,6 +397,10 @@ def projection_registry_for_compiler(
         return playbill_p2c_extension_registry().with_artifact_kinds(
             "attestation", "resolution-contract"
         )
+    if compiler == GOVERNED_TRIGGERS_COMPILER:
+        return playbill_p2c_extension_registry().with_artifact_kinds(
+            "attestation", "resolution-contract", "trigger"
+        )
     if compiler == ATTESTATION_COMPILER:
         return playbill_p2c_extension_registry().with_artifact_kinds("attestation")
     if compiler == PB_B_COMPILER:
@@ -432,6 +451,7 @@ __all__ = [
     "SOURCE_CHECKED_COMPILER",
     "TRIGGER_CAPTURE_COMPILER",
     "AUTHORITY_VERBS_COMPILER",
+    "GOVERNED_TRIGGERS_COMPILER",
     "RESOLUTION_COMPILER",
     "PB_B_COMPILER",
     "PB_C_COMPILER",

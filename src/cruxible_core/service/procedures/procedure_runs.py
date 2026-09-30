@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -67,13 +68,7 @@ from cruxible_client.contracts.procedures.closure import (
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
-    CadenceTriggerPolicyV1,
-    CaptureLandingTriggerPolicyV2,
-    LineSpecV2,
-    LineSpecV4,
-    LineSpecV5,
-    ManualTriggerPolicyV1,
-    WindowCloseTriggerPolicyV2,
+    LineSpecV6,
     evaluate_line_spec_law,
     line_identity_digest,
     line_requested_rung,
@@ -144,6 +139,8 @@ from cruxible_client.contracts.procedures.results import (
     procedure_selection_decision_digest,
 )
 from cruxible_client.contracts.procedures.windows import (
+    BoundObservationWindowV1,
+    CaptureEventWindowV1,
     LineTriggerBindingV1,
     TriggerEventReferenceV1,
 )
@@ -179,6 +176,13 @@ from cruxible_client.contracts.resolution_contracts import (
     ResolutionContractReferenceV1,
 )
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_client.contracts.triggers import (
+    AcceptedTriggerV1,
+    CadenceScheduleV1,
+    CaptureLandingScheduleV1,
+    TriggerV1,
+    WindowCloseScheduleV1,
+)
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     PlaybillWorkspaceAdvertisement,
@@ -188,14 +192,6 @@ from cruxible_client.contracts.workspace_file import (
     source_read_receipt_digest,
 )
 from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
-from cruxible_core.compiler.compiler import (
-    AUTHORITY_VERBS_COMPILER,
-    CLAIM_EVIDENCE_COMPILER,
-    RESOURCE_BUDGET_COMPILER,
-    SDK_SOURCE_COMPILER,
-    SOURCE_CHECKED_COMPILER,
-    TRIGGER_CAPTURE_COMPILER,
-)
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.errors import PermissionDeniedError
 from cruxible_core.exhaust import (
@@ -665,6 +661,13 @@ class LineRunRequestV1(_StrictProcedureSurfaceModel):
     resolution_contract: ResolutionContractReferenceV1 | None = None
     trigger_event: TriggerEventReferenceV1 | None = None
     line: str = Field(validation_alias=AliasChoices("line", "line_identity_digest"))
+    trigger: str | None = Field(
+        default=None,
+        description=(
+            "The Trigger (name or Trigger:name) this occurrence fires on. Omit it only "
+            "for a Line no live Trigger aims at, which runs when run explicitly."
+        ),
+    )
     occurrence_id: str | None = None
     evaluation_time: datetime | None = Field(
         default=None,
@@ -682,6 +685,13 @@ class LineRunRequestV1(_StrictProcedureSurfaceModel):
             Sha256Value.from_tagged(value)
         else:
             ArtifactIdentity(kind="Line", name=value.removeprefix("Line:"))
+        return value
+
+    @field_validator("trigger")
+    @classmethod
+    def _trigger(cls, value: str | None) -> str | None:
+        if value is not None:
+            ArtifactIdentity(kind="Trigger", name=value.removeprefix("Trigger:"))
         return value
 
     @field_validator("evaluation_time")
@@ -887,7 +897,79 @@ def _accepted_line_by_reference(
         identity, path, digest = matches[0]
         line = projection.typed.source(identity)
         assert line is not None
+        if not isinstance(line, LineSpecV6):
+            raise LineRunNotAccepted(
+                f"{LineRunNotAccepted.code}: Line {reference.removeprefix('Line:')!r} embeds "
+                f"its trigger ({line.artifact_format}), which is no longer served; upgrade to "
+                "compiler revision 32, then accept a Line v6 and Trigger artifacts aimed at it"
+            )
         return AcceptedLineSpecV1(path=path, line=line, artifact_digest=digest)
+
+
+def line_triggers(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpecV1,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> tuple[AcceptedTriggerV1, ...]:
+    """Every live Trigger aimed at this Line at one coordinate, in identity order."""
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        rows = projection.typed.connection.execute(
+            "SELECT identity,path,artifact_digest FROM triggers "
+            "WHERE target_kind='line' AND target=? AND lifecycle='live' ORDER BY identity",
+            (accepted_line.line.identity.qualified,),
+        ).fetchall()
+        triggers = []
+        for identity, path, digest in rows:
+            trigger = projection.typed.source(identity)
+            assert isinstance(trigger, TriggerV1)
+            triggers.append(AcceptedTriggerV1(path=path, trigger=trigger, artifact_digest=digest))
+    return tuple(triggers)
+
+
+def line_trigger_pins(triggers: tuple[AcceptedTriggerV1, ...]) -> dict[str, str]:
+    """The exact Trigger versions one arm or pending occurrence is bound to."""
+
+    return {item.trigger.identity.qualified: item.artifact_digest for item in triggers}
+
+
+def _trigger_reference(reference: str) -> str:
+    return "Trigger:" + reference.removeprefix("Trigger:")
+
+
+class LineTriggerMismatch(PlaybillExecutionError):
+    """A run names a Trigger that does not aim at the Line, or names none when some do."""
+
+
+def select_line_trigger(
+    triggers: tuple[AcceptedTriggerV1, ...],
+    reference: str | None,
+    *,
+    line: ArtifactIdentity,
+) -> AcceptedTriggerV1 | None:
+    """The live Trigger a run fires on; None only for a Line no Trigger aims at."""
+
+    if reference is None:
+        if triggers:
+            raise LineTriggerMismatch(
+                f"Line {line.name!r} runs on its Triggers "
+                f"({', '.join(item.trigger.identity.name for item in triggers)}); name the "
+                "Trigger this occurrence fires on"
+            )
+        return None
+    wanted = _trigger_reference(reference)
+    found = next((item for item in triggers if item.trigger.identity.qualified == wanted), None)
+    if found is None:
+        raise LineTriggerMismatch(
+            f"{wanted!r} is not a live Trigger aimed at Line {line.name!r}"
+            + (
+                f"; its Triggers: {', '.join(item.trigger.identity.name for item in triggers)}"
+                if triggers
+                else "; no Trigger aims at it, so run it without one"
+            )
+        )
+    return found
 
 
 def _accepted_line_predecessor(
@@ -990,6 +1072,36 @@ def _resolve_line_pin(
         ) from exc
 
 
+def _stored_line_admission(
+    instance: PlaybillInstance, stored: Any
+) -> ProcedureRunAdmissionV5 | None:
+    if stored.record.event_kind != "admission_bound":
+        return None
+    payload = parse_journal_payload(
+        instance.body_store().read(
+            stored.record.payload_digest,
+            access=BodyAccessContext(
+                principal_id="line-occurrence-registry",
+                can_read_body=True,
+            ),
+        )
+    )
+    if not isinstance(payload, dict) or payload.get("tag") not in {
+        "playbill-procedure-admission-bound-payload-v5",
+        "playbill-procedure-admission-bound-payload-v7",
+    }:
+        return None
+    return (
+        (
+            ProcedureAdmissionBoundPayloadV7
+            if payload.get("tag") == "playbill-procedure-admission-bound-payload-v7"
+            else ProcedureAdmissionBoundPayloadV5
+        )
+        .model_validate(payload)
+        .admission
+    )
+
+
 def _line_admissions(
     instance: PlaybillInstance,
     accepted_line: AcceptedLineSpecV1,
@@ -1008,32 +1120,74 @@ def _line_admissions(
         descending=True,
         limit=1,
     ):
-        if stored.record.event_kind != "admission_bound":
-            continue
-        payload = parse_journal_payload(
-            instance.body_store().read(
-                stored.record.payload_digest,
-                access=BodyAccessContext(
-                    principal_id="line-occurrence-registry",
-                    can_read_body=True,
-                ),
-            )
-        )
-        if not isinstance(payload, dict) or payload.get("tag") not in {
-            "playbill-procedure-admission-bound-payload-v5",
-            "playbill-procedure-admission-bound-payload-v7",
-        }:
-            continue
-        admissions.append(
-            (
-                ProcedureAdmissionBoundPayloadV7
-                if payload.get("tag") == "playbill-procedure-admission-bound-payload-v7"
-                else ProcedureAdmissionBoundPayloadV5
-            )
-            .model_validate(payload)
-            .admission
-        )
+        admission = _stored_line_admission(instance, stored)
+        if admission is not None:
+            admissions.append(admission)
     return tuple(admissions)
+
+
+# Per process: (instance root, Line partition, Trigger) -> (last journal
+# sequence read, that Trigger's latest admission). Admission records are
+# append-only, so the chain only ever reads what landed since.
+_TRIGGER_CHAINS: dict[tuple[str, str, str], tuple[int, ProcedureRunAdmissionV5 | None]] = {}
+_TRIGGER_CHAINS_LOCK = threading.Lock()
+
+
+def _trigger_admissions(
+    instance: PlaybillInstance,
+    accepted_line: AcceptedLineSpecV1,
+    trigger: ArtifactIdentity,
+) -> tuple[ProcedureRunAdmissionV5, ...]:
+    """The latest occurrence one Trigger fired on this Line: its cadence chain.
+
+    A Line's admissions interleave every Trigger aimed at it, so a cadence counts
+    from the last occurrence its own Trigger fired, found by the Trigger each
+    admission's binding names. Only records past the last read are parsed; a
+    restart rebuilds the chain from the retained journal.
+    """
+
+    journal, _root = _journal(instance)
+    stream = procedure_line_journal_stream(instance.descriptor.instance_id)
+    partition = procedure_line_partition(accepted_line.line.identity)
+    key = (str(instance.root), partition, trigger.qualified)
+    with _TRIGGER_CHAINS_LOCK:
+        seen, latest = _TRIGGER_CHAINS.get(key, (0, None))
+    for stored in journal.select_records(
+        stream,
+        partition_id=partition,
+        event_kind="admission_bound",
+        first_sequence=seen + 1,
+    ):
+        seen = max(seen, stored.record.sequence)
+        admission = _stored_line_admission(instance, stored)
+        binding = getattr(admission, "trigger_binding", None)
+        if binding is not None and binding.trigger == trigger:
+            latest = admission
+    with _TRIGGER_CHAINS_LOCK:
+        if _TRIGGER_CHAINS.get(key, (0, None))[0] <= seen:
+            _TRIGGER_CHAINS[key] = (seen, latest)
+    return () if latest is None else (latest,)
+
+
+def trigger_binding_for(
+    trigger: AcceptedTriggerV1,
+    *,
+    event: TriggerEventReferenceV1 | None = None,
+    window: BoundObservationWindowV1 | None = None,
+) -> LineTriggerBindingV1:
+    """The semantic cause one Trigger gives an occurrence."""
+
+    schedule = trigger.trigger.schedule
+    if isinstance(schedule, CadenceScheduleV1):
+        return LineTriggerBindingV1(kind="cadence", trigger=trigger.trigger.identity)
+    if isinstance(schedule, CaptureLandingScheduleV1):
+        return LineTriggerBindingV1(
+            kind="capture_landing", trigger=trigger.trigger.identity, event=event
+        )
+    assert window is not None
+    return LineTriggerBindingV1(
+        kind="window_close", trigger=trigger.trigger.identity, window=window, event=window.event
+    )
 
 
 def _line_occurrence(
@@ -1041,53 +1195,60 @@ def _line_occurrence(
     *,
     evaluation_time: datetime,
     prior: tuple[ProcedureRunAdmissionV5, ...],
+    trigger: AcceptedTriggerV1 | None = None,
     binding: LineTriggerBindingV1 | None = None,
     not_before: datetime | None = None,
     exact_basis: datetime | None = None,
 ) -> tuple[str, datetime | None]:
     """Derive one occurrence's identity and its next due instant.
 
-    A cadence occurrence is the tick after the last admitted one. `not_before`
-    floors it for forward-only matching: an arm that starts or resumes later
-    than that tick starts ticking from its own start, never catching up.
-    `exact_basis` names a retained tick outright, for an explicit dispatch or
-    retry of that exact occurrence.
+    With no Trigger the occurrence is an explicit run at its evaluation instant.
+    A cadence occurrence is the tick after the last one its Trigger fired
+    (`prior`). `not_before` floors it for forward-only matching: an arm that
+    starts or resumes later than that tick starts ticking from its own start,
+    never catching up. `exact_basis` names a retained tick outright, for an
+    explicit dispatch or retry of that exact occurrence.
     """
 
-    trigger = accepted_line.line.trigger_policy
     last = max(prior, key=lambda item: item.occurrence_evaluation_time, default=None)
     next_due = None
-    if isinstance(trigger, ManualTriggerPolicyV1):
+    if trigger is None:
+        kind = "manual"
         occurrence_basis: object = format_datetime(evaluation_time)
-    elif isinstance(trigger, CadenceTriggerPolicyV1):
-        next_due = (
-            exact_basis
-            if exact_basis is not None
-            else cadence_due(
-                timedelta(seconds=trigger.interval_seconds),
-                last=None if last is None else last.occurrence_evaluation_time,
-                not_before=not_before,
-            )
-        )
-        occurrence_basis = format_datetime(next_due or evaluation_time)
-    elif isinstance(trigger, (CaptureLandingTriggerPolicyV2, WindowCloseTriggerPolicyV2)):
-        if binding is None or binding.kind != trigger.kind:
-            raise PlaybillExecutionError("trigger requires an exact retained event or window")
-        occurrence_basis = binding.model_dump(mode="json")
-        if binding.window is not None:
-            next_due = binding.window.ends_at
     else:
-        raise PlaybillExecutionError(
-            "accept a Line successor with explicit event/window bindings before running "
-            "this trigger"
-        )
+        schedule = trigger.trigger.schedule
+        kind = schedule.kind
+        if (
+            binding is None
+            or binding.kind != schedule.kind
+            or binding.trigger != trigger.trigger.identity
+        ):
+            raise PlaybillExecutionError(
+                "a Trigger occurrence requires its exact tick, retained event, or window"
+            )
+        if isinstance(schedule, CadenceScheduleV1):
+            next_due = (
+                exact_basis
+                if exact_basis is not None
+                else cadence_due(
+                    timedelta(seconds=schedule.interval_seconds),
+                    last=None if last is None else last.occurrence_evaluation_time,
+                    not_before=not_before,
+                )
+            )
+            occurrence_basis = format_datetime(next_due or evaluation_time)
+        else:
+            occurrence_basis = binding.model_dump(mode="json")
+            if binding.window is not None:
+                next_due = binding.window.ends_at
     occurrence_id = typed_digest(
         Sha256Value,
-        "playbill-line-occurrence-v2",
+        "playbill-line-occurrence-v3",
         {
             "line_identity_digest": line_identity_digest(accepted_line.line.identity),
             "occurrence_epoch": accepted_line.line.occurrence_epoch,
-            "trigger_kind": trigger.kind,
+            "trigger": None if trigger is None else trigger.trigger.identity.qualified,
+            "trigger_kind": kind,
             "trigger_binding": occurrence_basis,
         },
     ).tagged
@@ -1097,23 +1258,17 @@ def _line_occurrence(
 def _line_budget(
     accepted_line: AcceptedLineSpecV1,
     accepted_procedure: AcceptedProcedureV1,
-    *,
-    resource_budgets: bool = False,
 ) -> ProcedureBudgetV3:
     budgets = accepted_line.line.budgets
-    if not isinstance(accepted_line.line, LineSpecV2) or not isinstance(budgets, dict):
+    if not isinstance(budgets, dict):
         return accepted_procedure.procedure.definition.budget
     return ProcedureBudgetV3(
         wall_clock=CanonicalDurationV1(microseconds=budgets["max_wall_clock_microseconds"]),
         max_provider_calls=budgets["max_provider_calls"],
         max_capture_bytes=budgets["max_capture_bytes"],
         max_items=budgets.get("max_items"),
-        max_result_bytes=(
-            budgets.get(
-                "max_result_bytes", accepted_procedure.procedure.definition.budget.max_result_bytes
-            )
-            if resource_budgets
-            else None
+        max_result_bytes=budgets.get(
+            "max_result_bytes", accepted_procedure.procedure.definition.budget.max_result_bytes
         ),
     )
 
@@ -1366,7 +1521,7 @@ def _line_external_occurrences(
         implementation_closures=getattr(accepted_line.line, "provider_implementation_closures", ()),
         supplied_source_inputs=(
             frozenset({accepted_line.line.trigger_input})
-            if isinstance(accepted_line.line, LineSpecV4 | LineSpecV5)
+            if isinstance(accepted_line.line, LineSpecV6)
             and accepted_line.line.trigger_input is not None
             else frozenset()
         ),
@@ -3590,6 +3745,7 @@ def service_run_playbill_line(
     evaluation_instant_skew: timedelta | None = None,
     occurrence_basis_time: datetime | None = None,
     expected_line_artifact_digest: str | None = None,
+    expected_trigger_artifact_digest: str | None = None,
     explicit_occurrence: bool = False,
 ) -> ProcedureRunStateV2:
     instance.require_writable()
@@ -3612,6 +3768,7 @@ def service_run_playbill_line(
             evaluation_instant_skew=evaluation_instant_skew,
             occurrence_basis_time=occurrence_basis_time,
             expected_line_artifact_digest=expected_line_artifact_digest,
+            expected_trigger_artifact_digest=expected_trigger_artifact_digest,
             explicit_occurrence=explicit_occurrence,
         )
 
@@ -3629,6 +3786,7 @@ def _run_playbill_line(
     evaluation_instant_skew: timedelta | None = None,
     occurrence_basis_time: datetime | None = None,
     expected_line_artifact_digest: str | None = None,
+    expected_trigger_artifact_digest: str | None = None,
     explicit_occurrence: bool = False,
 ) -> ProcedureRunStateV2:
     """Derive, admit, and execute one occurrence of an accepted Line.
@@ -3767,10 +3925,44 @@ def _run_playbill_line(
                 "repair": "Author and accept a ProcedureMandate pinning this exact Procedure."
             },
         )
-    trigger = accepted_line.line.trigger_policy
+    try:
+        trigger = select_line_trigger(
+            line_triggers(instance, accepted_line, coordinate=coordinate),
+            request.trigger,
+            line=accepted_line.line.identity,
+        )
+    except LineTriggerMismatch as exc:
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="line_trigger_mismatch",
+            message=str(exc),
+            details={},
+        )
+    if (
+        expected_trigger_artifact_digest is not None
+        and (None if trigger is None else trigger.artifact_digest)
+        != expected_trigger_artifact_digest
+    ):
+        return _line_refusal_state(
+            accepted,
+            accepted_line,
+            coordinate=coordinate,
+            head_at_admission=head_at_admission,
+            evaluation_time=evaluation_time,
+            code="line_binding_superseded",
+            message="The Trigger changed after the pending binding was checked.",
+            details={"expected_trigger_artifact_digest": expected_trigger_artifact_digest},
+        )
+    schedule = None if trigger is None else trigger.trigger.schedule
     trigger_binding = None
     try:
-        if isinstance(trigger, CaptureLandingTriggerPolicyV2):
+        if trigger is not None and isinstance(schedule, CadenceScheduleV1):
+            trigger_binding = trigger_binding_for(trigger)
+        elif trigger is not None and isinstance(schedule, CaptureLandingScheduleV1):
             if request.trigger_event is None:
                 return _line_refusal_state(
                     accepted,
@@ -3779,17 +3971,13 @@ def _run_playbill_line(
                     head_at_admission=head_at_admission,
                     evaluation_time=evaluation_time,
                     code="occurrence_not_due",
-                    message="The Line is waiting for a matching retained capture event.",
+                    message="The Trigger is waiting for a matching retained capture event.",
                     details={"repair": "Supply the retained capture event when it arrives."},
                 )
-            capture_event_time(instance, trigger.event, request.trigger_event, now=evaluation_time)
-            trigger_binding = LineTriggerBindingV1(
-                kind="capture_landing", event=request.trigger_event
-            )
-        elif isinstance(trigger, WindowCloseTriggerPolicyV2):
-            from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
-
-            if isinstance(trigger.window, CaptureEventWindowV1) and request.trigger_event is None:
+            capture_event_time(instance, schedule.event, request.trigger_event, now=evaluation_time)
+            trigger_binding = trigger_binding_for(trigger, event=request.trigger_event)
+        elif trigger is not None and isinstance(schedule, WindowCloseScheduleV1):
+            if isinstance(schedule.window, CaptureEventWindowV1) and request.trigger_event is None:
                 return _line_refusal_state(
                     accepted,
                     accepted_line,
@@ -3802,16 +3990,14 @@ def _run_playbill_line(
                 )
             line_event = request.trigger_event
             if (
-                not isinstance(trigger.window, CaptureEventWindowV1)
+                not isinstance(schedule.window, CaptureEventWindowV1)
                 and request.resolution_contract is not None
             ):
                 line_event = None
-            window = bind_window(instance, trigger.window, line_event, now=evaluation_time)
-            trigger_binding = LineTriggerBindingV1(
-                kind="window_close", window=window, event=window.event
-            )
+            window = bind_window(instance, schedule.window, line_event, now=evaluation_time)
+            trigger_binding = trigger_binding_for(trigger, window=window)
         elif request.trigger_event is not None and request.resolution_contract is None:
-            raise PlaybillExecutionError("this Line trigger does not accept a capture event")
+            raise PlaybillExecutionError("this Line occurrence does not accept a capture event")
         investigation = (
             None
             if request.resolution_contract is None
@@ -3844,16 +4030,22 @@ def _run_playbill_line(
         raise PlaybillExecutionError(
             "Line and resolution contract must bind the same observation window"
         )
-    prior = _line_admissions(instance, accepted_line)
+    is_cadence = isinstance(schedule, CadenceScheduleV1)
+    prior = (
+        _trigger_admissions(instance, accepted_line, trigger.trigger.identity)
+        if trigger is not None and is_cadence
+        else ()
+    )
     cadence_basis = (
         min(occurrence_basis_time, evaluation_time)
-        if occurrence_basis_time is not None and isinstance(trigger, CadenceTriggerPolicyV1)
+        if occurrence_basis_time is not None and is_cadence
         else None
     )
     occurrence_id, next_due = _line_occurrence(
         accepted_line,
         evaluation_time=cadence_basis or evaluation_time,
         prior=prior,
+        trigger=trigger,
         binding=trigger_binding,
         # A retained tick is validated against the same calculation that queued
         # it: automatically, as the chain's next tick floored at its own due
@@ -3933,19 +4125,7 @@ def _run_playbill_line(
         )
     runtime_policy = _accepted_runtime_policy(instance, coordinate)
     slot_pins = _line_slot_pins(accepted_line)
-    budget = _line_budget(
-        accepted_line,
-        accepted,
-        resource_budgets=coordinate.compiler
-        in {
-            RESOURCE_BUDGET_COMPILER,
-            SDK_SOURCE_COMPILER,
-            CLAIM_EVIDENCE_COMPILER,
-            SOURCE_CHECKED_COMPILER,
-            TRIGGER_CAPTURE_COMPILER,
-            AUTHORITY_VERBS_COMPILER,
-        },
-    )
+    budget = _line_budget(accepted_line, accepted)
     capture_contracts = _accepted_capture_contracts(
         instance, coordinate, (*accepted.procedure.pins, *accepted_line.line.pins)
     )
@@ -3975,10 +4155,7 @@ def _run_playbill_line(
             details={"repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Line."},
         )
     landed_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
-    if (
-        isinstance(accepted_line.line, LineSpecV4 | LineSpecV5)
-        and accepted_line.line.trigger_input is not None
-    ):
+    if isinstance(accepted_line.line, LineSpecV6) and accepted_line.line.trigger_input is not None:
         from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
 
         assert line_policy is not None  # a trigger input is a Source input

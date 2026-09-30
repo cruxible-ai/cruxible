@@ -565,6 +565,34 @@ LINE_V5_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="line",
     artifact_tag="playbill-line-v5",
 )
+# A Line with no embedded trigger. Retiring it, or changing the event it
+# accepts, cannot strand live Triggers aimed at it: they move in the same set.
+LINE_V6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.line.v6", "playbill-line-v6", semantic_revision=1
+    ),
+    artifact_kind="line",
+    artifact_tag="playbill-line-v6",
+)
+# A Trigger aims at a live Line that accepts its event, or at an internal
+# action on a cadence; a retired Trigger is never revived.
+TRIGGER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.trigger.v1", "playbill-trigger-v1", semantic_revision=1
+    ),
+    artifact_kind="trigger",
+    artifact_tag="playbill-trigger-v1",
+)
+# Revision 10 (to compiler revision 32) also refuses an instance that still
+# holds a Line which embeds its trigger: revision 32 admits none.
+GOVERNED_TRIGGERS_UPGRADE_LAW = InstalledAcceptanceLaw(
+    coordinate=_artifact_law_coordinate(
+        "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=10
+    ),
+    artifact_kind="compiler-upgrade",
+    artifact_tag="playbill-compiler-upgrade-v1",
+    current=False,
+)
 AUTHORITY_VERBS_UPGRADE_LAW = InstalledAcceptanceLaw(
     coordinate=_artifact_law_coordinate(
         "playbill.compiler-upgrade.v1", "playbill-compiler-upgrade-v1", semantic_revision=9
@@ -710,6 +738,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         SOURCE_CHECKED_UPGRADE_LAW,
         TRIGGER_CAPTURE_UPGRADE_LAW,
         AUTHORITY_VERBS_UPGRADE_LAW,
+        GOVERNED_TRIGGERS_UPGRADE_LAW,
         PROVIDER_CONTRACT_PROCEDURE_LAW,
         PROVIDER_CONTRACT_UPGRADE_LAW,
         COMPILER_UPGRADE_ACCEPTANCE_LAW,
@@ -741,6 +770,8 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         LINE_V3_ACCEPTANCE_LAW,
         LINE_V4_ACCEPTANCE_LAW,
         LINE_V5_ACCEPTANCE_LAW,
+        LINE_V6_ACCEPTANCE_LAW,
+        TRIGGER_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
         PROVIDER_V2_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_ACCEPTANCE_LAW,
@@ -786,6 +817,9 @@ __all__ = [
     "TRIGGER_CAPTURE_UPGRADE_LAW",
     "AUTHORITY_VERBS_UPGRADE_LAW",
     "LINE_V5_ACCEPTANCE_LAW",
+    "LINE_V6_ACCEPTANCE_LAW",
+    "TRIGGER_ACCEPTANCE_LAW",
+    "GOVERNED_TRIGGERS_UPGRADE_LAW",
     "CAPTURE_CONTRACT_ACCEPTANCE_LAW",
     "CAPTURE_CONTRACT_REVISION_3_ACCEPTANCE_LAW",
     "CAPTURE_CONTRACT_LAW_REVISION_3",

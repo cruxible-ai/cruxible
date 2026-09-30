@@ -129,15 +129,25 @@ def bind_observation_window(
 
 
 class LineTriggerBindingV1(_WindowModel):
-    """Semantic cause of one occurrence, independent of its dispatch instant."""
+    """Semantic cause of one occurrence, independent of its dispatch instant.
 
-    kind: Literal["capture_landing", "window_close"]
+    ``trigger`` is the Trigger artifact that fired. A cadence tick binds no event
+    or window: its instant is the occurrence's own evaluation instant.
+    """
+
+    kind: Literal["cadence", "capture_landing", "window_close"]
+    trigger: ArtifactIdentity
     event: TriggerEventReferenceV1 | None = None
     window: BoundObservationWindowV1 | None = None
 
     @model_validator(mode="after")
     def _shape(self) -> LineTriggerBindingV1:
-        if self.kind == "capture_landing":
+        if self.trigger.kind != "Trigger":
+            raise ValueError("a trigger binding names the Trigger that fired")
+        if self.kind == "cadence":
+            if self.event is not None or self.window is not None:
+                raise ValueError("a cadence tick binds no event or window")
+        elif self.kind == "capture_landing":
             if self.event is None or self.window is not None:
                 raise ValueError("capture trigger must bind exactly one retained event")
         elif self.window is None or self.event != self.window.event:

@@ -57,7 +57,6 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicyV1,
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
-from cruxible_client.contracts.procedures.line_specs import TriggerPolicyV2
 from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
@@ -100,7 +99,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:8abe12a1897bb8dda485dd194230e2c973896e39807fbabb55b1391a841288ae"
+    "sha256:dd30219e2c53b977cf71d2c60a5c3d5e750ecc54001b84032aea58fa997f959b"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -984,6 +983,9 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
     policy is required only when the Procedure acquires (has Source or exhaust
     nodes); a pure-compute Line pins none. ``parameters`` is the Procedure's
     input record, checked against its input Contract when the Line lowers.
+    When the Line runs is not its own: Triggers aim at it. ``trigger_input``
+    binds the triggering Capture to one Source input, and lowering declares the
+    exact event that input accepts from its CaptureContract.
     """
 
     tag: Literal["playbill-line-authoring-payload-v1"] = "playbill-line-authoring-payload-v1"
@@ -992,7 +994,6 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
     acquisition_policy_name: str | None = None
     # Caps this Line below its Procedure's capability; omitted, it is that capability.
     max_authority: Literal["observe", "propose", "settle"] | None = None
-    trigger_policy: TriggerPolicyV2
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     parameters: object = Field(default_factory=dict)
     budgets: dict[str, int] | None = None

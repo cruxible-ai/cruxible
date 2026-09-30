@@ -201,8 +201,10 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.line_specs import (
+    EMBEDDED_TRIGGER_LINE_FORMATS,
     AcceptedLineSpecV1,
     LineSpecFormatError,
+    LineSpecV6,
     evaluate_line_spec_law,
     line_spec_digest,
     parse_line_spec,
@@ -255,7 +257,14 @@ from cruxible_client.contracts.subjects import (
     subject_digest,
     subject_reuse_signature,
 )
-from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.triggers import (
+    AcceptedTriggerV1,
+    evaluate_trigger_law,
+    parse_trigger,
+    schedule_capture_selector,
+    trigger_digest,
+)
+from cruxible_client.contracts.types import CompilerCoordinate, PrincipalRecord
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     PlaybillWorkspaceAdvertisement,
@@ -374,6 +383,7 @@ _SOURCE_ACQUISITION_POLICY_PATH_RE = re.compile(
 _PROCEDURE_MANDATE_PATH_RE = re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0,255}\.json$")
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
+_TRIGGER_PATH_RE = re.compile(r"^triggers/[a-z][a-z0-9_.-]{0,255}\.json$")
 _QUERY_DEFINITION_PATH_RE = re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.json$")
 _EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.json$")
 
@@ -389,6 +399,7 @@ _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _CLAIM_PATH_RE,
     _PROCEDURE_PATH_RE,
     _LINE_PATH_RE,
+    _TRIGGER_PATH_RE,
     _QUERY_DEFINITION_PATH_RE,
     _EXHAUST_PROMOTION_PATH_RE,
 )
@@ -1781,6 +1792,8 @@ class _ResolvedArtifacts:
     provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1]
     procedures: Mapping[str, AcceptedProcedureV1]
     resolution_contracts: Mapping[str, ResolutionContractV1]
+    lines: Mapping[str, AcceptedLineSpecV1]
+    triggers: Mapping[str, AcceptedTriggerV1]
 
 
 @dataclass(frozen=True)
@@ -2123,8 +2136,63 @@ def _artifact_digest_identities(
     return {state.artifact_digest: state.artifact_digest for state in states.values()}
 
 
+def _admits_triggers(compiler: CompilerCoordinate) -> bool:
+    """Whether a compiler admits Trigger artifacts, and with them only v6 Lines."""
+
+    return any(entry.kind == "trigger" for entry in artifact_kinds_for_compiler(compiler).entries())
+
+
+def _line_trigger_dependents(context: _MemberContext, line: LineSpecV6) -> tuple[str, ...]:
+    """Live Triggers a Line change would strand, read in the final candidate.
+
+    A Trigger retired or retargeted in the same ChangeSet no longer counts. A
+    retired Line strands every live Trigger aimed at it; a Line that binds its
+    triggering Capture strands every Trigger that does not fire on the exact
+    event it accepts.
+    """
+
+    identity = line.identity.qualified
+    stranded: set[str] = set()
+    for accepted in context.resolved.triggers.values():
+        trigger = accepted.trigger
+        if (
+            trigger.lifecycle.state != "live"
+            or trigger.line is None
+            or trigger.line.qualified != identity
+        ):
+            continue
+        if line.lifecycle.state == "retired" or (
+            line.trigger_input is not None
+            and schedule_capture_selector(trigger.schedule) != line.trigger_event
+        ):
+            stranded.add(trigger.identity.qualified)
+    return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
+
+
 def _line_member(context: _MemberContext) -> _MemberVerdict:
     line = parse_line_spec(context.content, path=context.path)
+    if _admits_triggers(context.current.compiler):
+        if line.artifact_format in EMBEDDED_TRIGGER_LINE_FORMATS:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.line.embedded_trigger_retired",
+                        "This compiler accepts no new version of a Line that embeds its "
+                        "trigger: author a Line v6 and aim Trigger artifacts at it.",
+                        context.path,
+                    ),
+                )
+            )
+    elif isinstance(line, LineSpecV6):
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "playbill.line.governed_triggers_required",
+                    "A Line v6 requires compiler revision 32; upgrade the instance first.",
+                    context.path,
+                ),
+            )
+        )
     accepted_procedure = context.resolved.procedures.get(line.procedure.target.qualified)
     if accepted_procedure is None:
         return _MemberVerdict(
@@ -2176,6 +2244,19 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted LineSpec law result is incomplete")
+    if isinstance(line, LineSpecV6):
+        stranded = _line_trigger_dependents(context, line)
+        if stranded:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.line.triggers_not_settled",
+                        "This Line change would strand live Triggers aimed at it; retire "
+                        "or retarget them in the same ChangeSet: " + ", ".join(stranded),
+                        context.path,
+                    ),
+                )
+            )
     return _accepted(
         context,
         _installed(context, line.artifact_format),
@@ -2191,6 +2272,62 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             "verdict": "accepted",
         },
         retired=line.lifecycle.state == "retired",
+    )
+
+
+def _trigger_member(context: _MemberContext) -> _MemberVerdict:
+    if not _admits_triggers(context.current.compiler):
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "playbill.trigger.compiler_unsupported",
+                    "Trigger artifacts require compiler revision 32; upgrade the instance first.",
+                    context.path,
+                ),
+            )
+        )
+    trigger = parse_trigger(context.content, path=context.path)
+    predecessor: AcceptedTriggerV1 | None = None
+    if context.parent_content is not None:
+        previous = parse_trigger(context.parent_content, path=context.path)
+        predecessor = AcceptedTriggerV1(
+            path=context.path, trigger=previous, artifact_digest=trigger_digest(previous).tagged
+        )
+    line_live: bool | None = None
+    accepted_event = None
+    binds_event = False
+    if trigger.line is not None:
+        target = context.resolved.lines.get(trigger.line.qualified)
+        line_live = (
+            target is not None
+            and isinstance(target.line, LineSpecV6)
+            and target.line.lifecycle.state == "live"
+        )
+        if target is not None and isinstance(target.line, LineSpecV6):
+            binds_event = target.line.trigger_input is not None
+            accepted_event = target.line.trigger_event
+    law = evaluate_trigger_law(
+        trigger,
+        path=context.path,
+        predecessor=predecessor,
+        target_line_live=line_live,
+        accepted_event=accepted_event,
+        target_line_binds_event=binds_event,
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted Trigger law result is incomplete")
+    return _accepted(
+        context,
+        _installed(context, trigger.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=trigger.lifecycle.state == "retired",
     )
 
 
@@ -3031,6 +3168,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
     from cruxible_core.compiler.compiler import (
         AUTHORITY_VERBS_COMPILER,
         CLAIM_EVIDENCE_COMPILER,
+        GOVERNED_TRIGGERS_COMPILER,
         SOURCE_CHECKED_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
     )
@@ -3040,6 +3178,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         SOURCE_CHECKED_COMPILER,
         TRIGGER_CAPTURE_COMPILER,
         AUTHORITY_VERBS_COMPILER,
+        GOVERNED_TRIGGERS_COMPILER,
     }:
         if any(pin.target.kind == "Procedure" for pin in claim_type.pins) or any(
             getattr(rule, "allowed_reducer_digests", ())
@@ -3367,6 +3506,19 @@ def _compiler_upgrade_member(context: _MemberContext) -> _MemberVerdict:
             raise ValueError("compiler upgrade must be the entire proposal")
         value = parse_compiler_upgrade(context.content)
         validate_upgrade(value, context.current)
+        if _admits_triggers(value.target) and not _admits_triggers(context.current.compiler):
+            live_embedded = sorted(
+                accepted.line.identity.qualified
+                for accepted in context.resolved.lines.values()
+                if accepted.line.artifact_format in EMBEDDED_TRIGGER_LINE_FORMATS
+                and accepted.line.lifecycle.state == "live"
+            )
+            if live_embedded:
+                raise ValueError(
+                    "compiler revision 32 serves no Line that embeds its trigger; retire "
+                    "these Lines before upgrading, then author v6 Lines and Triggers: "
+                    + ", ".join(live_embedded)
+                )
         if context.actor_id is None:
             raise ValueError("compiler upgrade requires an authenticated principal")
         if context.principals.require_active(context.actor_id).kind != "ordinary":
@@ -3505,6 +3657,13 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         evaluate=_line_member,
     ),
     _MemberKind(
+        name="trigger",
+        pattern=_TRIGGER_PATH_RE,
+        removal_code="playbill.trigger.removal_unsupported",
+        removal_message="Triggers are retired by successor, never removed.",
+        evaluate=_trigger_member,
+    ),
+    _MemberKind(
         name="query-definition",
         pattern=_QUERY_DEFINITION_PATH_RE,
         removal_code="playbill.change_set.delete_unsupported",
@@ -3594,6 +3753,7 @@ ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "procedure",
     "exhaust-promotion",
     "line",
+    "trigger",
     "query-definition",
     "provider",
     "provider-interface",
@@ -3723,6 +3883,18 @@ def _resolved_artifacts(
             "resolution-contract",
             lambda path, content, digest: parse_resolution_contract(content, path=path),
             path_key=True,
+        ),
+        rows(
+            "line",
+            lambda path, content, digest: AcceptedLineSpecV1(
+                path=path, line=parse_line_spec(content, path=path), artifact_digest=digest
+            ),
+        ),
+        rows(
+            "trigger",
+            lambda path, content, digest: AcceptedTriggerV1(
+                path=path, trigger=parse_trigger(content, path=path), artifact_digest=digest
+            ),
         ),
     )
 
@@ -3916,7 +4088,7 @@ def _evaluate_scoped_members(
             )
 
         except PlaybillFormatError as exc:
-            if kind.name not in {"attestation", "resolution-contract"}:
+            if kind.name not in {"attestation", "resolution-contract", "trigger"}:
                 raise
             return CandidateEvaluation(
                 candidate_tree,

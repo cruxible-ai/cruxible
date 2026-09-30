@@ -1451,7 +1451,6 @@ def _accepted_authoring_trio(tmp_path):
         SourceAcquisitionPolicyAuthoringPayloadV1,
         authoring_member_identity,
     )
-    from cruxible_client.contracts.procedures.line_specs import ManualTriggerPolicyV1
 
     instance, owner = initialize_local(tmp_path)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
@@ -1483,7 +1482,6 @@ def _accepted_authoring_trio(tmp_path):
         procedure_name=name,
         acquisition_policy_name="demo",
         max_authority="observe",
-        trigger_policy=ManualTriggerPolicyV1(),
     )
     mandate = ProcedureMandateAuthoringPayloadV1(
         name=name,

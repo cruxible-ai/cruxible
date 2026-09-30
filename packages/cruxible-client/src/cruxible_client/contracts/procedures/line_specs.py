@@ -208,6 +208,43 @@ def _decimal_wrapper(value: object) -> dict[str, str]:
     return {"$decimal": spelling}
 
 
+def _canonical_object(value: object) -> object:
+    normalized = normalize_canonical(value)
+    if not isinstance(normalized, dict):
+        raise ValueError("LineSpec parameters and budgets must be canonical objects")
+    return normalized
+
+
+def _sorted_bindings(value: tuple[LineSlotBindingV1, ...]) -> tuple[LineSlotBindingV1, ...]:
+    names = tuple(item.slot_name for item in value)
+    if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+        raise ValueError("LineSpec slot bindings must be sorted and unique")
+    return value
+
+
+def _sorted_pins(value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
+    if value != tuple(sorted(value, key=_pin_key)):
+        raise ValueError("LineSpec pins must be canonically sorted")
+    keys = tuple((pin.role, pin.target.qualified) for pin in value)
+    if len(set(keys)) != len(keys):
+        raise ValueError("LineSpec pins must be unique by role and target")
+    return value
+
+
+def _sorted_closures(
+    value: tuple[ProviderImplementationClosureV1, ...],
+) -> tuple[ProviderImplementationClosureV1, ...]:
+    def closure_key(item: ProviderImplementationClosureV1) -> tuple[bytes, bytes]:
+        return item.node_id.encode("utf-8"), item.slot_name.encode("utf-8")
+
+    if value != tuple(sorted(value, key=closure_key)):
+        raise ValueError("Line Provider closures must be canonically node/slot sorted")
+    coordinates = tuple((item.node_id, item.slot_name) for item in value)
+    if len(coordinates) != len(set(coordinates)):
+        raise ValueError("Line Provider closures must be node/slot unique")
+    return value
+
+
 class LineSpecV1(_StrictLineModel):
     artifact_format: Literal["playbill-line-v1"] = "playbill-line-v1"
     identity: ArtifactIdentity
@@ -223,36 +260,10 @@ class LineSpecV1(_StrictLineModel):
     pins: tuple[ArtifactPin, ...]
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
-    @field_validator("parameters", "budgets", mode="before")
-    @classmethod
-    def _canonical_objects(cls, value: object) -> object:
-        normalized = normalize_canonical(value)
-        if not isinstance(normalized, dict):
-            raise ValueError("LineSpec parameters and budgets must be canonical objects")
-        return normalized
-
-    @field_validator("epsilon", mode="before")
-    @classmethod
-    def _epsilon(cls, value: object) -> object:
-        return _decimal_wrapper(value)
-
-    @field_validator("slot_bindings")
-    @classmethod
-    def _bindings(cls, value: tuple[LineSlotBindingV1, ...]) -> tuple[LineSlotBindingV1, ...]:
-        names = tuple(item.slot_name for item in value)
-        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("LineSpec slot bindings must be sorted and unique")
-        return value
-
-    @field_validator("pins")
-    @classmethod
-    def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
-        if value != tuple(sorted(value, key=_pin_key)):
-            raise ValueError("LineSpec pins must be canonically sorted")
-        keys = tuple((pin.role, pin.target.qualified) for pin in value)
-        if len(set(keys)) != len(keys):
-            raise ValueError("LineSpec pins must be unique by role and target")
-        return value
+    _canonical_objects = field_validator("parameters", "budgets", mode="before")(_canonical_object)
+    _epsilon = field_validator("epsilon", mode="before")(_decimal_wrapper)
+    _bindings = field_validator("slot_bindings")(_sorted_bindings)
+    _pins = field_validator("pins")(_sorted_pins)
 
     @model_validator(mode="after")
     def _shape(self) -> "LineSpecV1":
@@ -294,23 +305,7 @@ class LineSpecV2(LineSpecV1):
     artifact_format: Literal["playbill-line-v2"] = "playbill-line-v2"  # type: ignore[assignment]
     provider_implementation_closures: tuple[ProviderImplementationClosureV1, ...]
 
-    @field_validator("provider_implementation_closures")
-    @classmethod
-    def _provider_closures(
-        cls,
-        value: tuple[ProviderImplementationClosureV1, ...],
-    ) -> tuple[ProviderImplementationClosureV1, ...]:
-        def closure_key(
-            item: ProviderImplementationClosureV1,
-        ) -> tuple[bytes, bytes]:
-            return item.node_id.encode("utf-8"), item.slot_name.encode("utf-8")
-
-        if value != tuple(sorted(value, key=closure_key)):
-            raise ValueError("Line Provider closures must be canonically node/slot sorted")
-        coordinates = tuple((item.node_id, item.slot_name) for item in value)
-        if len(coordinates) != len(set(coordinates)):
-            raise ValueError("Line Provider closures must be node/slot unique")
-        return value
+    _provider_closures = field_validator("provider_implementation_closures")(_sorted_closures)
 
 
 class LineSpecV3(LineSpecV2):
@@ -367,17 +362,93 @@ class LineSpecV5(LineSpecV3):
         return data
 
 
-def line_requested_rung(line: "LineSpecV1") -> Literal[1, 2, 3]:
+class LineSpecV6(_StrictLineModel):
+    """A Line with no embedded trigger: Trigger artifacts aim at it by identity.
+
+    When it runs is no longer the Line's to say; every Trigger aimed at it is its
+    own governed artifact, and a Line with none runs only when run explicitly.
+    What stays with the Line is what it accepts: ``trigger_input`` binds the
+    triggering Capture to one named Source input, and ``trigger_event`` declares
+    the exact Capture event that input accepts, so a Trigger aimed at the Line
+    must fire on that event. ``occurrence_epoch`` advances exactly when that
+    acceptance changes. Compiler revision 32.
+    """
+
+    artifact_format: Literal["playbill-line-v6"] = "playbill-line-v6"
+    identity: ArtifactIdentity
+    occurrence_epoch: int = Field(ge=1, le=2**63 - 1)
+    procedure: ArtifactPin
+    parameters: object
+    slot_bindings: tuple[LineSlotBindingV1, ...]
+    acquisition_policy: ArtifactPin | None = None
+    max_authority: LineAuthority
+    trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    trigger_event: CaptureEventSelectorV1 | None = None
+    budgets: object
+    epsilon: object
+    pins: tuple[ArtifactPin, ...]
+    provider_implementation_closures: tuple[ProviderImplementationClosureV1, ...]
+    lifecycle: ArtifactLifecycle = ArtifactLifecycle()
+
+    _canonical_objects = field_validator("parameters", "budgets", mode="before")(_canonical_object)
+    _epsilon = field_validator("epsilon", mode="before")(_decimal_wrapper)
+    _bindings = field_validator("slot_bindings")(_sorted_bindings)
+    _pins = field_validator("pins")(_sorted_pins)
+    _provider_closures = field_validator("provider_implementation_closures")(_sorted_closures)
+
+    @model_validator(mode="after")
+    def _shape(self) -> "LineSpecV6":
+        if self.identity.kind != "Line" or not _LINE_NAME_RE.fullmatch(self.identity.name):
+            raise ValueError("Line identity must be path-addressable and kind Line")
+        if self.procedure.role != "procedure" or self.procedure.target.kind != "Procedure":
+            raise ValueError("LineSpec procedure must be an exact role=procedure Procedure pin")
+        if self.acquisition_policy is not None and (
+            self.acquisition_policy.role != ACQUISITION_POLICY_PIN_ROLE
+            or self.acquisition_policy.target.kind != "SourceAcquisitionPolicy"
+        ):
+            raise ValueError("LineSpec acquisition_policy pin has the wrong role or kind")
+        required = {self.procedure}
+        if self.acquisition_policy is not None:
+            required.add(self.acquisition_policy)
+        required.update(binding.artifact_pin for binding in self.slot_bindings)
+        if not required.issubset(set(self.pins)):
+            raise ValueError("LineSpec envelope pins do not contain its exact dependencies")
+        if (self.trigger_input is None) != (self.trigger_event is None):
+            raise ValueError("a trigger input and its accepted trigger_event come together")
+        event_pins = tuple(pin for pin in self.pins if pin.role == "trigger-capture-contract")
+        expected = (
+            ()
+            if self.trigger_event is None
+            else (
+                ArtifactPin(
+                    role="trigger-capture-contract",
+                    target=self.trigger_event.capture_contract_identity,
+                    artifact_digest=self.trigger_event.capture_contract_digest,
+                ),
+            )
+        )
+        if event_pins != expected:
+            raise ValueError("a Line pins exactly the CaptureContract its trigger_event names")
+        for pin in event_pins:
+            validate_exact_pin_expectation(
+                pin, TRIGGER_CAPTURE_CONTRACT, location="LineSpec trigger_event pin"
+            )
+        return self
+
+
+def line_requested_rung(line: "LineSpecV1 | LineSpecV6") -> Literal[1, 2, 3]:
     """The internal ordering value of what a Line asks to do, for either generation."""
 
-    if isinstance(line, LineSpecV5):
+    if isinstance(line, LineSpecV5 | LineSpecV6):
         return AUTHORITY_RUNG[line.max_authority]
     rung = line.requested_terminal_rung
     assert rung is not None
     return rung
 
 
-def trigger_capture_selector(line: LineSpecV3) -> CaptureEventSelectorV1 | None:
+def trigger_capture_selector(line: "LineSpecV3 | LineSpecV6") -> CaptureEventSelectorV1 | None:
+    if isinstance(line, LineSpecV6):
+        return line.trigger_event
     trigger = line.trigger_policy
     if isinstance(trigger, CaptureLandingTriggerPolicyV2):
         return trigger.event
@@ -389,7 +460,7 @@ def trigger_capture_selector(line: LineSpecV3) -> CaptureEventSelectorV1 | None:
 
 
 def trigger_capture_source(
-    line: "LineSpecV4 | LineSpecV5", procedure: AcceptedProcedureV1
+    line: "LineSpecV4 | LineSpecV5 | LineSpecV6", procedure: AcceptedProcedureV1
 ) -> SourceNodeV4:
     """Resolve the single input and verify its closed CaptureContract pin."""
     if line.trigger_input is None:
@@ -422,9 +493,38 @@ def trigger_capture_source(
 
 
 LineSpecAny: TypeAlias = Annotated[
-    LineSpecV1 | LineSpecV2 | LineSpecV3 | LineSpecV4 | LineSpecV5,
+    LineSpecV1 | LineSpecV2 | LineSpecV3 | LineSpecV4 | LineSpecV5 | LineSpecV6,
     Field(discriminator="artifact_format"),
 ]
+#: The Line formats that embed their own trigger, retained only to read history.
+EMBEDDED_TRIGGER_LINE_FORMATS = frozenset(
+    {
+        "playbill-line-v1",
+        "playbill-line-v2",
+        "playbill-line-v3",
+        "playbill-line-v4",
+        "playbill-line-v5",
+    }
+)
+
+
+def line_has_provider_closures(line: LineSpecAny) -> bool:
+    """Whether a Line freezes every graph-v4 Provider occurrence closure (v2 onward)."""
+
+    return isinstance(line, LineSpecV2 | LineSpecV6)
+
+
+def _line_acceptance(line: LineSpecAny) -> object:
+    """What decides a Line's occurrence identities: its epoch advances exactly on change.
+
+    An embedded-trigger Line's trigger policy; a v6 Line's accepted event binding.
+    """
+
+    if isinstance(line, LineSpecV6):
+        return ("accepts", line.trigger_input, line.trigger_event)
+    return line.trigger_policy
+
+
 _LINE_SPEC_ADAPTER: TypeAdapter[LineSpecAny] = TypeAdapter(LineSpecAny)
 
 
@@ -608,18 +708,19 @@ def evaluate_line_spec_law(
     except ProcedurePinClosureError as exc:
         return _refusal("playbill.line.slot_closure_failed", str(exc), path=path)
     definition = procedure.procedure.definition
-    if isinstance(line, LineSpecV4 | LineSpecV5) and line.trigger_input is not None:
+    if isinstance(line, LineSpecV4 | LineSpecV5 | LineSpecV6) and line.trigger_input is not None:
         try:
             trigger_capture_source(line, procedure)
         except ValueError as exc:
             return _refusal("playbill.line.trigger_input_mismatch", str(exc), path=path)
     if isinstance(definition, ProcedureDefinitionV4):
-        if not isinstance(line, LineSpecV2):
+        if not line_has_provider_closures(line):
             return _refusal(
                 "playbill.line.provider_closure_successor_required",
                 "A graph-v4 Procedure requires a playbill-line-v2 closure.",
                 path=path,
             )
+        assert isinstance(line, LineSpecV2 | LineSpecV6)
         provider_result = _verify_provider_implementation_closures(
             line,
             definition=definition,
@@ -629,10 +730,14 @@ def evaluate_line_spec_law(
         if provider_result is not None:
             code, message = provider_result
             return _refusal(code, message, path=path)
-    elif isinstance(line, LineSpecV2):
+    elif isinstance(line, LineSpecV2) or (
+        isinstance(line, LineSpecV6) and line.provider_implementation_closures
+    ):
+        # A v6 Line serves every Procedure a Line could: an earlier graph has
+        # no Provider occurrence to close, so it carries no closures.
         return _refusal(
             "playbill.line.graph_v4_required",
-            "A playbill-line-v2 closure must instantiate a graph-v4 Procedure.",
+            "Provider implementation closures must instantiate a graph-v4 Procedure.",
             path=path,
         )
     if line_requested_rung(line) > definition.terminal_capability:
@@ -682,10 +787,12 @@ def evaluate_line_spec_law(
                 "Line successor must retain stable identity.",
                 path=path,
             )
-        if isinstance(predecessor.line, LineSpecV2) and not isinstance(line, LineSpecV2):
+        if (
+            line_has_provider_closures(predecessor.line) and not line_has_provider_closures(line)
+        ) or (isinstance(predecessor.line, LineSpecV6) and not isinstance(line, LineSpecV6)):
             return _refusal(
                 "playbill.line.wire_downgrade",
-                "A Line v2 lineage cannot be succeeded by the historical v1 wire.",
+                "A Line lineage cannot be succeeded by an earlier Line wire.",
                 path=path,
             )
         if line.lifecycle.predecessor_digest != predecessor.artifact_digest:
@@ -694,7 +801,7 @@ def evaluate_line_spec_law(
                 "Line successor does not pin its exact predecessor.",
                 path=path,
             )
-        trigger_changed = line.trigger_policy != predecessor.line.trigger_policy
+        trigger_changed = _line_acceptance(line) != _line_acceptance(predecessor.line)
         expected_epoch = predecessor.line.occurrence_epoch + (1 if trigger_changed else 0)
         if line.occurrence_epoch != expected_epoch:
             return _refusal(
@@ -740,7 +847,7 @@ def _slot_provider_occurrences(
 
 
 def _verify_provider_implementation_closures(
-    line: LineSpecV2,
+    line: LineSpecV2 | LineSpecV6,
     *,
     definition: ProcedureDefinitionV4,
     providers: Mapping[str, AcceptedProviderV1],
@@ -880,6 +987,9 @@ __all__ = [
     "LineSpecV3",
     "LineSpecV4",
     "LineSpecV5",
+    "LineSpecV6",
+    "EMBEDDED_TRIGGER_LINE_FORMATS",
+    "line_has_provider_closures",
     "AUTHORITY_RUNG",
     "LineAuthority",
     "RUNG_AUTHORITY",

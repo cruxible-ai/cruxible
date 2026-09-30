@@ -460,7 +460,11 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
         reference,
         event=ref,
         now=now,
-        trigger_binding=LineTriggerBindingV1(kind="capture_landing", event=ref),
+        trigger_binding=LineTriggerBindingV1(
+            kind="capture_landing",
+            trigger=ArtifactIdentity(kind="Trigger", name="anchor-landed"),
+            event=ref,
+        ),
     )
     assert bound.window == bind_observation_window(contract.window)
     with pytest.raises(ValueError, match="cannot accept"):
@@ -494,20 +498,20 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
     )
     from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
     from cruxible_client.contracts.procedures.line_specs import (
-        LineSpecV3,
-        WindowCloseTriggerPolicyV2,
         line_identity_digest,
         line_spec_path,
         render_line_spec,
     )
     from cruxible_client.contracts.procedures.models import ProcedureDefinitionV4
     from cruxible_client.contracts.resolution_contracts import ResolutionContractReferenceV1
+    from cruxible_client.contracts.triggers import WindowCloseScheduleV1
     from cruxible_core.service.procedures import procedure_runs
     from cruxible_core.service.procedures.procedure_runs import (
         LineRunRequestV1,
         service_get_playbill_procedure_run,
         service_run_playbill_line,
     )
+    from tests.support.lines import line_trigger, trigger_members
     from tests.test_procedures.test_procedure_run_surface import _actor, _slotless_procedure
     from tests.test_server.test_playbill_line_run_refusals import (
         _acquisition_policy,
@@ -533,15 +537,11 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
     policy = _acquisition_policy("window-policy")
-    line = LineSpecV3.model_validate(
-        {
-            **_served_line("window-test", accepted=accepted, policy=policy).model_dump(
-                mode="python"
-            ),
-            "artifact_format": "playbill-line-v3",
-            "provider_implementation_closures": (),
-            "trigger_policy": WindowCloseTriggerPolicyV2(window=contract.window),
-        }
+    line = _served_line("window-test", accepted=accepted, policy=policy)
+    window_trigger = line_trigger(
+        "window-test-close",
+        line=line.identity.name,
+        schedule=WindowCloseScheduleV1(window=contract.window),
     )
     mandate = _line_mandate(accepted)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -552,6 +552,7 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
             line_spec_path(line.identity.name): render_line_spec(line),
             resolution_contract_path(contract.identity.name): render_resolution_contract(contract),
+            **trigger_members(window_trigger),
         }
     )
     _accept_tree(
@@ -568,7 +569,11 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
         return service_run_playbill_line(
             instance,
             path_identity_digest=line_id,
-            request=LineRunRequestV1(line_identity_digest=line_id, resolution_contract=reference),
+            request=LineRunRequestV1(
+                line_identity_digest=line_id,
+                trigger=window_trigger.identity.name,
+                resolution_contract=reference,
+            ),
             actor_context=_actor(instance),
             caller_rung=3,
             daemon_clock=SimpleNamespace(now=lambda: instant),

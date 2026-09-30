@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.line_dispatch import LineArmV1
+from cruxible_client.contracts.line_dispatch import LineArmV1, LineTriggerVersionV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.exhaust.backends import LocalJournalBackend
@@ -42,7 +42,7 @@ CREATE INDEX IF NOT EXISTS sessions_active ON sessions(active);
 CREATE TABLE IF NOT EXISTS pending (
  line_id TEXT NOT NULL, epoch INTEGER NOT NULL, occurrence_id TEXT NOT NULL,
  disposition TEXT NOT NULL, eligible_at TEXT NOT NULL, payload TEXT NOT NULL, run_id TEXT,
- session_id TEXT,
+ session_id TEXT, trigger_id TEXT,
  PRIMARY KEY(line_id,epoch,occurrence_id));
 CREATE INDEX IF NOT EXISTS unresolved
  ON pending(line_id,eligible_at,occurrence_id) WHERE disposition='pending';
@@ -78,7 +78,7 @@ class LineDispatchStore:
             try:
                 # This is a disposable projection, never a migration of authority.
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(pending)")}
-                if columns and not {"disposition", "session_id"} <= columns:
+                if columns and not {"disposition", "session_id", "trigger_id"} <= columns:
                     conn.executescript(
                         "BEGIN IMMEDIATE; DROP TABLE pending; DROP TABLE sessions; "
                         "DROP TABLE progress;" + _SCHEMA + "COMMIT;"
@@ -125,7 +125,7 @@ class LineDispatchStore:
             # The session that matched it, if any: only that armed segment may
             # dispatch it without an explicit call.
             conn.execute(
-                "INSERT OR IGNORE INTO pending VALUES(?,?,?,?,?,?,NULL,?)",
+                "INSERT OR IGNORE INTO pending VALUES(?,?,?,?,?,?,NULL,?,?)",
                 (
                     data["line_identity_digest"],
                     data["occurrence_epoch"],
@@ -134,6 +134,7 @@ class LineDispatchStore:
                     format_datetime(parse_datetime(data["occurrence"]["eligible_at"])),
                     json.dumps(data),
                     data.get("session_id"),
+                    data.get("trigger"),
                 ),
             )
         elif kind == "admitted":
@@ -220,6 +221,12 @@ class LineDispatchStore:
             line=data["line"],
             line_artifact_digest=data["line_artifact_digest"],
             occurrence_epoch=data["occurrence_epoch"],
+            triggers=tuple(
+                LineTriggerVersionV1(trigger=trigger, artifact_digest=digest)
+                for trigger, digest in sorted(
+                    data.get("trigger_pins", {}).items(), key=lambda item: item[0].encode()
+                )
+            ),
             state="stopped" if stopped else "armed",
             armed_at=data["armed_at"],
             armed_by=data["armed_by"],
@@ -231,17 +238,16 @@ class LineDispatchStore:
             pending_explicit=pending_explicit,
         )
 
-    def occurrence_states(
-        self, line_id: str, epoch: int, occurrence_ids: tuple[str, ...]
-    ) -> dict[str, str]:
+    def occurrence_states(self, line_id: str, occurrence_ids: tuple[str, ...]) -> dict[str, str]:
+        # An occurrence identity already names its Line epoch and Trigger.
         with self.locked() as conn:
             return {
                 row[0]: row[1]
                 for row in conn.execute(
-                    "SELECT occurrence_id,disposition FROM pending WHERE line_id=? AND epoch=? "
+                    "SELECT occurrence_id,disposition FROM pending WHERE line_id=? "
                     + "AND occurrence_id IN ("
                     + ",".join("?" for _ in occurrence_ids)
                     + ")",
-                    (line_id, epoch, *occurrence_ids),
+                    (line_id, *occurrence_ids),
                 )
             }

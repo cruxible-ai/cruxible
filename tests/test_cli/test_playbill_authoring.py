@@ -62,8 +62,9 @@ def test_cli_line_run_forwards_only_the_occurrence_assertion(monkeypatch) -> Non
             evaluation_time: str,
             resolution_contract=None,
             trigger_event=None,
+            trigger=None,
         ) -> contracts.PlaybillProcedureRunState:
-            assert resolution_contract is None and trigger_event is None
+            assert resolution_contract is None and trigger_event is None and trigger is None
             calls.append((instance_id, line_identity_digest, occurrence_id, evaluation_time))
             return contracts.PlaybillProcedureRunState(
                 run_id=None,

@@ -86,6 +86,9 @@ from cruxible_client.contracts.line_dispatch import (
 from cruxible_client.contracts.line_dispatch import (
     LineTriggerOccurrenceV1 as LineTriggerOccurrenceV1,
 )
+from cruxible_client.contracts.line_dispatch import (
+    LineTriggerVersionV1 as LineTriggerVersionV1,
+)
 from cruxible_client.contracts.orient import (
     PLAYBILL_ORIENT_DEFAULT_LIMIT as PLAYBILL_ORIENT_DEFAULT_LIMIT,
 )
@@ -284,7 +287,7 @@ PlaybillPolicyKind: TypeAlias = Literal[
     "query_evaluation_policy",
     "document_activation_policy",
     "procedure_activation_policy",
-    "line_trigger_policy",
+    "trigger_schedule",
 ]
 PlaybillNextReason: TypeAlias = Literal[
     "claim_conflicted",

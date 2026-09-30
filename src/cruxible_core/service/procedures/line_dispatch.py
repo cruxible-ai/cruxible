@@ -1,9 +1,11 @@
 """Line matching, arming and dispatch.
 
-An armed Line's daemon matches new trigger evidence forward-only and admits the
-occurrences it matched under the arming credential; nothing it did not observe
-while armed is ever run implicitly. Explicit evaluation and dispatch are the
-only way to act on anything else.
+An armed Line's daemon matches new evidence for the Triggers aimed at the Line
+forward-only and admits the occurrences it matched under the arming
+credential; nothing it did not observe while armed is ever run implicitly. The
+arm is pinned to the Line version and the exact Trigger versions it was armed
+under: a change to either stops it, never adopted implicitly. Explicit
+evaluation and dispatch are the only way to act on anything else.
 """
 
 from __future__ import annotations
@@ -31,17 +33,20 @@ from cruxible_client.contracts.line_dispatch import (
     LineTriggerCheckResultV1,
     LineTriggerOccurrenceV1,
 )
-from cruxible_client.contracts.procedures.line_specs import (
-    CadenceTriggerPolicyV1,
-    line_identity_digest,
-)
+from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalV1,
     ProcedureNodeRefusalV1,
 )
+from cruxible_client.contracts.procedures.windows import FixedWindowV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.repairs import served_repair_for_refusal
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
+from cruxible_client.contracts.triggers import (
+    AcceptedTriggerV1,
+    CadenceScheduleV1,
+    WindowCloseScheduleV1,
+)
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.procedures.line_admission import (
@@ -59,6 +64,8 @@ from cruxible_core.service.procedures.procedure_runs import (
     _line_admissions,
     _stream,
     line_run_target_rung,
+    line_trigger_pins,
+    line_triggers,
     require_line_mandate,
     require_run_permission,
     service_run_playbill_line,
@@ -70,11 +77,13 @@ _ARM_FIELDS = (
     "line_id",
     "line_artifact_digest",
     "occurrence_epoch",
+    "trigger_pins",
     "armed_at",
     "armed_by",
 )
 _EPOCH_CHANGED = "The Line's trigger epoch changed; rearm to match the new epoch."
 _LINE_CHANGED = "The Line changed; rearm to run its new version automatically."
+_TRIGGER_CHANGED = "The Triggers aimed at this Line changed; rearm to run under the current ones."
 
 # Idle polls need not retain a record per tick. A crash may leave at most this
 # checkpoint interval uncovered; restart never advances beyond durable coverage.
@@ -96,6 +105,7 @@ def _enqueue(
     session_id: str | None = None,
 ) -> LineTriggerCheckResultV1:
     occurrences = []
+    trigger_digests = {item.trigger: item.artifact_digest for item in result.triggers}
     for occurrence in result.occurrences:
         pending = False
         disposition = "admitted"
@@ -105,6 +115,9 @@ def _enqueue(
                 (result.line_identity_digest, result.occurrence_epoch, occurrence.occurrence_id),
             ).fetchone()
             if exists is None:
+                trigger = (
+                    None if occurrence.binding is None else occurrence.binding.trigger.qualified
+                )
                 store.append(
                     conn,
                     "pending",
@@ -113,6 +126,8 @@ def _enqueue(
                         "line_identity_digest": result.line_identity_digest,
                         "line_artifact_digest": result.line_artifact_digest,
                         "occurrence_epoch": result.occurrence_epoch,
+                        "trigger": trigger,
+                        "trigger_artifact_digest": trigger_digests.get(trigger or ""),
                         "coordinate": result.coordinate.model_dump(mode="json"),
                         "occurrence": occurrence.model_dump(mode="json"),
                         "session_id": session_id,
@@ -249,22 +264,25 @@ def _lapse_cadence_backlog(
     actor: GovernedActorContext,
     now: datetime,
 ) -> None:
-    """Lapse a cadence Line's pending ticks as a new arm segment opens.
+    """Lapse a Line's pending cadence ticks as a new arm segment opens.
 
-    A cadence tick is not an event but "the Line is due", and the evaluator
+    A cadence tick is not an event but "the Trigger is due", and the evaluator
     re-offers the first undispatched one, so a tick left pending by a restart,
-    a disarm or explicit evaluation would hold every later tick back. The new
-    segment's own ticks supersede it: it closes as `lapsed`, retained and still
-    runnable with an explicit retry, and is never run implicitly.
+    a disarm or explicit evaluation would hold every later tick of its Trigger
+    back. The new segment's own ticks supersede it: it closes as `lapsed`,
+    retained and still runnable with an explicit retry, and is never run
+    implicitly.
     """
 
-    if not isinstance(accepted.line.trigger_policy, CadenceTriggerPolicyV1):
-        return
     line_id = line_identity_digest(accepted.line.identity)
-    for (occurrence_id,) in conn.execute(
-        "SELECT occurrence_id FROM pending WHERE line_id=? AND epoch=? AND disposition='pending'",
+    for occurrence_id, payload in conn.execute(
+        "SELECT occurrence_id,payload FROM pending WHERE line_id=? AND epoch=? "
+        "AND disposition='pending'",
         (line_id, accepted.line.occurrence_epoch),
     ).fetchall():
+        binding = json.loads(payload)["occurrence"].get("binding")
+        if binding is None or binding.get("kind") != "cadence":
+            continue
         store.append(
             conn,
             "closed",
@@ -342,13 +360,14 @@ def service_arm_line(
 ) -> LineArmV1:
     """Arm the current Line version forward-only under the caller's credential.
 
-    Arming never catches up: matching starts at `now`, and any work already
-    pending stays for explicit dispatch. A Line that can propose or settle
-    refuses to arm (`playbill.line.mandate_required`) while no current mandate
-    covers its Procedure. Arming a Line already armed by this
-    caller, at the current version and epoch, on this daemon changes nothing
-    and reports `already_armed`. Rearming with any of those different rebinds
-    it to this caller and the current version, again from `now`.
+    The arm matches the live Triggers aimed at the Line now, pinned to their
+    exact versions. Arming never catches up: matching starts at `now`, and any
+    work already pending stays for explicit dispatch. A Line that can propose
+    or settle refuses to arm (`playbill.line.mandate_required`) while no
+    current mandate covers its Procedure. Arming a Line already armed by this
+    caller, at the current version, epoch and Triggers, on this daemon changes
+    nothing and reports `already_armed`. Rearming with any of those different
+    rebinds it to this caller and the current versions, again from `now`.
     """
 
     instance.require_writable()
@@ -357,6 +376,7 @@ def service_arm_line(
     # An arm admits on its own; one whose every admission would refuse for want
     # of a mandate is a silent stall, so it refuses here instead.
     require_line_mandate(instance, accepted, coordinate=coordinate, now=now)
+    trigger_pins = line_trigger_pins(line_triggers(instance, accepted, coordinate=coordinate))
     identity = line_identity_digest(accepted.line.identity)
     store = LineDispatchStore(instance)
     with line_arm_boundary(instance.root, identity), store.locked() as conn:
@@ -365,6 +385,7 @@ def service_arm_line(
             current["armed_by"] == principal.model_dump(mode="json")
             and current["line_artifact_digest"] == accepted.artifact_digest
             and current["occurrence_epoch"] == accepted.line.occurrence_epoch
+            and current.get("trigger_pins") == trigger_pins
             and current["daemon_id"] == daemon_id
         ):
             return _arm_view(store, conn, current, outcome="already_armed")
@@ -385,6 +406,7 @@ def service_arm_line(
             line_id=identity,
             line_artifact_digest=accepted.artifact_digest,
             occurrence_epoch=accepted.line.occurrence_epoch,
+            trigger_pins=trigger_pins,
             armed_at=format_datetime(now),
             armed_by=principal.model_dump(mode="json"),
         )
@@ -532,6 +554,60 @@ def armed_work(instance: PlaybillInstance, *, now: datetime) -> tuple[dict[str, 
         )
 
 
+def _arm_stop(
+    session: dict[str, Any],
+    *,
+    occurrence_epoch: int,
+    line_artifact_digest: str,
+    trigger_pins: dict[str, str],
+) -> tuple[LineArmStopReasonV1, str] | None:
+    """Why an arm no longer matches what is accepted, or None while it still does."""
+
+    if occurrence_epoch != session["occurrence_epoch"]:
+        return ("epoch_changed", _EPOCH_CHANGED)
+    if line_artifact_digest != session["line_artifact_digest"]:
+        # The arm is pinned to the version it was armed under: a changed
+        # Line is never adopted implicitly, even within the same epoch.
+        return ("line_changed", _LINE_CHANGED)
+    if trigger_pins != session.get("trigger_pins"):
+        # A Trigger added, changed or retired is held to the same rule as the
+        # Line: what the arm runs on is never adopted implicitly.
+        return ("trigger_changed", _TRIGGER_CHANGED)
+    return None
+
+
+def _timed(trigger: AcceptedTriggerV1) -> bool:
+    """Whether a Trigger fires by time (ticks, fixed windows) rather than on events."""
+
+    schedule = trigger.trigger.schedule
+    return isinstance(schedule, CadenceScheduleV1) or (
+        isinstance(schedule, WindowCloseScheduleV1) and isinstance(schedule.window, FixedWindowV1)
+    )
+
+
+def _segment_request(
+    trigger: AcceptedTriggerV1, session: dict[str, Any], scan: dict[str, Any]
+) -> LineTriggerCheckRequestV1:
+    """One Trigger's forward-only range: ticks and fixed windows by time, events by position.
+
+    A timed Trigger resumes from the instant its own matching last covered, so a
+    cadence tick held pending keeps its chain where it was while event Triggers
+    on the same Line move on.
+    """
+
+    name = trigger.trigger.identity.qualified
+    return LineTriggerCheckRequestV1(
+        since=(
+            parse_datetime(session.get("trigger_until", {}).get(name, session["starts_at"]))
+            if _timed(trigger)
+            else None
+        ),
+        until=parse_datetime(scan["until"]),
+        cursor=scan["cursors"].get(name),
+        limit=256,
+    )
+
+
 def service_match_listening_lines(
     instance: PlaybillInstance, *, actor: GovernedActorContext, now: datetime, daemon_id: str
 ) -> None:
@@ -546,9 +622,11 @@ def service_match_listening_lines(
         ]
     for session in sessions:
         try:
+            coordinate = instance.accepted_coordinate()
             accepted = _accepted_line_by_reference(
-                instance, coordinate=instance.accepted_coordinate(), reference=session["line"]
+                instance, coordinate=coordinate, reference=session["line"]
             )
+            triggers = line_triggers(instance, accepted, coordinate=coordinate)
         except (PlaybillError, OSError, ValueError) as exc:
             # One unavailable Line cannot starve the other subscriptions. No
             # progress is claimed; the retained status explains the uncovered range.
@@ -563,13 +641,13 @@ def service_match_listening_lines(
                         session["detail"] = str(exc)
                         store.append(conn, "coverage", session, actor=actor, now=now)
             continue
-        stop: tuple[LineArmStopReasonV1, str] | None = None
-        if accepted.line.occurrence_epoch != session["occurrence_epoch"]:
-            stop = ("epoch_changed", _EPOCH_CHANGED)
-        elif accepted.artifact_digest != session["line_artifact_digest"]:
-            # The arm is pinned to the version it was armed under: a changed
-            # Line is never adopted implicitly, even within the same epoch.
-            stop = ("line_changed", _LINE_CHANGED)
+        pins = line_trigger_pins(triggers)
+        stop = _arm_stop(
+            session,
+            occurrence_epoch=accepted.line.occurrence_epoch,
+            line_artifact_digest=accepted.artifact_digest,
+            trigger_pins=pins,
+        )
         if stop is not None:
             with line_arm_boundary(instance.root, session["line_id"]), store.locked() as conn:
                 current = _active_session(conn, session["line_id"])
@@ -609,16 +687,14 @@ def service_match_listening_lines(
             if current is None or not current[0]:
                 continue
             session = json.loads(current[1])
-            if accepted.line.occurrence_epoch != session["occurrence_epoch"]:
-                _stop(
-                    store,
-                    conn,
-                    session,
-                    reason="epoch_changed",
-                    detail=_EPOCH_CHANGED,
-                    actor=actor,
-                    now=now,
-                )
+            stop = _arm_stop(
+                session,
+                occurrence_epoch=accepted.line.occurrence_epoch,
+                line_artifact_digest=accepted.artifact_digest,
+                trigger_pins=pins,
+            )
+            if stop is not None:
+                _stop(store, conn, session, reason=stop[0], detail=stop[1], actor=actor, now=now)
                 continue
             evaluated_until = parse_datetime(session["evaluated_until"])
             assert evaluated_until is not None
@@ -627,82 +703,99 @@ def service_match_listening_lines(
             scan = session.get("scan") or {
                 "until": format_datetime(now + timedelta(microseconds=1)),
                 "through": _positions(instance),
-                "cursor": None,
+                "cursors": {},
+                "done": [],
+                "timed": [],
             }
-            is_cadence = isinstance(accepted.line.trigger_policy, CadenceTriggerPolicyV1)
-            # One outstanding cadence tick per arm segment: work explicit
-            # evaluation recorded, or an earlier segment left, never holds the
-            # arm's own ticks back.
-            if (
-                is_cadence
-                and conn.execute(
-                    "SELECT 1 FROM pending WHERE session_id=? AND disposition='pending' LIMIT 1",
-                    (session["session_id"],),
-                ).fetchone()
-            ):
-                continue
-            request = LineTriggerCheckRequestV1(
-                since=parse_datetime(session["evaluated_until"])
-                if is_cadence
-                or accepted.line.trigger_policy.kind == "window_close"
-                and getattr(accepted.line.trigger_policy, "window").kind == "fixed"
-                else None,
-                until=parse_datetime(scan["until"]),
-                cursor=scan["cursor"],
-                limit=256,
-            )
-            result = service_check_line_trigger(
-                instance,
-                session["line"],
-                request,
-                now=now,
-                after=session["positions"],
-                through=scan["through"],
-                include_future_windows=request.since is None,
-                pending_scope=session["session_id"],
-            )
-            if result.occurrence_epoch != session["occurrence_epoch"]:
-                # Acceptance may advance while the evaluator opens its snapshot.
-                # Arming the old epoch never arms the caller for a new one.
-                _stop(
-                    store,
-                    conn,
-                    session,
-                    reason="epoch_changed",
-                    detail=_EPOCH_CHANGED,
-                    actor=actor,
+            details: list[str] = []
+            stopped = False
+            for trigger in triggers:
+                name = trigger.trigger.identity.qualified
+                if name in scan["done"]:
+                    continue
+                # One outstanding cadence tick per Trigger per arm segment: work
+                # explicit evaluation recorded, or an earlier segment left, never
+                # holds the arm's own ticks back.
+                if (
+                    isinstance(trigger.trigger.schedule, CadenceScheduleV1)
+                    and conn.execute(
+                        "SELECT 1 FROM pending WHERE session_id=? AND trigger_id=? "
+                        "AND disposition='pending' LIMIT 1",
+                        (session["session_id"], name),
+                    ).fetchone()
+                ):
+                    scan["done"].append(name)
+                    continue
+                request = _segment_request(trigger, session, scan)
+                result = service_check_line_trigger(
+                    instance,
+                    session["line"],
+                    request,
                     now=now,
+                    after=session["positions"],
+                    through=scan["through"],
+                    include_future_windows=request.since is None,
+                    pending_scope=session["session_id"],
+                    only_trigger=name,
                 )
-                continue
-            if result.line_artifact_digest != session["line_artifact_digest"]:
-                # A same-epoch revision accepted while this check ran: what it
-                # matched belongs to a version the arm is not bound to.
-                _stop(
-                    store,
-                    conn,
+                stop = _arm_stop(
                     session,
-                    reason="line_changed",
-                    detail=_LINE_CHANGED,
-                    actor=actor,
-                    now=now,
+                    occurrence_epoch=result.occurrence_epoch,
+                    line_artifact_digest=result.line_artifact_digest,
+                    # A check reads only this Trigger; the rest of the pinned set
+                    # stands unless the check saw this one change or go.
+                    trigger_pins={
+                        **{key: value for key, value in pins.items() if key != name},
+                        **{item.trigger: item.artifact_digest for item in result.triggers},
+                    },
                 )
+                if stop is not None:
+                    # Acceptance may advance while the evaluator opens its
+                    # snapshot: what it matched belongs to versions the arm is
+                    # not bound to.
+                    _stop(
+                        store, conn, session, reason=stop[0], detail=stop[1], actor=actor, now=now
+                    )
+                    stopped = True
+                    break
+                _enqueue(store, conn, result, actor, now, session_id=session["session_id"])
+                if result.detail is not None:
+                    details.append(result.detail)
+                if result.status == "incomplete":
+                    scan["cursors"][name] = result.cursor
+                else:
+                    scan["cursors"].pop(name, None)
+                    scan["done"].append(name)
+                    if _timed(trigger):
+                        scan["timed"].append(name)
+            if stopped:
                 continue
-            _enqueue(store, conn, result, actor, now, session_id=session["session_id"])
+            complete = all(
+                trigger.trigger.identity.qualified in scan["done"] for trigger in triggers
+            )
+            detail = details[0] if details else None
             if (
-                result.status != "incomplete"
+                complete
                 and session.get("scan") is None
                 and scan["through"] == session["positions"]
-                and result.detail == session.get("detail")
+                and detail == session.get("detail")
                 and now - evaluated_until < _IDLE_COVERAGE_INTERVAL
             ):
                 # Pending transitions have already landed independently. Time-only
                 # progress can wait; event progress and partial scans cannot.
                 continue
-            session["detail"] = result.detail
-            if result.status != "incomplete":
-                session.update(evaluated_until=scan["until"], positions=scan["through"], scan=None)
+            session["detail"] = detail
+            if complete:
+                session.update(
+                    evaluated_until=scan["until"],
+                    positions=scan["through"],
+                    trigger_until={
+                        **session.get("trigger_until", {}),
+                        **{name: scan["until"] for name in scan["timed"]},
+                    },
+                    scan=None,
+                )
             else:
-                scan["cursor"] = result.cursor
                 session["scan"] = scan
             store.append(conn, "coverage", session, actor=actor, now=now)
 
@@ -719,12 +812,15 @@ def service_dispatch_line(
     workspace_file_reader: Any = None,
     session_id: str | None = None,
     pinned_line_artifact_digest: str | None = None,
+    pinned_trigger_pins: dict[str, str] | None = None,
     before_admission: Callable[[], tuple[GovernedActorContext, int]] | None = None,
 ) -> LineDispatchResultV1:
     """Admit pending occurrences, explicitly or for one armed segment.
 
     `session_id` limits dispatch to the work that armed segment matched itself,
-    under the Line version it is pinned to. `before_admission` runs immediately
+    under the Line and Trigger versions it is pinned to. An occurrence whose
+    Trigger changed or no longer aims at the Line is superseded: it was matched
+    under a schedule that no longer holds. `before_admission` runs immediately
     before each admission and returns the actor and caller rung that admission
     uses -- authority is re-resolved every time, never carried over -- or
     raises :class:`LineArmAuthorityLost`, leaving the occurrence pending. The
@@ -791,8 +887,18 @@ def service_dispatch_line(
             )
             run_id, detail = (prior.run_id if prior else None), None
             if prior is None:
+                current_coordinate = instance.accepted_coordinate()
                 current = _accepted_line_by_reference(
-                    instance, coordinate=instance.accepted_coordinate(), reference=line
+                    instance, coordinate=current_coordinate, reference=line
+                )
+                current_triggers = line_triggers(instance, current, coordinate=current_coordinate)
+                trigger = next(
+                    (
+                        item
+                        for item in current_triggers
+                        if item.trigger.identity.qualified == data.get("trigger")
+                    ),
+                    None,
                 )
                 if request.retry and current.line.occurrence_epoch == epoch:
                     # The exact event/window is unchanged. Only an explicit retry
@@ -812,7 +918,26 @@ def service_dispatch_line(
                     # Automatic dispatch runs only the version it was armed under;
                     # the occurrence stays pending for an explicit decision.
                     raise LineArmAuthorityLost("line_changed", _LINE_CHANGED)
-                if current.artifact_digest != data["line_artifact_digest"]:
+                if (
+                    pinned_trigger_pins is not None
+                    and line_trigger_pins(current_triggers) != pinned_trigger_pins
+                ):
+                    raise LineArmAuthorityLost("trigger_changed", _TRIGGER_CHANGED)
+                if data.get("trigger") is not None and (
+                    trigger is None or trigger.artifact_digest != data["trigger_artifact_digest"]
+                ):
+                    refusal = ProcedureAdmissionRefusalV1(
+                        code="line_binding_superseded",
+                        repair=served_repair_for_refusal("line_binding_superseded"),
+                        message=(
+                            "The pending occurrence was matched by a Trigger that has since "
+                            "changed or no longer aims at this Line; evaluate the Line's "
+                            "current Triggers."
+                        ),
+                    )
+                    status = "superseded"
+                    detail = refusal.message
+                elif current.artifact_digest != data["line_artifact_digest"]:
                     refusal = ProcedureAdmissionRefusalV1(
                         code="line_binding_superseded",
                         repair=served_repair_for_refusal("line_binding_superseded"),
@@ -842,6 +967,7 @@ def service_dispatch_line(
                             path_identity_digest=line,
                             request=LineRunRequestV1(
                                 line=line,
+                                trigger=None if binding is None else binding.trigger.name,
                                 occurrence_id=occurrence.occurrence_id,
                                 trigger_event=binding.event if binding else None,
                             ),
@@ -852,6 +978,7 @@ def service_dispatch_line(
                             daemon_clock=SimpleNamespace(now=lambda: now),
                             occurrence_basis_time=occurrence.eligible_at,
                             expected_line_artifact_digest=data["line_artifact_digest"],
+                            expected_trigger_artifact_digest=data.get("trigger_artifact_digest"),
                             explicit_occurrence=session_id is None,
                         )
                         # The journal, not the execution response, establishes admission.

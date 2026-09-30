@@ -27,11 +27,11 @@ from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_artifact_digest,
 )
-from cruxible_client.contracts.procedures.line_specs import line_spec_digest, parse_line_spec
 from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
     query_definition_digest,
 )
+from cruxible_client.contracts.triggers import parse_trigger, trigger_digest
 from cruxible_core.compiler.compiler import (
     artifact_codec_for_compiler,
 )
@@ -141,7 +141,7 @@ def list_playbill_policies_in_force(
         "query-definition",
         "document",
         "procedure",
-        "line",
+        "trigger",
     )
     with instance.bind_accepted_projection(coordinate) as projection:
         selected = [
@@ -304,19 +304,19 @@ def list_playbill_policies_in_force(
                     value=procedure.activation_policy,
                 )
             )
-        elif kind == "line":
-            line = parse_line_spec(content, path=path, codec=artifact_codec)
-            if line.lifecycle.state != "live":
+        elif kind == "trigger":
+            trigger = parse_trigger(content, path=path, codec=artifact_codec)
+            if trigger.lifecycle.state != "live":
                 continue
             rows.append(
                 _embedded(
-                    policy_kind="line_trigger_policy",
-                    identity=line.identity.qualified,
-                    artifact_kind=line.identity.kind,
-                    digest=line_spec_digest(line).tagged,
+                    policy_kind="trigger_schedule",
+                    identity=trigger.identity.qualified,
+                    artifact_kind=trigger.identity.kind,
+                    digest=trigger_digest(trigger).tagged,
                     path=path,
-                    field_path="/trigger_policy",
-                    value=line.trigger_policy.model_dump(mode="json"),
+                    field_path="/schedule",
+                    value=trigger.schedule.model_dump(mode="json"),
                 )
             )
     rows.sort(

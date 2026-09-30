@@ -108,6 +108,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "LineTriggerCheckRequestV1",
         "LineTriggerCheckResultV1",
         "LineTriggerOccurrenceV1",
+        "LineTriggerVersionV1",
         "ResolutionContractReferenceV1",
         "ResolutionContractV1",
         "ResolutionContractsRequestV1",

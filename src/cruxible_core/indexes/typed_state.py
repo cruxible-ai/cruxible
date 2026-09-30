@@ -61,6 +61,7 @@ from cruxible_client.contracts.providers import parse_provider
 from cruxible_client.contracts.query.definitions import parse_query_definition
 from cruxible_client.contracts.resolution_contracts import parse_resolution_contract
 from cruxible_client.contracts.subjects import parse_subject
+from cruxible_client.contracts.triggers import parse_trigger
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.compiler.projection_artifacts import (
     ArtifactEnvelopeRow,
@@ -201,6 +202,21 @@ OWNER_CODECS = (
                 "requested_terminal_rung",
                 "INTEGER NOT NULL CHECK(requested_terminal_rung IN (1,2,3))",
             ),
+        ),
+    ),
+    OwnerCodec(
+        "trigger",
+        "Trigger",
+        "triggers",
+        parse_trigger,
+        (
+            ("target_kind", "TEXT NOT NULL CHECK(target_kind IN ('line','action'))"),
+            ("target", "TEXT NOT NULL"),
+            (
+                "schedule_kind",
+                "TEXT NOT NULL CHECK(schedule_kind IN ('cadence','capture_landing','window_close'))",
+            ),
+            ("interval_seconds", "INTEGER CHECK(interval_seconds IS NULL OR interval_seconds>0)"),
         ),
     ),
     OwnerCodec(
@@ -431,6 +447,7 @@ def schema_sql() -> str:
             "CREATE INDEX claims_by_object_subject ON claims(object_path,identity) WHERE object_kind='subject'",
             "CREATE INDEX provider_interfaces_by_interface ON provider_interfaces(interface_digest,identity)",
             "CREATE INDEX lines_by_identity_digest ON lines(identity_digest,identity)",
+            "CREATE INDEX triggers_by_target ON triggers(target_kind,target,identity) WHERE lifecycle='live'",
             "CREATE INDEX procedure_mandates_by_procedure ON procedure_mandates(procedure_identity,procedure_digest,valid_from_us,identity) WHERE lifecycle='live'",
             """CREATE TABLE promotion_subjects (
             promotion_identity TEXT NOT NULL REFERENCES exhaust_promotions(identity), subject_identity TEXT NOT NULL,
@@ -531,6 +548,13 @@ def owner_values(owner: OwnerCodec, source: Any) -> dict[str, SQLValue]:
         }
     if owner.kind == "claim":
         return _claim_fields(source)
+    if owner.kind == "trigger":
+        return {
+            "target_kind": source.target.kind,
+            "target": source.line.qualified if source.line is not None else source.action,
+            "schedule_kind": source.schedule.kind,
+            "interval_seconds": getattr(source.schedule, "interval_seconds", None),
+        }
     result = {name: getattr(source, name) for name, _ in owner.fields if hasattr(source, name)}
     if owner.kind == "procedure":
         result.update(

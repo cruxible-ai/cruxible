@@ -207,10 +207,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny,
     procedure_artifact_digest,
 )
-from cruxible_client.contracts.procedures.line_specs import (
-    ManualTriggerPolicyV1,
-    TriggerPolicyV2,
-)
 from cruxible_client.contracts.procedures.results import ProcedureTerminalEgressV1
 from cruxible_client.contracts.procedures.windows import (
     TriggerEventReferenceV1,
@@ -967,7 +963,6 @@ class ChangeSetDraft:
         name: str,
         procedure: str,
         acquisition_policy: str | None = None,
-        trigger_policy: TriggerPolicyV2 | None = None,
         max_authority: Literal["observe", "propose", "settle"] | None = None,
         trigger_input: str | None = None,
         parameters: CanonicalValue | None = None,
@@ -978,11 +973,12 @@ class ChangeSetDraft:
         """Define one Line inside this changeset, naming its Procedure and policy.
 
         Lowering resolves both names -- accepted at the base or defined earlier
-        in this same set -- into the exact pins the LineSpec carries. A Line is
-        manual unless another trigger policy is given, and inherits the
-        Procedure's hard caps as its budget unless one is given.
-        ``trigger_input`` binds the triggering Capture to a named Source alias;
-        the trigger selector must match that Source's exact CaptureContract.
+        in this same set -- into the exact pins the LineSpec carries. A Line
+        runs when run explicitly, or when a Trigger aimed at it fires, and
+        inherits the Procedure's hard caps as its budget unless one is given.
+        ``trigger_input`` binds the triggering Capture to a
+        named Source alias; the Line then accepts only that Source's exact
+        CaptureContract event, and every Trigger aimed at it must fire on it.
         Missing or ineligible trigger material refuses admission, without a re-fetch.
 
         Lowering refuses a Procedure that is not graph-v4/v5/v6 and one whose
@@ -1004,7 +1000,6 @@ class ChangeSetDraft:
                     procedure_name=procedure,
                     acquisition_policy_name=acquisition_policy,
                     max_authority=max_authority,
-                    trigger_policy=trigger_policy or ManualTriggerPolicyV1(),
                     trigger_input=trigger_input,
                     parameters={} if parameters is None else parameters,
                     budgets=None if budgets is None else dict(budgets),
@@ -3248,15 +3243,21 @@ class Playbill:
         self,
         line: str,
         *,
+        trigger: str | None = None,
         occurrence_id: str | None = None,
         resolution_contract: ResolutionContractReferenceV1 | None = None,
         trigger_event: TriggerEventReferenceV1 | None = None,
     ) -> ProcedureRun:
-        """Trigger a named accepted Line; the daemon resolves its exact identity."""
+        """Trigger a named accepted Line; the daemon resolves its exact identity.
+
+        ``trigger`` names the Trigger this occurrence fires on; omit it only for
+        a Line no live Trigger aims at, which runs when run explicitly.
+        """
 
         result = self._client.run_playbill_line(
             self._instance_id,
             line,
+            trigger=trigger,
             occurrence_id=occurrence_id,
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,

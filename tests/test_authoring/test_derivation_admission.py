@@ -253,7 +253,7 @@ def test_raw_proposal_cannot_forge_terminal_authority(world):
 
 def _install_line(world):
     policy = _policy()
-    line = _served_line(world.reducer, policy).model_copy(update={"requested_terminal_rung": 2})
+    line = _served_line(world.reducer, policy).model_copy(update={"max_authority": "propose"})
     mandate = _line_mandate(world.reducer)
     _accept_more(
         world.instance,

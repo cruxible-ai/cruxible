@@ -149,9 +149,7 @@ from cruxible_client.contracts.procedures.graph import (
 )
 from cruxible_client.contracts.procedures.line_specs import (
     RUNG_AUTHORITY,
-    CaptureLandingTriggerPolicyV2,
-    LineSpecV5,
-    WindowCloseTriggerPolicyV2,
+    LineSpecV6,
     line_spec_digest,
     line_spec_path,
     parse_line_spec,
@@ -169,7 +167,7 @@ from cruxible_client.contracts.procedures.models import (
     SourceNodeV4,
     iter_pin_bindings,
 )
-from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
 from cruxible_client.contracts.query.definitions import (
     CLAIM_TYPE_PIN_ROLE,
@@ -2133,7 +2131,9 @@ def _render_line_member(
     the staged tree -- accepted at the base or authored earlier in the same
     set -- and lowering pins their exact digests. A Procedure that pins every
     Provider it names fills no slot, so the Line's slot bindings and Provider
-    closures are empty. Every Line lowers to v5, which states its authority as a verb.
+    closures are empty. Every Line lowers to v6: it embeds no trigger, and a
+    ``trigger_input`` Line declares the exact event its Source input accepts,
+    read from that Source's pinned CaptureContract.
     """
 
     procedure_target = procedure_path(payload.procedure_name)
@@ -2227,36 +2227,38 @@ def _render_line_member(
     if previous_content is not None:
         previous = parse_line_spec(previous_content, path=path)
         predecessor_digest = line_spec_digest(previous).tagged
-    trigger = payload.trigger_policy
-    selector = (
-        trigger.event
-        if isinstance(trigger, CaptureLandingTriggerPolicyV2)
-        else trigger.window.event
-        if isinstance(trigger, WindowCloseTriggerPolicyV2)
-        and isinstance(trigger.window, CaptureEventWindowV1)
-        else None
-    )
+    trigger_event: CaptureEventSelectorV1 | None = None
     trigger_pins: tuple[ArtifactPin, ...] = ()
-    if selector is not None:
-        capture_path = capture_contract_path(selector.capture_contract_identity.name)
-        content = tree.get(capture_path)
-        if (
-            content is None
-            or capture_contract_digest(parse_capture_contract(content, path=capture_path)).tagged
-            != selector.capture_contract_digest
-        ):
+    if payload.trigger_input is not None:
+        sources = [
+            node
+            for node in procedure.definition.nodes
+            if getattr(node, "as_", None) == payload.trigger_input
+        ]
+        contract = (
+            sources[0].capture_contract
+            if len(sources) == 1 and isinstance(sources[0], SourceNodeV4)
+            else None
+        )
+        if not isinstance(contract, ArtifactPin):
             _refuse(
-                "playbill.authoring.trigger_capture_missing",
-                "trigger_policy",
-                "Trigger CaptureContract does not match the accepted or staged version.",
-                repair_kind="replace_trigger_policy",
-                repair_description="Use the exact accepted CaptureContract identity and digest.",
+                "playbill.authoring.line_trigger_input_invalid",
+                "trigger_input",
+                f"trigger_input {payload.trigger_input!r} must name exactly one graph-v4 "
+                "Source input of the Procedure that pins its CaptureContract exactly.",
+                repair_kind="replace_trigger_input",
+                repair_description="Name the `as` alias of one Source node, or omit it.",
             )
+        assert isinstance(contract, ArtifactPin)
+        trigger_event = CaptureEventSelectorV1(
+            capture_contract_identity=contract.target,
+            capture_contract_digest=contract.artifact_digest,
+        )
         trigger_pins = (
             ArtifactPin(
                 role="trigger-capture-contract",
-                target=selector.capture_contract_identity,
-                artifact_digest=selector.capture_contract_digest,
+                target=contract.target,
+                artifact_digest=contract.artifact_digest,
             ),
         )
     line_fields = dict(
@@ -2265,12 +2267,12 @@ def _render_line_member(
         procedure=procedure_pin,
         parameters=payload.parameters,
         slot_bindings=(),
-        trigger_policy=payload.trigger_policy,
         acquisition_policy=policy_pin,
         max_authority=(
             payload.max_authority or RUNG_AUTHORITY[procedure.definition.terminal_capability]
         ),
         trigger_input=payload.trigger_input,
+        trigger_event=trigger_event,
         budgets=budgets,
         epsilon=payload.epsilon,
         pins=tuple(
@@ -2293,7 +2295,7 @@ def _render_line_member(
             predecessor_digest=predecessor_digest,
         ),
     )
-    line = LineSpecV5.model_validate(line_fields)
+    line = LineSpecV6.model_validate(line_fields)
     if previous_content is not None and _same_revision_content(line, previous):
         return path, previous_content, line_spec_digest(previous).tagged
     return path, render_line_spec(line), line_spec_digest(line).tagged

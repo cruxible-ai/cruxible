@@ -624,6 +624,7 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
     assert client.line_request == {
         "resolution_contract": None,
         "trigger_event": None,
+        "trigger": None,
         "line": "daily-line",
         "occurrence_id": "sha256:" + "c" * 64,
         "evaluation_time": "2026-08-24T12:00:00+00:00",
@@ -640,9 +641,12 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
         sequence=1,
         record_digest=_DIGEST,
     )
-    pb.run_line("daily-line", resolution_contract=contract, trigger_event=event)
+    pb.run_line(
+        "daily-line", trigger="on-anchor", resolution_contract=contract, trigger_event=event
+    )
     assert client.line_request["resolution_contract"] == contract
     assert client.line_request["trigger_event"] == event
+    assert client.line_request["trigger"] == "on-anchor"
 
 
 def test_sdk_plain_retirement_replay_uses_accepted_operation_coordinate(

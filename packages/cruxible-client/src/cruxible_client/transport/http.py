@@ -1651,10 +1651,12 @@ class CruxibleClient:
         evaluation_time: str | None = None,
         resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
         trigger_event: contracts.TriggerEventReferenceV1 | None = None,
+        trigger: str | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/lines/{line}/runs",
             json={
+                **({"trigger": trigger} if trigger is not None else {}),
                 **(
                     {"resolution_contract": resolution_contract.model_dump(mode="json")}
                     if resolution_contract is not None

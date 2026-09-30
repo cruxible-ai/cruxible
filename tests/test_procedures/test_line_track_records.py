@@ -24,8 +24,7 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
-    LineSpecV1,
-    ManualTriggerPolicyV1,
+    LineSpecV6,
     line_spec_digest,
     line_spec_path,
     render_line_spec,
@@ -130,14 +129,14 @@ def _artifacts() -> tuple[AcceptedProcedureV1, AcceptedLineSpecV1]:
     procedure_pin = _pin(
         "procedure", "Procedure", definition.name, digest=accepted_procedure.artifact_digest
     )
-    line = LineSpecV1(
+    line = LineSpecV6(
         identity=ArtifactIdentity(kind="Line", name="orders-triage"),
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={},
         slot_bindings=(),
-        trigger_policy=ManualTriggerPolicyV1(),
-        requested_terminal_rung=1,
+        max_authority="observe",
+        provider_implementation_closures=(),
         budgets={
             "max_capture_bytes": 0,
             "max_items": 100,
