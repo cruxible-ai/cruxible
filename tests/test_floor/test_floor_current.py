@@ -297,3 +297,87 @@ def test_the_export_carries_bodies_only_for_a_caller_who_may_read_them(
     with request_permission_scope(PermissionMode[mode]), pytest.raises(LookupError):
         playbill_api.playbill_export_floor("inst_floor")
     assert [item.can_read_body for item in seen] == [bodies]
+
+
+def _export_envelope(files: dict[str, bytes]) -> Any:
+    import base64
+
+    from cruxible_client import contracts
+
+    manifest = json.loads(files["manifest.json"])
+    return contracts.PlaybillFloorExport(
+        tag=manifest["format"],
+        coordinate=manifest["coordinate"],
+        manifest=manifest,
+        files=[
+            contracts.PlaybillFloorFile(
+                path=path, content_base64=base64.b64encode(content).decode("ascii")
+            )
+            for path, content in files.items()
+        ],
+    )
+
+
+def test_the_agent_path_carries_no_digests_and_provenance_keeps_them(
+    world: dict[str, Any],
+) -> None:
+    import re
+
+    files = world["readable"]
+    agent_path = {
+        path: content.decode()
+        for path, content in files.items()
+        if path.startswith(("current/", "documents/"))
+    }
+    assert agent_path
+    for path, text in agent_path.items():
+        assert "sha256:" not in text, path
+        assert '"artifact_path"' not in text and "subjects/" not in text.split("\n", 1)[-1], path
+    shown = {
+        handle
+        for path, text in agent_path.items()
+        if path.startswith("current/")
+        for handle in re.findall(r"CLM-[0-9a-f]{32}", text)
+    }
+    kept = {
+        row["claim"].removeprefix("Claim:")
+        for path, content in files.items()
+        if path.startswith("provenance/subjects/")
+        for row in json.loads(content)["claims"]
+    }
+    assert shown <= kept
+
+
+def test_every_floor_reader_still_verifies_the_export(
+    world: dict[str, Any], tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    from cruxible_client.authoring.workspace import (
+        inspect_workspace_floor,
+        materialize_playbill_floor,
+        record_playbill_floor_output,
+        verified_floor_files,
+    )
+    from cruxible_client.contracts import PlaybillAcceptedCoordinate
+    from cruxible_core.coverage.middleware import FloorFreshnessManifestV2
+
+    files = world["readable"]
+    export = _export_envelope(files)
+    assert verified_floor_files(export) == files
+    manifest = FloorFreshnessManifestV2.model_validate(json.loads(files["manifest.json"]))
+    assert manifest.floor_digest == json.loads(files["manifest.json"])["floor_digest"]
+    workspace = tmp_path_factory.mktemp("floor-workspace")
+    written = materialize_playbill_floor(workspace, export=export)
+    assert written.file_count == len(files)
+    record_playbill_floor_output(
+        workspace, instance_id="inst_floor", server_socket="/tmp/floor.sock"
+    )
+    status = inspect_workspace_floor(
+        workspace,
+        current_coordinate=PlaybillAcceptedCoordinate.model_validate(
+            manifest.coordinate.model_dump(mode="json")
+        ),
+    )
+    assert status.status == "current"
+    assert (workspace / ".playbill/floor/current" / KIND / "wi-1.yaml").read_bytes() == files[
+        f"current/{KIND}/wi-1.yaml"
+    ]

@@ -39,6 +39,52 @@ from cruxible_core.storage.cas import BodyAccessContext
 
 MAX_REVIEW_SNAPSHOT_BYTES = 64 * 1024 * 1024
 
+FLOOR_README = """\
+# Playbill floor
+
+Accepted state as plain files, for grep. Search here; confirm and act with the
+verbs. The floor does no matching of its own: grep is the search.
+
+## What to grep
+
+- `current/<kind>/<id>.yaml`: one file per Subject. Its first line is
+  `# <ref>  kind=<kind>  at <git_oid> gen <n>`, the coordinate the file is as
+  of. Then each field's current value under its short name (a many-valued or
+  contested field lists every value), each followed by `# CLM-... CAP-...`:
+  the Claim that states it and the Captures it cites. A Subject-valued field
+  shows the other Subject's ref. `flags:` lists each flagged field's verdict
+  problems (stale, contested, contradicted, uncovered, unsure_hold) as of
+  that coordinate.
+- `current/<kind>/<id>.<field>.txt`: a text value too long to inline, whole.
+- `documents/<name>.<ext>`: each Document, a one-line header and its body.
+
+## The loop
+
+1. `grep -rn "some text" .playbill/floor/current .playbill/floor/documents`
+2. Read the hit's first line: its ref, and the generation it is as of.
+3. `cruxible playbill get <ref>` for the live values and verdicts (the flags
+   here are as of the floor's coordinate; `orient` says how far behind it is).
+4. Change state with the write verbs (`cruxible playbill set|retire|write`).
+
+An agent without a shell asks `query --contains "some text"` instead.
+
+## Not for grep
+
+- `provenance/`: the digests and full statements behind every current/ value
+  (`subjects/`), Document envelopes (`documents/`), the latest accepted changes
+  behind current Claims with separately attributed review rationale where the
+  pinned Git notes snapshot retains it (`changes/`), and `snapshot.json`.
+- `manifest.json` binds every file by digest into the floor digest;
+  `coverage-manifest.json` is the export's coverage boundary.
+- `subjects/`, `claim-types/` and `procedures/`: the discovery cards other
+  tools read; they carry digests and addresses.
+
+History, rejected proposals, full evaluation transcripts, source and evidence
+bodies, and authoring-intent exhaust are not exported, so no match here does
+not prove absence. Document bodies are included only when the exporting caller
+may read bodies; otherwise the file says how to read one.
+"""
+
 
 def _render(value: object) -> bytes:
     return pretty_json(json.loads(canonical_bytes(value))).encode("utf-8") + b"\n"
@@ -188,24 +234,5 @@ def current_content(
             "history": "Only changes introducing the current Claim revisions are exported.",
         }
     )
-    files["README.md"] = (
-        "# Playbill searchable floor\n\n"
-        "Start with current/<kind>/<id>.yaml: one file per Subject, its first line "
-        "the ref, kind and accepted coordinate, then each field's current value "
-        "(every value of a many-valued or contested field), each followed by the "
-        "Claim and Captures that state it, then the verdict flags as of that "
-        "coordinate. Digests and full statements are under provenance/subjects/.\n\n"
-        "subjects/ and claim-types/ provide bounded discovery summaries. "
-        "provenance/ contains the latest changes behind current Claims and separately "
-        "attributed review rationale, where retained in the pinned Git notes snapshot.\n\n"
-        "History, rejected proposals, full evaluation transcripts, source bodies, and "
-        "authoring-intent exhaust are not exported. No match here does not prove "
-        "absence from those surfaces. Evidence bodies require their normal authorized "
-        "expansion; this export never reads them. Exact-content Claim values are shown "
-        "as their text, and Document bodies are under documents/ when the exporting "
-        "caller may read bodies.\n\n"
-        "The manifest binds every file. The accepted coordinate and the notes commit "
-        "in provenance/snapshot.json are separate rebuild inputs. "
-        "Agent-chosen projections can provide more useful reading layouts.\n"
-    ).encode()
+    files["README.md"] = FLOOR_README.encode()
     return files

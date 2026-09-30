@@ -1,8 +1,12 @@
 """Deterministic greppable file floor projected from accepted Playbill state.
 
-This is the pre-OKF floor: a plain, byte-stable rendering of the F5 projection
-artifacts (ClaimType cards, Subject profiles) and the accepted Documents, plus a
-root manifest that binds every file to the accepted coordinate it came from.
+This is the pre-OKF floor: a plain, byte-stable rendering of accepted state,
+plus a root manifest that binds every file to the accepted coordinate it came
+from. Format v3 leads with the grep-first layer an agent reads
+(``current/<kind>/<id>.yaml`` values and ``documents/`` bodies, see
+``floor_current`` and ``floor_documents``) and keeps every digest and address
+out of it, in ``provenance/`` and the manifest. The F5 projection artifacts
+(ClaimType cards, Subject profiles) stay beside it for the tools that read them.
 
 The service writes nothing. It returns a path-to-bytes map that is a pure
 function of the accepted coordinate and, in v3, the explicitly pinned review
