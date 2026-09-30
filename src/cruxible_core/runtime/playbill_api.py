@@ -2764,6 +2764,24 @@ def playbill_export_floor(
     )
 
 
+def _credential_principal_resolver(instance_id: str) -> Callable[[str], str | None]:
+    """Resolve a runtime credential of this instance to the principal it is bound to."""
+
+    from cruxible_core.server.credentials import get_runtime_credential_store
+
+    store = get_runtime_credential_store()
+
+    def resolve(credential_id: str) -> str | None:
+        # Revoked records still name their principal: a rotation revokes the
+        # arming credential, and its principal keeps seeing its own arms.
+        record = store.get(credential_id)
+        if record is None or record.instance_id != instance_id:
+            return None
+        return record.principal_id
+
+    return resolve
+
+
 def playbill_get(instance_id: str, *, request: PlaybillGetRequestV1) -> PlaybillGetResultV1:
     """One governed thing by reference; a Document body needs body-read permission."""
 
@@ -2776,18 +2794,23 @@ def playbill_get(instance_id: str, *, request: PlaybillGetRequestV1) -> Playbill
     # Consumption is recorded at the full coordinate, which a summary answer
     # leaves out unless the caller asked for it.
     auth = get_current_auth_context()
+    bearer = auth if auth is not None and auth.credential_type == "runtime_credential" else None
+    # Only a bearer credential bound to a principal sees that principal's other
+    # credentials; an unbound credential or a claim never does.
+    bound_to = None if bearer is None else bearer.principal_id
     result = service_playbill_get(
         get_playbill_manager().get(instance_id),
         request=request.model_copy(update={"full_coordinate": True}),
         access=_access(instance_id, include_body=request.detail == "body"),
-        # Arming credentials are shown only to themselves or an admin.
+        # Arming credentials are shown only to an admin, themselves, or another
+        # credential bound to the same principal.
         viewer=OperationalViewer(
-            credential_id=(
-                auth.credential_id
-                if auth is not None and auth.credential_type == "runtime_credential"
-                else None
-            ),
+            credential_id=None if bearer is None else bearer.credential_id,
             admin=get_current_mode() >= PermissionMode.ADMIN,
+            principal_id=bound_to,
+            credential_principal=(
+                None if bound_to is None else _credential_principal_resolver(instance_id)
+            ),
         ),
     )
     read_at = result.accepted_coordinate

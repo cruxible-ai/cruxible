@@ -100,6 +100,66 @@ def test_the_arming_credential_or_an_admin_sees_it(credential_world, viewer) -> 
     assert not arm.armed_by_withheld
 
 
+def _resolver(credential_id: str) -> str | None:
+    return {"cred-arm": "owner", "cred-unbound": None}.get(credential_id)
+
+
+@pytest.mark.parametrize(
+    ("viewer", "visible"),
+    [
+        # Another credential bound to the arming credential's principal (a
+        # rotation's replacement, or a second seat) sees it.
+        (
+            OperationalViewer(
+                credential_id="cred-rotated",
+                admin=False,
+                principal_id="owner",
+                credential_principal=_resolver,
+            ),
+            True,
+        ),
+        # A credential bound to another principal does not.
+        (
+            OperationalViewer(
+                credential_id="cred-reviewer",
+                admin=False,
+                principal_id="reviewer",
+                credential_principal=_resolver,
+            ),
+            False,
+        ),
+        # An unbound credential never widens, whatever it could resolve.
+        (
+            OperationalViewer(
+                credential_id="cred-unbound", admin=False, credential_principal=_resolver
+            ),
+            False,
+        ),
+        # A principal without a resolver (no bearer credential) never widens.
+        (OperationalViewer(credential_id=None, admin=False, principal_id="owner"), False),
+    ],
+    ids=["same_principal", "other_principal", "unbound", "claim"],
+)
+def test_a_credential_bound_to_the_arming_principal_sees_it_and_no_one_else(
+    credential_world,  # type: ignore[no-untyped-def]
+    viewer: OperationalViewer,
+    visible: bool,
+) -> None:
+    instance, line, run_id, when = credential_world
+
+    card = _get(instance, line.identity.qualified, viewer, evaluation_time=when).card
+    assert isinstance(card, PlaybillGetLineCardV1)
+    (arm,) = card.arms
+    run = _get(instance, f"ProcedureRun:{run_id}", viewer).card
+    assert isinstance(run, PlaybillGetProcedureRunCardV1) and run.triggered_by is not None
+    if visible:
+        assert (arm.credential, arm.armed_by) == ("cred-arm", "line-operator")
+        assert run.triggered_by.armed_by == "line-operator" and run.actor == "owner"
+    else:
+        assert arm.credential is None and arm.armed_by is None and arm.armed_by_withheld
+        assert run.triggered_by.armed_by is None and run.actor is None
+
+
 def test_the_runtime_get_passes_the_authenticated_viewer(monkeypatch: pytest.MonkeyPatch) -> None:
     from cruxible_core.runtime import playbill_api
     from cruxible_core.runtime.permissions import PermissionMode
@@ -137,7 +197,63 @@ def test_the_runtime_get_passes_the_authenticated_viewer(monkeypatch: pytest.Mon
     with pytest.raises(RuntimeError):
         playbill_api.playbill_get("inst", request=PlaybillGetRequestV1(ref="Line:x"))
 
-    assert seen["viewer"] == OperationalViewer(credential_id="cred-reader", admin=False)
+    viewer = seen["viewer"]
+    assert viewer == OperationalViewer(
+        credential_id="cred-reader", admin=False, principal_id="reader"
+    )
+    assert viewer.credential_principal is not None
+
+
+@pytest.mark.parametrize(
+    ("credential_type", "credential_id", "expected_credential"),
+    [("runtime_credential", "cred-unbound", "cred-unbound"), ("principal_claim", None, None)],
+)
+def test_an_unbound_credential_or_a_claim_gets_no_principal_widening(
+    monkeypatch: pytest.MonkeyPatch,
+    credential_type: str,
+    credential_id: str | None,
+    expected_credential: str | None,
+) -> None:
+    from cruxible_core.runtime import playbill_api
+    from cruxible_core.runtime.permissions import PermissionMode
+    from cruxible_core.server.auth import ResolvedAuthContext
+
+    seen: dict[str, Any] = {}
+
+    def service(instance: Any, **values: Any) -> Any:
+        seen.update(values)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr("cruxible_core.service.discovery.get.service_playbill_get", service)
+    monkeypatch.setattr(playbill_api, "check_permission", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        playbill_api,
+        "get_playbill_manager",
+        lambda: type("M", (), {"get": lambda self, _i: None})(),
+    )
+    monkeypatch.setattr(playbill_api, "_access", lambda *_a, **_k: _ACCESS)
+    monkeypatch.setattr(
+        playbill_api,
+        "get_current_auth_context",
+        lambda: ResolvedAuthContext(
+            credential_id=credential_id,
+            credential_label=None if credential_id is None else "manager",
+            credential_type=credential_type,  # type: ignore[arg-type]
+            instance_scope="inst",
+            role=None,
+            effective_permission_mode=PermissionMode.GOVERNED_WRITE,
+            # A claim names a principal; an unbound credential names none.
+            principal_id="owner" if credential_type == "principal_claim" else None,
+        ),
+    )
+    monkeypatch.setattr(playbill_api, "get_current_mode", lambda: PermissionMode.GOVERNED_WRITE)
+
+    with pytest.raises(RuntimeError):
+        playbill_api.playbill_get("inst", request=PlaybillGetRequestV1(ref="Line:x"))
+
+    viewer = seen["viewer"]
+    assert viewer.credential_id == expected_credential
+    assert viewer.principal_id is None and viewer.credential_principal is None
 
 
 @pytest.mark.parametrize("historical", [False, True])
@@ -172,3 +288,28 @@ def test_a_run_proof_reads_live_and_withholds_another_principals_credential(
     # A credential arm's run acts as the credential's principal, not its label.
     assert shown.proof["attribution"]["actor_id"] == "owner"
     assert shown.proof["receipt"]["attribution"]["actor_id"] == "owner"
+
+
+def test_the_resolver_names_a_revoked_credentials_principal_on_this_instance_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.runtime import playbill_api
+    from cruxible_core.server import credentials
+    from tests.test_procedures.test_line_arming import _credential
+
+    records = {
+        "cred-arm": _credential(instance_id="inst", revoked_at="2026-09-02T00:00:00Z"),
+        "cred-elsewhere": _credential(credential_id="cred-elsewhere", instance_id="other"),
+    }
+    monkeypatch.setattr(
+        credentials,
+        "get_runtime_credential_store",
+        lambda: SimpleNamespace(get=records.get),
+    )
+    resolve = playbill_api._credential_principal_resolver("inst")
+
+    assert resolve("cred-arm") == "owner"
+    assert resolve("cred-elsewhere") is None
+    assert resolve("cred-missing") is None
