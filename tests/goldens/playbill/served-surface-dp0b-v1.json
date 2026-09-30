@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-30:claimtype-v7",
-    "surface_digest": "sha256:e66203ae97e7036a762a92a98bb47abbcf11317f68f9804ed166a4242d27a9f3"
+    "surface_digest": "sha256:5433f60089658e4128cd826ab8972f3c1d5d3b1c0bab6d150d4ac669c9f932a0"
   },
   "surface": {
     "cli_leaves": [
@@ -1264,7 +1264,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/claim-types/migrations",
         "request_model": "types.UnionType[cruxible_core.playbill.claim_type_migrations.ClaimTypeMigrationRequestV1,cruxible_core.playbill.claim_type_migrations.ClaimTypeMigrationRequestV2,cruxible_core.playbill.claim_type_migrations.ClaimTypeMigrationRequestV3]",
-        "request_schema_digest": "sha256:f39cf52ab16e89bdb4987821a78df47d873ca6c8751414786d4980e6b63ee172",
+        "request_schema_digest": "sha256:71c4204f20e80fb3f1822dfe7364cb39a174710f0f932a94f89be31a1f697fb4",
         "response_model": "types.UnionType[cruxible_client.contracts.PlaybillClaimTypeMigrationResult,cruxible_client.contracts.PlaybillClaimTypeMigrationPreflight,cruxible_client.contracts.PlaybillClaimTypeMigrationResultV2,cruxible_client.contracts.PlaybillClaimTypeMigrationResultV3]",
         "response_schema_digest": "sha256:a1da5964da1f30041b6dfae91fa10df3ee1d23923df47cfa9199a9bb6173ad51"
       },
@@ -1277,7 +1277,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/claim-types/proposals",
         "request_model": "types.UnionType[cruxible_core.server.playbill_request_models.PlaybillProposeClaimTypeRequest,cruxible_core.server.playbill_request_models.PlaybillProposeClaimTypeInputRequest]",
-        "request_schema_digest": "sha256:2b3003a3e9f5920f0cc7005adf0dbe78f3a7279800e744c55ea734bc40954da5",
+        "request_schema_digest": "sha256:8df604b041c54f6353a1f5eec1c46fef98b44a68f23602e41ca3641e13020e23",
         "response_model": "types.UnionType[cruxible_client.contracts.PlaybillProposalInspection,cruxible_client.contracts.PlaybillClaimTypeInputProposalResult]",
         "response_schema_digest": "sha256:8c33cd11709615d71bbfa5f1830a53c69768f70908f0470a1ced519f6692349a"
       },
@@ -3215,7 +3215,7 @@
         "facade_operations": [
           "playbill_propose_claim_type_input"
         ],
-        "input_schema_digest": "sha256:06a5bc7586a6e62c925e9e8d72bf317a8b5f0125c8bd7c025d37e596f1a878eb",
+        "input_schema_digest": "sha256:1bfd5cc37dae1420a479aa0ca7b20ca2d684acc7c220c9c7e44537179b994b19",
         "name": "cruxible_playbill_propose_claim_type",
         "output_schema_digest": "sha256:0df1d3765bd3ce935355c2a0c0e8cdc5ec44265598bbb4cd2503c5c14b9c249d",
         "permission": "GOVERNED_WRITE"

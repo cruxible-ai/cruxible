@@ -434,3 +434,121 @@ def test_lowering_never_falls_back_to_v5_over_a_v7_predecessor() -> None:
         _lower(_input(evidence_admission_policy=unaccepted, anticipated_source_ids=[]), tree)
     with pytest.raises(ClaimTypeInputReferenceError, match="need ClaimType v7"):
         _lower(_input(description="Status."), {}, identity_rules=False)
+
+
+def _described_v7() -> ClaimType:
+    return _lower(
+        _input(
+            literal_schema={"enum": ["done", "ready"], "type": "string"},
+            description="Where the work stands.",
+            member_descriptions=[
+                {"member": "done", "description": "Finished."},
+                {"member": "ready", "description": "Can start."},
+            ],
+            default_role="normative",
+            revision_evidence="accumulate",
+        ),
+        {},
+    )
+
+
+def test_an_edit_that_omits_the_v7_fields_keeps_every_one_of_them() -> None:
+    predecessor = _described_v7()
+    tree = {PATH: render_claim_type(predecessor)}
+    # An unrelated edit: an extra permitted role, nothing about meaning.
+    edited = _lower(
+        _input(
+            literal_schema={"enum": ["done", "ready"], "type": "string"},
+            permitted_roles=["environment_binding", "normative", "observation"],
+        ),
+        tree,
+    )
+    for field in V7_FIELDS:
+        assert getattr(edited, field) == getattr(predecessor, field), field
+    assert edited.permitted_roles == ("environment_binding", "normative", "observation")
+
+
+def test_an_explicit_null_clears_a_v7_field_and_survives_the_wire() -> None:
+    from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
+
+    tree = {PATH: render_claim_type(_described_v7())}
+    clearing = _input(
+        literal_schema={"enum": ["done", "ready"], "type": "string"},
+        description=None,
+        member_descriptions=None,
+        default_role=None,
+    )
+    # What the CLI and the HTTP client send is model_dump: null stays null.
+    wire = clearing.model_dump(mode="json")  # type: ignore[attr-defined]
+    assert {"description": None, "member_descriptions": None, "default_role": None}.items() <= (
+        wire.items()
+    )
+    cleared = _lower(ClaimTypeInputV1.model_validate(wire), tree)
+    assert (cleared.description, cleared.member_descriptions, cleared.default_role) == (
+        None,
+        (),
+        None,
+    )
+    assert cleared.revision_evidence == "accumulate"  # still kept from the predecessor
+    emptied = _lower(
+        _input(
+            literal_schema={"enum": ["done", "ready"], "type": "string"}, member_descriptions=[]
+        ),
+        tree,
+    )
+    assert emptied.member_descriptions == ()
+    assert emptied.description == "Where the work stands."
+    # An input that states nothing v7 dumps exactly as before.
+    assert not set(V7_FIELDS) & set(_input().model_dump(mode="json"))  # type: ignore[attr-defined]
+    with pytest.raises(ValidationError, match="cannot be null"):
+        _input(revision_evidence=None)
+
+
+def test_inherited_descriptions_of_members_the_enum_dropped_are_refused_by_name() -> None:
+    from cruxible_core.claims.claim_type_inputs import ClaimTypeMemberDescriptionsStale
+
+    tree = {PATH: render_claim_type(_described_v7())}
+    with pytest.raises(ClaimTypeMemberDescriptionsStale) as refused:
+        _lower(_input(literal_schema={"enum": ["done", "shipped"], "type": "string"}), tree)
+    assert refused.value.error_code == "playbill.claim_type.member_descriptions_stale"
+    assert "'ready'" in str(refused.value) and "'done'" not in str(refused.value)
+    with pytest.raises(ClaimTypeMemberDescriptionsStale):
+        _lower(_input(literal_schema={"type": "string"}), tree)
+    # Restating or clearing them is the way through.
+    _lower(
+        _input(
+            literal_schema={"enum": ["done", "shipped"], "type": "string"},
+            member_descriptions=None,
+        ),
+        tree,
+    )
+
+
+def test_an_inherited_default_role_the_edit_no_longer_permits_is_refused() -> None:
+    from cruxible_core.claims.claim_type_inputs import ClaimTypeDefaultRoleNotPermitted
+
+    tree = {PATH: render_claim_type(_described_v7())}
+    edited_roles = {
+        "literal_schema": {"enum": ["done", "ready"], "type": "string"},
+        "permitted_roles": ["observation"],
+    }
+    with pytest.raises(ClaimTypeDefaultRoleNotPermitted) as refused:
+        _lower(_input(**edited_roles), tree)
+    assert refused.value.error_code == "playbill.claim_type.default_role_not_permitted"
+    assert "'normative'" in str(refused.value)
+    assert _lower(_input(**edited_roles, default_role=None), tree).default_role is None
+    assert (
+        _lower(_input(**edited_roles, default_role="observation"), tree).default_role
+        == "observation"
+    )
+
+
+def test_over_a_pre_v7_predecessor_descriptions_start_empty() -> None:
+    predecessor = _as_v6(_lower(_input(), {}))
+    edited = _lower(_input(), {PATH: render_claim_type(predecessor)})
+    assert (edited.description, edited.member_descriptions, edited.default_role) == (
+        None,
+        (),
+        None,
+    )
+    assert (edited.evidence_requirement, edited.revision_evidence) == ("self", "accumulate")

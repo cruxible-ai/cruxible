@@ -743,8 +743,13 @@ ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
 exactly the evidence it cites; `accumulate`: it keeps everything its
 predecessors cited). A revision that states the same thing again keeps its
 evidence either way, and a carry never loses backing. `propose --input` lowers
-to v7: a new ClaimType takes `self` and `replace`, and an edit of an existing one
-keeps its predecessor's values unless the input names them. ClaimTypes before v7
+to v7: a new ClaimType takes `self` and `replace`. An edit follows JSON merge-patch
+against its predecessor: a v7 field left out keeps the predecessor's value (over
+a ClaimType before v7: no descriptions, no default role, `self` and
+`accumulate`), and an explicit `null` clears `description`,
+`member_descriptions` or `default_role`. Inherited member descriptions of
+values the edited enum dropped, or an inherited default role the edit no longer
+permits, are refused by name rather than dropped. ClaimTypes before v7
 never switch on their own: `upgrade` proposes one change set moving the named
 live ClaimTypes (default: all of them) to v7 with `evidence_requirement` kept at
 `self` and `--revision-evidence` (default `replace`), carrying their Claims with
