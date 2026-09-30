@@ -154,7 +154,9 @@ open: each armed Line and each built-in worker, as `running`, `stalled`,
 `lagging`, `stopped`, or `disabled`. The built-in `next` worker runs on every
 instance by default. It maintains the
 current Claim queue, cited evidence availability and prediction windows under
-one health entry, with independent cursors for each part. Its evidence part re-hashes the Captures live Claims cite whenever a generation
+one health entry, with independent cursors for each part. Queue rows carry
+evaluation-time bounds; a `next.expire` deadline refreshes them at the next
+boundary. Its evidence part re-hashes the Captures live Claims cite whenever a generation
 cites one, and sweeps them all on a daily `evidence.sweep` trigger event.
 Retention is evaluated at the generation or trigger event's recorded instant. A missing or corrupt Capture envelope, a
 corrupt body, or a missing body its contract still requires to be retained is a

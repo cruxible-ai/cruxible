@@ -129,6 +129,23 @@ def schedule_deadline(instance: Any, name: str, at: datetime) -> None:
         )
 
 
+def cancel_deadline(instance: Any, name: str) -> None:
+    """Withdraw a replaced queue's bound when its replacement has no deadline."""
+
+    if not name or name in TriggerOperationalConfigV1().cadences():
+        raise ValueError("Deadline needs a nonempty name distinct from built-in cadences")
+    with _open(instance) as connection:
+        if (
+            connection is None
+            or connection.execute("SELECT 1 FROM deadlines WHERE name=?", (name,)).fetchone()
+            is None
+        ):
+            return
+    with _open(instance, create=True) as connection:
+        assert connection is not None
+        connection.execute("DELETE FROM deadlines WHERE name=?", (name,))
+
+
 def _due_triggers(
     connection: sqlite3.Connection | None, *, now: datetime, config: TriggerOperationalConfigV1
 ) -> list[tuple[str, datetime]]:
