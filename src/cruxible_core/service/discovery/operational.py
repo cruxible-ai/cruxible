@@ -294,42 +294,60 @@ def line_operations(
     if not dispatch_root(instance).exists():
         return LineOperations()
     store = LineDispatchStore(instance)
-    stamp = str(format_datetime(now))
     with store.locked() as conn:
-        arms_total = int(
-            conn.execute(
-                "SELECT count(DISTINCT json_extract(payload,'$.arm_id')) FROM sessions "
-                "WHERE line_id=?",
-                (line_digest,),
-            ).fetchone()[0]
+        return _line_operations(
+            store,
+            conn,
+            line_digest,
+            now=now,
+            arm_limit=arm_limit,
+            occurrence_limit=occurrence_limit,
         )
-        latest: dict[str, dict[str, Any]] = {}
-        for (payload,) in conn.execute(
-            "SELECT payload FROM sessions WHERE line_id=? ORDER BY rowid DESC", (line_digest,)
-        ):
-            data = json.loads(payload)
-            latest.setdefault(str(data["arm_id"]), data)
-            if len(latest) >= arm_limit:
-                break
-        arms = tuple(_arm(store, conn, data, now=now) for data in latest.values())
-        due, pending = conn.execute(
-            "SELECT coalesce(sum(eligible_at<=?),0), count(*) FROM pending "
-            "WHERE line_id=? AND disposition='pending'",
-            (stamp, line_digest),
-        ).fetchone()
-        occurrences = tuple(
-            PlaybillGetLineOccurrenceV1(
-                occurrence=str(occurrence_id),
-                eligible_at=_instant(str(eligible_at)),
-                state="due" if str(eligible_at) <= stamp else "waiting",
-            )
-            for occurrence_id, eligible_at in conn.execute(
-                "SELECT occurrence_id, eligible_at FROM pending "
-                "WHERE line_id=? AND disposition='pending' "
-                "ORDER BY eligible_at, occurrence_id LIMIT ?",
-                (line_digest, occurrence_limit),
-            )
+
+
+def _line_operations(
+    store: LineDispatchStore,
+    conn: sqlite3.Connection,
+    line_digest: str,
+    *,
+    now: datetime,
+    arm_limit: int,
+    occurrence_limit: int,
+) -> LineOperations:
+    stamp = str(format_datetime(now))
+    arms_total = int(
+        conn.execute(
+            "SELECT count(DISTINCT json_extract(payload,'$.arm_id')) FROM sessions WHERE line_id=?",
+            (line_digest,),
+        ).fetchone()[0]
+    )
+    latest: dict[str, dict[str, Any]] = {}
+    for (payload,) in conn.execute(
+        "SELECT payload FROM sessions WHERE line_id=? ORDER BY rowid DESC", (line_digest,)
+    ):
+        data = json.loads(payload)
+        latest.setdefault(str(data["arm_id"]), data)
+        if len(latest) >= arm_limit:
+            break
+    arms = tuple(_arm(store, conn, data, now=now) for data in latest.values())
+    due, pending = conn.execute(
+        "SELECT coalesce(sum(eligible_at<=?),0), count(*) FROM pending "
+        "WHERE line_id=? AND disposition='pending'",
+        (stamp, line_digest),
+    ).fetchone()
+    occurrences = tuple(
+        PlaybillGetLineOccurrenceV1(
+            occurrence=str(occurrence_id),
+            eligible_at=_instant(str(eligible_at)),
+            state="due" if str(eligible_at) <= stamp else "waiting",
         )
+        for occurrence_id, eligible_at in conn.execute(
+            "SELECT occurrence_id, eligible_at FROM pending "
+            "WHERE line_id=? AND disposition='pending' "
+            "ORDER BY eligible_at, occurrence_id LIMIT ?",
+            (line_digest, occurrence_limit),
+        )
+    )
     return LineOperations(
         arms=arms,
         arms_total=arms_total,
@@ -402,19 +420,23 @@ def line_rows(
                 "SELECT identity FROM lines ORDER BY identity"
             )
         ]
+    operations_by_line: dict[str, LineOperations] = {}
+    if at_head and lines and dispatch_root(instance).exists():
+        # One store session for every Line, not one replay per row.
+        store = LineDispatchStore(instance)
+        with store.locked() as conn:
+            for line in lines:
+                operations_by_line[line.identity.qualified] = _line_operations(
+                    store,
+                    conn,
+                    line_identity_digest(line.identity),
+                    now=evaluation_time,
+                    arm_limit=1,
+                    occurrence_limit=0,
+                )
     rows: list[PlaybillOrientLineV1] = []
     for line in lines:
-        operations = (
-            line_operations(
-                instance,
-                line_identity_digest(line.identity),
-                now=evaluation_time,
-                arm_limit=1,
-                occurrence_limit=0,
-            )
-            if at_head
-            else LineOperations()
-        )
+        operations = operations_by_line.get(line.identity.qualified, LineOperations())
         rows.append(
             PlaybillOrientLineV1(
                 line=line.identity.qualified,
