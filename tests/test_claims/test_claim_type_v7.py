@@ -330,3 +330,107 @@ def test_under_none_the_origin_goes_stale_past_the_freshness_horizon() -> None:
         providers={},
     )
     assert aged.verdict == "stale_evidence"
+
+
+# --- Lowering authored input ------------------------------------------------------
+
+
+def _input(**update: object) -> object:
+    from cruxible_core.claims.claim_type_inputs import (
+        ClaimTypeInputV1,
+        claim_type_input_template,
+    )
+
+    return ClaimTypeInputV1.model_validate(
+        {**claim_type_input_template().model_dump(mode="json"), **update}
+    )
+
+
+def _lower(value: object, tree: dict[str, bytes], *, identity_rules: bool = True) -> ClaimType:
+    from cruxible_core.claims.claim_type_inputs import lower_claim_type_input
+
+    return lower_claim_type_input(value, tree=tree, identity_rules=identity_rules)  # type: ignore[arg-type]
+
+
+def _as_v6(claim_type: ClaimType) -> ClaimType:
+    payload = claim_type.model_dump(mode="python")
+    payload.update(
+        artifact_format="playbill-claim-type-v6",
+        description=None,
+        member_descriptions=(),
+        default_role=None,
+        evidence_requirement=None,
+        revision_evidence=None,
+    )
+    return ClaimType.model_validate(payload)
+
+
+def test_a_new_claim_type_lowers_to_v7_replace_and_self() -> None:
+    lowered = _lower(_input(), {})
+    assert lowered.artifact_format == "playbill-claim-type-v7"
+    assert (lowered.evidence_requirement, lowered.revision_evidence) == ("self", "replace")
+    # The template's own bytes do not name any v7 field.
+    from cruxible_core.claims.claim_type_inputs import claim_type_input_template
+
+    assert not set(V7_FIELDS) & set(claim_type_input_template().model_dump(mode="json"))
+
+
+def test_an_edit_of_a_pre_v7_claim_type_keeps_accumulate_and_self_unless_named() -> None:
+    predecessor = _as_v6(_lower(_input(), {}))
+    tree = {PATH: render_claim_type(predecessor)}
+    edited = _lower(_input(permitted_roles=["normative"]), tree)
+    assert edited.artifact_format == "playbill-claim-type-v7"
+    assert (edited.evidence_requirement, edited.revision_evidence) == ("self", "accumulate")
+    assert edited.lifecycle.predecessor_digest == claim_type_digest(predecessor).tagged
+    chosen = _lower(_input(revision_evidence="replace", evidence_requirement="captured"), tree)
+    assert (chosen.evidence_requirement, chosen.revision_evidence) == ("captured", "replace")
+    # A v7 predecessor's own choice is what an unrelated edit keeps.
+    tree = {PATH: render_claim_type(chosen)}
+    again = _lower(_input(description="Status."), tree)
+    assert (again.evidence_requirement, again.revision_evidence) == ("captured", "replace")
+
+
+def test_authored_descriptions_are_normalized_and_members_sorted() -> None:
+    lowered = _lower(
+        _input(
+            literal_schema={"enum": ["ready", "done"], "type": "string"},
+            description="  Where the work stands. ",
+            member_descriptions=[
+                {"member": "ready", "description": " Can start. "},
+                {"member": "done", "description": "Finished."},
+            ],
+            default_role="observation",
+        ),
+        {},
+    )
+    assert lowered.description == "Where the work stands."
+    assert [(item.member, item.description) for item in lowered.member_descriptions] == [
+        ("done", "Finished."),
+        ("ready", "Can start."),
+    ]
+    assert lowered.default_role == "observation"
+
+
+def test_lowering_never_falls_back_to_v5_over_a_v7_predecessor() -> None:
+    from cruxible_core.claims.claim_type_inputs import ClaimTypeInputReferenceError
+
+    unaccepted = {
+        "rules": [
+            {
+                "rule_id": "exact",
+                "claim_roles": ["normative", "observation"],
+                "capture_contract_digests": ["sha256:" + "7" * 64],
+                "evidence_kinds": ["self_asserted"],
+                "admission": "direct",
+                "subject_binding": "exact_claim_subject",
+            }
+        ]
+    }
+    # With nothing to follow the exact version stays a v5 rule, as before.
+    fallback = _lower(_input(evidence_admission_policy=unaccepted, anticipated_source_ids=[]), {})
+    assert fallback.artifact_format == "playbill-claim-type-v5"
+    tree = {PATH: render_claim_type(_lower(_input(), {}))}
+    with pytest.raises(ClaimTypeInputReferenceError, match="accumulating evidence"):
+        _lower(_input(evidence_admission_policy=unaccepted, anticipated_source_ids=[]), tree)
+    with pytest.raises(ClaimTypeInputReferenceError, match="need ClaimType v7"):
+        _lower(_input(description="Status."), {}, identity_rules=False)

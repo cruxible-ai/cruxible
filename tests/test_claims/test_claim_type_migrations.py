@@ -824,8 +824,13 @@ def _accept_claim_type_only(
     *,
     proposal_name: str,
 ):  # type: ignore[no-untyped-def]
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    lowered = lower_claim_type_input(successor, tree=tree)
+    from cruxible_core.claims.claim_type_inputs import identity_rules_supported
+
+    coordinate = instance.accepted_coordinate()
+    tree = instance.tree_at(coordinate.git_oid)
+    lowered = lower_claim_type_input(
+        successor, tree=tree, identity_rules=identity_rules_supported(coordinate.compiler)
+    )
     tree[claim_type_path(lowered.predicate)] = render_claim_type(lowered)
     _accept_tree(
         instance,
@@ -1068,7 +1073,7 @@ def test_decision_only_successor_migrates_freshness_and_its_live_claim(
     assert tree_oid is not None
     path = claim_type_path(_claim_type().predicate)
     governed = parse_claim_type(instance.proposal_tree(tree_oid)[path], path=path)
-    assert governed.artifact_format == "playbill-claim-type-v6"
+    assert governed.artifact_format == "playbill-claim-type-v7"
     assert governed.evidence_freshness == freshness
     assert preflight.successor_artifact_digest == claim_type_digest(governed).tagged  # type: ignore[union-attr]
 
@@ -1118,7 +1123,7 @@ def test_current_successions_preserve_freshness_and_accept_policy(
     accepted_freshness = parse_claim_type(
         instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
     )
-    assert accepted_freshness.artifact_format == "playbill-claim-type-v6"
+    assert accepted_freshness.artifact_format == "playbill-claim-type-v7"
 
     policy = ClaimAttestationConsequencePolicyV1(
         rules=(
@@ -1162,7 +1167,7 @@ def test_current_successions_preserve_freshness_and_accept_policy(
     accepted_policy = parse_claim_type(
         instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
     )
-    assert accepted_policy.artifact_format == "playbill-claim-type-v6"
+    assert accepted_policy.artifact_format == "playbill-claim-type-v7"
     assert accepted_policy.evidence_freshness == accepted_freshness.evidence_freshness
     assert accepted_policy.attestation_consequence_policy == policy
     assert (

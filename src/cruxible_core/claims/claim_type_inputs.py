@@ -19,13 +19,19 @@ from cruxible_client.contracts.captures import (
     foreign_source_capture_contract,
     parse_capture_contract,
 )
+from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimEvidenceFreshnessV1,
     ClaimFreshnessDurationV1,
     ClaimType,
+    EvidenceRequirement,
+    RevisionEvidence,
+    canonical_description_text,
     claim_type_digest,
     claim_type_path,
+    effective_evidence_requirement,
+    effective_revision_evidence,
     parse_claim_type,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
@@ -60,6 +66,13 @@ class ClaimTypeInputValidationError(PlaybillFormatError):
         super().__init__(f"{self.error_code}: {'; '.join(details)}")
 
 
+class ClaimTypeMemberDescriptionInputV1(_StrictClaimTypeInputModel):
+    """What one literal enum member means; lowering normalizes and sorts these."""
+
+    member: str | int | bool | None
+    description: str
+
+
 class ClaimTypeInputV1(_StrictClaimTypeInputModel):
     predicate: str
     allowed_subject_kinds: tuple[str, ...]
@@ -86,6 +99,23 @@ class ClaimTypeInputV1(_StrictClaimTypeInputModel):
     unsure_hold_for: ClaimFreshnessDurationV1 | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
+    )
+    #: What the predicate means (ClaimType v7). Normalized to NFC and trimmed.
+    description: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: What each literal enum member means (ClaimType v7), in any order.
+    member_descriptions: tuple[ClaimTypeMemberDescriptionInputV1, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    #: The role a write takes when it names none (ClaimType v7).
+    default_role: ClaimRole | None = Field(default=None, exclude_if=lambda value: value is None)
+    #: Omitted: a revision keeps its predecessor's; a new ClaimType takes ``self``.
+    evidence_requirement: EvidenceRequirement | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    #: Omitted: a revision keeps its predecessor's (``accumulate`` before v7); a
+    #: new ClaimType takes ``replace``.
+    revision_evidence: RevisionEvidence | None = Field(
+        default=None, exclude_if=lambda value: value is None
     )
     anticipated_source_ids: tuple[str, ...] = ()
 
@@ -167,7 +197,7 @@ def claim_type_input_template() -> ClaimTypeInputV1:
 
 
 def identity_rules_supported(compiler: CompilerCoordinate) -> bool:
-    """Whether this compiler accepts ClaimType v6 identity evidence rules."""
+    """Whether this compiler accepts ClaimType v6/v7 identity evidence rules."""
 
     return compiler == AUTHORITY_VERBS_COMPILER
 
@@ -274,6 +304,64 @@ class ClaimTypeInputReferenceError(PlaybillFormatError):
     error_code = "playbill.claim_type.input_invalid"
 
 
+_V7_INPUT_FIELDS = (
+    "description",
+    "member_descriptions",
+    "default_role",
+    "evidence_requirement",
+    "revision_evidence",
+)
+
+
+def _v7_fields(value: ClaimTypeInputV1, predecessor: ClaimType | None) -> dict[str, object]:
+    """The v7 fields a lowered ClaimType states; semantics are inherited, never flipped.
+
+    An omitted evidence requirement or revision-evidence rule keeps the
+    predecessor's effective value, which for every ClaimType before v7 is
+    ``self`` and ``accumulate``: an unrelated edit never changes what a Claim
+    needs or keeps. A new ClaimType takes ``self`` and ``replace``.
+    """
+
+    members = sorted(
+        (
+            {
+                "member": item.member,
+                "description": canonical_description_text(item.description),
+            }
+            for item in value.member_descriptions
+        ),
+        key=lambda item: canonical_bytes(item["member"]),
+    )
+    return {
+        "description": (
+            None if value.description is None else canonical_description_text(value.description)
+        ),
+        "member_descriptions": members,
+        "default_role": value.default_role,
+        "evidence_requirement": value.evidence_requirement
+        or ("self" if predecessor is None else effective_evidence_requirement(predecessor)),
+        "revision_evidence": value.revision_evidence
+        or ("replace" if predecessor is None else effective_revision_evidence(predecessor)),
+    }
+
+
+def _refuse_v5_fallback(value: ClaimTypeInputV1, predecessor: ClaimType | None) -> None:
+    """A v5 ClaimType cannot say what v7 says, so lowering never silently drops it."""
+
+    if predecessor is not None and predecessor.artifact_format == "playbill-claim-type-v7":
+        raise ClaimTypeInputReferenceError(
+            f"{ClaimTypeInputReferenceError.error_code}: ClaimType:{value.predicate} is v7; "
+            "every evidence rule must name its contracts by identity (capture_contracts), "
+            "because a v5 successor would silently return it to accumulating evidence"
+        )
+    named = [field for field in _V7_INPUT_FIELDS if getattr(value, field)]
+    if named:
+        raise ClaimTypeInputReferenceError(
+            f"{ClaimTypeInputReferenceError.error_code}: {', '.join(named)} need ClaimType v7, "
+            "whose evidence rules name contracts by identity (capture_contracts)"
+        )
+
+
 def lower_claim_type_input(
     value: ClaimTypeInputV1,
     *,
@@ -286,8 +374,10 @@ def lower_claim_type_input(
         predecessor = parse_claim_type(tree[path], path=path)
     payload = value.model_dump(mode="json")
     payload.pop("anticipated_source_ids", None)
+    for field in _V7_INPUT_FIELDS:
+        payload.pop(field, None)
     payload["artifact_format"] = (
-        "playbill-claim-type-v6" if identity_rules else "playbill-claim-type-v5"
+        "playbill-claim-type-v7" if identity_rules else "playbill-claim-type-v5"
     )
     identities = _contract_identities(tree, value.anticipated_source_ids)
     identity_policy = None
@@ -300,6 +390,10 @@ def lower_claim_type_input(
             # A rule names an exact version that is not accepted yet, so it has no
             # identity to follow; it keeps its exact meaning as a v5 rule.
             payload["artifact_format"] = "playbill-claim-type-v5"
+    if payload["artifact_format"] == "playbill-claim-type-v7":
+        payload.update(_v7_fields(value, predecessor))
+    else:
+        _refuse_v5_fallback(value, predecessor)
     try:
         if identity_policy is not None:
             payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicyV3.model_validate(
@@ -458,6 +552,7 @@ __all__ = [
     "ClaimTypeInputProposalResultV1",
     "ClaimTypeInputValidationError",
     "ClaimTypeInputV1",
+    "ClaimTypeMemberDescriptionInputV1",
     "ClaimTypeLintWarningV1",
     "ClaimTypeProposalLintV1",
     "claim_type_input_template",
