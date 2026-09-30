@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **The floor is the grep-first front door to accepted state.** `playbill floor
+  export` now leads with `current/<kind>/<id>.yaml`: a one-line header (ref,
+  kind, `at <git_oid> gen <n>`), then each field's current value under its short
+  name with the `CLM-` Claim and `CAP-` Capture handles, then the verdict flags
+  as of that coordinate. Exact-content values (rulings) are written as their
+  text, long ones whole in a sibling `.txt` file; Documents are readable
+  `documents/<name>.<ext>` files (bodies only for a caller who may read them);
+  `current/<kind>/INDEX` lists every Subject with a title and its states.
+  Digests, addresses and full statements move to `provenance/` and the
+  manifest. A daemon re-renders only what the change records touched since its
+  last export, and `orient` reports `floor: {at, generations_behind}` for the
+  workspace's floor. The loop: grep, read the header, `get` the ref for live
+  verdicts, write with the verbs.
+
 - **ClaimTypes no longer need a distinction Claim beside adjacent vocabulary.**
   The current ClaimType acceptance laws (`playbill.claim-type.v1`, `v3`, `v4`
   and `v5` at revision 5, `v6` at revision 2) drop the vocabulary reuse check:
