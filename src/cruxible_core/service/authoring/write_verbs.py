@@ -131,6 +131,7 @@ from cruxible_core.service.discovery.query_vocabulary import (
     QueryVocabulary,
     load_query_vocabulary,
 )
+from cruxible_core.service.identity import require_authoring_principal
 from cruxible_core.service.read_refusals import nearest, resolve_read_coordinate
 from cruxible_core.storage.cas import BodyAccessContext
 
@@ -2102,6 +2103,11 @@ def service_playbill_write(
     """
 
     instance.require_writable()
+    # The caller must be able to author here before anything is resolved or
+    # planned, dry run included: a dry run never reports a write that the real
+    # one would refuse, and an already-live value never answers "accepted" to a
+    # caller who could not have written it.
+    require_authoring_principal(instance, caller.actor.actor_id)
     # A dry run writes nothing, derived indexes included: every history read it
     # makes, from planning to the verdicts, is served without touching the index.
     with detached_history_reads() if request.dry_run else nullcontext():

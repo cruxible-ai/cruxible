@@ -359,6 +359,8 @@ class AuthoringIntentCoordinator:
         """
 
         self.instance.require_writable()
+        # A preview refuses exactly the actor a create would.
+        require_authoring_principal(self.instance, actor.actor_id)
         with dry_run_bodies(), detached_history_reads():
             intent = self._draft_intent(
                 actor=actor,
