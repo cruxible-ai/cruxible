@@ -379,3 +379,47 @@ def test_minting_on_an_auth_off_daemon_refuses_without_latching_auth(
     store = get_runtime_credential_store()
     assert store.list_for_instance(instance_id) == []
     assert store.is_auth_required() is False
+
+
+def test_minting_forgets_spent_consents_past_the_replay_window(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance_id, reviewer_key = playbill_http
+    admin = _bearer(None, instance_id, PermissionMode.ADMIN)
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    store = get_runtime_credential_store()
+    with sqlite3.connect(store.db_path) as conn:
+        conn.executemany(
+            "INSERT INTO runtime_credential_proofs VALUES (?, ?, ?)",
+            [
+                ("sha256:old", "rcred_old", "2026-01-01T00:00:00+00:00"),
+                ("sha256:recent", "rcred_recent", "2999-01-01T00:00:00+00:00"),
+            ],
+        )
+    proof = sign_runtime_credential_mint(
+        instance_id=instance_id,
+        principal_id="reviewer",
+        permission_mode="read_only",
+        label="reviewer",
+        private_key_path=reviewer_key,
+        forbidden_roots=(),
+    )
+
+    minted = _mint(
+        client,
+        instance_id,
+        admin,
+        principal_id="reviewer",
+        permission_mode="read_only",
+        principal_proof=proof.model_dump(mode="json"),
+    )
+
+    assert minted.status_code == 200, minted.text  # type: ignore[attr-defined]
+    with sqlite3.connect(store.db_path) as conn:
+        kept = {
+            row[0] for row in conn.execute("SELECT proof_digest FROM runtime_credential_proofs")
+        }
+    assert "sha256:old" not in kept
+    assert "sha256:recent" in kept
+    assert len(kept) == 2  # the recent row and the consent just spent

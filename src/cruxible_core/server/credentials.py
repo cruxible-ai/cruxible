@@ -7,12 +7,16 @@ import hmac
 import secrets
 import sqlite3
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.repairs import RepairOperationV1
-from cruxible_client.contracts.temporal import format_datetime, utc_now
+from cruxible_client.contracts.runtime_credentials import (
+    RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS,
+)
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime, utc_now
 from cruxible_core.errors import (
     BootstrapClaimRefusedError,
     InstanceNotFoundError,
@@ -196,6 +200,7 @@ class RuntimeCredentialStore:
         try:
             with self._connect() as conn:
                 if proof_digest is not None:
+                    self._prune_spent_proofs_conn(conn, now=created.record.created_at)
                     conn.execute(
                         """
                         INSERT INTO runtime_credential_proofs(
@@ -793,6 +798,27 @@ class RuntimeCredentialStore:
             raise RuntimeCredentialRecoveryError(
                 f"No ADMIN runtime credential exists for instance_id {instance_id!r}."
             )
+
+    @staticmethod
+    def _prune_spent_proofs_conn(conn: sqlite3.Connection, *, now: str) -> int:
+        """Forget spent consents that can no longer be replayed; return how many.
+
+        A consent is accepted only while its ``issued_at`` is within the skew
+        window of the daemon's clock, on either side. One spent at ``u`` was
+        issued no later than ``u + skew``, so it stops verifying by
+        ``u + 2 * skew``; past that its row guards nothing.
+        """
+
+        current = parse_datetime(now)
+        assert current is not None
+        horizon = current - timedelta(seconds=2 * RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS)
+        stale = [
+            (str(row[0]),)
+            for row in conn.execute("SELECT proof_digest, used_at FROM runtime_credential_proofs")
+            if (used := parse_datetime(str(row[1]))) is not None and used < horizon
+        ]
+        conn.executemany("DELETE FROM runtime_credential_proofs WHERE proof_digest = ?", stale)
+        return len(stale)
 
     @staticmethod
     def _ensure_principal_column_conn(conn: sqlite3.Connection) -> None:
