@@ -7,7 +7,13 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
-from tests.core_support._write_support import KIND, seed_write_vocabulary
+from tests.core_support._write_support import (
+    KIND,
+    REPORTS,
+    cited_captures,
+    report_evidence,
+    seed_write_vocabulary,
+)
 
 WI1 = f"{KIND}/wi-1"
 
@@ -52,6 +58,143 @@ def test_set_retire_and_write_answer_outcomes(
     assert retired.json()["changes"][0]["claim"] == claim
 
 
+def test_expect_travels_on_every_write_route(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _key = playbill_http
+    _seed(client, instance_id)
+    base = f"/api/v1/{instance_id}/playbill"
+    post = lambda route, body: client.post(f"{base}/{route}", json=body).json()  # noqa: E731
+
+    first = post("set", {"subject": WI1, "field": "status", "value": "ready", "because": "x"})
+    assert first["status"] == "accepted", first
+    stale = post(
+        "set",
+        {"subject": WI1, "field": "status", "value": "done", "because": "x", "expect": "blocked"},
+    )
+    assert stale["refusal"]["code"] == "playbill.write.slot_changed", stale
+    assert stale["refusal"]["field_path"] == "changes[0].expect"
+    added = post(
+        "write",
+        {
+            "because": "x",
+            "changes": [
+                {
+                    "op": "add",
+                    "subject": WI1,
+                    "field": "governs",
+                    "value": f"{KIND}/wi-2",
+                    "expect_absent": True,
+                },
+                {
+                    "op": "set",
+                    "subject": WI1,
+                    "field": "status",
+                    "value": "done",
+                    "expect": "ready",
+                },
+            ],
+        },
+    )
+    assert added["status"] == "accepted", added
+    retired = post(
+        "retire",
+        {
+            "target": {"subject": WI1, "field": "governs"},
+            "because": "x",
+            "expect": [f"{KIND}/wi-2"],
+        },
+    )
+    assert retired["status"] == "accepted", retired
+
+
+def test_the_write_route_takes_a_default_subject(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _key = playbill_http
+    _seed(client, instance_id)
+    base = f"/api/v1/{instance_id}/playbill"
+    written = client.post(
+        f"{base}/write",
+        json={
+            "because": "x",
+            "subject": WI1,
+            "changes": [
+                {"op": "set", "field": "status", "value": "ready"},
+                {"op": "add", "field": "governs", "value": f"{KIND}/wi-2"},
+            ],
+        },
+    ).json()
+    assert written["status"] == "accepted", written
+    assert {item["subject"] for item in written["changes"]} == {WI1}
+    orphan = client.post(
+        f"{base}/write",
+        json={"because": "x", "changes": [{"op": "set", "field": "status", "value": "done"}]},
+    ).json()
+    assert orphan["refusal"]["code"] == "playbill.write.subject_required", orphan
+
+
+def test_capture_handles_and_contract_evidence_over_http(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    client, instance_id, _key = playbill_http
+    _seed(client, instance_id)
+    base = f"/api/v1/{instance_id}/playbill"
+    evidence = report_evidence(tmp_path, "Count: 3")
+    first = client.post(
+        f"{base}/set",
+        json={
+            "subject": WI1,
+            "field": "measured",
+            "value": 3,
+            "because": "x",
+            "evidence": evidence,
+        },
+    ).json()
+    assert first["status"] == "accepted", first
+    instance = get_playbill_manager().get(instance_id)
+    (digest,) = cited_captures(instance, first["changes"][0]["claim"])
+    handle = "CAP-" + digest.removeprefix("sha256:")[:12]
+    cited = client.post(
+        f"{base}/set",
+        json={
+            "subject": f"{KIND}/wi-2",
+            "field": "measured",
+            "value": 3,
+            "because": "x",
+            "evidence": {"kind": "capture", "capture": handle},
+        },
+    ).json()
+    assert cited["changes"][0]["capture"] == handle, cited
+    by_contract = client.post(
+        f"{base}/write",
+        json={
+            "because": "x",
+            "subject": WI1,
+            "changes": [
+                {
+                    "op": "add",
+                    "field": "labels",
+                    "value": "counted",
+                    "evidence": {"kind": "contract", "contract": REPORTS.identity.name},
+                }
+            ],
+        },
+    ).json()
+    assert by_contract["changes"][0]["capture"] == handle, by_contract
+    short = client.post(
+        f"{base}/set",
+        json={
+            "subject": WI1,
+            "field": "measured",
+            "value": 3,
+            "because": "x",
+            "evidence": {"kind": "capture", "capture": "CAP-abc"},
+        },
+    )
+    assert short.status_code == 422
+
+
 def test_a_refused_write_is_an_outcome_and_a_malformed_one_is_a_422(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
@@ -82,3 +225,18 @@ def test_the_dedicated_claim_retire_route_is_gone(
         json={"mode": "preflight"},
     )
     assert response.status_code in {404, 405}
+
+
+def test_the_openapi_outcome_declares_each_warning_variant(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, _instance_id, _key = playbill_http
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    outcome = schemas["WriteOutcome"]
+    items = outcome["properties"]["warnings"]["items"]
+    assert items["discriminator"]["propertyName"] == "code"
+    verdict = schemas["VerdictNotSupportedWarning"]
+    newer = schemas["NewerCaptureNotCitableWarning"]
+    assert "verdict" in verdict["required"] and "capture" not in verdict["properties"]
+    assert "capture" in newer["required"] and "verdict" not in newer["properties"]
+    assert "WriteWarning" not in schemas

@@ -152,7 +152,7 @@ outside the language server/MCP process.
 |---|---|---|
 | `cruxible_playbill_list_documents` | List accepted Documents and coordinate | `READ_ONLY` |
 | `cruxible_playbill_get_document` | Read an accepted Document envelope | `READ_ONLY` |
-| `cruxible_playbill_read_capture` | Verify retained Capture evidence and read bounded material | `GOVERNED_WRITE` |
+| `cruxible_playbill_read_capture` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among accepted Captures | `GOVERNED_WRITE` |
 | `cruxible_playbill_dereference` | Read permission-gated body bytes | `GOVERNED_WRITE` |
 | `cruxible_playbill_history` | Read accepted history | `READ_ONLY` |
 | `cruxible_playbill_explain` | Explain governance, provenance, coverage, and history | `READ_ONLY` |
@@ -196,7 +196,7 @@ paths and root aliases, not compilation wire.
 | `cruxible_playbill_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `playbill.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
 | `cruxible_playbill_retire` | End one live Claim, by Claim ID or by Subject and single-value field, with its dependent Claims, in one change set | `GOVERNED_WRITE` |
 | `cruxible_playbill_write` | Apply `set`, `add` (one more value in a many-valued field) and `retire` changes as one change set, accepted or refused together | `GOVERNED_WRITE` |
-| `cruxible_playbill_get` | Read one thing by any reference (Claim id or prefix, `kind/id`, predicate, `Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, artifact path, proposal id); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is cut to `{value, truncated: true, length}`, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why`, `history` (newest first, paged by `limit` and `cursor`), `proof` (with the full `accepted_coordinate`), or `body` with a byte `range`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`); a wrong name refuses with the nearest names | `READ_ONLY` |
+| `cruxible_playbill_get` | Read one thing by any reference (Claim id or prefix, `kind/id`, predicate, `Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, artifact path, proposal id, or an operational reference: `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is cut to `{value, truncated: true, length}`, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why`, `history` (newest first, paged by `limit` and `cursor`), `proof` (with the full `accepted_coordinate`), or `body` with a byte `range`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
 | `cruxible_playbill_get_claim` | Read one accepted Claim | `READ_ONLY` |
 | `cruxible_playbill_claim_history` | Read one Claim's accepted lineage | `READ_ONLY` |
 | `cruxible_playbill_explain_claim` | Explain a Claim's verdict and evidence | `READ_ONLY` |
@@ -325,7 +325,7 @@ now).
 | `cruxible_playbill_query` | Answer any question over accepted state in one call: compact (`kind` and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`) or a query `name` with `params`; rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
 | `cruxible_playbill_query_spec` | Run one full `QueryDefinitionSpecV1` inline (`spec`, `limit`, `cursor`, `at`, `evaluation_time`) with the same evaluation, rows, flags and paging as `cruxible_playbill_query`; `full` profile only | `READ_ONLY` |
 | `cruxible_playbill_discover` | Find interfaces and Subjects by name | `READ_ONLY` |
-| `cruxible_playbill_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue, and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types` or `queries` (`limit`, `cursor`); when the MCP workspace holds this instance's floor, `floor: {at, generations_behind}` says how far behind the head it is | `READ_ONLY` |
+| `cruxible_playbill_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue (with `arms`: the instance's Line arms by state and the stalled or stopped Lines by name, no daemon scope needed), and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types`, `queries`, `interfaces`, or an operational family -- `runs` (Procedure runs, newest admission first, paged by an immutable key) or `running` (only the runs still running; read one with `cruxible_playbill_get(ref="ProcedureRun:RUN-...")` for its live progress), `lines`, `captures`, `capture_contracts`, `predictions`, `mandates` -- which the map only counts under `artifacts` (`limit`, `cursor`); when the MCP workspace holds this instance's floor, `floor: {at, generations_behind}` says how far behind the head it is | `READ_ONLY` |
 | `cruxible_playbill_search` | Search, list, or orient over accepted state | `READ_ONLY` |
 | `cruxible_playbill_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
 | `cruxible_playbill_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible playbill next` does | `READ_ONLY` |
@@ -343,10 +343,15 @@ now).
 that performs it (for example `cruxible_playbill_settle(prediction_id="RSC-...")`,
 adding the observation's Claim ID), or none when its operands are local files.
 A row or nested finding whose repair the session cannot perform -- its profile
-does not advertise the tool that performs it, or its tier is too low -- is left
-out and counted in `status.hidden`. A status facet keeps its state either way,
-but drops a repair the session cannot perform and says `repair_hidden: true`. The `default` profile advertises neither
-`cruxible_playbill_settle` nor the Line tools, for example.
+does not advertise the tool that performs it, or its tier is too low -- stays in
+the queue with `repair: null` and `repair_requires: {tool, tier, because,
+profile?}` naming what running it needs, so `orient` attention and the queue
+count it for every caller and `status.hidden` stays 0. A status facet keeps its
+state either way, but drops a repair the session cannot perform and says
+`repair_hidden: true` with the same `repair_requires`. The `default` profile
+advertises neither `cruxible_playbill_settle` nor the Line tools, for example:
+a stopped Line arm still shows as `consumer_stalled`, its repair withheld with
+`because: ["profile"]`.
 
 Lists that can outgrow one answer are paged. `proposal_list`,
 `policies_in_force` and `curation_list` take `limit` and `cursor`; a cut page

@@ -303,6 +303,30 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillGetRevisionV1", "sequence"): "SETTLEMENT ORDER",
     ("PlaybillGetCoordinateV1", "generation"): "SETTLEMENT ORDER",
     ("_RevisionEntry", "sequence"): "SETTLEMENT ORDER",
+    # Operational reads: Lines, Captures, predictions, mandates and runs. An
+    # arm's and an occurrence's instants are the dispatch store's validity
+    # windows; a Capture's observed_at is its producer's assertion; a run's
+    # times are its admission's evaluation instant, which the deterministic
+    # executor clock stamps on every journal record of the run.
+    ("PlaybillGetLineArmV1", "armed_at"): "VALIDITY WINDOW",
+    ("PlaybillGetLineArmV1", "stopped_at"): "VALIDITY WINDOW",
+    ("PlaybillGetLineOccurrenceV1", "eligible_at"): "VALIDITY WINDOW",
+    ("PlaybillGetCaptureCardV1", "observed_at"): "ASSERTION TIME",
+    ("PlaybillOrientCaptureV1", "observed_at"): "ASSERTION TIME",
+    ("PlaybillGetPredictionWindowV1", "starts_at"): "VALIDITY WINDOW",
+    ("PlaybillGetPredictionWindowV1", "ends_at"): "VALIDITY WINDOW",
+    ("PlaybillOrientPredictionV1", "next_close"): "VALIDITY WINDOW",
+    ("PlaybillGetMandateCardV1", "valid_from"): "VALIDITY WINDOW",
+    ("PlaybillGetMandateCardV1", "expires_at"): "VALIDITY WINDOW",
+    ("PlaybillOrientMandateV1", "expires_at"): "VALIDITY WINDOW",
+    ("PlaybillRunRowV1", "started_at"): "EVALUATION INSTANT",
+    ("PlaybillGetProcedureRunCardV1", "started_at"): "EVALUATION INSTANT",
+    ("PlaybillGetRunCurrentNodeV1", "started_at"): "EVALUATION INSTANT",
+    ("PlaybillGetPendingInputV1", "waiting_since"): "EVALUATION INSTANT",
+    ("PlaybillGetRunNodeV1", "sequence"): "SETTLEMENT ORDER",
+    # The accepted head a live operational read was taken at.
+    ("PlaybillLiveHeadV1", "generation"): "SETTLEMENT ORDER",
+    ("RunLocator", "admitted_at"): "EVALUATION INSTANT",
     ("PlaybillSearchRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillSearchResult", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillSearchResultV1", "evaluation_time"): "EVALUATION INSTANT",

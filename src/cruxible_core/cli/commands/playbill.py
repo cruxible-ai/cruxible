@@ -110,6 +110,7 @@ from cruxible_client.contracts.write import (
     PlaybillRetireRequestV1,
     PlaybillSetRequestV1,
     PlaybillWriteRequestV1,
+    SubjectRef,
     WriteOutcome,
 )
 from cruxible_client.errors import DataValidationError
@@ -3410,6 +3411,10 @@ class _WriteFileV1(BaseModel):
     because: str | None = Field(
         default=None, min_length=1, description="Why; --because overrides it."
     )
+    subject: SubjectRef | None = Field(
+        default=None,
+        description="The Subject (kind/id) of every change that names none.",
+    )
     changes: list[Change] = Field(min_length=1)
 
 
@@ -3456,6 +3461,8 @@ def _write_text(outcome: WriteOutcome) -> None:
             details.append("already live")
         if change.verdict is not None:
             details.append(f"verdict {change.verdict}")
+        if change.capture is not None:
+            details.append(f"evidence {change.capture}")
         if change.retired:
             details.append(f"also retires {', '.join(change.retired)}")
         if change.contenders_created:
@@ -3502,13 +3509,41 @@ def _write_request(model: type[ResultT], fields: Mapping[str, Any], *, example: 
         ) from None
 
 
+def _expect_option_value(values: tuple[str, ...]) -> str | tuple[str, ...] | None:
+    """``--expect`` given once is the value; given again, every live value."""
+
+    if not values:
+        return None
+    return values[0] if len(values) == 1 else values
+
+
+_EXPECT_HELP = (
+    "Refuse unless the field holds this value now (compare-and-set); repeat it "
+    "for every value of a many-valued field."
+)
+
+
 def _evidence_option_value(
-    evidence_file: str | None, capture: str | None, workspace_root: str
+    evidence_file: str | None,
+    capture: str | None,
+    workspace_root: str,
+    contract: str | None = None,
 ) -> dict[str, Any] | None:
-    if evidence_file is not None and capture is not None:
-        raise click.UsageError("pass --evidence-file or --capture, not both")
+    given = [
+        flag
+        for flag, value in (
+            ("--evidence-file", evidence_file),
+            ("--capture", capture),
+            ("--evidence-contract", contract),
+        )
+        if value is not None
+    ]
+    if len(given) > 1:
+        raise click.UsageError(f"pass one of {', '.join(given)}, not both")
     if capture is not None:
         return {"kind": "capture", "capture": capture}
+    if contract is not None:
+        return {"kind": "contract", "contract": contract}
     if evidence_file is None:
         return None
     try:
@@ -3531,9 +3566,24 @@ def _evidence_option_value(
     default=None,
     help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
 )
-@click.option("--capture", default=None, help="Cite an existing Capture by digest.")
+@click.option(
+    "--capture",
+    default=None,
+    help="Cite an existing Capture: its handle CAP-<12+ hex>, or its sha256 digest.",
+)
+@click.option(
+    "--evidence-contract",
+    default=None,
+    help="Cite the newest verified Capture of this CaptureContract about SUBJECT.",
+)
 @click.option("--role", default=None, help="Only when the field permits several roles.")
 @click.option("--contend", is_flag=True, help="Contest the live value instead of replacing it.")
+@click.option("--expect", "expect", multiple=True, help=_EXPECT_HELP)
+@click.option(
+    "--expect-absent",
+    is_flag=True,
+    help="Refuse unless the field holds no value now (compare-and-set on an empty field).",
+)
 @click.option(
     "--workspace-root",
     default=".",
@@ -3550,8 +3600,11 @@ def set_value(
     because: str,
     evidence_file: str | None,
     capture: str | None,
+    evidence_contract: str | None,
     role: str | None,
     contend: bool,
+    expect: tuple[str, ...],
+    expect_absent: bool,
     workspace_root: str,
     dry_run: bool,
     no_accept: bool,
@@ -3565,6 +3618,8 @@ def set_value(
     for such fields, a Subject as kind/id, or the text itself for exact content.
     """
 
+    if expect_absent and expect:
+        raise click.UsageError("pass --expect or --expect-absent, not both")
     request = _write_request(
         PlaybillSetRequestV1,
         {
@@ -3572,9 +3627,12 @@ def set_value(
             "field": field,
             "value": value,
             "because": because,
-            "evidence": _evidence_option_value(evidence_file, capture, workspace_root),
+            "evidence": _evidence_option_value(
+                evidence_file, capture, workspace_root, evidence_contract
+            ),
             "role": role,
             "contend": contend,
+            "expect": () if expect_absent else _expect_option_value(expect),
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,
@@ -3584,6 +3642,97 @@ def set_value(
     outcome = _server_call(
         lambda client, instance_id: client.playbill_set(instance_id, request=request),
         command_name="playbill set",
+    )
+    _finish_write(outcome, output_json=output_json)
+
+
+@playbill_group.command("add")
+@click.argument("subject")
+@click.argument("field")
+@click.argument("value")
+@click.option("--because", required=True, help="Why; also the default evidence.")
+@click.option(
+    "--evidence-file",
+    default=None,
+    help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
+)
+@click.option(
+    "--capture",
+    default=None,
+    help="Cite an existing Capture: its handle CAP-<12+ hex>, or its sha256 digest.",
+)
+@click.option(
+    "--evidence-contract",
+    default=None,
+    help="Cite the newest verified Capture of this CaptureContract about SUBJECT.",
+)
+@click.option("--role", default=None, help="Only when the field permits several roles.")
+@click.option(
+    "--expect-absent",
+    is_flag=True,
+    help="Refuse when the value is already there, instead of answering it as done.",
+)
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose source catalog --evidence-file reads.",
+)
+@_write_options
+@handle_errors
+def add_value(
+    subject: str,
+    field: str,
+    value: str,
+    because: str,
+    evidence_file: str | None,
+    capture: str | None,
+    evidence_contract: str | None,
+    role: str | None,
+    expect_absent: bool,
+    workspace_root: str,
+    dry_run: bool,
+    no_accept: bool,
+    at_oid: str | None,
+    output_json: bool,
+) -> None:
+    """Add VALUE to many-valued FIELD of SUBJECT (kind/id), beside the values there.
+
+    A value already there is answered as done (--expect-absent refuses instead).
+    A Subject of a known kind that does not exist yet is added. VALUE is text, as
+    for set: a Subject as kind/id for a Subject-valued field.
+    """
+
+    request = _write_request(
+        PlaybillWriteRequestV1,
+        {
+            "changes": [
+                {
+                    "op": "add",
+                    "subject": subject,
+                    "field": field,
+                    "value": value,
+                    "evidence": _evidence_option_value(
+                        evidence_file, capture, workspace_root, evidence_contract
+                    ),
+                    "role": role,
+                    "expect_absent": expect_absent,
+                }
+            ],
+            "because": because,
+            "dry_run": dry_run,
+            "accept": "never" if no_accept else "if_allowed",
+            "at": at_oid,
+        },
+        example=(
+            "cruxible playbill add dev.item/tidy-cli governs dev.item/cli-docs "
+            '--because "Linked in review."'
+        ),
+    )
+    outcome = _server_call(
+        lambda client, instance_id: client.playbill_write(instance_id, request=request),
+        command_name="playbill add",
     )
     _finish_write(outcome, output_json=output_json)
 
@@ -3599,6 +3748,7 @@ def set_value(
     show_default=True,
     help="was-rescinded: withdrawn; was-wrong: it was false; superseded: its shape is gone.",
 )
+@click.option("--expect", "expect", multiple=True, help=_EXPECT_HELP)
 @_write_options
 @handle_errors
 def retire(
@@ -3606,6 +3756,7 @@ def retire(
     field: str | None,
     because: str,
     reason: str,
+    expect: tuple[str, ...],
     dry_run: bool,
     no_accept: bool,
     at_oid: str | None,
@@ -3622,6 +3773,7 @@ def retire(
             "target": target if field is None else {"subject": target, "field": field},
             "because": because,
             "reason": reason,
+            "expect": _expect_option_value(expect),
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,
@@ -3662,7 +3814,8 @@ def write_changes(
 
     FILE (YAML or JSON) holds {"because": ..., "changes": [...]}, or a bare list
     of changes with --because. Each change is {"op": "set" | "add", "subject",
-    "field", "value"} or {"op": "retire", "target"}; --schema prints the schema.
+    "field", "value"} or {"op": "retire", "target"}; a top-level "subject" is
+    the Subject of every change that names none. --schema prints the schema.
     """
 
     if schema:
@@ -3691,6 +3844,7 @@ def write_changes(
         PlaybillWriteRequestV1,
         {
             "changes": observe_changes(parsed.changes, workspace=Path(workspace_root)),
+            "subject": parsed.subject,
             "because": rationale,
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",
@@ -3724,7 +3878,7 @@ def write_changes(
     "--at",
     "at_oid",
     default=None,
-    help="Accepted git oid, or a unique 12+ hex prefix, to read at; default head.",
+    help="Accepted git oid, a unique 12+ hex prefix, or a generation number; default head.",
 )
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @click.option(
@@ -3750,7 +3904,9 @@ def get_by_ref(
 
     REF is any reference form: CLM-... (or a unique prefix), kind/id, a predicate,
     ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, an artifact
-    path, or a proposal id or prefix.
+    path, a proposal id or prefix, or an operational reference: Line:<name> (or
+    the Line identity digest next names), CAP-<12+ hex> or Capture:<digest>,
+    ResolutionContract:<name>, Mandate:<name>.
     """
 
     from cruxible_client.contracts.get_reads import PlaybillByteRangeV1, PlaybillGetRequestV1
@@ -3879,8 +4035,8 @@ def _emit_get_text(result: Any) -> None:
                 else f"  = {_get_value_text(revision.value, width=GET_CLI_HISTORY_VALUE_WIDTH)}"
             )
             click.echo(
-                f"rev {revision.revision}  seq {revision.sequence}  {revision.accepted}  "
-                f"by {revision.actor or '-'}{value}"
+                f"rev {revision.revision}  seq {revision.sequence} at {revision.git_oid}  "
+                f"{revision.accepted}  by {revision.actor or '-'}{value}"
             )
             for step in revision.next:
                 click.echo(f"next: {step}")
@@ -4319,7 +4475,7 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     "--at",
     "at_oid",
     default=None,
-    help="Read at this accepted git oid (or a unique 12+ hex prefix).",
+    help="Read at this accepted git oid (or a unique 12+ hex prefix), or a generation number.",
 )
 @click.option("--evaluation-time", default=None, help="ISO-8601 instant; default now.")
 @json_option
@@ -5179,6 +5335,15 @@ def next_work(
             else ""
         )
         row = f"{change}{item.severity}  {item.reason}  {item.subject_identity}"
+        if item.repair is None:
+            needs = _next_requirement_hint(item.repair_requires)
+            click.echo(row + ("" if output_brief else f"  repair withheld: {needs}"))
+            if not output_brief:
+                for finding in item.findings:
+                    click.echo(
+                        f"  also: {finding.severity}  {finding.reason}  {finding.subject_identity}"
+                    )
+            continue
         if output_brief:
             click.echo(row + (f"  next={item.repair.command}" if item.repair.command else ""))
             continue
@@ -5193,6 +5358,19 @@ def next_work(
             f"Showing {len(result.items)} of {result.total_items} rows. "
             f"Next: --cursor {result.next_cursor}"
         )
+
+
+def _next_requirement_hint(requires: contracts.PlaybillNextRepairRequirement | None) -> str:
+    """What running a withheld repair needs, in one phrase."""
+
+    if requires is None:
+        return "this caller cannot run it"
+    needs = []
+    if "tier" in requires.because:
+        needs.append(f"the {requires.tier} tier")
+    if "profile" in requires.because:
+        needs.append(f"the {requires.profile} MCP tool profile")
+    return f"{requires.tool} needs " + " and ".join(needs)
 
 
 def _next_repair_hint(repair: contracts.PlaybillNextRepair) -> str:
@@ -5229,11 +5407,21 @@ def _echo_next_status(status: contracts.PlaybillNextStatus) -> None:
         repair = health.repair
         hint = None if repair is None else repair.command or repair.required_change
         if health.repair_hidden:
-            hint = "(repair needs a higher permission tier)"
+            hint = f"(repair withheld: {_next_requirement_hint(health.repair_requires)})"
         label = facet.replace("_", " ")
         click.echo(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
+    arms = (
+        status.consumers.detail.get("line_arms")
+        if isinstance(status.consumers.detail, dict)
+        else None
+    )
+    if isinstance(arms, dict) and (arms.get("stalled") or arms.get("stopped")):
+        click.echo(
+            f"Status: line arms stalled={arms.get('stalled', 0)} stopped={arms.get('stopped', 0)}"
+            "  next=cruxible playbill orient --section lines"
+        )
     if status.hidden:
-        click.echo(f"Hidden: {status.hidden} rows whose repair needs a higher permission tier")
+        click.echo(f"Hidden: {status.hidden} rows")
 
 
 @playbill_group.group("curation")
@@ -5807,7 +5995,16 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     section = result.get("section")
     if section is not None and not result[section]:
         lines.append(f"(no {section.replace('_', ' ')})")
-    if section in {"documents", "procedures"}:
+    if section in {
+        "documents",
+        "procedures",
+        "runs",
+        "lines",
+        "captures",
+        "capture_contracts",
+        "predictions",
+        "mandates",
+    }:
         for row in result[section]:
             lines.append("  ".join(str(value) for value in row.values()))
     if section == "interfaces":
@@ -5840,6 +6037,13 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         )
         lines.extend(f"  {line}" for line in attention["top"])
         lines.extend(f"  note: {line}" for line in attention.get("notes", ()))
+        arms = attention.get("arms")
+        if arms is not None:
+            lines.append(
+                f"  Line arms: running={arms['running']} stalled={arms['stalled']} "
+                f"stopped={arms['stopped']}"
+            )
+            lines.extend(f"    {line}" for line in arms.get("needs_attention", ()))
     if result.get("next"):
         lines.append("Next:")
         lines.extend(f"  {line}" for line in result["next"])
@@ -5865,7 +6069,7 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     "--at",
     "at_oid",
     default=None,
-    help="An accepted generation's Git OID or a unique 12+ hex prefix.",
+    help="An accepted generation's Git OID, a unique 12+ hex prefix, or its number.",
 )
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @json_option

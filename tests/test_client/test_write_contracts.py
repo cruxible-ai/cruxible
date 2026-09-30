@@ -128,3 +128,149 @@ def test_one_slot_ref_names_a_subject_field_and_procedure_slots_are_named_apart(
     assert not hasattr(sdk_types, "SlotRef")
     assert not hasattr(sdk, "WriteSlotRef")
     assert cruxible_client.ProcedureSlotRef is sdk_types.ProcedureSlotRef
+
+
+def test_expect_is_one_value_or_every_value_and_travels_through_the_batch() -> None:
+    one = SetChange(subject="dev.item/a", field="n", value=2, expect=1)
+    assert one.expect == 1 and not isinstance(one.expect, bool)
+    flag = SetChange(subject="dev.item/a", field="f", value=False, expect=True)
+    assert flag.expect is True
+    many = TypeAdapter(Change).validate_python(
+        {"op": "retire", "target": _CLAIM, "expect": ["dev.item/b", "dev.item/c"]}
+    )
+    assert isinstance(many, RetireChange) and many.expect == ("dev.item/b", "dev.item/c")
+    none = SetChange(subject="dev.item/a", field="f", value="x", expect=[])
+    assert none.expect == ()
+    assert SetChange(subject="dev.item/a", field="f", value="x").expect is None
+    add = AddChange(subject="dev.item/a", field="g", value="dev.item/b", expect_absent=True)
+    assert add.expect_absent
+    with pytest.raises(ValidationError):
+        SetChange(subject="dev.item/a", field="f", value="x", expect={"nested": 1})  # type: ignore[arg-type]
+    lowered = as_write_request(
+        PlaybillSetRequestV1(subject="dev.item/a", field="f", value="x", because="y", expect="w")
+    )
+    assert lowered.changes[0].expect == "w"  # type: ignore[union-attr]
+    retired = as_write_request(PlaybillRetireRequestV1(target=_CLAIM, because="y", expect=["w"]))
+    assert retired.changes[0].expect == ("w",)  # type: ignore[union-attr]
+
+
+def test_a_write_may_name_its_subject_once() -> None:
+    request = PlaybillWriteRequestV1.model_validate(
+        {
+            "because": "x",
+            "subject": "dev.item/a",
+            "changes": [
+                {"op": "set", "field": "status", "value": "done"},
+                {"op": "retire", "target": {"field": "status"}},
+            ],
+        }
+    )
+    assert request.subject == "dev.item/a"
+    assert request.changes[0].subject is None  # type: ignore[union-attr]
+    target = request.changes[1].target  # type: ignore[union-attr]
+    assert isinstance(target, SlotRef) and target.subject is None
+    with pytest.raises(ValidationError):
+        PlaybillWriteRequestV1.model_validate(
+            {"because": "x", "subject": "no-slash", "changes": [{"op": "retire", "target": _CLAIM}]}
+        )
+
+
+def test_capture_evidence_takes_a_handle_and_contract_evidence_a_name() -> None:
+    from cruxible_client.contracts.write import ContractEvidence, capture_handle
+
+    evidence = TypeAdapter(tuple[Evidence, ...]).validate_python(
+        [
+            {"kind": "capture", "capture": "CAP-0123456789ab"},
+            {"kind": "capture", "capture": "CAP-" + "0" * 64},
+            {"kind": "contract", "contract": "repo.reports"},
+        ]
+    )
+    assert [type(item) for item in evidence] == [CaptureEvidence, CaptureEvidence, ContractEvidence]
+    for bad in ("CAP-0123", "CAP-0123456789AB", "cap-0123456789ab", "sha256:abc"):
+        with pytest.raises(ValidationError):
+            CaptureEvidence(capture=bad)
+    with pytest.raises(ValidationError):
+        TypeAdapter(Evidence).validate_python({"kind": "contract", "contract": ""})
+    assert capture_handle("sha256:" + "0123456789ab" + "f" * 52) == "CAP-0123456789ab"
+    assert capture_handle("sha256:" + "a" * 64, length=16) == "CAP-" + "a" * 16
+
+
+def test_a_warning_is_one_flat_variant_per_code() -> None:
+    from cruxible_client.contracts.write import (
+        NewerCaptureNotCitableWarning,
+        VerdictNotSupportedWarning,
+        WriteWarning,
+    )
+
+    adapter = TypeAdapter(WriteWarning)
+    verdict = adapter.validate_python(
+        {
+            "code": "playbill.write.verdict_not_supported",
+            "change": 0,
+            "verdict": "uncovered",
+            "message": "m",
+        }
+    )
+    assert isinstance(verdict, VerdictNotSupportedWarning)
+    newer = adapter.validate_python(
+        {
+            "code": "playbill.write.newer_capture_not_citable",
+            "change": 0,
+            "capture": "CAP-0123456789ab",
+            "message": "m",
+        }
+    )
+    assert isinstance(newer, NewerCaptureNotCitableWarning)
+    invalid = [
+        # An R05 warning without the verdict it is about.
+        {"code": "playbill.write.verdict_not_supported", "change": 0, "message": "m"},
+        # An uncitable-Capture warning with a verdict and no Capture.
+        {
+            "code": "playbill.write.newer_capture_not_citable",
+            "change": 0,
+            "verdict": "uncovered",
+            "message": "m",
+        },
+        # Each variant forbids the other's field.
+        {
+            "code": "playbill.write.verdict_not_supported",
+            "change": 0,
+            "verdict": "uncovered",
+            "capture": "CAP-0123456789ab",
+            "message": "m",
+        },
+        {
+            "code": "playbill.write.newer_capture_not_citable",
+            "change": 0,
+            "capture": "sha256:" + "0" * 64,
+            "message": "m",
+        },
+        {"code": "playbill.write.something_else", "change": 0, "message": "m"},
+    ]
+    for payload in invalid:
+        with pytest.raises(ValidationError):
+            adapter.validate_python(payload)
+        with pytest.raises(ValidationError):
+            WriteOutcome.model_validate(
+                {
+                    "status": "accepted",
+                    "coordinate": {"git_oid": "0123456789ab", "generation": 1},
+                    "warnings": [payload],
+                }
+            )
+
+
+def test_the_outcome_schema_discriminates_warnings_by_code() -> None:
+    schema = WriteOutcome.model_json_schema()
+    defs = schema["$defs"]
+    items = schema["properties"]["warnings"]["items"]
+    assert items["discriminator"]["propertyName"] == "code"
+    assert set(items["discriminator"]["mapping"]) == {
+        "playbill.write.verdict_not_supported",
+        "playbill.write.newer_capture_not_citable",
+    }
+    verdict = defs["VerdictNotSupportedWarning"]
+    newer = defs["NewerCaptureNotCitableWarning"]
+    assert "verdict" in verdict["required"] and "capture" not in verdict["properties"]
+    assert "capture" in newer["required"] and "verdict" not in newer["properties"]
+    assert verdict["additionalProperties"] is False and newer["additionalProperties"] is False

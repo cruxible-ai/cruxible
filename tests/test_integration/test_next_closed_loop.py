@@ -1677,8 +1677,8 @@ def test_every_next_reason_has_an_effective_named_repair(
     CLOSED_LOOP_CASES[key](case_root, monkeypatch)
 
 
-def test_next_shows_a_settle_row_only_to_a_caller_who_can_settle(tmp_path: Path) -> None:
-    """R07: a row whose repair the caller cannot run is hidden and counted."""
+def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_path: Path) -> None:
+    """R07, option (b): the row stays; a repair the caller cannot run is withheld."""
 
     from tests.test_consumers import test_prediction_settlement as worker
 
@@ -1697,8 +1697,11 @@ def test_next_shows_a_settle_row_only_to_a_caller_who_can_settle(tmp_path: Path)
     assert "hidden" not in governed.status.model_dump(mode="json")
 
     read_only = service_playbill_next(instance, request=request, caller_rung=0)
-    assert settle_rows(read_only) == []
-    assert read_only.status.hidden == 1
+    (withheld,) = settle_rows(read_only)
+    assert withheld.repair is None
+    assert withheld.repair_requires.tool == "cruxible_playbill_settle"
+    assert withheld.repair_requires.because == ("tier",)
+    assert read_only.status.hidden == 0
 
     mcp = request.model_copy(
         update={
@@ -1710,5 +1713,7 @@ def test_next_shows_a_settle_row_only_to_a_caller_who_can_settle(tmp_path: Path)
     assert mcp_row.repair.command == f'cruxible_playbill_settle(prediction_id="{bound}")'
 
     default_profile = mcp.model_copy(update={"caller_tools": ("cruxible_playbill_next",)})
-    hidden = service_playbill_next(instance, request=default_profile, caller_rung=1)
-    assert settle_rows(hidden) == [] and hidden.status.hidden == 1
+    profiled = service_playbill_next(instance, request=default_profile, caller_rung=1)
+    (kept,) = settle_rows(profiled)
+    assert kept.repair is None and kept.repair_requires.because == ("profile",)
+    assert kept.repair_requires.profile == "full" and profiled.status.hidden == 0

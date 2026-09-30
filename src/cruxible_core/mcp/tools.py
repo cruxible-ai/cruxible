@@ -42,6 +42,7 @@ from cruxible_client.contracts.write import (
     Change,
     ClaimValue,
     Evidence,
+    ExpectedValue,
     SlotRef,
     WriteAccept,
     WriteOutcome,
@@ -66,6 +67,12 @@ InstanceId = Annotated[
     str | None,
     Field(description=f"Instance to act on; defaults to the server's {MCP_INSTANCE_ENV}."),
 ]
+
+
+def _read_at(at: Any) -> Any:
+    """A read's ``at`` for the handler: a generation number travels as its decimal."""
+
+    return str(at) if isinstance(at, int) and not isinstance(at, bool) else at
 
 
 def register_tools(
@@ -310,11 +317,11 @@ def register_tools(
             str | None, Field(description="next_cursor from the previous page of this view.")
         ] = None,
         at: Annotated[
-            str | contracts.PlaybillAcceptedCoordinate | None,
+            str | int | contracts.PlaybillAcceptedCoordinate | None,
             Field(
                 description=(
-                    "An accepted coordinate, or one accepted generation's Git OID "
-                    "(a unique prefix of 12+ hex characters is enough)."
+                    "An accepted coordinate, one accepted generation's Git OID (a unique "
+                    "prefix of 12+ hex characters is enough), or its generation number."
                 )
             ),
         ] = None,
@@ -329,7 +336,7 @@ def register_tools(
             section=section,
             limit=limit,
             cursor=cursor,
-            at=at,
+            at=_read_at(at),
             evaluation_time=evaluation_time,
         )
 
@@ -834,7 +841,9 @@ def register_tools(
                 description=(
                     "Any reference you have seen: CLM-… (or a unique prefix), kind/id, "
                     "a predicate, ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, "
-                    "an artifact path, or a proposal id or prefix."
+                    "an artifact path, a proposal id or prefix, or an operational reference: "
+                    "Line:<name> (or the Line identity digest next names), CAP-<12+ hex> or "
+                    "Capture:<digest>, ResolutionContract:<name>, Mandate:<name>."
                 )
             ),
         ],
@@ -844,11 +853,11 @@ def register_tools(
             Field(description='Byte range [start, end) of a Document body; detail="body" only.'),
         ] = None,
         at: Annotated[
-            contracts.PlaybillAcceptedCoordinate | str | None,
+            contracts.PlaybillAcceptedCoordinate | str | int | None,
             Field(
                 description=(
-                    "Accepted coordinate or git oid (or a unique 12+ hex prefix) to read at; "
-                    "default current head."
+                    "Accepted coordinate, git oid (or a unique 12+ hex prefix), or generation "
+                    "number to read at; default current head."
                 )
             ),
         ] = None,
@@ -875,7 +884,7 @@ def register_tools(
             ref=ref,
             detail=detail,
             range=range,
-            at=at,
+            at=_read_at(at),
             evaluation_time=evaluation_time,
             limit=limit,
             cursor=cursor,
@@ -905,7 +914,9 @@ def register_tools(
             Field(
                 description=(
                     'Default {"kind": "self", "self": because}. Or {"kind": "capture", '
-                    '"capture": "sha256:…"}, or {"kind": "file", "file": "PATH#ANCHOR"}.'
+                    '"capture": "CAP-<12 hex>" or "sha256:…"}, {"kind": "contract", "contract": '
+                    '"<CaptureContract>"} (its newest Capture about the Subject), or '
+                    '{"kind": "file", "file": "PATH#ANCHOR"}.'
                 )
             ),
         ] = None,
@@ -917,6 +928,15 @@ def register_tools(
             bool,
             Field(description="Contest the live value instead of replacing it."),
         ] = False,
+        expect: Annotated[
+            ExpectedValue | None,
+            Field(
+                description=(
+                    "Compare-and-set: the value you read (a list for several, [] for none); "
+                    "refuses slot_changed, showing the value, if the field holds another."
+                )
+            ),
+        ] = None,
         dry_run: Annotated[
             bool, Field(description="Run every check up to the commit; write nothing.")
         ] = False,
@@ -944,6 +964,7 @@ def register_tools(
             evidence=evidence,
             role=role,
             contend=contend,
+            expect=expect,
             dry_run=dry_run,
             accept=accept,
             at=at,
@@ -969,6 +990,15 @@ def register_tools(
                 description=("was-rescinded (withdrawn), was-wrong (it was false), or superseded.")
             ),
         ] = "was-rescinded",
+        expect: Annotated[
+            ExpectedValue | None,
+            Field(
+                description=(
+                    "Compare-and-set: the field's live value (every live value, as a list, "
+                    "for a many-valued field); refuses slot_changed if it holds another."
+                )
+            ),
+        ] = None,
         dry_run: Annotated[
             bool, Field(description="Run every check up to the commit; write nothing.")
         ] = False,
@@ -987,6 +1017,7 @@ def register_tools(
             target=target,
             because=because,
             reason=reason,
+            expect=expect,
             dry_run=dry_run,
             accept=accept,
             at=at,
@@ -1007,6 +1038,15 @@ def register_tools(
             ),
         ],
         because: Annotated[str, Field(description="Why: the change set's rationale.")],
+        subject: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "The Subject (kind/id) of every change that names none; a change's own "
+                    "subject overrides it."
+                )
+            ),
+        ] = None,
         dry_run: Annotated[
             bool, Field(description="Run every check up to the commit; write nothing.")
         ] = False,
@@ -1024,6 +1064,7 @@ def register_tools(
             require_instance_id(instance_id),
             changes=changes,
             because=because,
+            subject=subject,
             dry_run=dry_run,
             accept=accept,
             at=at,
@@ -1123,7 +1164,7 @@ def register_tools(
         cursor: str | None = None,
         name: str | None = None,
         params: dict[str, str | int | bool] | None = None,
-        at: AcceptedCoordinate | str | None = None,
+        at: AcceptedCoordinate | str | int | None = None,
         evaluation_time: str | None = None,
     ) -> contracts.PlaybillQueryResult:
         """Query accepted state: rows of values with flags; pass next_cursor while truncated."""
@@ -1139,7 +1180,7 @@ def register_tools(
             cursor=cursor,
             name=name,
             params=params,
-            at=at,
+            at=_read_at(at),
             evaluation_time=evaluation_time,
         )
 
@@ -1152,7 +1193,7 @@ def register_tools(
             int, Field(ge=1, le=contracts.PLAYBILL_QUERY_MAX_LIMIT)
         ] = contracts.PLAYBILL_QUERY_DEFAULT_LIMIT,
         cursor: str | None = None,
-        at: AcceptedCoordinate | str | None = None,
+        at: AcceptedCoordinate | str | int | None = None,
         evaluation_time: str | None = None,
     ) -> contracts.PlaybillQueryResult:
         """Run one full QueryDefinition spec inline: the query verb's rows, flags and paging."""
@@ -1161,7 +1202,7 @@ def register_tools(
             spec=spec,
             limit=limit,
             cursor=cursor,
-            at=at,
+            at=_read_at(at),
             evaluation_time=evaluation_time,
         )
 

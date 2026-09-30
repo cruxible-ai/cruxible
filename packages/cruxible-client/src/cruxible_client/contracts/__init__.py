@@ -1621,6 +1621,24 @@ class PlaybillNextRepair(BaseModel):
     command: str | None = None
 
 
+class PlaybillNextRepairRequirement(BaseModel):
+    """What running a withheld repair needs that this caller does not have.
+
+    The row stays in the queue; only its repair is withheld. ``because`` names
+    the gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool
+    ``profile`` that advertises it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-next-repair-requirement-v1"] = "playbill-next-repair-requirement-v1"
+    operation: PlaybillNextRepairOperation
+    tool: str
+    tier: Literal["read_only", "governed_write", "graph_write", "admin"]
+    profile: Literal["full"] | None = None
+    because: list[Literal["tier", "profile"]]
+
+
 class PlaybillNextFinding(BaseModel):
     """One more finding about the same underlying fact as the row that carries it."""
 
@@ -1632,7 +1650,9 @@ class PlaybillNextFinding(BaseModel):
     subject_identity: str
     related_identities: list[str] = Field(default_factory=list)
     detail: Any = Field(default_factory=dict)
-    repair: PlaybillNextRepair
+    # None when this caller cannot run it; `repair_requires` then says why.
+    repair: PlaybillNextRepair | None
+    repair_requires: PlaybillNextRepairRequirement | None = None
 
 
 class PlaybillNextItem(BaseModel):
@@ -1645,11 +1665,14 @@ class PlaybillNextItem(BaseModel):
     subject_identity: str
     related_identities: list[str] = Field(default_factory=list)
     detail: Any = Field(default_factory=dict)
-    repair: PlaybillNextRepair
+    # None when this caller's surface, tool profile or tier cannot run it: the
+    # row stays, and `repair_requires` says what running it needs.
+    repair: PlaybillNextRepair | None
     findings: list[PlaybillNextFinding] = Field(
         default_factory=list,
         exclude_if=lambda value: not value,
     )
+    repair_requires: PlaybillNextRepairRequirement | None = None
 
     @field_validator("item_id")
     @classmethod
@@ -1669,6 +1692,7 @@ class PlaybillNextHealth(BaseModel):
     repair: PlaybillNextRepair | None = None
     # The facet needs a repair this caller cannot perform, so it was dropped.
     repair_hidden: bool = False
+    repair_requires: PlaybillNextRepairRequirement | None = None
 
 
 class PlaybillNextStatus(BaseModel):
@@ -1687,7 +1711,8 @@ class PlaybillNextStatus(BaseModel):
     line_dispatch: PlaybillNextHealth
     consumers: PlaybillNextHealth
     held: int = Field(default=0, ge=0)
-    #: Rows left out because this caller's surface, tools or tier cannot repair them.
+    #: Rows left out for this caller. None are: a row whose repair this caller
+    #: cannot run keeps its place with `repair_requires`, so this stays 0.
     hidden: int = Field(default=0, ge=0)
 
 

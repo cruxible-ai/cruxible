@@ -15,6 +15,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts import PlaybillAcceptedCoordinate
+from cruxible_client.contracts.operational_reads import (
+    PlaybillGetCaptureCardV1,
+    PlaybillGetLineCardV1,
+    PlaybillGetMandateCardV1,
+    PlaybillGetProcedureRunCardV1,
+    PlaybillGetResolutionContractCardV1,
+    PlaybillLiveViewV1,
+)
 
 PlaybillGetDetail = Literal["summary", "evidence", "why", "history", "proof", "body"]
 PlaybillGetRefKind = Literal[
@@ -26,6 +34,11 @@ PlaybillGetRefKind = Literal[
     "query",
     "capture_contract",
     "proposal",
+    "line",
+    "capture",
+    "resolution_contract",
+    "mandate",
+    "procedure_run",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
 # never re-adjudicated here.
@@ -56,6 +69,11 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "query": ("summary", "history", "proof"),
     "capture_contract": ("summary", "history", "proof"),
     "proposal": ("summary", "proof"),
+    "line": ("summary", "history", "proof"),
+    "capture": ("summary", "proof"),
+    "resolution_contract": ("summary", "history", "proof"),
+    "mandate": ("summary", "history", "proof"),
+    "procedure_run": ("summary", "proof"),
 }
 
 
@@ -117,8 +135,8 @@ class PlaybillGetRequestV1(_StrictGetModel):
     ) -> PlaybillAcceptedCoordinate | str | None:
         if isinstance(value, str) and not re.fullmatch(_GIT_OID, value):
             raise ValueError(
-                "at must be an accepted coordinate or a lowercase hex git oid "
-                "(a unique prefix of at least 12 characters)"
+                "at must be an accepted coordinate, a lowercase hex git oid (a unique "
+                "prefix of at least 12 characters), or a generation number (for example 42)"
             )
         return value
 
@@ -318,11 +336,19 @@ PlaybillGetCardV1 = (
     | PlaybillGetQueryCardV1
     | PlaybillGetCaptureContractCardV1
     | PlaybillGetProposalCardV1
+    | PlaybillGetLineCardV1
+    | PlaybillGetCaptureCardV1
+    | PlaybillGetResolutionContractCardV1
+    | PlaybillGetMandateCardV1
+    | PlaybillGetProcedureRunCardV1
 )
 
 
 class PlaybillGetCaptureEvidenceV1(_StrictGetModel):
-    capture: str = Field(description="Capture digest prefix.")
+    capture: str = Field(
+        description="Capture handle, CAP- plus the digest's first 12 hex; get and read_capture "
+        "accept it."
+    )
     contract: str = Field(description="CaptureContract identity; never a digest.")
     version: int = Field(description="Accepted version of that contract the capture used.")
     source: str
@@ -350,6 +376,9 @@ class PlaybillGetEvidenceV1(_StrictGetModel):
 class PlaybillGetRevisionV1(_StrictGetModel):
     revision: int
     sequence: int
+    # The accepted generation's git oid (12-hex prefix): pass it, or the
+    # sequence, back as ``at`` to read at that revision.
+    git_oid: str = Field(pattern=r"^[0-9a-f]{12}$")
     accepted: str
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     approved_by: tuple[str, ...] = ()
@@ -402,6 +431,9 @@ class PlaybillGetResultV1(_StrictGetModel):
     accepted_coordinate: PlaybillAcceptedCoordinate | None = Field(
         default=None, exclude_if=_omit_none
     )
+    # Present when part of the answer is operational state, read live at the
+    # current head (``live.as_of``) whatever ``coordinate`` the read named.
+    live: PlaybillLiveViewV1 | None = Field(default=None, exclude_if=_omit_none)
     evaluation_time: datetime
 
 

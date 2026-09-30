@@ -21,10 +21,30 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from cruxible_client.contracts.operational_reads import (
+    PlaybillLiveViewV1,
+    PlaybillOrientCaptureContractV1,
+    PlaybillOrientCaptureV1,
+    PlaybillOrientLineV1,
+    PlaybillOrientMandateV1,
+    PlaybillOrientPredictionV1,
+    PlaybillRunRowV1,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 PlaybillOrientSection: TypeAlias = Literal[
-    "documents", "procedures", "claim_types", "queries", "interfaces"
+    "documents",
+    "procedures",
+    "claim_types",
+    "queries",
+    "interfaces",
+    "runs",
+    "running",
+    "lines",
+    "captures",
+    "capture_contracts",
+    "predictions",
+    "mandates",
 ]
 #: The surface a caller renders ``next`` for: tool calls, commands, or SDK calls.
 PlaybillOrientSurface: TypeAlias = Literal["mcp", "cli", "sdk"]
@@ -118,11 +138,25 @@ class PlaybillOrientKindDetailV1(PlaybillOrientKindV1):
 
 
 class PlaybillOrientArtifactCountsV1(_StrictOrientModel):
+    """How many of each family exist; each operational family is its own section.
+
+    ``lines``, ``capture_contracts``, ``resolution_contracts`` and ``mandates``
+    count accepted artifacts, ``captures`` the Captures accepted Claims cite,
+    and ``runs`` / ``running`` the Procedure runs admitted and still running.
+    """
+
     claim_types: int = Field(ge=0)
     procedures: int = Field(ge=0)
     documents: int = Field(ge=0)
     queries: int = Field(ge=0)
     interfaces: int = Field(ge=0)
+    lines: int = Field(default=0, ge=0)
+    captures: int = Field(default=0, ge=0)
+    capture_contracts: int = Field(default=0, ge=0)
+    resolution_contracts: int = Field(default=0, ge=0)
+    mandates: int = Field(default=0, ge=0)
+    runs: int = Field(default=0, ge=0)
+    running: int = Field(default=0, ge=0)
 
 
 class PlaybillOrientQueryV1(_StrictOrientModel):
@@ -165,6 +199,22 @@ class PlaybillOrientInterfaceV1(_StrictOrientModel):
     providers: tuple[str, ...] = ()
 
 
+class PlaybillOrientArmsV1(_StrictOrientModel):
+    """The instance's armed Lines as its Line consumer reports them, no daemon scope needed.
+
+    ``running`` arms are admitting their own due work; ``stalled`` ones have
+    due work older than the stall horizon; ``stopped`` ones stopped for any
+    reason but a deliberate disarm. ``needs_attention`` names up to three
+    stalled or stopped Lines (``Line:<name> stopped (<reason>)``), each a
+    ``get`` reference.
+    """
+
+    running: int = Field(default=0, ge=0)
+    stalled: int = Field(default=0, ge=0)
+    stopped: int = Field(default=0, ge=0)
+    needs_attention: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
+
+
 class PlaybillOrientAttentionV1(_StrictOrientModel):
     """What the ``next`` queue holds, and anything else the instance needs."""
 
@@ -172,6 +222,8 @@ class PlaybillOrientAttentionV1(_StrictOrientModel):
     open_proposals: int = Field(ge=0)
     top: tuple[str, ...] = ()
     notes: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
+    # Present when any Line was ever armed on this instance.
+    arms: PlaybillOrientArmsV1 | None = Field(default=None, exclude_if=_is_none)
 
 
 class PlaybillOrientFloorV1(_StrictOrientModel):
@@ -194,7 +246,10 @@ class PlaybillOrientResultV1(_StrictOrientModel):
       ``artifacts``, ``queries`` and ``attention``;
     - ``kind``: ``kind_detail``;
     - ``section``: that section's rows (``documents``, ``procedures``,
-      ``claim_types``, ``queries`` or ``interfaces``), paged.
+      ``claim_types``, ``queries``, ``interfaces``, or an operational family:
+      ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,
+      ``predictions``, ``mandates``), paged. The default map counts the
+      operational families under ``artifacts`` and never inlines their rows.
 
     ``next`` is rendered for the requesting surface.
     """
@@ -226,8 +281,27 @@ class PlaybillOrientResultV1(_StrictOrientModel):
     interfaces: tuple[PlaybillOrientInterfaceV1, ...] | None = Field(
         default=None, exclude_if=_is_none
     )
+    # Procedure runs, newest admission first (section "runs"), or only the runs
+    # still running (section "running"). Runs are operational state, read live.
+    runs: tuple[PlaybillRunRowV1, ...] | None = Field(default=None, exclude_if=_is_none)
+    # Accepted Lines, with each arm's state and pending counts at the head.
+    lines: tuple[PlaybillOrientLineV1, ...] | None = Field(default=None, exclude_if=_is_none)
+    # Captures accepted Claims cite, newest observation first (paged by key).
+    captures: tuple[PlaybillOrientCaptureV1, ...] | None = Field(default=None, exclude_if=_is_none)
+    capture_contracts: tuple[PlaybillOrientCaptureContractV1, ...] | None = Field(
+        default=None, exclude_if=_is_none
+    )
+    # Live ResolutionContracts with their bound windows counted by status.
+    predictions: tuple[PlaybillOrientPredictionV1, ...] | None = Field(
+        default=None, exclude_if=_is_none
+    )
+    mandates: tuple[PlaybillOrientMandateV1, ...] | None = Field(default=None, exclude_if=_is_none)
     truncated: bool = False
     next_cursor: str | None = Field(default=None, exclude_if=_is_none)
+    # Present when part of the answer is operational state -- runs, Line arms and
+    # pending counts, prediction windows -- read live at the current head
+    # (``live.as_of``) whatever ``coordinate`` the read named.
+    live: PlaybillLiveViewV1 | None = Field(default=None, exclude_if=_is_none)
     next: tuple[str, ...] = ()
 
 
@@ -237,6 +311,7 @@ __all__ = [
     "PLAYBILL_ORIENT_DEFAULT_QUERIES",
     "PLAYBILL_ORIENT_MAX_LIMIT",
     "PLAYBILL_ORIENT_SAMPLE_SUBJECTS",
+    "PlaybillOrientArmsV1",
     "PlaybillOrientArtifactCountsV1",
     "PlaybillOrientAttentionV1",
     "PlaybillOrientDocumentV1",

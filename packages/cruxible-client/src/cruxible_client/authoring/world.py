@@ -435,11 +435,16 @@ class WorldSubject(SubjectRef):
         because: str,
         evidence: Evidence | None = None,
         role: WriteRole | None = None,
+        expect_absent: bool = False,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         **fields: object,
     ) -> WriteOutcome:
-        """Add one more value to many-valued fields of this Subject, by leaf."""
+        """Add one more value to many-valued fields of this Subject, by leaf.
+
+        A value already there is answered as done; ``expect_absent=True`` refuses
+        it instead (``playbill.write.value_already_present``).
+        """
 
         from cruxible_client.contracts.write import AddChange
 
@@ -450,6 +455,7 @@ class WorldSubject(SubjectRef):
                 value=_write_value(value),
                 evidence=evidence,
                 role=role,
+                expect_absent=expect_absent,
             )
             for name, value in fields.items()
         ]

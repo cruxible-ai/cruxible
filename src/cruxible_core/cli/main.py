@@ -51,6 +51,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "claim-type", "upgrade-evidence-rules"): "active",
     ("playbill", "block", "depublish"): "active",
     ("playbill", "set"): "active",
+    ("playbill", "add"): "active",
     ("playbill", "retire"): "active",
     ("playbill", "write"): "active",
     ("playbill", "claim", "attest"): "active",
@@ -797,6 +798,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             ),
             "set": _command(
                 "playbill", "set_value", "Set one field of one Subject, replacing its value."
+            ),
+            "add": _command(
+                "playbill", "add_value", "Add one value to a many-valued field of one Subject."
             ),
             "retire": _command(
                 "playbill", "retire", "Retire one live Claim, by ID or by Subject and field."

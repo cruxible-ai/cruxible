@@ -31,6 +31,11 @@ class RefKind(str, Enum):
     DOCUMENT = "document"
     CAPTURE_CONTRACT = "capture_contract"
     PROPOSAL = "proposal"
+    LINE = "line"
+    CAPTURE = "capture"
+    RESOLUTION_CONTRACT = "resolution_contract"
+    MANDATE = "mandate"
+    PROCEDURE_RUN = "procedure_run"
 
 
 @runtime_checkable

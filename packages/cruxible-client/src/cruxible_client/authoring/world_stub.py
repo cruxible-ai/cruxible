@@ -250,7 +250,15 @@ def _write_members(world: World, kind: str, body: _Body) -> None:
         + [") -> WriteOutcome: ..."]
     )
     body.declare_lines(
-        ["def add(", "    self,", "    /,", "    *,", *common, *tail]
+        [
+            "def add(",
+            "    self,",
+            "    /,",
+            "    *,",
+            *common,
+            "    expect_absent: bool = ...,",
+            *tail,
+        ]
         + by_cardinality["many"]
         + [") -> WriteOutcome: ..."]
     )

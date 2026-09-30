@@ -213,6 +213,7 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
                     PlaybillGetRevisionV1(
                         revision=3,
                         sequence=9,
+                        git_oid="9" * 12,
                         accepted="2026-09-01T00:00:00Z",
                         actor="owner",
                         value="done",
@@ -231,7 +232,7 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
 
     assert paged.exit_code == 0, paged.output
     assert stub.requests[0].limit == 1 and stub.requests[0].cursor is None
-    assert "rev 3  seq 9" in paged.output
+    assert f"rev 3  seq 9 at {'9' * 12}" in paged.output
     assert "next: cruxible playbill get CLM-aaaa --detail history --cursor CURSOR" in paged.output
 
     long_row = PlaybillGetSubjectClaimV1(

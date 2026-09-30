@@ -26,6 +26,7 @@ from cruxible_client.contracts.approval_policy import (
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.authoring.models import (
+    MAX_REPAIR_BYTES,
     ApprovalPolicyAuthoringPayloadV1,
     AttestationAuthoringPayloadV1,
     AuthoringArtifactReferenceV1,
@@ -40,6 +41,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV3,
     ClaimRetirementMemberV1,
     ClaimTypeAuthoringPayloadV1,
+    ClaimTypeSuccessionDependentV1,
     ClaimTypeSuccessionMemberV1,
     ExistingCaptureCitationSourceV1,
     LineAuthoringPayloadV1,
@@ -351,6 +353,65 @@ def _producer_digests_for_capture(
     return result
 
 
+def _repair_bytes(kind: str, description: str, replacement: object | None) -> int:
+    return len(
+        canonical_bytes(
+            {
+                "kind": kind,
+                "description": description,
+                "replacement": None if replacement is None else normalize_canonical(replacement),
+            }
+        )
+    )
+
+
+def bounded_repair(kind: str, description: str, replacement: object | None) -> RepairAlternativeV1:
+    """A repair that fits the frozen repair-byte limit, however large its replacement.
+
+    A replacement over the limit used to fail the repair's own validator, which
+    turned a coded refusal into a generic `lowering_invalid` and dropped the
+    very list the refusal existed to name. Instead the replacement's lists are
+    cut, longest first, to the longest prefix that fits; each cut list keeps
+    its full length as ``<name>_count`` and the replacement says ``truncated``.
+    """
+
+    if _repair_bytes(kind, description, replacement) <= MAX_REPAIR_BYTES:
+        return RepairAlternativeV1(kind=kind, description=description, replacement=replacement)
+    if not isinstance(replacement, Mapping):
+        return RepairAlternativeV1(
+            kind=kind,
+            description=description,
+            replacement={"truncated": True, "omitted": "the replacement exceeds the repair limit"},
+        )
+    full = dict(replacement)
+    lists = {key: value for key, value in full.items() if isinstance(value, list | tuple)}
+    trimmed: dict[str, object] = {
+        **full,
+        **{f"{key}_count": len(value) for key, value in lists.items()},
+        "truncated": True,
+    }
+    for key in sorted(lists, key=lambda name: -len(canonical_bytes(list(lists[name])))):
+        items = list(lists[key])
+        low, high = 0, len(items)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if (
+                _repair_bytes(kind, description, {**trimmed, key: items[:middle]})
+                <= MAX_REPAIR_BYTES
+            ):
+                low = middle
+            else:
+                high = middle - 1
+        trimmed[key] = items[:low]
+        if _repair_bytes(kind, description, trimmed) <= MAX_REPAIR_BYTES:
+            return RepairAlternativeV1(kind=kind, description=description, replacement=trimmed)
+    return RepairAlternativeV1(
+        kind=kind,
+        description=description,
+        replacement={"truncated": True, "omitted": "the replacement exceeds the repair limit"},
+    )
+
+
 def _refuse(
     code: str,
     offending_element: str,
@@ -364,14 +425,18 @@ def _refuse(
         code=code,
         offending_element=offending_element,
         message=message,
-        repairs=(
-            RepairAlternativeV1(
-                kind=repair_kind,
-                description=repair_description,
-                replacement=replacement,
-            ),
-        ),
+        repairs=(bounded_repair(repair_kind, repair_description, replacement),),
     )
+
+
+def _closure_difference(required: Iterable[str], supplied: Iterable[str]) -> dict[str, list[str]]:
+    """What a closure still owes and what it names that it does not owe, byte-sorted."""
+
+    required_set, supplied_set = set(required), set(supplied)
+    return {
+        "missing": sorted(required_set - supplied_set, key=lambda item: item.encode("utf-8")),
+        "unexpected": sorted(supplied_set - required_set, key=lambda item: item.encode("utf-8")),
+    }
 
 
 def _observed_at(timestamp: str) -> datetime:
@@ -3174,6 +3239,30 @@ def _stage_claim_type_succession(
             ),
         )
     required = {item.identity.qualified: item for item in inventory}
+    if member.carry_all:
+        # The server fills the closure: every member the author did not name is
+        # carried to the successor as it stands, retired Claims included, so a
+        # closure too large to list in a repair is still one member to write.
+        named = {item.identity.qualified for item in member.dependents}
+        member = member.model_copy(
+            update={
+                "dependents": tuple(
+                    sorted(
+                        (
+                            *member.dependents,
+                            *(
+                                ClaimTypeSuccessionDependentV1(
+                                    identity=item.identity, disposition="successor"
+                                )
+                                for item in inventory
+                                if item.identity.qualified not in named
+                            ),
+                        ),
+                        key=lambda item: item.identity.qualified.encode("utf-8"),
+                    )
+                )
+            }
+        )
     supplied = {item.identity.qualified: item for item in member.dependents}
     if set(required) != set(supplied):
         _refuse(
@@ -3186,9 +3275,14 @@ def _stage_claim_type_succession(
                 # identity alone and the succession re-reads the bytes itself.
                 # `current_artifact_digest` rides in `required_dependents` as an
                 # informational read, never as something to copy back.
-                "Disposition exactly the listed dependents, each named by the exact identity given."
+                "Disposition exactly the listed dependents, each named by the exact identity "
+                "given; `missing` names the ones this member omits and `unexpected` the ones it "
+                "names outside the closure. Or set carry_all: true to carry every dependent "
+                "this member does not name to the successor. A truncated list is continued "
+                "by `cruxible playbill claim-type migrate` in preflight mode."
             ),
             replacement={
+                **_closure_difference(required, supplied),
                 "required_dependents": [item.model_dump(mode="json") for item in inventory],
                 "supplied_dependents": sorted(supplied, key=lambda item: item.encode("utf-8")),
             },
@@ -3377,8 +3471,20 @@ def _stage_claim_retirement(
             "dependents",
             "A retirement member must carry its exact live Claim closure.",
             repair_kind="replace_dependents",
-            repair_description="Carry exactly the listed dependents at their exact digests.",
+            repair_description=(
+                "Carry exactly the listed dependents at their exact digests; `missing` names "
+                "the ones this member omits and `unexpected` the ones it names outside the "
+                "closure."
+            ),
             replacement={
+                **_closure_difference(
+                    expected,
+                    (
+                        identity
+                        for identity, digest in supplied.items()
+                        if expected.get(identity) == digest
+                    ),
+                ),
                 "required_dependents": [item.model_dump(mode="json") for item in inventory],
                 "supplied_dependents": sorted(
                     supplied,
