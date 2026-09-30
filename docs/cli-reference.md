@@ -1252,7 +1252,15 @@ it matches, with no explicit call. Runs use the arming caller's credential,
 which the daemon rechecks before every admission: a revoked credential, one
 moved to another instance, or one no longer permitted to dispatch stops the arm
 with that reason (`credential_revoked`, `credential_scope_changed`,
-`permission_insufficient`). Arming needs governed write, and keeps only the
+`permission_insufficient`, `credential_unbound`). The accepted standing of the
+principal the arm acts as is rechecked too: a credential's bound principal, or
+on an auth-off daemon the principal the arming request claimed, that is no
+longer active stops the arm (`principal_inactive`) and revokes that principal's
+credentials; an arm made with no principal claimed runs as the implicit local
+operator. An arm recorded before arms named this provenance cannot say which it
+was, so it is stopped (`arm_requires_rearm`) rather than carried across a
+restart, and `line status`, `server status` and `next` name the rearm repair.
+Arming needs governed write, and keeps only the
 credential's identifier, never a token. A Line that can propose
 or settle refuses to arm while no current mandate covers it. An arm is pinned to the
 Line version current when it was armed: any accepted change to the Line stops

@@ -23,6 +23,7 @@
         "credential_revoked",
         "credential_unbound",
         "principal_inactive",
+        "arm_requires_rearm",
         "credential_scope_changed",
         "permission_insufficient",
         "authentication_changed"
@@ -1293,6 +1294,20 @@
             "title": "Label",
             "type": "string"
           }
+        },
+        "tag": {
+          "default": "line-arm-principal-v2",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "line-arm-principal-v2",
+            "default": "line-arm-principal-v2",
+            "title": "Tag",
+            "type": "string"
+          }
         }
       },
       "json_schema": {
@@ -1322,6 +1337,12 @@
           },
           "label": {
             "title": "Label",
+            "type": "string"
+          },
+          "tag": {
+            "const": "line-arm-principal-v2",
+            "default": "line-arm-principal-v2",
+            "title": "Tag",
             "type": "string"
           }
         },
@@ -1519,6 +1540,7 @@
                   "credential_revoked",
                   "credential_unbound",
                   "principal_inactive",
+                  "arm_requires_rearm",
                   "credential_scope_changed",
                   "permission_insufficient",
                   "authentication_changed"
@@ -1585,6 +1607,12 @@
               },
               "label": {
                 "title": "Label",
+                "type": "string"
+              },
+              "tag": {
+                "const": "line-arm-principal-v2",
+                "default": "line-arm-principal-v2",
+                "title": "Tag",
                 "type": "string"
               }
             },
@@ -1692,6 +1720,7 @@
                   "credential_revoked",
                   "credential_unbound",
                   "principal_inactive",
+                  "arm_requires_rearm",
                   "credential_scope_changed",
                   "permission_insufficient",
                   "authentication_changed"

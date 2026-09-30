@@ -1027,3 +1027,69 @@ def test_the_implicit_local_operator_never_reads_a_registered_principals_standin
     )
 
     assert actor.actor_type == "human_user" and actor.actor_id == "operator"
+
+
+class _LegacyArmPrincipal:
+    """An arm principal exactly as code before arm-record provenance persisted it."""
+
+    def __init__(self, label: str) -> None:
+        self._record = {"kind": "local_operator", "credential_id": None, "label": label}
+
+    def model_dump(self, mode: str = "python") -> dict[str, object]:
+        return dict(self._record)
+
+
+@pytest.mark.parametrize("label", ["line-operator", "operator"])
+def test_an_old_format_arm_is_stopped_on_recovery_never_rolled_over_as_the_operator(
+    tmp_path, monkeypatch, label
+):
+    monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
+    instance, line, _procedure, start = _armed_world(
+        tmp_path,
+        principal=_LegacyArmPrincipal(label),  # type: ignore[arg-type]
+    )
+
+    # A daemon restart: the next matching pass must not carry the arm across.
+    _match(instance, start + timedelta(seconds=2), daemon_id="restarted-daemon")
+
+    status = service_line_status(instance, line.identity.name)
+    assert status.state == "stopped"
+    assert status.stop_reason == "arm_requires_rearm"
+    assert status.detail is not None and "rearm" in status.detail
+    from cruxible_core.consumers.lines import LINE_ARMS
+
+    (stopped,) = [
+        health
+        for health in LINE_ARMS.health(instance, now=start + timedelta(seconds=3))
+        if health.state == "stopped"
+    ]
+    assert stopped.detail["stop_reason"] == "arm_requires_rearm"
+    assert stopped.repair is not None and stopped.repair.operation == "playbill.line.arm"
+
+
+def test_an_old_format_claimed_arm_admits_nothing_even_with_its_principal_revoked(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
+    instance, line, procedure, start = _armed_world(
+        tmp_path,
+        principal=_LegacyArmPrincipal("line-operator"),  # type: ignore[arg-type]
+    )
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    arms = armed_work(instance, now=start + timedelta(seconds=2))
+
+    results = [
+        dispatch_armed_line(
+            _manager(instance),
+            instance.descriptor.instance_id,
+            arm,
+            now=start + timedelta(seconds=3),
+        )
+        for arm in arms
+    ]
+
+    assert all(result is None for result in results)
+    assert _admissions(instance) == 0
+    status = service_line_status(instance, line.identity.name)
+    assert status.state == "stopped" and status.stop_reason == "arm_requires_rearm"

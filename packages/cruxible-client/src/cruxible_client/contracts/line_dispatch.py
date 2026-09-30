@@ -108,10 +108,24 @@ LineArmStopReasonV1 = Literal[
     "credential_revoked",
     "credential_unbound",
     "principal_inactive",
+    "arm_requires_rearm",
     "credential_scope_changed",
     "permission_insufficient",
     "authentication_changed",
 ]
+
+
+LINE_ARM_PRINCIPAL_TAG = "line-arm-principal-v2"
+
+
+def is_current_arm_principal_record(record: object) -> bool:
+    """Whether a persisted ``armed_by`` carries the provenance this build can verify.
+
+    Earlier code stored claimed principals and the implicit local operator under
+    one kind, so a record without the current tag cannot say which it was.
+    """
+
+    return isinstance(record, dict) and record.get("tag") == LINE_ARM_PRINCIPAL_TAG
 
 
 #: What one arm or disarm call did. Arming an arm that already stands with the
@@ -131,6 +145,9 @@ class LineArmPrincipalV1(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+    # The record format. An arm persisted without it predates arm provenance:
+    # its authority cannot be established, so it is stopped, never resolved.
+    tag: Literal["line-arm-principal-v2"] = "line-arm-principal-v2"
     kind: Literal["runtime_credential", "principal_claim", "local_operator"]
     credential_id: str | None = None
     label: str
