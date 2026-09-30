@@ -17,6 +17,7 @@ from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from cruxible_client.contracts.operator_mac import (
+    OPERATOR_BOOT_HEADER,
     OPERATOR_MAC_HEADER,
     OPERATOR_NONCE_HEADER,
     OPERATOR_TIMESTAMP_HEADER,
@@ -30,6 +31,7 @@ from cruxible_core.server import restart as restart_module
 from cruxible_core.server.bootstrap_secret import (
     bootstrap_secret_path,
     read_local_bootstrap_secret,
+    read_local_operator_key,
     reset_operator_nonces,
 )
 from cruxible_core.server.credentials import reset_runtime_credential_store
@@ -108,8 +110,10 @@ def _held_secret(
 ) -> tuple[Path, StateRootLock | None]:
     """A state root whose lock records ``transport``; held by this process when live."""
 
+    from cruxible_core.server.restart import PROCESS_BOOT_ID
+
     state_root = tmp_path / "state"
-    lock = StateRootLock(state_root, transport=transport).acquire()
+    lock = StateRootLock(state_root, transport=transport, boot_id=PROCESS_BOOT_ID).acquire()
     if not live:
         lock.release()
     path = bootstrap_secret_path(state_root)
@@ -149,12 +153,22 @@ def test_the_secret_needs_a_live_lock_on_the_exact_transport_and_an_owner_only_f
 
 
 def _signed_headers(
-    secret: str, method: str, path: str, *, nonce: str = "a" * 32, at: int | None = None
+    secret: str,
+    method: str,
+    path: str,
+    *,
+    nonce: str = "a" * 32,
+    at: int | None = None,
+    boot_id: str | None = None,
 ) -> dict[str, str]:
+    from cruxible_core.server import restart as restart_state
+
     timestamp = str(int(time.time()) if at is None else at)
+    boot = restart_state.PROCESS_BOOT_ID if boot_id is None else boot_id
     return {
         OPERATOR_NONCE_HEADER: nonce,
         OPERATOR_TIMESTAMP_HEADER: timestamp,
+        OPERATOR_BOOT_HEADER: boot,
         OPERATOR_MAC_HEADER: operator_request_mac(
             secret,
             method=method,
@@ -163,6 +177,7 @@ def _signed_headers(
             body=b"",
             nonce=nonce,
             timestamp=timestamp,
+            boot_id=boot,
         ),
     }
 
@@ -218,6 +233,43 @@ def test_a_replayed_or_stale_request_is_refused(operator_daemon) -> None:
     assert replayed.json()["error_code"] == "runtime_bootstrap.operator_mac_replayed"
     assert stale.status_code == 401
     assert stale.json()["error_code"] == "runtime_bootstrap.operator_mac_stale"
+
+
+def test_a_request_signed_for_the_previous_boot_is_refused_after_restart(
+    operator_daemon, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.server import restart as restart_state
+
+    signed_before = _signed_headers("the-secret", "GET", INFO, nonce="c" * 32)
+    # An in-place restart re-execs a new process image with a new boot id and an
+    # empty replay cache; a request captured before it must not work after it.
+    monkeypatch.setattr(restart_state, "PROCESS_BOOT_ID", "boot" + "9" * 32)
+    reset_operator_nonces()
+
+    replayed = operator_daemon.get(INFO, headers=signed_before)
+    fresh = operator_daemon.get(INFO, headers=_signed_headers("the-secret", "GET", INFO))
+
+    assert replayed.status_code == 401
+    assert replayed.json()["error_code"] == "runtime_bootstrap.operator_mac_boot_changed"
+    assert fresh.status_code == 200, fresh.text
+
+
+def test_the_signer_binds_the_boot_id_the_live_lock_records(tmp_path: Path) -> None:
+    socket = tmp_path / "run" / "d.sock"
+    state_root = tmp_path / "state"
+    lock = StateRootLock(
+        state_root, transport=f"unix socket {socket}", boot_id="boot" + "1" * 32
+    ).acquire()
+    path = bootstrap_secret_path(state_root)
+    path.write_text("the-secret\n")
+    path.chmod(0o600)
+    try:
+        key = read_local_operator_key(state_root, server_url=None, server_socket=str(socket))
+    finally:
+        lock.release()
+
+    assert key is not None
+    assert (key.secret, key.boot_id) == ("the-secret", "boot" + "1" * 32)
 
 
 def test_the_operator_proof_route_is_gone(operator_daemon) -> None:

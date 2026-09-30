@@ -10,6 +10,7 @@ import httpx
 
 from cruxible_client import contracts
 from cruxible_client.contracts.operator_mac import (
+    OPERATOR_BOOT_HEADER,
     OPERATOR_MAC_HEADER,
     OPERATOR_NONCE_HEADER,
     OPERATOR_TIMESTAMP_HEADER,
@@ -28,14 +29,16 @@ class OperatorRequestSigner(httpx.Auth):
 
     requires_request_body = True
 
-    def __init__(self, secret: str) -> None:
+    def __init__(self, secret: str, *, boot_id: str) -> None:
         self._secret = secret
+        self._boot_id = boot_id
 
     def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         nonce = secrets.token_hex(16)
         timestamp = str(int(time.time()))
         request.headers[OPERATOR_NONCE_HEADER] = nonce
         request.headers[OPERATOR_TIMESTAMP_HEADER] = timestamp
+        request.headers[OPERATOR_BOOT_HEADER] = self._boot_id
         request.headers[OPERATOR_MAC_HEADER] = operator_request_mac(
             self._secret,
             method=request.method,
@@ -44,6 +47,7 @@ class OperatorRequestSigner(httpx.Auth):
             body=request.content,
             nonce=nonce,
             timestamp=timestamp,
+            boot_id=self._boot_id,
         )
         yield request
 
@@ -64,15 +68,21 @@ class DaemonLifecycleClient:
         socket_path: str | None = None,
         token: str | None = None,
         operator_secret: str | None = None,
+        operator_boot_id: str | None = None,
     ) -> None:
-        """``operator_secret`` signs each request with the daemon's bootstrap secret
-        instead of sending any credential; it never goes on the wire."""
+        """``operator_secret`` signs each request with the daemon's bootstrap secret,
+        for the daemon image ``operator_boot_id``, instead of sending any
+        credential; the secret never goes on the wire."""
 
         if token is not None and operator_secret is not None:
             raise ValueError("configure a bearer token or an operator secret, not both")
+        if (operator_secret is None) != (operator_boot_id is None):
+            raise ValueError("an operator secret signs only for a named daemon boot id")
         self._transport = CruxibleClient(base_url=base_url, socket_path=socket_path, token=token)
-        if operator_secret is not None:
-            self._transport._client._client.auth = OperatorRequestSigner(operator_secret)
+        if operator_secret is not None and operator_boot_id is not None:
+            self._transport._client._client.auth = OperatorRequestSigner(
+                operator_secret, boot_id=operator_boot_id
+            )
 
     def version(self) -> str:
         return self._transport.version()

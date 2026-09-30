@@ -21,6 +21,7 @@ import stat
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -150,6 +151,32 @@ def read_local_bootstrap_secret(
     return secret or None
 
 
+@dataclass(frozen=True)
+class LocalOperatorKey:
+    """What a local lifecycle command signs with: the secret and the live image's boot id."""
+
+    secret: str
+    boot_id: str
+
+
+def read_local_operator_key(
+    state_root: Path, *, server_url: str | None, server_socket: str | None
+) -> LocalOperatorKey | None:
+    """The live local daemon's signing key and boot id, or None.
+
+    The boot id comes from the lock record the live daemon wrote when it took
+    the state root; a record without one (an older daemon) yields nothing.
+    """
+
+    secret = read_local_bootstrap_secret(
+        state_root, server_url=server_url, server_socket=server_socket
+    )
+    lock = read_state_lock(state_root)
+    if secret is None or lock is None or lock.boot_id is None:
+        return None
+    return LocalOperatorKey(secret=secret, boot_id=lock.boot_id)
+
+
 class OperatorRequestRefused(Exception):
     """Why a MAC-signed operator request was refused: one code per cause."""
 
@@ -179,6 +206,8 @@ def verify_operator_request(
     nonce: str | None,
     timestamp: str | None,
     mac: str | None,
+    boot_id: str | None,
+    current_boot_id: str,
     now: float | None = None,
 ) -> None:
     """Accept one MAC-signed, bodyless operator request exactly once, or refuse.
@@ -199,6 +228,11 @@ def verify_operator_request(
         raise OperatorRequestRefused(
             "runtime_bootstrap.operator_mac_invalid", "the operator request timestamp is malformed"
         ) from exc
+    if boot_id is None or not hmac.compare_digest(boot_id, current_boot_id):
+        raise OperatorRequestRefused(
+            "runtime_bootstrap.operator_mac_boot_changed",
+            "the operator request was signed for another daemon process image",
+        )
     expected = operator_request_mac(
         secret,
         method=method,
@@ -207,6 +241,7 @@ def verify_operator_request(
         body=b"",
         nonce=nonce,
         timestamp=timestamp,
+        boot_id=current_boot_id,
     )
     if not hmac.compare_digest(mac, expected):
         raise OperatorRequestRefused(
@@ -233,10 +268,12 @@ def verify_operator_request(
 
 __all__ = [
     "BOOTSTRAP_SECRET_FILE",
+    "LocalOperatorKey",
     "OperatorRequestRefused",
     "bootstrap_secret_path",
     "prepare_bootstrap_secret",
     "read_local_bootstrap_secret",
+    "read_local_operator_key",
     "reset_operator_nonces",
     "verify_operator_request",
     "write_owner_only_secret",

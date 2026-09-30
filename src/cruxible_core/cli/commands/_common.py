@@ -7,7 +7,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import click
 
@@ -21,6 +21,9 @@ from cruxible_core.cli.context import (
     save_cli_context,
 )
 from cruxible_core.server.config import get_runtime_bearer_token
+
+if TYPE_CHECKING:
+    from cruxible_core.server.bootstrap_secret import LocalOperatorKey
 
 LocalResultT = TypeVar("LocalResultT")
 RemoteResultT = TypeVar("RemoteResultT")
@@ -200,40 +203,43 @@ def _get_lifecycle_client() -> DaemonLifecycleClient | None:
     if isinstance(client, DaemonLifecycleClient):
         return client
     token = get_runtime_bearer_token()
+    key = (
+        None
+        if token is not None
+        else _local_operator_key(server_url=server_url, server_socket=server_socket)
+    )
     client = DaemonLifecycleClient(
         base_url=server_url,
         socket_path=server_socket,
         token=token,
-        operator_secret=(
-            None
-            if token is not None
-            else _local_bootstrap_secret(server_url=server_url, server_socket=server_socket)
-        ),
+        operator_secret=None if key is None else key.secret,
+        operator_boot_id=None if key is None else key.boot_id,
     )
     obj["_lifecycle_client"] = client
     return client
 
 
-def _local_bootstrap_secret(*, server_url: str | None, server_socket: str | None) -> str | None:
-    """The bootstrap secret of the local daemon this command targets, to sign with.
+def _local_operator_key(
+    *, server_url: str | None, server_socket: str | None
+) -> LocalOperatorKey | None:
+    """The bootstrap secret and boot id of the local daemon this command targets.
 
     Lifecycle commands (`server status`, `restart`, `stop`) fall back to it when
     no bearer token is configured, so a local restart needs no credential typed
-    in. It keys a per-request MAC and never goes on the wire. It is read only
-    while a live daemon holds the state-root lock on this exact transport.
+    in. It keys a per-request MAC, bound to the boot id the live daemon wrote in
+    its lock record, and never goes on the wire. It is read only while a live
+    daemon holds the state-root lock on this exact transport.
     """
 
     from cruxible_core.errors import CoreError
-    from cruxible_core.server.bootstrap_secret import read_local_bootstrap_secret
+    from cruxible_core.server.bootstrap_secret import read_local_operator_key
     from cruxible_core.server.config import get_server_state_root
 
     try:
         state_root = get_server_state_root()
     except CoreError:
         return None
-    return read_local_bootstrap_secret(
-        state_root, server_url=server_url, server_socket=server_socket
-    )
+    return read_local_operator_key(state_root, server_url=server_url, server_socket=server_socket)
 
 
 def _current_cli_context() -> CliContextState:

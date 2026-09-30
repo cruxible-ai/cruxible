@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from cruxible_client.contracts.errors import PlaybillBootstrapError
 from cruxible_client.contracts.operator_mac import (
+    OPERATOR_BOOT_HEADER,
     OPERATOR_MAC_HEADER,
     OPERATOR_NONCE_HEADER,
     OPERATOR_TIMESTAMP_HEADER,
@@ -32,6 +33,7 @@ from cruxible_core.runtime.permissions import (
     request_permission_scope,
 )
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from cruxible_core.server import restart as restart_state
 from cruxible_core.server.bootstrap_secret import OperatorRequestRefused, verify_operator_request
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
@@ -236,6 +238,8 @@ def _operator_mac_refusal(
             nonce=request.headers.get(OPERATOR_NONCE_HEADER),
             timestamp=request.headers.get(OPERATOR_TIMESTAMP_HEADER),
             mac=request.headers.get(OPERATOR_MAC_HEADER),
+            boot_id=request.headers.get(OPERATOR_BOOT_HEADER),
+            current_boot_id=restart_state.PROCESS_BOOT_ID,
         )
     except OperatorRequestRefused as exc:
         return refused(exc.code, str(exc))

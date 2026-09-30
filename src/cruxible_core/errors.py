@@ -265,6 +265,7 @@ _PRINCIPAL_REFUSAL_STATUS: dict[str, int] = {
     "runtime_bootstrap.operator_mac_invalid": 401,
     "runtime_bootstrap.operator_mac_stale": 401,
     "runtime_bootstrap.operator_mac_replayed": 401,
+    "runtime_bootstrap.operator_mac_boot_changed": 401,
 }
 
 

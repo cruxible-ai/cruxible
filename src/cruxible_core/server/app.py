@@ -306,7 +306,7 @@ def run_server(
         else f"{os.environ.get('CRUXIBLE_HOST', '127.0.0.1')}:"
         f"{os.environ.get('CRUXIBLE_PORT', '8100')}"
     )
-    with StateRootLock(get_server_state_root(), transport=transport):
+    with StateRootLock(get_server_state_root(), transport=transport, boot_id=PROCESS_BOOT_ID):
         _serve(
             resolved_socket,
             bootstrap_secret_file=(

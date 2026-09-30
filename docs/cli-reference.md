@@ -158,10 +158,13 @@ restart keeps the same secret. `server status`, `server restart` and
 `server stop` use that file by default when no `CRUXIBLE_SERVER_BEARER_TOKEN` is
 set, so a local restart needs no credential typed in. The secret is never sent:
 each such request carries a MAC keyed by the secret over its method, path,
-body digest, a fresh nonce and a timestamp, and the daemon accepts it only if
-the MAC verifies under its own secret, the timestamp is within 60 seconds of its
-clock, and the nonce is new (`runtime_bootstrap.operator_mac_invalid`,
-`operator_mac_stale`, `operator_mac_replayed`). Only `server status`, `restart`
+body digest, a fresh nonce, a timestamp and the daemon's unpredictable boot id
+(read from the live lock record), and the daemon accepts it only if the boot id
+is its own current process image's, the MAC verifies under its own secret, the
+timestamp is within 60 seconds of its clock, and the nonce is new
+(`runtime_bootstrap.operator_mac_boot_changed`, `operator_mac_invalid`,
+`operator_mac_stale`, `operator_mac_replayed`). A request captured before an
+in-place restart therefore cannot be replayed after it. Only `server status`, `restart`
 and `stop` accept a signed request. As defense in depth the secret is read only
 while a live daemon holds the state-root lock and the lock records exactly the
 transport the command is about to use (the socket path, or the bound host and
