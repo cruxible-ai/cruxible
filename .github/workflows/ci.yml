@@ -53,7 +53,7 @@ jobs:
         run: uv run mypy src packages/cruxible-client/src
 
       - name: Test
-        run: uv run pytest --tb=short
+        run: uv run pytest -n auto --dist loadfile --tb=short
 
   docker-image-test:
     runs-on: ubuntu-latest

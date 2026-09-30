@@ -131,7 +131,10 @@ def test_c4_no_secret_reaches_argv_or_the_child_environment(short_root: Path) ->
     finally:
         runtime_module.subprocess.Popen = real_popen  # type: ignore[misc]
     observed = json.loads(dump.read_text(encoding="utf-8"))
-    spawns = [item for item in handed if item["env"]]
+    # Popen is process-global: a background thread another test left running (a
+    # ledger or advertiser Git call) can spawn inside this window. Only the
+    # provider child is this invocation's spawn; the secret scan still covers all.
+    spawns = [item for item in handed if item["argv"][:1] == [str(interpreter)]]
     assert len(spawns) == 1
     assert "SUPERSECRET-V5" not in json.dumps(handed)
     assert set(spawns[0]["env"]) == {  # type: ignore[arg-type]

@@ -76,6 +76,9 @@ def _genesis_replay_at_retained_compiler(
     instance: PlaybillInstance, tmp_path: Path, name: str
 ) -> None:
     clone = tmp_path / name
+    # Acceptance queues an advisory review-ref refresh that rewrites the proposal
+    # index checkpoint; let it finish so the copy is not torn mid-rename.
+    instance.settled_workspace_advertisement()
     shutil.copytree(instance.root, clone)
     checkpoint = PlaybillInstance._checkpoint_directory(clone)
     if checkpoint.exists():
@@ -268,6 +271,7 @@ def test_release_level_law_bump_replays_rev8_tombstone_from_fresh_clone(
     instance, claim_id, _owner = _accepted_affects_package_world(tmp_path)
     _accept(instance, _migration(instance, claim_id))
     clone = tmp_path / "fresh-rev9-clone"
+    instance.settled_workspace_advertisement()
     shutil.copytree(instance.root, clone)
     checkpoint = PlaybillInstance._checkpoint_directory(clone)
     if checkpoint.exists():
