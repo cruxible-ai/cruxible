@@ -387,6 +387,50 @@ def test_new_instances_start_with_the_default_internal_triggers(tmp_path):
     ]
 
 
+def test_accepted_trigger_changes_move_the_internal_cadences_that_fire(tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    from cruxible_core.triggers.journal import evaluate_triggers
+
+    instance, owner = initialize_local(tmp_path)
+    start = datetime(2026, 10, 1, tzinfo=UTC)
+
+    def fired(at):  # type: ignore[no-untyped-def]
+        # No supplied cadence set: the accepted head decides what fires.
+        return sorted(event.trigger for event in evaluate_triggers(instance, now=at))
+
+    def accept(name, minute, *triggers):  # type: ignore[no-untyped-def]
+        tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+        tree.update(trigger_members(*triggers))
+        _accept_tree(
+            instance,
+            owner,
+            tree,
+            timestamp=f"2026-09-30T10:{minute:02d}:00.000000Z",
+            proposal_name=name,
+        )
+
+    assert fired(start) == ["Trigger:evidence-sweep", "Trigger:prediction-anchor-retry"]
+
+    # Accepting a Trigger adds its cadence at once.
+    hourly = action_trigger("evidence-hourly", action="evidence.sweep", interval_seconds=3600)
+    accept("add", 1, hourly)
+    assert fired(start + timedelta(seconds=1)) == ["Trigger:evidence-hourly"]
+
+    # Changing one moves its interval: the daily sweep now fires each minute.
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    daily = parse_trigger(tree["triggers/evidence-sweep.json"], path="triggers/evidence-sweep.json")
+    accept("change", 2, successor(daily, schedule=CadenceScheduleV1(interval_seconds=60)))
+    assert fired(start + timedelta(seconds=61)) == ["Trigger:evidence-sweep"]
+
+    # Retiring one removes it: past its interval, it never fires again.
+    accept("retire", 3, successor(hourly, state="retired"))
+    assert fired(start + timedelta(hours=2)) == [
+        "Trigger:evidence-sweep",
+        "Trigger:prediction-anchor-retry",
+    ]
+
+
 def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path):
     from datetime import UTC, datetime
 
