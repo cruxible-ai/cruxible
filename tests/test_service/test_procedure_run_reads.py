@@ -192,7 +192,7 @@ def test_a_line_run_names_the_line_occurrence_and_arm_that_admitted_it(tmp_path:
     assert card.triggered_by.line == line.identity.qualified
     assert card.triggered_by.occurrence is not None
     assert card.triggered_by.arm == arm["arm_id"]
-    assert card.triggered_by.armed_by == "local-operator"
+    assert card.triggered_by.armed_by == "operator"
     assert card.nodes_total >= card.nodes_done >= 1
     assert f'cruxible_playbill_get(ref="{line.identity.qualified}")' in card.next
 

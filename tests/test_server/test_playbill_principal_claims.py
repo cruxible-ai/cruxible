@@ -157,14 +157,17 @@ def test_with_auth_on_a_claim_may_only_repeat_the_credentials_principal(
     assert refused.json()["error_code"] == "playbill.identity.principal_claim_mismatch"
 
 
-def test_the_client_sends_its_configured_principal_and_refuses_a_malformed_one() -> None:
-    client = CruxibleClient(socket_path="/tmp/unused.sock", principal_id="alice")
+def test_the_client_sends_its_configured_principal_and_refuses_a_malformed_one(
+    tmp_path: Path,
+) -> None:
+    socket_path = str(tmp_path / "unused.sock")
+    client = CruxibleClient(socket_path=socket_path, principal_id="alice")
     try:
         assert client._client._client.headers[PRINCIPAL_ID_HEADER] == "alice"
     finally:
         client.close()
     with pytest.raises(ClientConfigError, match="CRUXIBLE_PRINCIPAL_ID"):
-        CruxibleClient(socket_path="/tmp/unused.sock", principal_id="Not An ID")
+        CruxibleClient(socket_path=socket_path, principal_id="Not An ID")
 
 
 def _create(client: TestClient, headers: dict[str, str]) -> object:

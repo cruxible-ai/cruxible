@@ -141,7 +141,7 @@ def test_start_rejects_unknown_capability_ceiling_before_serving(
 
 
 def test_start_auth_flag_opts_in_and_keeps_the_env_form(
-    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
 ) -> None:
     import os
 
@@ -153,7 +153,7 @@ def test_start_auth_flag_opts_in_and_keeps_the_env_form(
         "cruxible_core.server.app.run_server", lambda **kwargs: captured.update(kwargs)
     )
 
-    result = runner.invoke(cli, ["server", "start", "--auth", "--socket", "/tmp/x/d.sock"])
+    result = runner.invoke(cli, ["server", "start", "--auth", "--socket", str(tmp_path / "d.sock")])
 
     assert result.exit_code == 0, result.output
     assert captured["auth"] is True

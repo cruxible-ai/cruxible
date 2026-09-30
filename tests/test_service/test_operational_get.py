@@ -94,7 +94,7 @@ def test_a_line_card_names_its_procedure_trigger_arms_and_runs(line_world) -> No
     assert card.authority in {"observe", "propose", "settle"}
     (arm,) = card.arms
     assert arm.state == "stopped" and arm.stop_reason == "credential_revoked"
-    assert arm.armed_by == "local-operator" and arm.principal_kind == "local_operator"
+    assert arm.armed_by == "operator" and arm.principal_kind == "local_operator"
     assert card.arms_total == 1
     admitted = [item.run_id for item in dispatched.items if item.run_id is not None]
     assert [row.run for row in card.recent_runs] == admitted
