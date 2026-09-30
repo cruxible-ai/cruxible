@@ -318,6 +318,66 @@ def test_self_evidence_a_field_does_not_admit_lands_uncovered_and_says_so(
     assert supported.changes[0].verdict == "supported" and supported.warnings == ()
 
 
+class _Sent(Exception):
+    def __init__(self, request: Any) -> None:
+        self.request = request
+
+
+class _Recorder:
+    """A client that keeps the request the SDK would send, and sends nothing."""
+
+    def playbill_set(self, _instance_id: str, *, request: Any) -> Any:
+        raise _Sent(request)
+
+    def playbill_write(self, _instance_id: str, *, request: Any) -> Any:
+        raise _Sent(request)
+
+
+def test_every_sdk_evidence_repair_runs_against_the_real_builders(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    """The rendered repair is a call the SDK takes, and it sends the change it names."""
+
+    from cruxible_client.authoring.sdk import Playbill
+    from cruxible_client.contracts.write import CaptureEvidence
+
+    digest = "sha256:" + "b" * 64
+    outcome = _write(
+        instance,
+        _set(WI1, "measured", 3),
+        _add(WI1, "labels", "urgent"),
+        surface="sdk",
+    )
+    assert outcome.status == "accepted", outcome
+    assert [item.change for item in outcome.warnings] == [0, 1]
+    for warning in outcome.warnings:
+        assert warning.repair is not None
+        placeholder = f"<digest of a Capture under {REPORTS.identity.name}>"
+        assert placeholder in warning.repair
+        pb = Playbill(
+            client=_Recorder(),  # type: ignore[arg-type]
+            instance_id="inst",
+            workspace=tmp_path,
+            access_profile="governed_write",  # type: ignore[arg-type]
+            clock=None,
+        )
+        with pytest.raises(_Sent) as sent:
+            exec(  # noqa: S102 - the repair is the code under test
+                warning.repair.replace(placeholder, digest),
+                {"pb": pb, "CaptureEvidence": CaptureEvidence},
+            )
+        request = sent.value.request
+        assert request.because == "The writer checked it."
+        (change,) = request.changes if hasattr(request, "changes") else (request.change(),)
+        written = outcome.changes[warning.change]
+        assert (change.op, change.subject, change.field) == (
+            written.op,
+            written.subject,
+            written.field,
+        )
+        assert change.evidence == CaptureEvidence(capture=digest)
+
+
 def test_evidence_required_waits_for_a_claim_type_flag(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:

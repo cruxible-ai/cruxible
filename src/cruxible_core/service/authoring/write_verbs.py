@@ -1210,16 +1210,22 @@ def _render_evidence_repair(
             f'"evidence": {{"kind": "capture", "capture": "{placeholder}"}}'
         )
     if surface == "sdk":
-        verb = "set" if isinstance(change, SetChange) else "add"
-        call = (
-            f"pb.{verb}({json.dumps(change.subject)}, {json.dumps(change.field)}, "
-            f"{json.dumps(value)}, because={json.dumps(because)}, "
-            f"evidence=CaptureEvidence(capture={json.dumps(placeholder)}))"
-        )
+        # Rendered against the builder signatures: ``pb.set`` takes ``because``;
+        # a batch ``add`` does not, so it goes on ``pb.changes`` instead.
+        arguments = [json.dumps(change.subject), json.dumps(change.field), json.dumps(value)]
+        options = [f"evidence=CaptureEvidence(capture={json.dumps(placeholder)})"]
+        if change.role is not None:
+            options.append(f"role={json.dumps(change.role)}")
+        if isinstance(change, SetChange):
+            if change.contend:
+                options.append("contend=True")
+            return (
+                f"pb.set({', '.join(arguments)}, because={json.dumps(because)}, "
+                f"{', '.join(options)})"
+            )
         return (
-            call
-            if verb == "set"
-            else f"pb.changes(because={json.dumps(because)}).{call[3:]}.write()"
+            f"pb.changes(because={json.dumps(because)})"
+            f".add({', '.join([*arguments, *options])}).write()"
         )
     evidence = json.dumps({"kind": "capture", "capture": placeholder})
     if isinstance(change, SetChange):
