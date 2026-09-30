@@ -35,8 +35,25 @@ OWNER = OrientCaller("owner", "active", "admin")
 UPGRADE_NOTE = "1 ClaimType still names CaptureContracts by digest; run evidence_rules_upgrade"
 
 
+@pytest.fixture(scope="module")
+def seeded(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-untyped-def]
+    """One world for the module's read-only orient tests.
+
+    Tests that mutate the instance or patch what orient folds take
+    ``own_seeded`` instead, so no memo or state crosses between them.
+    """
+
+    return _seeded_world(tmp_path_factory.mktemp("orient-seeded"))
+
+
 @pytest.fixture
-def seeded(tmp_path: Path):  # type: ignore[no-untyped-def]
+def own_seeded(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """A world of this test's own, for tests that decommission or patch."""
+
+    return _seeded_world(tmp_path)
+
+
+def _seeded_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     instance, owner = seed_claims(tmp_path)
     for name, description in ((QUERY_NAME, "Every work item."), ("project.work_items_b", None)):
         inspection = submit_query_definition_candidate(
@@ -89,7 +106,7 @@ def test_attention_names_digest_named_rules_and_suggests_the_upgrade(seeded) -> 
 
 
 def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
-    seeded,  # type: ignore[no-untyped-def]
+    own_seeded,  # type: ignore[no-untyped-def]
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     item = SimpleNamespace(
@@ -114,7 +131,7 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
         ),
     )
 
-    attention = service_playbill_orient(seeded, caller=OWNER).attention
+    attention = service_playbill_orient(own_seeded, caller=OWNER).attention
 
     assert attention is not None and attention.next_items == 7
     assert attention.top == (
@@ -299,10 +316,10 @@ def test_identity_rules_name_their_contracts_and_unknown_digests_stay_short(
         assert names.name("sha256:" + "ab" * 32) == "unresolved:abababababab"
 
 
-def test_a_decommissioned_instance_still_orients_and_says_why(seeded) -> None:  # type: ignore[no-untyped-def]
-    seeded.decommission(reason="migrated to a new host", decommissioned_by="owner")
+def test_a_decommissioned_instance_still_orients_and_says_why(own_seeded) -> None:  # type: ignore[no-untyped-def]
+    own_seeded.decommission(reason="migrated to a new host", decommissioned_by="owner")
 
-    attention = service_playbill_orient(seeded, caller=OWNER).attention
+    attention = service_playbill_orient(own_seeded, caller=OWNER).attention
 
     assert attention is not None
     assert any(
@@ -431,10 +448,10 @@ def test_sdk_suggestions_are_python_literals_and_mcp_keeps_json() -> None:
     )
 
 
-def test_a_decommissioned_instance_cannot_be_authored_even_by_an_active_writer(seeded) -> None:  # type: ignore[no-untyped-def]
-    seeded.decommission(reason="migrated to a new host", decommissioned_by="owner")
+def test_a_decommissioned_instance_cannot_be_authored_even_by_an_active_writer(own_seeded) -> None:  # type: ignore[no-untyped-def]
+    own_seeded.decommission(reason="migrated to a new host", decommissioned_by="owner")
 
-    you = service_playbill_orient(seeded, caller=OWNER).you
+    you = service_playbill_orient(own_seeded, caller=OWNER).you
 
     assert you is not None and you.can_author is False
     assert you.actor == "owner" and you.principal == "owner"
@@ -660,7 +677,7 @@ def test_modal_evidence_ties_are_independent_of_predicate_order() -> None:
 
 
 def test_attention_summary_preserves_complete_orient_bytes(
-    seeded,  # type: ignore[no-untyped-def]
+    own_seeded,  # type: ignore[no-untyped-def]
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from datetime import UTC, datetime
@@ -671,7 +688,7 @@ def test_attention_summary_preserves_complete_orient_bytes(
     from cruxible_core.service.discovery.next import PlaybillNextSummary, service_playbill_next
 
     moment = datetime(2026, 9, 29, tzinfo=UTC)
-    optimized = service_playbill_orient(seeded, caller=OWNER, evaluation_time=moment)
+    optimized = service_playbill_orient(own_seeded, caller=OWNER, evaluation_time=moment)
     dependency_fold = next_module._claim_dependency_items
 
     def original_dependencies(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -693,7 +710,7 @@ def test_attention_summary_preserves_complete_orient_bytes(
     monkeypatch.setattr(next_module, "_claim_dependency_items", original_dependencies)
     monkeypatch.setattr(next_module, "_claim_threshold_evidence", _claim_law_evidence_index)
     monkeypatch.setattr(orient_module, "summarize_playbill_next", full_queue)
-    previous = service_playbill_orient(seeded, caller=OWNER, evaluation_time=moment)
+    previous = service_playbill_orient(own_seeded, caller=OWNER, evaluation_time=moment)
     assert canonical_bytes(optimized.model_dump(mode="json")) == canonical_bytes(
         previous.model_dump(mode="json")
     )
