@@ -32,6 +32,7 @@ import json
 import re
 import shlex
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -107,6 +108,7 @@ from cruxible_client.contracts.write import (
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import ComputedPreflight
 from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retirement_inventory
+from cruxible_core.indexes.history.history_index import detached_history_reads
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -1476,10 +1478,13 @@ def service_playbill_write(
     """
 
     instance.require_writable()
-    outcome = _service_write(instance, request=request, caller=caller)
-    if request.full_coordinate and outcome.accepted_coordinate is None:
-        pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)
-        outcome = outcome.model_copy(update={"accepted_coordinate": _full(pinned)})
+    # A dry run writes nothing, derived indexes included: every history read it
+    # makes, from planning to the verdicts, is served without touching the index.
+    with detached_history_reads() if request.dry_run else nullcontext():
+        outcome = _service_write(instance, request=request, caller=caller)
+        if request.full_coordinate and outcome.accepted_coordinate is None:
+            pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)
+            outcome = outcome.model_copy(update={"accepted_coordinate": _full(pinned)})
     return outcome
 
 

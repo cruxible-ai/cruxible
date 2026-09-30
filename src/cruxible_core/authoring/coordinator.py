@@ -71,6 +71,7 @@ from cruxible_core.authoring.preflight import (
 )
 from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.compiler.projection_artifacts import projected_revision
+from cruxible_core.indexes.history.history_index import detached_history_reads
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.candidate_cards import is_candidate_card_path
 from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
@@ -343,12 +344,14 @@ class AuthoringIntentCoordinator:
 
         This is a dry run: the draft is built in memory under a fresh intent ID
         instead of being stored, and the bodies lowering stores are held in
-        memory (``dry_run_bodies``), so the same lowering and evaluation run as
-        for a submit, against the current accepted coordinate, without a write.
+        memory (``dry_run_bodies``) and history reads never catch the derived
+        index up on disk (``detached_history_reads``), so the same lowering and
+        evaluation run as for a submit, against the current accepted coordinate,
+        without a write.
         """
 
         self.instance.require_writable()
-        with dry_run_bodies():
+        with dry_run_bodies(), detached_history_reads():
             intent = self._draft_intent(
                 actor=actor,
                 payload=payload,

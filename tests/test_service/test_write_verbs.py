@@ -539,15 +539,13 @@ def test_one_write_may_retire_one_contender_and_replace_the_other(
 def _snapshot(instance: PlaybillInstance) -> dict[str, tuple[int, int, str]]:
     """Every file under the managed root, after background ref upkeep has settled.
 
-    An acceptance queues advisory review-ref upkeep on a worker thread, and the
-    first history read after one catches the derived history index up. Neither
-    is the dry run's -- any read does the second -- so both are settled before
-    the store is compared.
+    An acceptance queues advisory review-ref upkeep on a worker thread; that is
+    not the dry run's, so it is settled first. The derived history index is
+    deliberately left as it is: after an acceptance it is behind the head, and a
+    dry run must leave it that way.
     """
 
     instance.settled_workspace_advertisement()
-    with instance.accepted_history_reader() as history:
-        assert history.sequence >= 0
     root = instance.root
     found: dict[str, tuple[int, int, str]] = {}
     for path in sorted(root.rglob("*")):
@@ -582,6 +580,41 @@ def test_a_dry_run_takes_the_write_path_and_writes_nothing(instance: PlaybillIns
     committed = _write(instance, _set(WI1, "status", "done"), at=preview.coordinate.git_oid)
     assert committed.status == "accepted"
     assert committed.changes[0].revises == preview.changes[0].revises
+
+
+@pytest.mark.parametrize("cache", ["cold", "behind_head"])
+def test_a_dry_run_leaves_a_cold_or_behind_history_index_as_it_found_it(
+    instance: PlaybillInstance, cache: str
+) -> None:
+    """The dry run's history reads build nothing on disk, however stale the index."""
+
+    read_at = instance.accepted_coordinate().git_oid
+    _write(instance, _set(WI1, "status", "ready"))
+    instance.settled_workspace_advertisement()
+    kept = {path: path.read_bytes() for path in instance.root.rglob("history.sqlite3*")}
+    assert kept
+    if cache == "behind_head":
+        _write(instance, _set(WI2, "status", "ready"))
+        instance.settled_workspace_advertisement()
+    for path in instance.root.rglob("history.sqlite3*"):
+        path.unlink()
+    if cache == "behind_head":
+        # The index as it stood one generation ago: behind the head.
+        for path, data in kept.items():
+            path.write_bytes(data)
+    before = _snapshot(instance)
+    preview = _write(
+        instance,
+        _set(WI3, "status", "done"),
+        _add(WI1, "governs", WI2),
+        at=read_at,
+        dry_run=True,
+    )
+    assert preview.status == "would_accept", preview
+    assert _snapshot(instance) == before
+    stale = _write(instance, _set(WI1, "status", "done"), at=read_at, dry_run=True)
+    assert _refusal(stale).code == "playbill.write.slot_changed"
+    assert _snapshot(instance) == before
 
 
 def test_a_dry_run_reports_a_refusal_found_only_by_preflight(
