@@ -21,8 +21,6 @@ from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerRepair,
     ConsumerWork,
-    CursorPolicy,
-    EffectClass,
 )
 from cruxible_core.consumers.state import DisposableState
 from cruxible_core.server.config import get_disabled_consumers
@@ -42,7 +40,7 @@ CREATE TABLE progress (
  last_error TEXT, last_error_at TEXT
 ) STRICT;
 """
-_STATE = DisposableState("next-queue", _SCHEMA)
+_STATE = DisposableState("next/queue", _SCHEMA)
 
 
 def stored_claim_queue(
@@ -57,7 +55,7 @@ def stored_claim_queue(
 
     from cruxible_core.service.discovery.next import _StoredClaimQueue
 
-    if not NEXT_QUEUE.active(instance) or coordinate != instance.accepted_coordinate():
+    if not _PART.active(instance) or coordinate != instance.accepted_coordinate():
         return None
     with _STATE.open(instance, create=False) as connection:
         if connection is None:
@@ -80,11 +78,8 @@ def stored_claim_queue(
     )
 
 
-class NextQueueConsumers:
+class ClaimQueuePart:
     name = "next"
-    cursor_policy: CursorPolicy = "resume"
-    effect_class: EffectClass = "findings"
-    workers = 1
 
     def active(self, instance: Any) -> bool:
         return self.name not in get_disabled_consumers()
@@ -227,4 +222,4 @@ class NextQueueConsumers:
         )
 
 
-NEXT_QUEUE = NextQueueConsumers()
+_PART = ClaimQueuePart()

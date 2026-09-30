@@ -29,9 +29,9 @@ from cruxible_client.contracts.resolution_contracts import (
     resolution_contract_digest,
     resolution_contract_path,
 )
-from cruxible_core.consumers import predictions
-from cruxible_core.consumers.predictions import PREDICTION_SETTLEMENT as WORKER
-from cruxible_core.consumers.predictions import (
+from cruxible_core.consumers.next import NEXT_QUEUE, predictions
+from cruxible_core.consumers.next.predictions import _PART as WORKER
+from cruxible_core.consumers.next.predictions import (
     settleable_windows,
     unbindable_anchors,
 )
@@ -54,12 +54,12 @@ def drain(instance, *, now: datetime) -> None:  # type: ignore[no-untyped-def]
 
     manager = SimpleNamespace(get=lambda _id: instance)
     for _pass in range(16):
-        WORKER.match(instance, now=now, daemon_id="daemon")
-        work = tuple(WORKER.due(instance, now=now))
+        NEXT_QUEUE.match(instance, now=now, daemon_id="daemon")
+        work = tuple(NEXT_QUEUE.due(instance, now=now))
         if not work:
             return
         for item in work:
-            WORKER.run(manager, "instance", item, now=now)
+            NEXT_QUEUE.run(manager, "instance", item, now=now)
     raise AssertionError("the worker never ran out of due work")
 
 
@@ -460,10 +460,10 @@ def test_a_retirement_landing_while_its_old_version_loads_is_not_lost(
 
 
 def test_the_operator_can_turn_the_worker_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "prediction")
-    assert not WORKER.active(SimpleNamespace())
-    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "evidence")
-    assert WORKER.active(SimpleNamespace())
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
+    assert not NEXT_QUEUE.active(SimpleNamespace())
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "")
+    assert NEXT_QUEUE.active(SimpleNamespace())
 
 
 def test_a_failing_worker_is_stalled_with_a_repair_and_recovers_on_success(
@@ -484,11 +484,17 @@ def test_a_failing_worker_is_stalled_with_a_repair_and_recovers_on_success(
     with pytest.raises(OSError):
         drain(instance, now=FIXED_CLOSES)
     (health,) = [
-        item for item in consumer_health(instance, now=FIXED_CLOSES) if item.kind == "prediction"
+        item for item in consumer_health(instance, now=FIXED_CLOSES) if item.kind == "next"
     ]
-    assert health.state == "stalled" and "journal unreadable" in health.detail["last_error"]
+    assert (
+        health.state == "stalled"
+        and "journal unreadable" in health.detail["prediction"]["last_error"]
+    )
     assert health.repair is not None and health.repair.operation == "hand_edit"
-    assert health.detail["contracts"] == 1 and health.detail["open_windows"] == 1
+    assert (
+        health.detail["prediction"]["contracts"] == 1
+        and health.detail["prediction"]["open_windows"] == 1
+    )
 
     monkeypatch.setattr(WORKER, "_windows", original)
     drain(instance, now=FIXED_CLOSES)

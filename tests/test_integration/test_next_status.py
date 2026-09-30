@@ -464,7 +464,7 @@ def test_worker_findings_report_how_current_they_are(
     # No consumer loop: findings stand as of the last pass, and that is not work.
     idle = consumers(swept)
     assert idle.state == "not_running" and idle.repair is None
-    assert [worker["kind"] for worker in idle.detail["workers"]] == ["evidence"]
+    assert [worker["kind"] for worker in idle.detail["workers"]] == ["next"]
 
     assert consumers(swept, consumers_running=True).state == "current"
     first_fire = swept + timedelta(days=1)
@@ -476,10 +476,10 @@ def test_worker_findings_report_how_current_they_are(
     assert lagging.consumers.state == "lagging"
     assert _attention(lagging) == (("consumers", lagging.consumers),)
 
-    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "evidence")
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
     off = consumers(late, consumers_running=True)
     assert off.state == "current" and off.detail["workers"] == [
-        {"kind": "evidence", "state": "disabled"}
+        {"kind": "next", "state": "disabled"}
     ]
 
     hidden = PlaybillNextRequestV1(
@@ -494,20 +494,20 @@ def test_one_next_request_reads_each_workers_health_once(
 ) -> None:
     from datetime import UTC, datetime
 
-    from cruxible_core.consumers.evidence import EVIDENCE_AVAILABILITY
+    from cruxible_core.consumers.next import NEXT_QUEUE
     from tests.test_consumers.test_evidence_availability import _drain, _world
 
     instance, _capture = _world(tmp_path)
     swept = datetime(2026, 9, 1, tzinfo=UTC)
     _drain(instance, now=swept)
-    health = EVIDENCE_AVAILABILITY.health
+    health = NEXT_QUEUE.health
     calls: list[datetime] = []
 
     def counted(target, *, now):  # type: ignore[no-untyped-def]
         calls.append(now)
         return health(target, now=now)
 
-    monkeypatch.setattr(EVIDENCE_AVAILABILITY, "health", counted)
+    monkeypatch.setattr(NEXT_QUEUE, "health", counted)
     _status(instance, _request(instance, evaluation_time=swept), consumers_running=True)
 
     assert calls == [swept]

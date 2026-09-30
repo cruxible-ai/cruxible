@@ -1832,7 +1832,7 @@ def claim_unsure_holds(
         return frozenset()
     store = instance.claim_attestation_evidence_store()
     head = store.head()
-    from cruxible_core.consumers.next_queue import stored_claim_queue
+    from cruxible_core.consumers.next.queue import stored_claim_queue
 
     stored = stored_claim_queue(
         instance, coordinate=coordinate, door_head=head, evaluation_time=evaluation_time, version=2
@@ -3368,7 +3368,7 @@ def _evidence_unavailable_items(
 
     if not access_profile.permits("instance"):
         return ()
-    from cruxible_core.consumers.evidence import evidence_findings
+    from cruxible_core.consumers.next.evidence import evidence_findings
 
     findings = evidence_findings(instance)
     if not findings:
@@ -3430,7 +3430,7 @@ def _prediction_items(
 
     if not access_profile.permits("instance"):
         return ()
-    from cruxible_core.consumers.predictions import settleable_windows, unbindable_anchors
+    from cruxible_core.consumers.next.predictions import settleable_windows, unbindable_anchors
 
     items: list[PlaybillNextItemV1] = []
     for owed in settleable_windows(instance, evaluation_time=evaluation_time):
@@ -4591,7 +4591,7 @@ def _next_queue(
         store = instance.claim_attestation_evidence_store()
         attestation_head = request.at_attestation_head_digest or store.head()
         door_events = store.fold_events(at_head=attestation_head)
-    from cruxible_core.consumers.next_queue import stored_claim_queue
+    from cruxible_core.consumers.next.queue import stored_claim_queue
 
     stored = None
     if (

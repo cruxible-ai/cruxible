@@ -13,7 +13,7 @@ import pytest
 
 from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.claims import claim_statement_digest
-from cruxible_core.consumers import next_queue as consumer
+from cruxible_core.consumers.next import queue as consumer
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.service.discovery.next import (
@@ -48,7 +48,7 @@ from tests.test_query.test_dependency_impact import (
     _source_v2,
 )
 
-WORKER = consumer.NEXT_QUEUE
+WORKER = consumer._PART
 
 
 def _drain(instance, at: datetime = EVALUATION_TIME) -> None:  # type: ignore[no-untyped-def]

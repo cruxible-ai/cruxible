@@ -11,9 +11,9 @@ import pytest
 
 from cruxible_client.contracts.captures import parse_capture_envelope
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_core.consumers import evidence
-from cruxible_core.consumers.evidence import EVIDENCE_AVAILABILITY as WORKER
-from cruxible_core.consumers.evidence import evidence_findings
+from cruxible_core.consumers.next import NEXT_QUEUE, evidence
+from cruxible_core.consumers.next.evidence import _PART as WORKER
+from cruxible_core.consumers.next.evidence import evidence_findings
 from cruxible_core.triggers.config import TriggerOperationalConfigV1
 from cruxible_core.triggers.journal import evaluate_triggers
 from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
@@ -37,10 +37,21 @@ def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
 
 def _drain(instance, *, now: datetime) -> None:  # type: ignore[no-untyped-def]
     evaluate_triggers(instance, now=now, config=TriggerOperationalConfigV1())
-    WORKER.match(instance, now=now, daemon_id="daemon")
     manager = SimpleNamespace(get=lambda _id: instance)
-    for work in WORKER.due(instance, now=now):
-        WORKER.run(manager, "instance", work, now=now)
+    for _pass in range(16):
+        NEXT_QUEUE.match(instance, now=now, daemon_id="daemon")
+        units = tuple(NEXT_QUEUE.due(instance, now=now))
+        if not units:
+            return
+        for work in units:
+            try:
+                NEXT_QUEUE.run(manager, "instance", work, now=now)
+            except Exception:
+                # Like the runner, one failed queue fold cannot stop evidence checks.
+                # This fixture deliberately removes/corrupts CAS material.
+                if not work.key.startswith("queue:"):
+                    raise
+    raise AssertionError("the folded worker never ran out of due work")
 
 
 def _findings(instance):  # type: ignore[no-untyped-def]
@@ -122,10 +133,10 @@ def test_a_body_its_policy_lets_go_is_not_a_finding_but_a_rotted_body_is(
 
 
 def test_the_operator_can_turn_the_worker_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "evidence")
-    assert not WORKER.active(SimpleNamespace())
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
+    assert not NEXT_QUEUE.active(SimpleNamespace())
     monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "")
-    assert WORKER.active(SimpleNamespace())
+    assert NEXT_QUEUE.active(SimpleNamespace())
 
 
 def test_a_failing_worker_is_stalled_with_a_repair_and_recovers_on_success(
@@ -144,8 +155,10 @@ def test_a_failing_worker_is_stalled_with_a_repair_and_recovers_on_success(
     due = NOW + SWEEP_INTERVAL
     with pytest.raises(OSError):
         _drain(instance, now=due)
-    (health,) = [item for item in consumer_health(instance, now=due) if item.kind == "evidence"]
-    assert health.state == "stalled" and "store unreadable" in health.detail["last_error"]
+    (health,) = [item for item in consumer_health(instance, now=due) if item.kind == "next"]
+    assert (
+        health.state == "stalled" and "store unreadable" in health.detail["evidence"]["last_error"]
+    )
     assert health.repair is not None and health.repair.operation == "hand_edit"
 
     monkeypatch.setattr(WORKER, "_sweep", original)
@@ -165,11 +178,11 @@ def test_server_status_lists_open_instances_consumers_including_disabled_workers
     manager = SimpleNamespace(open_instances=lambda: (("inst", instance),))
 
     (running,) = consumer_statuses(manager)
-    assert (running.instance_id, running.kind, running.state) == ("inst", "evidence", "running")
+    assert (running.instance_id, running.kind, running.state) == ("inst", "next", "running")
 
-    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "evidence")
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
     (disabled,) = consumer_statuses(manager)
-    assert (disabled.consumer_id, disabled.state) == ("consumer:evidence", "disabled")
+    assert (disabled.consumer_id, disabled.state) == ("consumer:next", "disabled")
 
 
 def _citations(count: int) -> sqlite3.Connection:

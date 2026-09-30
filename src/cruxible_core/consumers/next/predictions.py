@@ -1,4 +1,4 @@
-"""Prediction settlement as a consumer kind: resuming, findings only.
+"""Prediction settlement within the next consumer.
 
 A ResolutionContract tests its hypothesis over a bound observation window. A
 fixed window is bound when the contract is accepted. An event window is bound
@@ -48,11 +48,8 @@ from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerRepair,
     ConsumerWork,
-    CursorPolicy,
-    EffectClass,
 )
 from cruxible_core.consumers.state import DisposableState
-from cruxible_core.server.config import get_disabled_consumers
 from cruxible_core.triggers.journal import trigger_events
 
 if TYPE_CHECKING:
@@ -139,7 +136,7 @@ CREATE TRIGGER IF NOT EXISTS window_moved AFTER UPDATE OF status ON windows
  UPDATE tally SET value=value+1 WHERE name=NEW.status;
  END;
 """
-_STATE = DisposableState("prediction-settlement", _SCHEMA)
+_STATE = DisposableState("next/predictions", _SCHEMA)
 
 
 @dataclass(frozen=True)
@@ -358,15 +355,7 @@ def _journals(instance: Any) -> tuple[Any, Any, Any]:
     return journal, procedure_runs._stream(instance), resolutions
 
 
-class PredictionSettlementConsumers:
-    name = "prediction"
-    cursor_policy: CursorPolicy = "resume"
-    effect_class: EffectClass = "findings"
-    workers = 1
-
-    def active(self, instance: Any) -> bool:
-        return self.name not in get_disabled_consumers()
-
+class PredictionPart:
     def match(self, instance: Any, *, now: datetime, daemon_id: str) -> None:
         with instance.accepted_history_reader() as history:
             head = history.sequence
@@ -865,8 +854,8 @@ class PredictionSettlementConsumers:
         lagging = behind > GENERATION_BATCH or len(outstanding) > 1
         return (
             ConsumerHealth(
-                kind=self.name,
-                consumer_id="consumer:prediction",
+                kind="next",
+                consumer_id="consumer:next",
                 state="stalled" if failing else "lagging" if lagging else "running",
                 detail={
                     "generation": generation,
@@ -898,4 +887,4 @@ class PredictionSettlementConsumers:
         )
 
 
-PREDICTION_SETTLEMENT = PredictionSettlementConsumers()
+_PART = PredictionPart()

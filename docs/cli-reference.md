@@ -151,15 +151,16 @@ decommissioned state. Its `Instances` count is the number
 of governed daemon hosts shown, excluding unrelated local registry entries.
 `server status` also lists the daemon's consumers on every instance it holds
 open: each armed Line and each built-in worker, as `running`, `stalled`,
-`lagging`, `stopped`, or `disabled`. The built-in evidence worker runs on every instance
-by default. It re-hashes the Captures live Claims cite whenever a generation
+`lagging`, `stopped`, or `disabled`. The built-in `next` worker runs on every
+instance by default. It maintains the
+current Claim queue, cited evidence availability and prediction windows under
+one health entry, with independent cursors for each part. Its evidence part re-hashes the Captures live Claims cite whenever a generation
 cites one, and sweeps them all on a daily `evidence.sweep` trigger event.
 Retention is evaluated at the generation or trigger event's recorded instant. A missing or corrupt Capture envelope, a
 corrupt body, or a missing body its contract still requires to be retained is a
 finding. A body whose contract lets it go (`optional` or `never_materialize`
 retention, or a `required_for_duration` window that has passed) is not.
-`CRUXIBLE_DISABLED_CONSUMERS=evidence` turns it off.
-The built-in prediction worker also runs on every instance by default. It binds
+Its prediction part binds
 each accepted ResolutionContract's observation window: a fixed window when the
 contract is accepted, and an event window once per landed Capture its selector
 matches, each its own contract instance. On first start it reads every live
@@ -168,8 +169,9 @@ resolution journal initially and whenever a settlement or overturn lands there.
 It stores whether an answer exists; reads decide whether an unanswered window
 has closed at the request's evaluation time. Unbindable anchors are retried on
 `prediction.anchor_retry` events (hourly by default) and new capture landings. A retired or revised contract withdraws its
-windows. `CRUXIBLE_DISABLED_CONSUMERS=prediction` turns it off; list both names,
-comma-separated, to turn off both workers.
+windows. `CRUXIBLE_DISABLED_CONSUMERS=next` turns off the whole findings worker.
+Unknown names, including the former `evidence` and `prediction` names, refuse
+the setting. Armed Lines remain a separate governed consumer.
 `server status` also renders `Provider lane:` and, when degraded,
 `Provider lane reason:`. Provider-lane degradation never prevents the daemon's
 non-Provider surfaces from starting, so these lines are the operator's recovery
@@ -1579,7 +1581,7 @@ profile excludes instance material reads `not_observed`.
 These rows come from the daemon's consumers rather than from a computation at
 read time. Findings are what a worker last observed, so each row reflects its
 last check:
-- `evidence_unavailable` names a Capture the evidence worker found missing or
+- `evidence_unavailable` names a Capture the next worker found missing or
   corrupt, with the live Claims that cite it. Restore its bytes, or recapture
   and re-cite; the worker's next check clears the row.
 - `prediction_settleable` names a ResolutionContract with a closed bound window
@@ -1604,8 +1606,9 @@ generations or has not finished earlier sweep/retry work before another fire;
 this facet asks for
 attention), `stalled` (already a `consumer_stalled` row), or `not_running` when
 no consumer loop is running, as in a library read. There, worker rows stand as
-of each worker's last pass. `detail.workers` lists each built-in worker's state
-and cursor, including disabled ones. Evidence rows carry when they were
+of the last pass. `detail.workers` lists each built-in worker's state
+and cursor, including disabled ones. The `next` entry keeps each part's figures under
+`queue`, `evidence` and `prediction`. Evidence rows carry when they were
 observed in their own detail; prediction rows omit observation timestamps so
 their identity stays stable while the finding is unchanged.
 

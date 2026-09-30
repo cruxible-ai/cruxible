@@ -28,12 +28,10 @@ _log = structlog.get_logger(__name__)
 
 
 def consumer_kinds() -> tuple[ConsumerKind, ...]:
-    from cruxible_core.consumers.evidence import EVIDENCE_AVAILABILITY
     from cruxible_core.consumers.lines import LINE_ARMS
-    from cruxible_core.consumers.next_queue import NEXT_QUEUE
-    from cruxible_core.consumers.predictions import PREDICTION_SETTLEMENT
+    from cruxible_core.consumers.next import NEXT_QUEUE
 
-    return (LINE_ARMS, EVIDENCE_AVAILABILITY, PREDICTION_SETTLEMENT, NEXT_QUEUE)
+    return (LINE_ARMS, NEXT_QUEUE)
 
 
 def consumer_health(instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
@@ -103,8 +101,9 @@ class ConsumerRunner:
 
     def start(self) -> None:
         if self.thread is None or not self.thread.is_alive():
-            from cruxible_core.server.config import get_server_state_root
+            from cruxible_core.server.config import get_disabled_consumers, get_server_state_root
 
+            get_disabled_consumers()
             self.trigger_config = load_trigger_config(get_server_state_root())
             self.daemon_id = uuid4().hex
             self.stop_event.clear()
@@ -168,7 +167,7 @@ class ConsumerRunner:
         try:
             kind.run(self.manager, instance_id, work, now=datetime.now(UTC))
         except Exception:
-            # The work stays due; the next tick schedules it again.
+            # The kind retains retry or failed-target state for the next matching pass.
             _log.exception("consumer_work_incomplete", instance_id=instance_id, kind=kind.name)
         finally:
             with self._in_flight_lock:

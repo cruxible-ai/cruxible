@@ -1,6 +1,6 @@
-"""Evidence availability as a consumer kind: resuming, findings only.
+"""Evidence availability within the next consumer.
 
-A Claim's evidence is only as good as the stored Capture it cites. This kind
+A Claim's evidence is only as good as the stored Capture it cites. This part
 re-checks cited Captures against the content-addressed store and records the
 ones that are missing or no longer hash to their address. It checks a Capture
 when a generation starts citing it, and sweeps every cited Capture when a
@@ -43,11 +43,8 @@ from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerRepair,
     ConsumerWork,
-    CursorPolicy,
-    EffectClass,
 )
 from cruxible_core.consumers.state import DisposableState
-from cruxible_core.server.config import get_disabled_consumers
 from cruxible_core.triggers.journal import trigger_events
 
 #: Captures one unit of work checks before yielding.
@@ -55,7 +52,7 @@ CHECK_BATCH = 256
 #: Generations one matching pass reads before yielding.
 GENERATION_BATCH = 64
 
-_READER = BodyAccessContext(principal_id="evidence-availability", can_read_body=True)
+_READER = BodyAccessContext(principal_id="next-evidence", can_read_body=True)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (
@@ -79,7 +76,7 @@ CREATE TABLE IF NOT EXISTS findings (
  checked_at TEXT NOT NULL, PRIMARY KEY(capture_digest, part)
 ) STRICT;
 """
-_STATE = DisposableState("evidence-availability", _SCHEMA)
+_STATE = DisposableState("next/evidence", _SCHEMA)
 
 
 @dataclass(frozen=True)
@@ -195,15 +192,7 @@ def _absence_permitted(
     return now >= observed_at + timedelta(microseconds=policy.minimum_retention.microseconds)
 
 
-class EvidenceAvailabilityConsumers:
-    name = "evidence"
-    cursor_policy: CursorPolicy = "resume"
-    effect_class: EffectClass = "findings"
-    workers = 1
-
-    def active(self, instance: Any) -> bool:
-        return self.name not in get_disabled_consumers()
-
+class EvidencePart:
     def match(self, instance: Any, *, now: datetime, daemon_id: str) -> None:
         with instance.accepted_history_reader() as history:
             head = history.sequence
@@ -386,8 +375,8 @@ class EvidenceAvailabilityConsumers:
         lagging = behind > GENERATION_BATCH or len(sweeps) > 1
         return (
             ConsumerHealth(
-                kind=self.name,
-                consumer_id="consumer:evidence",
+                kind="next",
+                consumer_id="consumer:next",
                 state="stalled" if failing else "lagging" if lagging else "running",
                 detail={
                     "generation": generation,
@@ -412,4 +401,4 @@ class EvidenceAvailabilityConsumers:
         )
 
 
-EVIDENCE_AVAILABILITY = EvidenceAvailabilityConsumers()
+_PART = EvidencePart()

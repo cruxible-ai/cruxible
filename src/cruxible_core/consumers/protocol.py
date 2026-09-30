@@ -1,6 +1,6 @@
 """What a consumer kind is, to the daemon loop that runs every kind.
 
-A kind follows the instance's logs or a clock (its subscription), keeps its own
+A kind follows the instance's logs (its subscription), keeps its own
 place in them (its cursor), and acts on what it matched. Matching never acts:
 it only records due work, which the runner hands to the kind's bounded workers,
 one flight per work key at a time.
