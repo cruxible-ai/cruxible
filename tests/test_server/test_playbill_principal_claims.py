@@ -262,3 +262,92 @@ def test_authoring_create_refuses_a_non_principal_before_any_work(
 
     assert refused.value.error_code == "playbill.identity.principal_absent"
     assert "cruxible playbill principal add mallory --key-dir DIR" in str(refused.value)
+
+
+_OPERATIONAL_SECTIONS = (
+    "runs",
+    "running",
+    "lines",
+    "captures",
+    "capture_contracts",
+    "predictions",
+    "mandates",
+)
+
+
+def test_an_unregistered_claim_reads_orient_and_every_operational_section(
+    daemon: tuple[TestClient, Path], tmp_path: Path
+) -> None:
+    """Reads stay open for any claim; orient's you block names the shared refusal."""
+
+    client, managed = daemon
+    assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
+    mallory = {PRINCIPAL_ID_HEADER: "mallory"}
+
+    base = client.get(f"/api/v1/{INSTANCE}/playbill/orient", headers=mallory)
+    assert base.status_code == 200, base.text
+    you = base.json()["you"]
+    assert you["can_author"] is False
+    assert you["authoring_refusal"]["code"] == "playbill.identity.principal_absent"
+    for section in _OPERATIONAL_SECTIONS:
+        page = client.get(
+            f"/api/v1/{INSTANCE}/playbill/orient", params={"section": section}, headers=mallory
+        )
+        assert page.status_code == 200, (section, page.text)
+        assert page.json()["section"] == section
+
+
+@pytest.mark.parametrize(
+    ("headers", "code", "repair"),
+    [
+        (
+            {PRINCIPAL_ID_HEADER: "mallory"},
+            "playbill.identity.principal_absent",
+            {"operation": "playbill.principal.add", "arguments": {"principal_id": "mallory"}},
+        ),
+        (
+            {},
+            "playbill.identity.principal_unconfigured",
+            {
+                "operation": "playbill.principal.list",
+                "arguments": {"configure": "CRUXIBLE_PRINCIPAL_ID"},
+            },
+        ),
+    ],
+    ids=["unregistered_claim", "implicit_operator"],
+)
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_the_write_verbs_refuse_a_caller_that_cannot_author_with_the_whoami_repair(
+    daemon: tuple[TestClient, Path],
+    tmp_path: Path,
+    headers: dict[str, str],
+    code: str,
+    repair: dict[str, object],
+    dry_run: bool,
+) -> None:
+    client, managed = daemon
+    assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
+    who = client.get(f"/api/v1/{INSTANCE}/playbill/whoami", headers=headers).json()
+    assert who["authoring_refusal"]["code"] == code
+
+    change = {"subject": "project.work_item/wi-1", "field": "status", "value": "ready"}
+    requests = {
+        "set": {"because": "b", "dry_run": dry_run, **change},
+        "write": {
+            "because": "b",
+            "dry_run": dry_run,
+            "accept": "if_allowed",
+            "changes": [{"op": "set", **change}],
+        },
+        "retire": {
+            "because": "b",
+            "dry_run": dry_run,
+            "target": {"subject": change["subject"], "field": "status"},
+        },
+    }
+    for verb, body in requests.items():
+        refused = client.post(f"/api/v1/{INSTANCE}/playbill/{verb}", json=body, headers=headers)
+        assert refused.status_code == 403, (verb, refused.text)
+        answer = refused.json()
+        assert answer["error_code"] == code, verb
+        assert answer["repair"] == repair == who["authoring_refusal"]["repair"], verb
