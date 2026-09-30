@@ -452,6 +452,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "add_playbill_kit",
         "remove_playbill_kit",
         "upgrade_playbill_evidence_rules",
+        "upgrade_playbill_claim_types",
         "migrate_playbill_claim_type",
         "next_playbill",
         "audit_playbill",

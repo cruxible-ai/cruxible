@@ -15,6 +15,10 @@ from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendResultV1
 from cruxible_client.contracts.claim_reads import ClaimValuesResultV1
+from cruxible_client.contracts.claim_type_upgrade import (
+    ClaimTypeUpgradeRequestV1,
+    ClaimTypeUpgradeResultV1,
+)
 from cruxible_client.contracts.compact_query import QueryFilterV1, QueryFollowV1
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
 from cruxible_client.contracts.get_reads import (
@@ -138,6 +142,17 @@ def register_tools(
     ) -> PlaybillKitChangeResultV1:
         """Propose installing or upgrading a kit as one change set; activation is separate."""
         return handlers.handle_playbill_kit_add(require_instance_id(instance_id), request)
+
+    @_tool
+    def cruxible_playbill_claim_type_upgrade(
+        instance_id: InstanceId = None,
+        *,
+        request: ClaimTypeUpgradeRequestV1,
+    ) -> ClaimTypeUpgradeResultV1:
+        """Propose moving live ClaimTypes to v7 (dry_run evaluates and proposes nothing)."""
+        return handlers.handle_playbill_claim_type_upgrade(
+            require_instance_id(instance_id), request
+        )
 
     @_tool
     def cruxible_playbill_evidence_rules_upgrade(

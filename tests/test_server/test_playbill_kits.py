@@ -509,12 +509,43 @@ def test_a_kit_upgrade_carries_a_replace_claim_types_claims_with_their_backing(
 
     assert (claim_path, "carry") in {(item.path, item.action) for item in upgraded.plan}
     carried = parse_claim(consumer.tree()[claim_path], path=claim_path)
-    assert carried.statement.claim_type_digest == claim_type_digest(
-        consumer.claim_type(SEATS)
-    ).tagged
+    assert (
+        carried.statement.claim_type_digest == claim_type_digest(consumer.claim_type(SEATS)).tagged
+    )
     assert canonical_bytes(carried.backing.model_dump(mode="json")) == canonical_bytes(
         before.backing.model_dump(mode="json")
     )
+
+
+def test_claim_type_upgrade_is_one_verb_on_the_sdk_http_and_mcp_doors(
+    worlds: tuple[_World, _World],
+) -> None:
+    from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequestV1
+    from cruxible_core.mcp import handlers
+
+    publisher, _consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}))
+    before = publisher.tree()
+
+    dry = publisher.pb.upgrade_claim_types(SEATS, dry_run=True)
+    assert dry.status == "would_propose", dry
+    assert [(item.claim_type, item.revision_evidence_after) for item in dry.upgraded] == [
+        (f"ClaimType:{SEATS}", "replace")
+    ]
+    assert publisher.tree() == before
+
+    local = handlers.handle_playbill_claim_type_upgrade(
+        publisher.instance_id,
+        ClaimTypeUpgradeRequestV1(claim_types=(SEATS,), revision_evidence="accumulate"),
+    )
+    assert local.status == "proposed" and local.proposal_id is not None, local
+    publisher.approve(local.proposal_id)
+    upgraded = publisher.claim_type(SEATS)
+    assert (upgraded.artifact_format, upgraded.revision_evidence) == (
+        "playbill-claim-type-v7",
+        "accumulate",
+    )
+    assert publisher.pb.upgrade_claim_types(SEATS).status == "unchanged"
 
 
 def test_a_local_edit_blocks_the_upgrade_of_that_path_and_is_reported(

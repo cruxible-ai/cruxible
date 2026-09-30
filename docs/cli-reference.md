@@ -688,6 +688,7 @@ cruxible playbill claim-type propose --template
 cruxible playbill claim-type propose --input FILE --name NAME
 cruxible playbill claim-type migrate REQUEST_FILE
 cruxible playbill claim-type upgrade-evidence-rules
+cruxible playbill claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate] [--dry-run]
 cruxible playbill claim-type list
 cruxible playbill claim-type get PREDICATE
 ~~~
@@ -733,6 +734,22 @@ named contract must be compatible with its predecessor, and two rules that did
 not overlap may not start matching the same evidence. It lists, per ClaimType,
 the accepted contract versions a converted rule newly admits, and leaves the
 rest unchanged with the reason. Approve and activate the proposal as usual.
+
+ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
+`default_role` a write takes when it names none, an `evidence_requirement`
+(`none`: the Claim's own origin supports it; `self`: the evidence rules decide;
+`captured`: a Capture under a declared contract is required) and a
+`revision_evidence` rule (`replace`: a revision that changes its statement keeps
+exactly the evidence it cites; `accumulate`: it keeps everything its
+predecessors cited). A revision that states the same thing again keeps its
+evidence either way, and a carry never loses backing. `propose --input` lowers
+to v7: a new ClaimType takes `self` and `replace`, and an edit of an existing one
+keeps its predecessor's values unless the input names them. ClaimTypes before v7
+never switch on their own: `upgrade` proposes one change set moving the named
+live ClaimTypes (default: all of them) to v7 with `evidence_requirement` kept at
+`self` and `--revision-evidence` (default `replace`), carrying their Claims with
+their backing intact. It lists each ClaimType's revision-evidence change;
+`--dry-run` evaluates the change set and proposes nothing.
 
 A CaptureContract successor must be compatible with its predecessor: it may
 widen the sources, modes, identities and evidence kinds it accepts and raise its
