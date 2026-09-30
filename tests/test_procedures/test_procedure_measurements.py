@@ -38,7 +38,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.compiler.compiler import PC_D_COMPILER, projection_registry_for_compiler
-from cruxible_core.compiler.projection_artifacts import parse_projection_tree
+from cruxible_core.compiler.projection_artifacts import P2_C_ARTIFACT_KINDS, parse_projection_tree
 
 
 def _digest(label: str) -> str:
@@ -249,6 +249,7 @@ def test_measurements_are_projected_from_the_typed_field_not_annotations() -> No
     projection = parse_projection_tree(
         {path: render_procedure(procedure)},
         registry=projection_registry_for_compiler(PC_D_COMPILER),
+        artifact_kinds=P2_C_ARTIFACT_KINDS,
     )
     fact = next(
         item

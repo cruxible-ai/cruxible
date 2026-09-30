@@ -56,6 +56,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.claims.closure import evaluate_dependency_closure, parse_dependency_artifact
 from cruxible_core.compiler.compiler import PC_D_COMPILER, projection_registry_for_compiler
 from cruxible_core.compiler.projection_artifacts import (
+    P2_C_ARTIFACT_KINDS,
     PLAYBILL_ARTIFACT_KINDS,
     parse_projection_tree,
     registered_path_kind,
@@ -291,12 +292,14 @@ def test_query_definition_identity_and_semantic_address_follow_the_pc_a1_grammar
 
 
 def test_pc_f_activates_the_query_definition_path_kind_and_fails_closed_elsewhere() -> None:
-    assert registered_path_kind(QUERY_PATH) == "query-definition"
+    assert (
+        registered_path_kind(QUERY_PATH, artifact_kinds=P2_C_ARTIFACT_KINDS) == "query-definition"
+    )
     assert "query-definition" in {entry.kind for entry in PLAYBILL_ARTIFACT_KINDS.entries()}
     with pytest.raises(ProjectionFormatError, match="no registered format"):
-        registered_path_kind("query-definitions/Project.json")
+        registered_path_kind("query-definitions/Project.json", artifact_kinds=P2_C_ARTIFACT_KINDS)
     with pytest.raises(ProjectionFormatError, match="no registered format"):
-        registered_path_kind("queries/project.active_work.yaml")
+        registered_path_kind("queries/project.active_work.yaml", artifact_kinds=P2_C_ARTIFACT_KINDS)
     assert (
         PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-query-definition-v1")
         == QUERY_DEFINITION_ACCEPTANCE_LAW
@@ -870,6 +873,7 @@ def test_query_definition_projects_its_declaration_policy_and_references() -> No
     projection = parse_projection_tree(
         {QUERY_PATH: render_query_definition(query)},
         registry=playbill_runtime_extension_registry(),
+        artifact_kinds=P2_C_ARTIFACT_KINDS,
     )
 
     assert tuple((row.kind, row.identity) for row in projection.envelopes) == (
@@ -912,6 +916,7 @@ def test_query_definition_projection_refuses_a_malformed_registered_artifact() -
         parse_projection_tree(
             {QUERY_PATH: b'{"artifact_format":"playbill-query-definition-v1"}\n'},
             registry=playbill_runtime_extension_registry(),
+            artifact_kinds=P2_C_ARTIFACT_KINDS,
         )
 
 

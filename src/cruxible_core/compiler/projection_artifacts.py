@@ -273,7 +273,7 @@ class ParsedProjectionTree:
 def registered_path_kind(
     path: str,
     *,
-    artifact_kinds: ArtifactKindRegistry = P2_C_ARTIFACT_KINDS,
+    artifact_kinds: ArtifactKindRegistry,
 ) -> RegisteredPathKind:
     return cast(RegisteredPathKind, artifact_kinds.resolve_path(path))
 
@@ -524,7 +524,7 @@ def parse_projection_tree(
     blobs: Mapping[str, bytes],
     *,
     registry: ProjectionExtensionRegistry,
-    artifact_kinds: ArtifactKindRegistry = P2_C_ARTIFACT_KINDS,
+    artifact_kinds: ArtifactKindRegistry,
     artifact_codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
     bodies: BodyProjectionProtocol | None = None,
     coordinate: ProjectionCoordinateContext | None = None,
@@ -532,7 +532,11 @@ def parse_projection_tree(
     verified_change_sets: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
     selected_member_history: tuple[tuple[str, ChangeSetRecordAnyVersion], ...] | None = None,
 ) -> ParsedProjectionTree:
-    """Parse all registered blobs and produce one sorted, typed row stream."""
+    """Parse all registered blobs and produce one sorted, typed row stream.
+
+    The path grammar is the caller's compiler's, always named: no default can
+    know which artifact kinds a given tree's compiler admits.
+    """
 
     from cruxible_client.contracts.captures import (
         CaptureFormatError,

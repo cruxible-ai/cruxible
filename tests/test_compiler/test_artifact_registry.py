@@ -36,22 +36,28 @@ from cruxible_core.compiler.projection_artifacts import (
 )
 
 
+def _p2_c_kind(path: str) -> str:
+    """The path kind the P2-C registry resolves; the paths below all predate Triggers."""
+
+    return registered_path_kind(path, artifact_kinds=P2_C_ARTIFACT_KINDS)
+
+
 def test_pc_d_activates_procedure_and_line_paths() -> None:
-    assert registered_path_kind("governance/approval-policy.json") == "approval-policy"
-    assert registered_path_kind("claim-types/project.work_item/status.json") == "claim-type"
-    assert registered_path_kind("capture-contracts/erp-release.json") == "capture-contract"
-    assert registered_path_kind("claims/12/CLM-12" + "ab" * 15 + ".json") == "claim"
-    assert registered_path_kind("procedures/product-lot-release.json") == "procedure"
-    assert registered_path_kind("lines/product-lot-release.json") == "line"
+    assert _p2_c_kind("governance/approval-policy.json") == "approval-policy"
+    assert _p2_c_kind("claim-types/project.work_item/status.json") == "claim-type"
+    assert _p2_c_kind("capture-contracts/erp-release.json") == "capture-contract"
+    assert _p2_c_kind("claims/12/CLM-12" + "ab" * 15 + ".json") == "claim"
+    assert _p2_c_kind("procedures/product-lot-release.json") == "procedure"
+    assert _p2_c_kind("lines/product-lot-release.json") == "line"
 
 
 def test_pc_f_activates_the_query_definition_path_kind() -> None:
-    assert registered_path_kind("query-definitions/project.active_work.json") == "query-definition"
+    assert _p2_c_kind("query-definitions/project.active_work.json") == "query-definition"
     assert "query-definition" in {entry.kind for entry in PLAYBILL_ARTIFACT_KINDS.entries()}
 
 
 def test_p2_b1_activates_provider_interface_only_at_the_successor_compiler() -> None:
-    assert registered_path_kind("provider-interfaces/demo.interface.json") == ("provider-interface")
+    assert _p2_c_kind("provider-interfaces/demo.interface.json") == ("provider-interface")
     with pytest.raises(ProjectionFormatError):
         PLAYBILL_ARTIFACT_KINDS.resolve_path("provider-interfaces/demo.interface.json")
     assert (
@@ -63,7 +69,7 @@ def test_p2_b1_activates_provider_interface_only_at_the_successor_compiler() -> 
 
 
 def test_p2_c_activates_procedure_mandates_only_at_the_successor_compiler() -> None:
-    assert registered_path_kind("procedure-mandates/demo.json") == "procedure-mandate"
+    assert _p2_c_kind("procedure-mandates/demo.json") == "procedure-mandate"
     with pytest.raises(ProjectionFormatError):
         PLAYBILL_ARTIFACT_KINDS.resolve_path("procedure-mandates/demo.json")
     assert (

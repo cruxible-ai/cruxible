@@ -35,7 +35,11 @@ from cruxible_core.compiler.compiler import (
     current_compiler_coordinate,
     projection_registry_for_compiler,
 )
-from cruxible_core.compiler.projection_artifacts import ProjectionFormatError, parse_projection_tree
+from cruxible_core.compiler.projection_artifacts import (
+    P2_C_ARTIFACT_KINDS,
+    ProjectionFormatError,
+    parse_projection_tree,
+)
 from tests.test_procedures.test_line_specs import _accepted_procedure, _line
 
 
@@ -51,6 +55,7 @@ def test_pc_d_projects_procedure_graph_line_and_exact_source_mappings() -> None:
             "lines/triage-hourly.json": line_content,
         },
         registry=projection_registry_for_compiler(PC_D_COMPILER),
+        artifact_kinds=P2_C_ARTIFACT_KINDS,
     )
 
     assert tuple((row.kind, row.identity) for row in projection.envelopes) == (
@@ -155,9 +160,17 @@ def test_runtime_policy_artifact_kind_begins_at_the_p2_b0_compiler() -> None:
         ProjectionFormatError,
         match="does not recognize ProcedureRuntimePolicy",
     ):
-        parse_projection_tree(tree, registry=projection_registry_for_compiler(PC_E1_COMPILER))
+        parse_projection_tree(
+            tree,
+            registry=projection_registry_for_compiler(PC_E1_COMPILER),
+            artifact_kinds=P2_C_ARTIFACT_KINDS,
+        )
 
-    parsed = parse_projection_tree(tree, registry=projection_registry_for_compiler(P2_B0_COMPILER))
+    parsed = parse_projection_tree(
+        tree,
+        registry=projection_registry_for_compiler(P2_B0_COMPILER),
+        artifact_kinds=P2_C_ARTIFACT_KINDS,
+    )
     assert [(row.kind, row.identity) for row in parsed.envelopes] == [
         ("procedure-runtime-policy", "ProcedureRuntimePolicy:instance")
     ]
