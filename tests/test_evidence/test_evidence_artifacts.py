@@ -11,7 +11,10 @@ from cruxible_client.contracts.captures import capture_contract_path, render_cap
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.providers import provider_path, render_provider
 from cruxible_core.compiler.assembler import ProjectionAssembler
-from cruxible_core.compiler.compiler import projection_registry_for_compiler
+from cruxible_core.compiler.compiler import (
+    artifact_kinds_for_compiler,
+    projection_registry_for_compiler,
+)
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.service.authoring.documents import (
@@ -87,6 +90,7 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
     projected = parse_projection_tree(
         instance.tree_at(coordinate.git_oid),
         registry=projection_registry_for_compiler(coordinate.compiler),
+        artifact_kinds=artifact_kinds_for_compiler(coordinate.compiler),
         bodies=instance.body_store(),
         coordinate=assembler.request(output_staging_directory=publication / ".stage"),
     )

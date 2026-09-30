@@ -6,10 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
 
-from cruxible_core.triggers.config import TriggerOperationalConfigV1, load_trigger_config
+from cruxible_core.triggers import journal as trigger_journal
 from cruxible_core.triggers.journal import (
+    TriggerCadence,
     evaluate_triggers,
     journal_path,
     latest_sequence,
@@ -18,7 +18,12 @@ from cruxible_core.triggers.journal import (
 )
 
 NOW = datetime(2026, 9, 29, tzinfo=UTC)
-CONFIG = TriggerOperationalConfigV1()
+SWEEP = TriggerCadence("Trigger:evidence-sweep", "evidence.sweep", timedelta(days=1))
+RETRY = TriggerCadence(
+    "Trigger:prediction-anchor-retry", "prediction.anchor_retry", timedelta(hours=1)
+)
+# The default Triggers a new instance is seeded with, as the journal reads them.
+CONFIG = (SWEEP, RETRY)
 
 
 def instance(root: Path):  # type: ignore[no-untyped-def]
@@ -30,96 +35,118 @@ def instance(root: Path):  # type: ignore[no-untyped-def]
 def test_cadences_fire_once_when_due_and_once_after_downtime(tmp_path: Path) -> None:
     world = instance(tmp_path)
     assert trigger_events(world) == () and not journal_path(world).exists()
-    first = evaluate_triggers(world, now=NOW, config=CONFIG)
-    assert {event.name for event in first} == {"evidence.sweep", "prediction.anchor_retry"}
+    first = evaluate_triggers(world, now=NOW, cadences=CONFIG)
+    assert {event.action for event in first} == {"evidence.sweep", "prediction.anchor_retry"}
     assert all(event.due_at == event.fired_at == NOW for event in first)
-    assert evaluate_triggers(world, now=NOW, config=CONFIG) == ()
-    hourly = evaluate_triggers(world, now=NOW + timedelta(hours=1), config=CONFIG)
-    assert [event.name for event in hourly] == ["prediction.anchor_retry"]
-    resumed = evaluate_triggers(instance(tmp_path), now=NOW + timedelta(days=10), config=CONFIG)
+    assert evaluate_triggers(world, now=NOW, cadences=CONFIG) == ()
+    hourly = evaluate_triggers(world, now=NOW + timedelta(hours=1), cadences=CONFIG)
+    assert [event.action for event in hourly] == ["prediction.anchor_retry"]
+    resumed = evaluate_triggers(instance(tmp_path), now=NOW + timedelta(days=10), cadences=CONFIG)
     assert len(resumed) == 2
     assert {event.due_at for event in resumed} == {
         NOW + timedelta(hours=2),
         NOW + timedelta(days=1),
     }
-    assert evaluate_triggers(world, now=NOW + timedelta(days=10, seconds=1), config=CONFIG) == ()
+    assert evaluate_triggers(world, now=NOW + timedelta(days=10, seconds=1), cadences=CONFIG) == ()
 
 
 def test_deadline_replacement_and_rearming_are_one_shot(tmp_path: Path) -> None:
     world = instance(tmp_path)
-    evaluate_triggers(world, now=NOW, config=CONFIG)
+    evaluate_triggers(world, now=NOW, cadences=CONFIG)
     schedule_deadline(world, "next.expire", NOW + timedelta(minutes=1))
     schedule_deadline(world, "next.expire", NOW + timedelta(minutes=2))
-    assert evaluate_triggers(world, now=NOW + timedelta(minutes=1), config=CONFIG) == ()
-    (event,) = evaluate_triggers(world, now=NOW + timedelta(minutes=3), config=CONFIG)
-    assert (event.name, event.due_at, event.fired_at) == (
+    assert evaluate_triggers(world, now=NOW + timedelta(minutes=1), cadences=CONFIG) == ()
+    (event,) = evaluate_triggers(world, now=NOW + timedelta(minutes=3), cadences=CONFIG)
+    assert (event.action, event.due_at, event.fired_at) == (
         "next.expire",
         NOW + timedelta(minutes=2),
         NOW + timedelta(minutes=3),
     )
-    assert evaluate_triggers(world, now=NOW + timedelta(minutes=4), config=CONFIG) == ()
+    assert evaluate_triggers(world, now=NOW + timedelta(minutes=4), cadences=CONFIG) == ()
     schedule_deadline(world, "next.expire", NOW + timedelta(minutes=4))
-    assert len(evaluate_triggers(world, now=NOW + timedelta(minutes=4), config=CONFIG)) == 1
+    assert len(evaluate_triggers(world, now=NOW + timedelta(minutes=4), cadences=CONFIG)) == 1
 
 
 def test_durable_ordered_journal_resumes_after_a_consumer_cursor(tmp_path: Path) -> None:
     world = instance(tmp_path)
-    evaluate_triggers(world, now=NOW, config=CONFIG)
+    evaluate_triggers(world, now=NOW, cadences=CONFIG)
     (page,) = trigger_events(world, limit=1)
     cursor = page.sequence
-    evaluate_triggers(instance(tmp_path), now=NOW + timedelta(days=1), config=CONFIG)
+    evaluate_triggers(instance(tmp_path), now=NOW + timedelta(days=1), cadences=CONFIG)
     remaining = trigger_events(instance(tmp_path), after=cursor)
     all_events = trigger_events(world)
     assert (page, *remaining) == all_events
     assert [event.sequence for event in all_events] == [1, 2, 3, 4]
     assert trigger_events(world, after=remaining[-1].sequence) == ()
-    sweeps = trigger_events(world, name="evidence.sweep")
-    assert len(sweeps) == 2 and latest_sequence(world, name="evidence.sweep") == sweeps[-1].sequence
+    sweeps = trigger_events(world, action="evidence.sweep")
+    assert (
+        len(sweeps) == 2 and latest_sequence(world, action="evidence.sweep") == sweeps[-1].sequence
+    )
     with sqlite3.connect(journal_path(world)) as connection:
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             connection.execute("DELETE FROM events")
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
-            connection.execute("UPDATE events SET name='other'")
+            connection.execute("UPDATE events SET action='other'")
 
 
 def test_an_unknown_journal_is_retained_instead_of_rebuilt(tmp_path: Path) -> None:
     world = instance(tmp_path)
-    evaluate_triggers(world, now=NOW, config=CONFIG)
+    evaluate_triggers(world, now=NOW, cadences=CONFIG)
     with sqlite3.connect(journal_path(world)) as connection:
         connection.execute("PRAGMA user_version=42")
     with pytest.raises(ValueError, match="retain"):
-        evaluate_triggers(world, now=NOW, config=CONFIG)
+        evaluate_triggers(world, now=NOW, cadences=CONFIG)
     with sqlite3.connect(journal_path(world)) as connection:
         assert connection.execute("SELECT count(*) FROM events").fetchone() == (2,)
 
 
-def test_operational_config_is_closed_and_controls_intervals(tmp_path: Path) -> None:
-    assert load_trigger_config(tmp_path) == CONFIG
-    path = tmp_path / "daemon/triggers.json"
-    path.parent.mkdir()
-    for bad in (
-        '{"unknown":1}',
-        '{"evidence_sweep_interval_seconds":0}',
-        '{"prediction_anchor_retry_interval_seconds":true}',
-        '{"tag":"wrong"}',
-        "{",
-    ):
-        path.write_text(bad)
-        with pytest.raises(ValidationError):
-            load_trigger_config(tmp_path)
-    path.write_text(
-        '{"evidence_sweep_interval_seconds":2,"prediction_anchor_retry_interval_seconds":3}'
+def test_cadence_state_follows_the_accepted_trigger_set(tmp_path: Path) -> None:
+    world = instance(tmp_path)
+    first = evaluate_triggers(world, now=NOW, cadences=(SWEEP,))
+    assert [(event.action, event.trigger) for event in first] == [
+        ("evidence.sweep", "Trigger:evidence-sweep")
+    ]
+    # A new Trigger fires once, on the next tick after it is accepted.
+    added = TriggerCadence("Trigger:sweep-often", "evidence.sweep", timedelta(minutes=10))
+    (fired,) = evaluate_triggers(world, now=NOW + timedelta(minutes=1), cadences=(SWEEP, added))
+    assert (fired.action, fired.trigger) == ("evidence.sweep", "Trigger:sweep-often")
+    # Two Triggers on one action both fire into it; a worker follows the action.
+    assert evaluate_triggers(world, now=NOW + timedelta(minutes=5), cadences=(SWEEP, added)) == ()
+    (again,) = evaluate_triggers(world, now=NOW + timedelta(minutes=11), cadences=(SWEEP, added))
+    assert again.trigger == "Trigger:sweep-often" and again.due_at == NOW + timedelta(minutes=11)
+    # A changed interval takes effect from the Trigger's last fire.
+    shorter = TriggerCadence("Trigger:evidence-sweep", "evidence.sweep", timedelta(hours=1))
+    (rescheduled,) = evaluate_triggers(
+        world, now=NOW + timedelta(hours=1, minutes=5), cadences=(shorter,)
     )
-    config = load_trigger_config(tmp_path)
-    world = instance(tmp_path / "instance")
-    evaluate_triggers(world, now=NOW, config=config)
-    assert [
-        event.name
-        for event in evaluate_triggers(world, now=NOW + timedelta(seconds=2), config=config)
-    ] == ["evidence.sweep"]
+    assert (rescheduled.trigger, rescheduled.due_at) == (
+        "Trigger:evidence-sweep",
+        NOW + timedelta(hours=1),
+    )
+    # A removed Trigger stops; the one that stays keeps its own chain.
+    assert (
+        evaluate_triggers(world, now=NOW + timedelta(hours=2, minutes=5), cadences=(added,))[
+            0
+        ].trigger
+        == "Trigger:sweep-often"
+    )
+    sweeps = trigger_events(world, action="evidence.sweep")
+    assert {event.trigger for event in sweeps} == {"Trigger:evidence-sweep", "Trigger:sweep-often"}
 
 
-def test_runner_fires_before_matching_consumers(tmp_path: Path) -> None:
+def test_a_deadline_cannot_take_the_name_of_a_trigger_action(tmp_path: Path) -> None:
+    world = instance(tmp_path)
+    for name in ("", "evidence.sweep", "prediction.anchor_retry"):
+        with pytest.raises(ValueError, match="distinct from Trigger actions"):
+            schedule_deadline(world, name, NOW)
+    schedule_deadline(world, "next.expire", NOW)
+    (event,) = evaluate_triggers(world, now=NOW, cadences=())
+    assert (event.action, event.trigger) == ("next.expire", None)
+
+
+def test_runner_fires_before_matching_consumers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from cruxible_core.consumers.runner import ConsumerRunner
 
     world = instance(tmp_path)
@@ -131,6 +158,8 @@ def test_runner_fires_before_matching_consumers(tmp_path: Path) -> None:
         due=lambda *_a, **_k: (),
     )
     runner = ConsumerRunner(SimpleNamespace(), kinds=(kind,))
+    # The runner fires the live internal Triggers at the instance's accepted head.
+    monkeypatch.setattr(trigger_journal, "internal_trigger_cadences", lambda _instance: CONFIG)
     runner.match_once("instance", world, now=NOW)
     assert len(seen) == 2
 
@@ -139,7 +168,7 @@ def test_an_idle_tick_uses_only_a_read_connection_without_a_writer_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world = instance(tmp_path)
-    evaluate_triggers(world, now=NOW, config=CONFIG)
+    evaluate_triggers(world, now=NOW, cadences=CONFIG)
     schedule_deadline(world, "next.expire", NOW + timedelta(minutes=1))
     statements = []
     connections = []
@@ -157,7 +186,8 @@ def test_an_idle_tick_uses_only_a_read_connection_without_a_writer_lock(
         writer.execute("BEGIN IMMEDIATE")
         for seconds in (0, 1, 59):
             assert (
-                evaluate_triggers(world, now=NOW + timedelta(seconds=seconds), config=CONFIG) == ()
+                evaluate_triggers(world, now=NOW + timedelta(seconds=seconds), cadences=CONFIG)
+                == ()
             )
     assert len(connections) == 3
     assert all(args[0].endswith("?mode=ro") and kwargs["uri"] for args, kwargs in connections)
@@ -172,7 +202,7 @@ def test_due_triggers_are_rechecked_after_the_read_before_firing(
     from cruxible_core.triggers import journal
 
     world = instance(tmp_path)
-    evaluate_triggers(world, now=NOW, config=CONFIG)
+    evaluate_triggers(world, now=NOW, cadences=CONFIG)
     schedule_deadline(world, "next.expire", NOW + timedelta(minutes=1))
     due = journal._due_triggers
     replaced = []
@@ -187,6 +217,6 @@ def test_due_triggers_are_rechecked_after_the_read_before_firing(
         return pending
 
     monkeypatch.setattr(journal, "_due_triggers", replace_after_read)
-    assert evaluate_triggers(world, now=NOW + timedelta(minutes=1), config=CONFIG) == ()
-    (event,) = evaluate_triggers(world, now=NOW + timedelta(minutes=2), config=CONFIG)
-    assert event.name == "next.expire" and event.due_at == NOW + timedelta(minutes=2)
+    assert evaluate_triggers(world, now=NOW + timedelta(minutes=1), cadences=CONFIG) == ()
+    (event,) = evaluate_triggers(world, now=NOW + timedelta(minutes=2), cadences=CONFIG)
+    assert event.action == "next.expire" and event.due_at == NOW + timedelta(minutes=2)

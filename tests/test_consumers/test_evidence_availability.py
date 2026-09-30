@@ -14,7 +14,6 @@ from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_core.consumers.next import NEXT_QUEUE, evidence
 from cruxible_core.consumers.next.evidence import _PART as WORKER
 from cruxible_core.consumers.next.evidence import evidence_findings
-from cruxible_core.triggers.config import TriggerOperationalConfigV1
 from cruxible_core.triggers.journal import evaluate_triggers
 from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
 
@@ -36,7 +35,7 @@ def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
 
 
 def _drain(instance, *, now: datetime) -> None:  # type: ignore[no-untyped-def]
-    evaluate_triggers(instance, now=now, config=TriggerOperationalConfigV1())
+    evaluate_triggers(instance, now=now)
     manager = SimpleNamespace(get=lambda _id: instance)
     for _pass in range(16):
         NEXT_QUEUE.match(instance, now=now, daemon_id="daemon")
@@ -279,10 +278,10 @@ def test_no_sweep_or_clock_lag_without_a_fired_event(tmp_path: Path) -> None:
     assert tuple(WORKER.due(instance, now=NOW + timedelta(days=100))) == ()
     (health,) = WORKER.health(instance, now=NOW + timedelta(days=100))
     assert health.state == "running" and health.detail["sweep_completed_at"] is None
-    evaluate_triggers(instance, now=NOW, config=TriggerOperationalConfigV1())
+    evaluate_triggers(instance, now=NOW)
     (health,) = WORKER.health(instance, now=NOW)
     assert health.state == "running" and health.detail["sweep_in_progress"]
-    evaluate_triggers(instance, now=NOW + SWEEP_INTERVAL, config=TriggerOperationalConfigV1())
+    evaluate_triggers(instance, now=NOW + SWEEP_INTERVAL)
     (health,) = WORKER.health(instance, now=NOW)
     assert health.state == "lagging"
     _drain(instance, now=NOW)
@@ -295,7 +294,7 @@ def test_sweep_resumes_a_fired_event_at_its_logged_time(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     instance, capture = _world(tmp_path)
-    evaluate_triggers(instance, now=NOW, config=TriggerOperationalConfigV1())
+    evaluate_triggers(instance, now=NOW)
     WORKER.match(instance, now=NOW, daemon_id="daemon")
     monkeypatch.setattr(evidence, "CHECK_BATCH", 1)
     manager = SimpleNamespace(get=lambda _id: instance)
@@ -312,7 +311,7 @@ def test_sweep_resumes_a_fired_event_at_its_logged_time(
     (health,) = WORKER.health(instance, now=NOW)
     assert health.state == "running" and health.detail["sweep_position"] == 0
     # A restart continues this event, even if another one has fired meanwhile.
-    evaluate_triggers(instance, now=NOW + SWEEP_INTERVAL, config=TriggerOperationalConfigV1())
+    evaluate_triggers(instance, now=NOW + SWEEP_INTERVAL)
     (health,) = WORKER.health(instance, now=NOW)
     assert health.state == "lagging"
     for _ in range(4):

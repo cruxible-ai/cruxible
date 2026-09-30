@@ -79,6 +79,9 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
         "claim_resolution_policy",
         "procedure_runtime_policy",
         "query_evaluation_policy",
+        # The two Triggers every new instance is seeded with.
+        "trigger_schedule",
+        "trigger_schedule",
     ]
     assert result.policies[0].placement == "standalone"
     assert result.policies[0].field_path == "/"
@@ -109,6 +112,8 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
     assert [row.policy_kind for row in historical.policies] == [
         "approval_policy",
         "procedure_runtime_policy",
+        "trigger_schedule",
+        "trigger_schedule",
     ]
 
 
@@ -233,6 +238,9 @@ def complete_policy_inventory(
     for procedure in (live_procedure, retired_procedure):
         tree[procedure_path(procedure.identity.name)] = render_procedure(procedure)
 
+    # The seeded default Triggers are two live carriers; this inventory keeps one.
+    for path in [path for path in tree if path.startswith("triggers/")]:
+        del tree[path]
     live_trigger = action_trigger("policy-sweep", action="evidence.sweep", interval_seconds=60)
     retired_trigger = action_trigger(
         "retired-policy-sweep",

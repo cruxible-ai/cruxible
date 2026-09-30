@@ -21,7 +21,6 @@ import structlog
 
 from cruxible_core.consumers.protocol import ConsumerHealth, ConsumerKind, ConsumerWork
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
-from cruxible_core.triggers.config import TriggerOperationalConfigV1, load_trigger_config
 from cruxible_core.triggers.journal import evaluate_triggers
 
 _log = structlog.get_logger(__name__)
@@ -92,7 +91,6 @@ class ConsumerRunner:
         self.manager = manager
         self.kinds = tuple(consumer_kinds() if kinds is None else kinds)
         self.daemon_id = uuid4().hex
-        self.trigger_config = TriggerOperationalConfigV1()
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
         self._executors: dict[str, ThreadPoolExecutor] = {}
@@ -101,10 +99,9 @@ class ConsumerRunner:
 
     def start(self) -> None:
         if self.thread is None or not self.thread.is_alive():
-            from cruxible_core.server.config import get_disabled_consumers, get_server_state_root
+            from cruxible_core.server.config import get_disabled_consumers
 
             get_disabled_consumers()
-            self.trigger_config = load_trigger_config(get_server_state_root())
             self.daemon_id = uuid4().hex
             self.stop_event.clear()
             self._executors = {
@@ -136,7 +133,8 @@ class ConsumerRunner:
     def match_once(self, instance_id: str, instance: Any, *, now: datetime) -> None:
         """Match every active kind on one instance and schedule its due work."""
 
-        evaluate_triggers(instance, now=now, config=self.trigger_config)
+        # The live internal Triggers at the instance's accepted head fire here.
+        evaluate_triggers(instance, now=now)
         for kind in self.kinds:
             if not kind.active(instance):
                 continue

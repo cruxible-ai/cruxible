@@ -1639,11 +1639,10 @@ def _prediction_window_unbindable(root: Path, _monkeypatch: pytest.MonkeyPatch) 
 
     # The named repair: restore the anchor's material; the worker's retry binds it.
     restore()
-    from cruxible_core.triggers.config import TriggerOperationalConfigV1
     from cruxible_core.triggers.journal import evaluate_triggers
 
     retry_at = now + timedelta(hours=1)
-    evaluate_triggers(instance, now=retry_at, config=TriggerOperationalConfigV1())
+    evaluate_triggers(instance, now=retry_at)
     worker.drain(instance, now=retry_at)
     _assert_gone(instance, "prediction_window_unbindable", _request(instance))
 
@@ -1811,7 +1810,6 @@ def test_prediction_row_identity_stays_stable_after_the_window_closes(tmp_path: 
 def test_unbindable_prediction_row_identity_survives_an_unchanged_retry(tmp_path: Path) -> None:
     from datetime import timedelta
 
-    from cruxible_core.triggers.config import TriggerOperationalConfigV1
     from cruxible_core.triggers.journal import evaluate_triggers
     from tests.test_consumers import test_prediction_settlement as worker
 
@@ -1820,7 +1818,7 @@ def test_unbindable_prediction_row_identity_survives_an_unchanged_retry(tmp_path
     request = _request(instance)
     first = _row(instance, "prediction_window_unbindable", request)
     later = worker.served.PREDICTED_AT + timedelta(hours=1)
-    evaluate_triggers(instance, now=later, config=TriggerOperationalConfigV1())
+    evaluate_triggers(instance, now=later)
     worker.drain(instance, now=later)
     second = _row(instance, "prediction_window_unbindable", request)
     assert first == second and first.item_id == second.item_id

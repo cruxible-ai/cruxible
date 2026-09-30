@@ -228,23 +228,23 @@ exact stale JSON record under `<state-root>/daemon/provider-process-leases/`.
 Removing a record while its process may still be live abandons the recovery
 identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 
-### Trigger operational configuration
+### Internal triggers
 
-The local operator may write `<state-root>/daemon/triggers.json` while the daemon
-is stopped. This daemon-local, non-governed file has a closed shape with tag
-`cruxible-trigger-operational-config-v1`:
+The daemon's internal cadences are governed Trigger artifacts
+(`triggers/<name>.json`) aimed at an internal action, not daemon-local
+configuration. `evidence.sweep` and `prediction.anchor_retry` take a cadence
+schedule only. A new instance is initialized with `evidence-sweep` (daily) and
+`prediction-anchor-retry` (hourly); change an interval, add a Trigger, or retire
+one through an ordinary proposal. `playbill next` reports any internal action
+no live Trigger schedules.
 
-| Entry | Default | Purpose |
-|---|---:|---|
-| `evidence_sweep_interval_seconds` | `86400` | Interval between `evidence.sweep` fires. |
-| `prediction_anchor_retry_interval_seconds` | `3600` | Interval between `prediction.anchor_retry` fires. |
-
-An absent file uses the defaults. Unknown entries, non-positive or non-integer
-intervals, malformed JSON, and an unreadable file refuse consumer-loop startup.
-Cadences fire once on the first tick and once after downtime, without backfill.
-Fires and pending one-shot deadlines are retained under each instance's
+Each live cadence fires once on the first tick after it is accepted, then one
+interval after its last fire; a changed interval counts from the last fire, and
+a retired Trigger stops. Fires, which record the Trigger and the action, and
+pending one-shot deadlines are retained under each instance's
 `exhaust/triggers.sqlite3`; this append-only event log is not disposable worker
-state. Workers resume from its sequences. Library mode fires no triggers.
+state. Workers follow fires by action and resume from its sequences. Library
+mode fires no triggers.
 
 ### Proposal receive operational configuration
 

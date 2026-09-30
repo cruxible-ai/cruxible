@@ -74,7 +74,7 @@ def stored_claim_queue(
         return None
     if row[1] != door_head or row[2] is None or row[2] != verdict_input_fingerprint(instance):
         return None
-    if row[3] != latest_sequence(instance, name="next.expire"):
+    if row[3] != latest_sequence(instance, action="next.expire"):
         return None
     payload = row[4 if version == 1 else 5]
     if payload is None:
@@ -99,7 +99,7 @@ class ClaimQueuePart:
         ).model_dump_json()
         door = instance.claim_attestation_evidence_store().head()
         fingerprint = verdict_input_fingerprint(instance)
-        expiry = latest_sequence(instance, name="next.expire")
+        expiry = latest_sequence(instance, action="next.expire")
         with _STATE.open(instance) as connection:
             assert connection is not None
             targets = connection.execute(
@@ -155,7 +155,7 @@ class ClaimQueuePart:
                 (completed_expiry,) = connection.execute("SELECT expire FROM progress").fetchone()
             if work.item[3] > completed_expiry:
                 (event,) = trigger_events(
-                    instance, after=work.item[3] - 1, name="next.expire", limit=1
+                    instance, after=work.item[3] - 1, action="next.expire", limit=1
                 )
                 evaluated_at = event.fired_at
             # Both wire versions are served. V1 ignores door observations, so
@@ -221,7 +221,7 @@ class ClaimQueuePart:
         if row is None:
             return ()
         coordinate, door, generation, error, fingerprint, expiry = row
-        expiry_head = latest_sequence(instance, name="next.expire")
+        expiry_head = latest_sequence(instance, action="next.expire")
         head = AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump_json()
         door_head = instance.claim_attestation_evidence_store().head()
         inputs_changed = fingerprint != verdict_input_fingerprint(instance)

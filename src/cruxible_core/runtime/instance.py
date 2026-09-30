@@ -76,6 +76,7 @@ from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import (
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     SUPPORTED_COMPILERS,
+    artifact_kinds_for_compiler,
     current_compiler_coordinate,
 )
 from cruxible_core.compiler.projection_artifacts import (
@@ -123,6 +124,7 @@ from cruxible_core.ledger.bootstrap import (
     VerifiedGenesis,
     prepare_genesis,
     seeded_procedure_runtime_policy,
+    seeded_triggers,
     verify_genesis,
 )
 from cruxible_core.ledger.checkpoints import (
@@ -451,6 +453,18 @@ class PlaybillInstance:
                     )
                 ),
                 procedure_runtime_policy=seeded_procedure_runtime_policy(),
+                # A compiler that admits Triggers starts the instance with the
+                # default internal-action Triggers; they are governed from here on.
+                triggers=(
+                    seeded_triggers()
+                    if any(
+                        entry.kind == "trigger"
+                        for entry in artifact_kinds_for_compiler(
+                            current_compiler_coordinate()
+                        ).entries()
+                    )
+                    else ()
+                ),
                 timestamp=commit_timestamp,
             )
             descriptor = PlaybillDescriptor(

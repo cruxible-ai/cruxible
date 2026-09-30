@@ -396,7 +396,7 @@ class PredictionPart:
             resolution_stream, after=after, through=resolutions, limit=EVENT_BATCH
         )
         events = trigger_events(
-            instance, after=trigger_sequence, name="prediction.anchor_retry", limit=EVENT_BATCH
+            instance, after=trigger_sequence, action="prediction.anchor_retry", limit=EVENT_BATCH
         )
         mark = uuid4().hex
         with _STATE.open(instance) as connection:
@@ -849,7 +849,7 @@ class PredictionPart:
         with instance.accepted_history_reader() as history:
             behind = history.sequence - generation
         outstanding = trigger_events(
-            instance, after=retry_completed_sequence, name="prediction.anchor_retry", limit=2
+            instance, after=retry_completed_sequence, action="prediction.anchor_retry", limit=2
         )
         lagging = behind > GENERATION_BATCH or len(outstanding) > 1
         return (

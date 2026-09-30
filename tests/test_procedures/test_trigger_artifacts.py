@@ -363,3 +363,25 @@ def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_trig
         timestamp="2026-09-30T10:06:00.000000Z",
     )
     assert _refused(removed) == ("playbill.trigger.removal_unsupported",)
+
+
+def test_new_instances_start_with_the_default_internal_triggers(tmp_path):
+    from cruxible_core.triggers.journal import internal_trigger_cadences
+
+    instance, _owner = initialize_local(tmp_path)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    defaults = {
+        path: parse_trigger(tree[path], path=path) for path in tree if path.startswith("triggers/")
+    }
+    assert {
+        path: (item.action, item.schedule.interval_seconds) for path, item in defaults.items()
+    } == {
+        "triggers/evidence-sweep.json": ("evidence.sweep", 86400),
+        "triggers/prediction-anchor-retry.json": ("prediction.anchor_retry", 3600),
+    }
+    assert [
+        (item.action, item.interval.total_seconds()) for item in internal_trigger_cadences(instance)
+    ] == [
+        ("evidence.sweep", 86400),
+        ("prediction.anchor_retry", 3600),
+    ]

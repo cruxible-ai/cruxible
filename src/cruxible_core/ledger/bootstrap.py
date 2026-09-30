@@ -35,6 +35,13 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     parse_procedure_runtime_policy,
     render_procedure_runtime_policy,
 )
+from cruxible_client.contracts.triggers import (
+    TriggerFormatError,
+    TriggerV1,
+    parse_trigger,
+    render_trigger,
+    trigger_path,
+)
 from cruxible_client.contracts.types import (
     GenerationDescriptor,
     PlaybillTrustRoot,
@@ -122,6 +129,7 @@ def genesis_tree(
     *,
     approval_policy: ApprovalPolicyV1,
     procedure_runtime_policy: ProcedureRuntimePolicyV1 | None = None,
+    triggers: Sequence[TriggerV1] = (),
 ) -> dict[str, bytes]:
     ordered = sorted(principals, key=lambda record: record.principal_id)
     if [record.principal_id for record in ordered] != sorted(
@@ -138,7 +146,30 @@ def genesis_tree(
         tree[PROCEDURE_RUNTIME_POLICY_PATH] = render_procedure_runtime_policy(
             procedure_runtime_policy
         )
+    for trigger in triggers:
+        tree[trigger_path(trigger.identity.name)] = render_trigger(trigger)
     return tree
+
+
+#: The internal-action Triggers a new instance starts with.
+SEEDED_TRIGGER_NAMES = ("evidence-sweep", "prediction-anchor-retry")
+
+
+def seeded_triggers() -> tuple[TriggerV1, ...]:
+    """Load the checked-in default Triggers: a daily evidence sweep, an hourly anchor retry.
+
+    They are ordinary governed Triggers from the first generation on: an
+    instance changes or retires them through proposals like any other.
+    """
+
+    seeds = files("cruxible_core.governance.seed_artifacts").joinpath("triggers")
+    return tuple(
+        parse_trigger(
+            seeds.joinpath(f"{name}.json").read_bytes(),
+            path=trigger_path(name),
+        )
+        for name in SEEDED_TRIGGER_NAMES
+    )
 
 
 def seeded_procedure_runtime_policy() -> ProcedureRuntimePolicyV1:
@@ -186,17 +217,28 @@ def verify_genesis(
             )
         except ProcedureRuntimePolicyFormatError as exc:
             raise PlaybillBootstrapError("genesis Procedure runtime policy is invalid") from exc
+    triggers: list[TriggerV1] = []
+    for path in sorted(item for item in tree if item.startswith("triggers/")):
+        try:
+            triggers.append(parse_trigger(tree[path], path=path))
+        except TriggerFormatError as exc:
+            raise PlaybillBootstrapError(f"genesis Trigger is invalid: {path}") from exc
+    if triggers and tuple(triggers) != seeded_triggers():
+        raise PlaybillBootstrapError("genesis Triggers differ from the seeded defaults")
     expected_tree = genesis_tree(
         trust_root.principals,
         approval_policy=approval_policy,
         procedure_runtime_policy=runtime_policy,
+        triggers=triggers,
     )
     if set(tree) != set(expected_tree):
         raise PlaybillBootstrapError("genesis principal registry paths differ from trust root")
 
     parsed: list[PrincipalRecord] = []
     for path in sorted(expected_tree):
-        if path in {APPROVAL_POLICY_PATH, PROCEDURE_RUNTIME_POLICY_PATH}:
+        if path in {APPROVAL_POLICY_PATH, PROCEDURE_RUNTIME_POLICY_PATH} or path.startswith(
+            "triggers/"
+        ):
             if tree[path] != expected_tree[path]:  # pragma: no cover - parser already proves this
                 raise PlaybillBootstrapError("genesis approval policy is not canonical")
             continue
@@ -246,9 +288,14 @@ def prepare_genesis(
     trust_root: PlaybillTrustRoot,
     approval_policy: ApprovalPolicyV1,
     procedure_runtime_policy: ProcedureRuntimePolicyV1 | None = None,
+    triggers: Sequence[TriggerV1] = (),
     timestamp: str,
 ) -> VerifiedGenesis:
-    """Create, verify, and install the one no-parent genesis commit."""
+    """Create, verify, and install the one no-parent genesis commit.
+
+    ``triggers`` are the seeded default Triggers, given only when the
+    instance's compiler admits Trigger artifacts.
+    """
 
     tree = genesis_tree(
         trust_root.principals,
@@ -258,6 +305,7 @@ def prepare_genesis(
             if procedure_runtime_policy is None
             else procedure_runtime_policy
         ),
+        triggers=triggers,
     )
     oid = ledger.create_signed_genesis(tree, timestamp=timestamp)
     verified = verify_genesis(ledger, oid, trust_root=trust_root)
@@ -277,5 +325,6 @@ __all__ = [
     "prepare_genesis",
     "render_principal",
     "seeded_procedure_runtime_policy",
+    "seeded_triggers",
     "verify_genesis",
 ]

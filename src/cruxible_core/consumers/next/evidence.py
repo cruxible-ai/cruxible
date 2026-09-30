@@ -242,7 +242,7 @@ class EvidencePart:
         if pending is not None:
             work.append(ConsumerWork(key="events", item="events"))
         if row is not None and trigger_events(
-            instance, after=row[0], name="evidence.sweep", limit=1
+            instance, after=row[0], action="evidence.sweep", limit=1
         ):
             work.append(ConsumerWork(key="sweep", item="sweep"))
         return tuple(work)
@@ -291,7 +291,7 @@ class EvidencePart:
             sequence, after = connection.execute(
                 "SELECT sweep_sequence,sweep_after FROM progress"
             ).fetchone()
-        events = trigger_events(instance, after=sequence, name="evidence.sweep", limit=1)
+        events = trigger_events(instance, after=sequence, action="evidence.sweep", limit=1)
         if not events:
             return
         (event,) = events
@@ -370,7 +370,7 @@ class EvidencePart:
         failing = error is not None
         with instance.accepted_history_reader() as history:
             behind = history.sequence - generation
-        sweeps = trigger_events(instance, after=sequence, name="evidence.sweep", limit=2)
+        sweeps = trigger_events(instance, after=sequence, action="evidence.sweep", limit=2)
         sweep_pending = bool(sweeps)
         lagging = behind > GENERATION_BATCH or len(sweeps) > 1
         return (

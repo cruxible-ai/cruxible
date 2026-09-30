@@ -33,6 +33,7 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.projection_extensions import playbill_replay_extension_registry
 from cruxible_client.contracts.subjects import SubjectShell, render_subject
+from cruxible_core.compiler.compiler import artifact_kinds_for_compiler
 from cruxible_core.compiler.projection_artifacts import parse_projection_tree
 from cruxible_core.ledger.checkpoints import (
     checkpoint_body,
@@ -353,6 +354,7 @@ def test_accepted_projection_reads_a_crossed_ledger(
     parsed = parse_projection_tree(
         dict(reopened.tree_at(head.git_oid)),
         registry=playbill_replay_extension_registry(),
+        artifact_kinds=artifact_kinds_for_compiler(head.compiler),
         bodies=reopened.body_store(),
     )
     identities = {row.identity for row in parsed.envelopes}
