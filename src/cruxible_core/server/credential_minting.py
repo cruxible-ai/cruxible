@@ -4,12 +4,12 @@ A credential acts as exactly one principal. The admin tier lets a caller manage
 credentials at all; it never lets a caller mint one that acts as somebody else.
 Minting as principal P therefore needs, in addition, P's own authority:
 
-* the request already acts as P (a credential bound to P, or, with daemon auth
-  off, a request claiming P), or
+* the request already acts as P (a credential bound to P), or
 * P's signed consent: a fresh, single-use mint statement signed with P's key
   as registered at the accepted head.
 
 P must be registered and active. The label is a description and decides nothing.
+Minting needs daemon auth: on an auth-off daemon it is refused, never latched.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from cruxible_core.errors import PrincipalRefusedError
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.auth import ResolvedAuthContext
+from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.server.credentials import (
     CreatedRuntimeCredential,
     get_runtime_credential_store,
@@ -116,6 +117,15 @@ def mint_principal_credential(
     """Mint one credential acting as ``principal_id``, or refuse with the repair."""
 
     mode_name = permission_mode.name.lower()
+    if not is_server_auth_enabled():
+        # A bearer credential authenticates nothing here, and storing one would
+        # silently latch this state root into requiring auth on its next start.
+        raise PrincipalRefusedError(
+            "runtime_credential.auth_off",
+            "this daemon runs with auth off, so a bearer credential would authenticate "
+            "nothing; repair: restart the daemon with auth: `cruxible server start --auth`",
+            repair=RepairOperationV1(operation="server.start", arguments={"auth": True}),
+        )
     instance = get_playbill_manager().get(instance_id)
     refusal = principal_refusal(instance, principal_id, configured=True)
     if refusal is not None:

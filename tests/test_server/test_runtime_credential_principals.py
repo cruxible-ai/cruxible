@@ -298,3 +298,35 @@ def test_credentials_minted_before_principal_binding_stay_unbound(tmp_path: Path
     # Never silently rebound from its label, even though a principal "manager" may exist.
     assert record.label == "manager"
     assert record.principal_id is None
+
+
+def test_minting_on_an_auth_off_daemon_refuses_without_latching_auth(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, reviewer_key = playbill_http
+    proof = sign_runtime_credential_mint(
+        instance_id=instance_id,
+        principal_id="reviewer",
+        permission_mode="governed_write",
+        label="reviewer",
+        private_key_path=reviewer_key,
+        forbidden_roots=(),
+    )
+
+    refused = client.post(
+        f"/api/v1/{instance_id}/runtime/credentials",
+        json={
+            "principal_id": "reviewer",
+            "permission_mode": "governed_write",
+            "principal_proof": proof.model_dump(mode="json"),
+        },
+    )
+
+    assert refused.status_code == 409
+    body = refused.json()
+    assert body["error_code"] == "runtime_credential.auth_off"
+    assert "cruxible server start --auth" in body["message"]
+    assert body["repair"] == {"operation": "server.start", "arguments": {"auth": True}}
+    store = get_runtime_credential_store()
+    assert store.list_for_instance(instance_id) == []
+    assert store.is_auth_required() is False

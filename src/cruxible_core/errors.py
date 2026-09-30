@@ -244,6 +244,7 @@ PrincipalRefusalCode = Literal[
     "playbill.identity.init_owner_mismatch",
     "playbill.identity.credential_unbound",
     "playbill.identity.permission_insufficient",
+    "runtime_credential.auth_off",
     "runtime_credential.principal_authority_required",
     "runtime_credential.principal_proof_invalid",
     "runtime_credential.principal_proof_replayed",
@@ -256,6 +257,7 @@ _PRINCIPAL_REFUSAL_STATUS: dict[str, int] = {
     "playbill.identity.principal_claim_invalid": 400,
     "playbill.identity.principal_claim_mismatch": 401,
     "runtime_credential.principal_proof_replayed": 409,
+    "runtime_credential.auth_off": 409,
 }
 
 

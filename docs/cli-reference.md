@@ -95,7 +95,11 @@ registered and active (`playbill.identity.principal_absent` /
 admin credential: either the request already acts as that principal, or
 `--key-dir` signs the principal's single-use consent with its registered key
 (`runtime_credential.principal_authority_required`,
-`principal_proof_invalid`, `principal_proof_replayed`). Revoking a principal
+`principal_proof_invalid`, `principal_proof_replayed`). On a daemon with auth
+off, where a bearer credential authenticates nothing, minting is refused
+(`runtime_credential.auth_off`, repair: `cruxible server start --auth`) and
+nothing is stored, so the state root is never silently latched into requiring
+auth. Revoking a principal
 revokes every credential that acts as it: the next request with one is refused
 with `playbill.identity.principal_revoked` and the rows are marked revoked.
 Rotation keeps the principal.

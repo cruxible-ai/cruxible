@@ -359,14 +359,14 @@ def test_transport_credentials_do_not_initialize_playbill_or_a_legacy_graph(
     record = get_registry().get(instance_id)
     assert record is not None
 
-    # A credential acts as a principal, and no principal exists before init, so
-    # minting refuses rather than inventing state.
+    # With auth off a credential authenticates nothing, so minting refuses
+    # rather than inventing state or latching the state root.
     credential = host_client.post(
         f"/api/v1/{instance_id}/runtime/credentials",
         json={"principal_id": "automation", "permission_mode": "governed_write"},
     )
     assert credential.status_code == 409, credential.text
-    assert "not initialized" in credential.text
+    assert credential.json()["error_code"] == "runtime_credential.auth_off"
     assert not Path(record.location).exists()
 
     uninitialized = host_client.get(f"/api/v1/{instance_id}/playbill/documents")
