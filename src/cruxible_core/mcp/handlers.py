@@ -2255,7 +2255,8 @@ def handle_playbill_next(
     workspace = mcp_workspace_root()
     observation = observe_playbill_next_workspace(workspace)
     # Rows render as MCP tool calls, and a row whose repair is a tool this
-    # session does not advertise is hidden and counted rather than shown.
+    # session does not advertise keeps its place with the repair withheld and
+    # `repair_requires` naming the tool and profile it needs.
     from cruxible_core.mcp.curation import session_tool_names
 
     tools = tuple(sorted(session_tool_names()))

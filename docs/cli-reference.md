@@ -1605,14 +1605,18 @@ the rows held. A hold lasts only while its basis is unchanged:
 A revised Claim, a later support or contradict from the same principal, or a
 lapsed validity window ends the hold, and the row returns.
 
-A row appears only when the caller can perform its repair: each repair needs
-the permission tier of the tool that performs it (approval needs graph write;
-settle, arm and authoring need governed write; a Line dispatch needs what the
-Line's runs need). A read-only credential sees only the rows it can repair.
-`status.hidden` counts the rows and nested findings left out, and the text
-output says so. A status facet (the compiler, floor, ledger mirror and so on)
-always reports its state; when its repair is one the caller cannot perform,
-the repair is dropped and the facet carries `repair_hidden: true` instead. Each repair's `command`
+Every caller sees every row. Each repair needs the permission tier of the tool
+that performs it (approval needs graph write; settle, arm and authoring need
+governed write; a Line dispatch needs what the Line's runs need). When the
+caller cannot perform a row's repair, or a nested finding's, the row stays: its
+`repair` is withheld (`null`) and `repair_requires` names the `tool`, the `tier`
+it runs at, and `because` (`tier`, or `profile` when an MCP session's tool
+profile does not advertise it; `profile: "full"` does). The text output prints
+`repair withheld: <tool> needs the <tier> tier`. Nothing is left out, so
+`status.hidden` stays 0. A status facet (the compiler, floor, ledger mirror and
+so on) always reports its state; when its repair is one the caller cannot
+perform, the repair is dropped and the facet carries `repair_hidden: true` and
+`repair_requires` instead. Each repair's `command`
 renders for the caller's surface: a CLI command here, an MCP tool call on
 `cruxible_playbill_next`.
 Empty `items` means only that no work exists in the explicitly observed domains.

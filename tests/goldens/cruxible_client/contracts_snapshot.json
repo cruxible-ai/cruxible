@@ -24554,7 +24554,33 @@
           "json_name": "repair",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/PlaybillNextRepair"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "repair_requires": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "repair_requires",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepairRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "severity": {
@@ -24656,6 +24682,87 @@
             ],
             "title": "PlaybillNextRepair",
             "type": "object"
+          },
+          "PlaybillNextRepairRequirement": {
+            "additionalProperties": false,
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "properties": {
+              "because": {
+                "items": {
+                  "enum": [
+                    "tier",
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "title": "Because",
+                "type": "array"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.set",
+                  "playbill.write",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.proposal.approve",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "playbill.settle",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "profile": {
+                "anyOf": [
+                  {
+                    "const": "full",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Profile"
+              },
+              "tag": {
+                "const": "playbill-next-repair-requirement-v1",
+                "default": "playbill-next-repair-requirement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write",
+                  "admin"
+                ],
+                "title": "Tier",
+                "type": "string"
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "tool",
+              "tier",
+              "because"
+            ],
+            "title": "PlaybillNextRepairRequirement",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -24702,7 +24809,25 @@
             "type": "array"
           },
           "repair": {
-            "$ref": "#/$defs/PlaybillNextRepair"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repair_requires": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepairRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "severity": {
             "enum": [
@@ -24781,6 +24906,25 @@
             "default": false,
             "title": "Repair Hidden",
             "type": "boolean"
+          }
+        },
+        "repair_requires": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "repair_requires",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepairRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "state": {
@@ -24867,6 +25011,87 @@
             ],
             "title": "PlaybillNextRepair",
             "type": "object"
+          },
+          "PlaybillNextRepairRequirement": {
+            "additionalProperties": false,
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "properties": {
+              "because": {
+                "items": {
+                  "enum": [
+                    "tier",
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "title": "Because",
+                "type": "array"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.set",
+                  "playbill.write",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.proposal.approve",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "playbill.settle",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "profile": {
+                "anyOf": [
+                  {
+                    "const": "full",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Profile"
+              },
+              "tag": {
+                "const": "playbill-next-repair-requirement-v1",
+                "default": "playbill-next-repair-requirement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write",
+                  "admin"
+                ],
+                "title": "Tier",
+                "type": "string"
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "tool",
+              "tier",
+              "because"
+            ],
+            "title": "PlaybillNextRepairRequirement",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -24890,6 +25115,17 @@
             "default": false,
             "title": "Repair Hidden",
             "type": "boolean"
+          },
+          "repair_requires": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepairRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "state": {
             "title": "State",
@@ -25001,7 +25237,33 @@
           "json_name": "repair",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/PlaybillNextRepair"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "repair_requires": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "repair_requires",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepairRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "severity": {
@@ -25091,7 +25353,25 @@
                 "type": "array"
               },
               "repair": {
-                "$ref": "#/$defs/PlaybillNextRepair"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepair"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "repair_requires": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepairRequirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "severity": {
                 "enum": [
@@ -25179,6 +25459,87 @@
             ],
             "title": "PlaybillNextRepair",
             "type": "object"
+          },
+          "PlaybillNextRepairRequirement": {
+            "additionalProperties": false,
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "properties": {
+              "because": {
+                "items": {
+                  "enum": [
+                    "tier",
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "title": "Because",
+                "type": "array"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.set",
+                  "playbill.write",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.proposal.approve",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "playbill.settle",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "profile": {
+                "anyOf": [
+                  {
+                    "const": "full",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Profile"
+              },
+              "tag": {
+                "const": "playbill-next-repair-requirement-v1",
+                "default": "playbill-next-repair-requirement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write",
+                  "admin"
+                ],
+                "title": "Tier",
+                "type": "string"
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "tool",
+              "tier",
+              "because"
+            ],
+            "title": "PlaybillNextRepairRequirement",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -25235,7 +25596,25 @@
             "type": "array"
           },
           "repair": {
-            "$ref": "#/$defs/PlaybillNextRepair"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repair_requires": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepairRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "severity": {
             "enum": [
@@ -25418,6 +25797,204 @@
         "operation",
         "required_change",
         "target"
+      ]
+    },
+    "PlaybillNextRepairRequirement": {
+      "fields": {
+        "because": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "because",
+          "required": true,
+          "schema": {
+            "items": {
+              "enum": [
+                "tier",
+                "profile"
+              ],
+              "type": "string"
+            },
+            "title": "Because",
+            "type": "array"
+          }
+        },
+        "operation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operation",
+          "required": true,
+          "schema": {
+            "enum": [
+              "playbill.authoring.create",
+              "playbill.authoring.bind",
+              "playbill.claim.retire",
+              "playbill.set",
+              "playbill.write",
+              "playbill.floor.export",
+              "playbill.block.depublish",
+              "playbill.block.repin",
+              "playbill.block.sync",
+              "playbill.document.propose",
+              "playbill.proposal.readmit",
+              "playbill.proposal.approve",
+              "playbill.compiler.upgrade",
+              "playbill.line.arm",
+              "playbill.line.dispatch",
+              "playbill.settle",
+              "hand_edit"
+            ],
+            "title": "Operation",
+            "type": "string"
+          }
+        },
+        "profile": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "profile",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "const": "full",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          }
+        },
+        "tag": {
+          "default": "playbill-next-repair-requirement-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-next-repair-requirement-v1",
+            "default": "playbill-next-repair-requirement-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "tier": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tier",
+          "required": true,
+          "schema": {
+            "enum": [
+              "read_only",
+              "governed_write",
+              "graph_write",
+              "admin"
+            ],
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "tool": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tool",
+          "required": true,
+          "schema": {
+            "title": "Tool",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+        "properties": {
+          "because": {
+            "items": {
+              "enum": [
+                "tier",
+                "profile"
+              ],
+              "type": "string"
+            },
+            "title": "Because",
+            "type": "array"
+          },
+          "operation": {
+            "enum": [
+              "playbill.authoring.create",
+              "playbill.authoring.bind",
+              "playbill.claim.retire",
+              "playbill.set",
+              "playbill.write",
+              "playbill.floor.export",
+              "playbill.block.depublish",
+              "playbill.block.repin",
+              "playbill.block.sync",
+              "playbill.document.propose",
+              "playbill.proposal.readmit",
+              "playbill.proposal.approve",
+              "playbill.compiler.upgrade",
+              "playbill.line.arm",
+              "playbill.line.dispatch",
+              "playbill.settle",
+              "hand_edit"
+            ],
+            "title": "Operation",
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "const": "full",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "tag": {
+            "const": "playbill-next-repair-requirement-v1",
+            "default": "playbill-next-repair-requirement-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "tier": {
+            "enum": [
+              "read_only",
+              "governed_write",
+              "graph_write",
+              "admin"
+            ],
+            "title": "Tier",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation",
+          "tool",
+          "tier",
+          "because"
+        ],
+        "title": "PlaybillNextRepairRequirement",
+        "type": "object"
+      },
+      "required_fields": [
+        "because",
+        "operation",
+        "tier",
+        "tool"
       ]
     },
     "PlaybillNextResult": {
@@ -25699,7 +26276,25 @@
                 "type": "array"
               },
               "repair": {
-                "$ref": "#/$defs/PlaybillNextRepair"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepair"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "repair_requires": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepairRequirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "severity": {
                 "enum": [
@@ -25752,6 +26347,17 @@
                 "default": false,
                 "title": "Repair Hidden",
                 "type": "boolean"
+              },
+              "repair_requires": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepairRequirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "state": {
                 "title": "State",
@@ -25825,7 +26431,25 @@
                 "type": "array"
               },
               "repair": {
-                "$ref": "#/$defs/PlaybillNextRepair"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepair"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "repair_requires": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepairRequirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "severity": {
                 "enum": [
@@ -25913,6 +26537,87 @@
               "required_change"
             ],
             "title": "PlaybillNextRepair",
+            "type": "object"
+          },
+          "PlaybillNextRepairRequirement": {
+            "additionalProperties": false,
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "properties": {
+              "because": {
+                "items": {
+                  "enum": [
+                    "tier",
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "title": "Because",
+                "type": "array"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.set",
+                  "playbill.write",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.proposal.approve",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "playbill.settle",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "profile": {
+                "anyOf": [
+                  {
+                    "const": "full",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Profile"
+              },
+              "tag": {
+                "const": "playbill-next-repair-requirement-v1",
+                "default": "playbill-next-repair-requirement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write",
+                  "admin"
+                ],
+                "title": "Tier",
+                "type": "string"
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "tool",
+              "tier",
+              "because"
+            ],
+            "title": "PlaybillNextRepairRequirement",
             "type": "object"
           },
           "PlaybillNextStatus": {
@@ -26264,6 +26969,17 @@
                 "title": "Repair Hidden",
                 "type": "boolean"
               },
+              "repair_requires": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepairRequirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "state": {
                 "title": "State",
                 "type": "string"
@@ -26337,6 +27053,87 @@
               "required_change"
             ],
             "title": "PlaybillNextRepair",
+            "type": "object"
+          },
+          "PlaybillNextRepairRequirement": {
+            "additionalProperties": false,
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "properties": {
+              "because": {
+                "items": {
+                  "enum": [
+                    "tier",
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "title": "Because",
+                "type": "array"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.set",
+                  "playbill.write",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.proposal.approve",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "playbill.settle",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "profile": {
+                "anyOf": [
+                  {
+                    "const": "full",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Profile"
+              },
+              "tag": {
+                "const": "playbill-next-repair-requirement-v1",
+                "default": "playbill-next-repair-requirement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write",
+                  "admin"
+                ],
+                "title": "Tier",
+                "type": "string"
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "tool",
+              "tier",
+              "because"
+            ],
+            "title": "PlaybillNextRepairRequirement",
             "type": "object"
           }
         },

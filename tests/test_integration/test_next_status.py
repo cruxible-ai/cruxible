@@ -310,6 +310,9 @@ def test_a_status_repair_the_caller_cannot_perform_keeps_the_facet_but_not_the_r
         assert lower.compiler.detail == admin.compiler.detail
         assert lower.compiler.repair is None
         assert lower.compiler.repair_hidden is True
+        assert lower.compiler.repair_requires is not None
+        assert lower.compiler.repair_requires.tier == "admin"
+        assert lower.compiler.repair_requires.because == ("tier",)
         # Facets are not rows: the row count stays about rows.
         assert lower.hidden == 0
 
@@ -318,6 +321,7 @@ def test_a_status_repair_the_caller_cannot_perform_keeps_the_facet_but_not_the_r
     )
     profiled = _status(instance, mcp, caller_rung=3)
     assert profiled.compiler.repair is None and profiled.compiler.repair_hidden is True
+    assert profiled.compiler.repair_requires.because == ("profile",)
 
 
 def test_a_compiler_with_no_forward_edge_is_reported_without_a_repair(

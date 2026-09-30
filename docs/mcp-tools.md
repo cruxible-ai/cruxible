@@ -343,10 +343,15 @@ now).
 that performs it (for example `cruxible_playbill_settle(prediction_id="RSC-...")`,
 adding the observation's Claim ID), or none when its operands are local files.
 A row or nested finding whose repair the session cannot perform -- its profile
-does not advertise the tool that performs it, or its tier is too low -- is left
-out and counted in `status.hidden`. A status facet keeps its state either way,
-but drops a repair the session cannot perform and says `repair_hidden: true`. The `default` profile advertises neither
-`cruxible_playbill_settle` nor the Line tools, for example.
+does not advertise the tool that performs it, or its tier is too low -- stays in
+the queue with `repair: null` and `repair_requires: {tool, tier, because,
+profile?}` naming what running it needs, so `orient` attention and the queue
+count it for every caller and `status.hidden` stays 0. A status facet keeps its
+state either way, but drops a repair the session cannot perform and says
+`repair_hidden: true` with the same `repair_requires`. The `default` profile
+advertises neither `cruxible_playbill_settle` nor the Line tools, for example:
+a stopped Line arm still shows as `consumer_stalled`, its repair withheld with
+`because: ["profile"]`.
 
 Lists that can outgrow one answer are paged. `proposal_list`,
 `policies_in_force` and `curation_list` take `limit` and `cursor`; a cut page

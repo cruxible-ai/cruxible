@@ -487,9 +487,14 @@ def _enum_filter(kind: PlaybillOrientKindV1) -> dict[str, object] | None:
 
 def _upgrade_hint(items: Sequence[PlaybillNextItemV1]) -> PlaybillNextItemV1 | None:
     for item in items:
+        repair = item.repair
         text = " ".join(
             str(part)
-            for part in (item.reason, item.repair.command, item.repair.required_change)
+            for part in (
+                item.reason,
+                None if repair is None else repair.command,
+                None if repair is None else repair.required_change,
+            )
             if part is not None
         )
         if any(marker in text for marker in _UPGRADE_MARKERS):

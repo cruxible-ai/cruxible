@@ -5178,6 +5178,15 @@ def next_work(
             else ""
         )
         row = f"{change}{item.severity}  {item.reason}  {item.subject_identity}"
+        if item.repair is None:
+            needs = _next_requirement_hint(item.repair_requires)
+            click.echo(row + ("" if output_brief else f"  repair withheld: {needs}"))
+            if not output_brief:
+                for finding in item.findings:
+                    click.echo(
+                        f"  also: {finding.severity}  {finding.reason}  {finding.subject_identity}"
+                    )
+            continue
         if output_brief:
             click.echo(row + (f"  next={item.repair.command}" if item.repair.command else ""))
             continue
@@ -5192,6 +5201,19 @@ def next_work(
             f"Showing {len(result.items)} of {result.total_items} rows. "
             f"Next: --cursor {result.next_cursor}"
         )
+
+
+def _next_requirement_hint(requires: contracts.PlaybillNextRepairRequirement | None) -> str:
+    """What running a withheld repair needs, in one phrase."""
+
+    if requires is None:
+        return "this caller cannot run it"
+    needs = []
+    if "tier" in requires.because:
+        needs.append(f"the {requires.tier} tier")
+    if "profile" in requires.because:
+        needs.append(f"the {requires.profile} MCP tool profile")
+    return f"{requires.tool} needs " + " and ".join(needs)
 
 
 def _next_repair_hint(repair: contracts.PlaybillNextRepair) -> str:
@@ -5228,11 +5250,11 @@ def _echo_next_status(status: contracts.PlaybillNextStatus) -> None:
         repair = health.repair
         hint = None if repair is None else repair.command or repair.required_change
         if health.repair_hidden:
-            hint = "(repair needs a higher permission tier)"
+            hint = f"(repair withheld: {_next_requirement_hint(health.repair_requires)})"
         label = facet.replace("_", " ")
         click.echo(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
     if status.hidden:
-        click.echo(f"Hidden: {status.hidden} rows whose repair needs a higher permission tier")
+        click.echo(f"Hidden: {status.hidden} rows")
 
 
 @playbill_group.group("curation")
