@@ -111,11 +111,12 @@ class _V7World(_World):
         value: str = "ready",
         claim_ref: str | None = None,
         citation_role: str | None = "evidence",
+        predicate: str = PREDICATE,
     ) -> tuple[dict[str, bytes], str]:
         """Lower one Claim (or revision) and return the candidate and its path."""
 
         statement = _self_source_payload().statement.model_copy(
-            update={"object": LiteralClaimObject(value=value)}
+            update={"object": LiteralClaimObject(value=value), "predicate": predicate}
         )
         assert isinstance(statement, AuthoringClaimStatementV1)
         payload_type = (
