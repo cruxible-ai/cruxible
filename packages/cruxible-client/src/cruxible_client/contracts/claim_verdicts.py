@@ -12,7 +12,7 @@ from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvid
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, Sha256Value, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
-from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.claim_types import ClaimType, effective_evidence_requirement
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
 from cruxible_client.contracts.providers import ProviderV1
 
@@ -74,8 +74,7 @@ def _policy_digest(policy: ClaimEvidenceAdmissionPolicy) -> str:
     ).tagged
 
 
-class ClaimAdjudicationRuleV1(_StrictVerdictModel):
-    tag: Literal["playbill-claim-adjudication-rule-v1"] = "playbill-claim-adjudication-rule-v1"
+class _ClaimAdjudicationRuleBase(_StrictVerdictModel):
     claim_type_digest: str
     evidence_policy_digest: str
     shell_sensitive: bool
@@ -92,7 +91,7 @@ class ClaimAdjudicationRuleV1(_StrictVerdictModel):
         return value
 
     @model_validator(mode="after")
-    def _thresholds(self) -> "ClaimAdjudicationRuleV1":
+    def _thresholds(self) -> "_ClaimAdjudicationRuleBase":
         if (
             self.minimum_supporting_control_domains < 1
             or self.minimum_contradicting_control_domains < 1
@@ -101,15 +100,49 @@ class ClaimAdjudicationRuleV1(_StrictVerdictModel):
         return self
 
 
+class ClaimAdjudicationRuleV1(_ClaimAdjudicationRuleBase):
+    tag: Literal["playbill-claim-adjudication-rule-v1"] = "playbill-claim-adjudication-rule-v1"
+
+
+class ClaimAdjudicationRuleV2(_ClaimAdjudicationRuleBase):
+    """The v1 rule for a ClaimType whose Claims need no evidence (requirement ``none``).
+
+    Origin-only Captures count as admitted support in every branch of the verdict,
+    so the Claim is ``supported`` on its origin alone; contradicting attestations
+    still contradict and freshness still ages it.
+    """
+
+    tag: Literal["playbill-claim-adjudication-rule-v2"] = "playbill-claim-adjudication-rule-v2"
+    origin_supports: Literal[True] = True
+
+
+ClaimAdjudicationRuleAny = ClaimAdjudicationRuleV1 | ClaimAdjudicationRuleV2
+
+
+def _admitted_kinds(rule: ClaimAdjudicationRuleAny) -> frozenset[str]:
+    if isinstance(rule, ClaimAdjudicationRuleV2):
+        return frozenset({"origin_only", "direct", "derivational"})
+    return frozenset({"direct", "derivational"})
+
+
 def claim_adjudication_rule(
     claim_type: ClaimType,
     *,
     claim_type_digest: str,
-) -> ClaimAdjudicationRuleV1:
-    """Compile the conservative v1 rule from the exact accepted ClaimType."""
+) -> ClaimAdjudicationRuleAny:
+    """Compile the conservative rule from the exact accepted ClaimType.
+
+    Every ClaimType compiles the v1 rule except a v7 one whose evidence
+    requirement is ``none``, which compiles the v2 rule.
+    """
 
     ArtifactDigest.from_tagged(claim_type_digest)
-    return ClaimAdjudicationRuleV1(
+    rule_type: type[ClaimAdjudicationRuleV1] | type[ClaimAdjudicationRuleV2] = (
+        ClaimAdjudicationRuleV2
+        if effective_evidence_requirement(claim_type) == "none"
+        else ClaimAdjudicationRuleV1
+    )
+    return rule_type(
         claim_type_digest=claim_type_digest,
         evidence_policy_digest=_policy_digest(claim_type.evidence_admission_policy),
         shell_sensitive=claim_type.referent_sensitivity == "shell",
@@ -127,12 +160,12 @@ def claim_adjudication_rule(
     )
 
 
-def claim_adjudication_rule_digest(rule: ClaimAdjudicationRuleV1) -> str:
+def claim_adjudication_rule_digest(rule: ClaimAdjudicationRuleAny) -> str:
     payload = rule.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(
         Sha256Value,
-        "playbill-claim-adjudication-rule-v1",
+        rule.tag,
         payload,
     ).tagged
 
@@ -415,11 +448,12 @@ def claim_verdict_v1_compat(result: ClaimVerdictResultAny) -> ClaimVerdictResult
 def verify_claim_verdict_freshness(
     result: ClaimVerdictResultAny,
     *,
-    rule: ClaimAdjudicationRuleV1,
+    rule: ClaimAdjudicationRuleAny,
     captures: tuple[CaptureVerdictEvidenceV1, ...],
 ) -> None:
     """Refuse a v3 verdict whose committed expiration vector cannot reproduce."""
 
+    admitted_kinds = _admitted_kinds(rule)
     if rule.max_evidence_age is None:
         if isinstance(result, ClaimVerdictResultV2):
             raise ValueError(
@@ -438,7 +472,7 @@ def verify_claim_verdict_freshness(
             + timedelta(microseconds=rule.max_evidence_age.microseconds),
         )
         for item in sorted(captures, key=lambda item: item.capture_digest.encode("ascii"))
-        if item.admission in {"direct", "derivational"}
+        if item.admission in admitted_kinds
     )
     if result.freshness_expirations != expected:
         raise ValueError(
@@ -449,7 +483,7 @@ def verify_claim_verdict_freshness(
 def _capture_current(
     evidence: CaptureVerdictEvidenceV1,
     *,
-    rule: ClaimAdjudicationRuleV1,
+    rule: ClaimAdjudicationRuleAny,
     evaluation_time: datetime,
 ) -> bool:
     if evaluation_time < evidence.observed_at:
@@ -470,7 +504,7 @@ def _capture_current(
 def evaluate_claim_verdict(
     *,
     claim_statement_digest: str,
-    rule: ClaimAdjudicationRuleV1,
+    rule: ClaimAdjudicationRuleAny,
     evaluation_time: datetime,
     captures: tuple[CaptureVerdictEvidenceV1, ...],
     attestations: tuple[ClaimAttestationEvidence, ...],
@@ -494,6 +528,8 @@ def evaluate_claim_verdict(
     if resolved_authority_basis != tuple(sorted(set(resolved_authority_basis))):
         raise ValueError("Claim authority basis must be sorted and unique")
     rule_digest = claim_adjudication_rule_digest(rule)
+    # Which admissions count as support: rule v2 also counts the origin.
+    admitted_kinds = _admitted_kinds(rule)
     before_claim_interval = (
         claim_effective_from is not None and evaluation_time < claim_effective_from
     )
@@ -515,14 +551,12 @@ def evaluate_claim_verdict(
         and (not rule.shell_sensitive or item.current)
     )
     admitted_capture_digests = {
-        item.capture_digest
-        for item in current_captures
-        if item.admission in {"direct", "derivational"}
+        item.capture_digest for item in current_captures if item.admission in admitted_kinds
     }
     started_admitted_capture_digests = {
         item.capture_digest
         for item in captures
-        if item.admission in {"direct", "derivational"} and item.observed_at <= evaluation_time
+        if item.admission in admitted_kinds and item.observed_at <= evaluation_time
     }
 
     def attestation_has_relevant_captures(item: ClaimAttestationEvidence) -> bool:
@@ -530,9 +564,7 @@ def evaluate_claim_verdict(
         return bool(cited) and cited.issubset(admitted_capture_digests)
 
     support_capture_digests = {
-        item.capture_digest
-        for item in current_captures
-        if item.admission in {"direct", "derivational"}
+        item.capture_digest for item in current_captures if item.admission in admitted_kinds
     }
     support_attestations = {
         item.attestation_digest
@@ -545,9 +577,9 @@ def evaluate_claim_verdict(
         if item.statement.stance == "contradict" and attestation_has_relevant_captures(item)
     }
     support = support_capture_digests | support_attestations
-    all_support = {
-        item.capture_digest for item in captures if item.admission in {"direct", "derivational"}
-    } | {item.attestation_digest for item in attestations if item.statement.stance == "support"}
+    all_support = {item.capture_digest for item in captures if item.admission in admitted_kinds} | {
+        item.attestation_digest for item in attestations if item.statement.stance == "support"
+    }
     all_contradicting = {
         item.attestation_digest for item in attestations if item.statement.stance == "contradict"
     }
@@ -580,7 +612,7 @@ def evaluate_claim_verdict(
     elif support_satisfies or resolved_authority_basis:
         verdict = "supported"
     elif rule.max_evidence_age is not None and any(
-        item.admission in {"direct", "derivational"}
+        item.admission in admitted_kinds
         and item.observed_at <= evaluation_time
         and evaluation_time
         >= item.observed_at + timedelta(microseconds=rule.max_evidence_age.microseconds)
@@ -592,10 +624,10 @@ def evaluate_claim_verdict(
         verdict = "stale_evidence"
     elif captures or attestations:
         any_potentially_supporting = any(
-            item.admission != "origin_only" for item in captures
+            item.admission in admitted_kinds for item in captures
         ) or any(item.statement.stance != "unsure" for item in attestations)
         any_started_potential = any(
-            item.observed_at <= evaluation_time and item.admission != "origin_only"
+            item.observed_at <= evaluation_time and item.admission in admitted_kinds
             for item in captures
         ) or any(
             item.statement.observed_at <= evaluation_time
@@ -651,7 +683,7 @@ def evaluate_claim_verdict(
                     + timedelta(microseconds=rule.max_evidence_age.microseconds),
                 )
                 for item in sorted(captures, key=lambda item: item.capture_digest.encode("ascii"))
-                if item.admission in {"direct", "derivational"}
+                if item.admission in admitted_kinds
             ),
         )
         verify_claim_verdict_freshness(result, rule=rule, captures=captures)
@@ -675,7 +707,9 @@ def evaluate_claim_verdict(
 
 __all__ = [
     "CaptureVerdictEvidenceV1",
+    "ClaimAdjudicationRuleAny",
     "ClaimAdjudicationRuleV1",
+    "ClaimAdjudicationRuleV2",
     "ClaimVerdictResultV1",
     "ClaimVerdictResultV2",
     "ClaimVerdictResultAny",

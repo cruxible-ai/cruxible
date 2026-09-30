@@ -33,11 +33,12 @@ from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
     claim_type_path,
+    effective_evidence_requirement,
     parse_claim_type,
 )
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidenceV1,
-    ClaimAdjudicationRuleV1,
+    ClaimAdjudicationRuleAny,
     ClaimVerdictResultV1,
     ClaimVerdictResultV2,
     claim_adjudication_rule,
@@ -970,7 +971,7 @@ def _reproduced_claim_adjudication_rule(
     claim_type: ClaimType,
     evidence_digest: str,
     history: ClaimReadHistoryIndex,
-) -> ClaimAdjudicationRuleV1:
+) -> ClaimAdjudicationRuleAny:
     """Return the current rule when accepted evidence proves the same verdict contract.
 
     Queue-only policy changes cannot invalidate an otherwise identical
@@ -989,8 +990,18 @@ def _reproduced_claim_adjudication_rule(
             "subject_scope",
             "slot_policy",
             "attestation_consequence_policy",
+            # ClaimType v7: what a predicate means, the role a write defaults to
+            # and what a revision keeps are not part of how a verdict is reached.
+            "description",
+            "member_descriptions",
+            "default_role",
+            "revision_evidence",
+            "evidence_requirement",
         ):
             payload.pop(field, None)
+        # Only `none` changes a verdict (the origin supports); `self` is every
+        # earlier ClaimType's meaning and `captured` is enforced at acceptance.
+        payload["origin_supports"] = effective_evidence_requirement(item) == "none"
         # The v1 wire omitted the later null placeholder. Parsing preserves its
         # meaning, so normalize the historical spelling before comparison.
         payload["evidence_freshness"] = (
@@ -1061,7 +1072,7 @@ def _reproduced_claim_adjudication_rule(
 def _record_verdict_time_boundaries(
     boundaries: MutableSet[datetime],
     *,
-    rule: ClaimAdjudicationRuleV1,
+    rule: ClaimAdjudicationRuleAny,
     claim: ClaimArtifactAny,
     captures: tuple[CaptureVerdictEvidenceV1, ...],
     attestations: tuple[ClaimAttestationEvidence, ...],

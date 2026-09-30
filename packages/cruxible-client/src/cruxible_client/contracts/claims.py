@@ -63,6 +63,8 @@ from cruxible_client.contracts.claim_types import (
     AcceptedClaimType,
     ClaimType,
     claim_type_accepts_subject,
+    effective_evidence_requirement,
+    effective_revision_evidence,
 )
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidenceV1,
@@ -1692,6 +1694,7 @@ def evaluate_claim_law(
     evaluation_time: datetime | None = None,
     allow_claim_type_retirement_shape_exemption: bool = False,
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
+    claim_type_v7_semantics: bool = False,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures.
 
@@ -1699,6 +1702,20 @@ def evaluate_claim_law(
     verifies against the exact contract version it names even after that
     contract has a successor: the Claim's capture-contract pins are provenance,
     resolved in accepted history, never required to be the live head.
+
+    With `claim_type_v7_semantics` (Claim law v2 revision 8, v3 revision 10) a
+    v7 ClaimType's rules apply; every earlier ClaimType means `accumulate` and
+    `self`, so it is judged exactly as before. Off, this is the earlier law.
+
+    - A successor whose backing is byte-identical to its predecessor's is a
+      carry, not a revision: every check it had still applies, and it keeps all
+      of its backing whatever the rules say.
+    - Under `replace`, a revision that changes its statement carries exactly the
+      evidence it cites: nothing it inherited has to stay, and every
+      capture-contract pin must name the version of a Capture it cites. An
+      unchanged statement keeps accruing evidence, as under `accumulate`.
+    - `captured` refuses a new Claim or revision with no admitted Capture under a
+      declared contract; `none` records the Claim's own origin as support.
     """
 
     try:
@@ -1715,6 +1732,22 @@ def evaluate_claim_law(
             path=path,
         )
     contract: ClaimType = claim_type.claim_type
+    revision_evidence = (
+        effective_revision_evidence(contract) if claim_type_v7_semantics else "accumulate"
+    )
+    evidence_requirement = (
+        effective_evidence_requirement(contract) if claim_type_v7_semantics else "self"
+    )
+    carry = predecessor is not None and claim.backing == predecessor.claim.backing
+    replacing = bool(
+        revision_evidence == "replace"
+        and predecessor is not None
+        and not carry
+        and claim.statement
+        != predecessor.claim.statement.model_copy(
+            update={"claim_type_digest": claim.statement.claim_type_digest}
+        )
+    )
     descriptor = statement.predicate in {
         "semantic.alias",
         "semantic.distinct_from",
@@ -2068,7 +2101,7 @@ def evaluate_claim_law(
                 path=path,
             )
         old = predecessor.claim.backing
-        if not (
+        if not replacing and not (
             set(old.capture_digests).issubset(claim.backing.capture_digests)
             and set(old.attestation_digests).issubset(claim.backing.attestation_digests)
             and set(old.input_claim_digests).issubset(claim.backing.input_claim_digests)
@@ -2082,6 +2115,9 @@ def evaluate_claim_law(
             citation_capture_digests = {item.capture_digest for item in claim.backing.citations}
             if isinstance(predecessor.claim.backing, ClaimBacking):
                 implicit_legacy = set(predecessor.claim.backing.capture_digests)
+                if replacing and not implicit_legacy & set(claim.backing.capture_digests):
+                    # A replacing revision may leave the whole legacy set behind.
+                    implicit_legacy = set()
                 if citation_capture_digests.intersection(implicit_legacy):
                     return _diagnostic(
                         "playbill.claim.legacy_capture_relabeled",
@@ -2105,7 +2141,7 @@ def evaluate_claim_law(
                     - predecessor_citation_capture_digests
                 )
                 current_legacy = set(claim.backing.capture_digests) - citation_capture_digests
-                if current_legacy != predecessor_legacy:
+                if current_legacy != predecessor_legacy and not (replacing and not current_legacy):
                     return _diagnostic(
                         "playbill.claim.legacy_capture_set_changed",
                         "The implicit legacy Capture set is immutable after v2 succession.",
@@ -2114,7 +2150,7 @@ def evaluate_claim_law(
                 predecessor_citation_ids = {
                     item.citation_id for item in predecessor.claim.backing.citations
                 }
-                if not predecessor_citation_ids.issubset(
+                if not replacing and not predecessor_citation_ids.issubset(
                     item.citation_id for item in claim.backing.citations
                 ):
                     return _diagnostic(
@@ -2164,6 +2200,8 @@ def evaluate_claim_law(
     # and the contracts grouped by the contract digest a Capture names.
     known_producer_digests: dict[str, str] | None = None
     contracts_by_digest: dict[str, list[AcceptedCaptureContract]] | None = None
+    cited_contract_versions: set[str] = set()
+    captured_evidence = False
     for capture_digest_value in claim.backing.capture_digests:
         envelope = None
         resolved_contract = None
@@ -2215,6 +2253,7 @@ def evaluate_claim_law(
                 "A backing CaptureContract is not pinned by the Claim.",
                 path=path,
             )
+        cited_contract_versions.add(resolved_contract.artifact_digest)
         origin_refusal = _citation_origin_refusal(
             claim,
             capture_digest=capture_digest_value,
@@ -2289,39 +2328,50 @@ def evaluate_claim_law(
                     "A Procedure-produced Capture requires its exact accepted Procedure pin.",
                     path=path,
                 )
-        if (
-            not _capture_is_explicitly_eligible(
+        eligible = (
+            _capture_is_explicitly_eligible(
                 claim,
                 capture_digest=capture_digest_value,
             )
-            and not _self_source_capture_admitted_by_rule(
-                claim,
-                claim_type=contract,
-                capture_contract=resolved_contract,
-                capture_digest=capture_digest_value,
-            )
-            and not _copy_capture_admitted_by_rule(
+            or _self_source_capture_admitted_by_rule(
                 claim,
                 claim_type=contract,
                 capture_contract=resolved_contract,
                 capture_digest=capture_digest_value,
             )
-        ):
+            or _copy_capture_admitted_by_rule(
+                claim,
+                claim_type=contract,
+                capture_contract=resolved_contract,
+                capture_digest=capture_digest_value,
+            )
+        )
+        # Under `none` the Claim's own origin supports it, so a Capture the rules
+        # do not admit still enters the verdict as origin-only evidence.
+        if not eligible and evidence_requirement != "none":
             continue
         capture_admissions: set[Literal["origin_only", "direct", "derivational"]] = set()
-        decisions = evaluate_capture_evidence_admissions(
-            claim,
-            claim_type=contract,
-            capture_digest=capture_digest_value,
-            capture_contract=resolved_contract,
-            envelope=envelope,
-            verified_attestations=tuple(verified_attestations),
+        decisions = (
+            evaluate_capture_evidence_admissions(
+                claim,
+                claim_type=contract,
+                capture_digest=capture_digest_value,
+                capture_contract=resolved_contract,
+                envelope=envelope,
+                verified_attestations=tuple(verified_attestations),
+            )
+            if eligible
+            else ()
         )
         for decision in decisions:
             admission = decision.trace.result
             if admission.verdict == "eligible" and admission.admission is not None:
                 evidence_basis.add(admission.admission)
                 capture_admissions.add(admission.admission)
+                if resolved_contract.contract.identity.name not in (
+                    _COMPILER_SELF_ASSERTION_CONTRACT_IDS
+                ):
+                    captured_evidence = True
         if "derivational" in capture_admissions:
             capture_admission: Literal["origin_only", "direct", "derivational"] = "derivational"
         elif "direct" in capture_admissions:
@@ -2362,6 +2412,22 @@ def evaluate_claim_law(
                     envelope.commitment.materialization in {"ledger", "cas", "external"}
                 ),
             )
+        )
+    if replacing and not capture_contract_pin_digests.issubset(cited_contract_versions):
+        return _diagnostic(
+            "playbill.claim.capture_contract_pin_unbacked",
+            "Under revision_evidence 'replace', a revision that changes its statement "
+            "carries exactly the evidence it cites, so every capture-contract pin must name "
+            "the contract version of a Capture it cites.",
+            path=path,
+        )
+    if evidence_requirement == "captured" and not carry and not captured_evidence:
+        return _diagnostic(
+            "playbill.claim.captured_evidence_required",
+            f"ClaimType {contract.predicate!r} requires captured evidence: cite a Capture "
+            "taken under a declared CaptureContract that one of its evidence rules admits; "
+            "the Claim's own words cannot back it.",
+            path=path,
         )
     for mapping in claim.backing.source_mappings:
         for span in mapping.spans:

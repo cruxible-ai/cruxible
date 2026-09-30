@@ -137,8 +137,10 @@ from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_LAW_REVISION_4,
     CLAIM_LAW_V2_REVISION_7,
+    CLAIM_LAW_V2_REVISION_8,
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_LAW_V3_REVISION_9,
+    CLAIM_LAW_V3_REVISION_10,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
@@ -2748,14 +2750,24 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         accepted_referent_coordinates=context.accepted_referent_coordinates,
         evaluation_time=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
         allow_claim_type_retirement_shape_exemption=(
-            installed.coordinate in {CLAIM_LAW_V3_REVISION_8, CLAIM_LAW_V3_REVISION_9}
+            installed.coordinate
+            in {CLAIM_LAW_V3_REVISION_8, CLAIM_LAW_V3_REVISION_9, CLAIM_LAW_V3_REVISION_10}
         ),
         historical_capture_contract=(
             historical_capture_contract_resolver(
                 context.historical_artifact_provider, context.accepted_coordinate()
             )
-            if installed.coordinate in {CLAIM_LAW_V2_REVISION_7, CLAIM_LAW_V3_REVISION_9}
+            if installed.coordinate
+            in {
+                CLAIM_LAW_V2_REVISION_7,
+                CLAIM_LAW_V2_REVISION_8,
+                CLAIM_LAW_V3_REVISION_9,
+                CLAIM_LAW_V3_REVISION_10,
+            }
             else None
+        ),
+        claim_type_v7_semantics=(
+            installed.coordinate in {CLAIM_LAW_V2_REVISION_8, CLAIM_LAW_V3_REVISION_10}
         ),
     )
     if law.verdict == "refused":
@@ -2866,9 +2878,10 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted ClaimType law result is incomplete")
-    if claim_type.artifact_format == "playbill-claim-type-v6" and claim_type.lifecycle.state == (
-        "live"
-    ):
+    if claim_type.artifact_format in {
+        "playbill-claim-type-v6",
+        "playbill-claim-type-v7",
+    } and claim_type.lifecycle.state == ("live"):
         unresolved = _claim_type_v6_unresolved(context, claim_type)
         if unresolved:
             return _MemberVerdict(
