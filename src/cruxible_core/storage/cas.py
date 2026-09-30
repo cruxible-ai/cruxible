@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import stat
 import threading
 import weakref
@@ -74,6 +75,10 @@ def _read_descriptor(
     finally:
         os.close(descriptor)
     return before, b"".join(chunks), after
+
+
+_SHARD_PREFIX = re.compile(r"[0-9a-f]{2,64}")
+_OBJECT_NAME = re.compile(r"[0-9a-f]{64}")
 
 
 class ContentAddressedBodyStore:
@@ -159,6 +164,28 @@ class ContentAddressedBodyStore:
             return None
         finally:
             os.close(descriptor)
+
+    def shard_digests(self, hex_prefix: str) -> tuple[str, ...]:
+        """Every stored digest in the shard ``hex_prefix`` falls in, in byte order.
+
+        Objects are sharded by their first two hex digits, so a prefix of two or
+        more names exactly one shard; only well-formed object names are listed.
+        """
+
+        if not _SHARD_PREFIX.fullmatch(hex_prefix):
+            raise PlaybillCasError("a shard is named by two or more lowercase hex digits")
+        descriptor = self._shard(hex_prefix[:2])
+        if descriptor is None:
+            return ()
+        try:
+            names = os.listdir(descriptor)
+        finally:
+            os.close(descriptor)
+        return tuple(
+            "sha256:" + name
+            for name in sorted(names)
+            if _OBJECT_NAME.fullmatch(name) and name.startswith(hex_prefix[:2])
+        )
 
     def file_identity(self, digest: str) -> tuple[int, int, int, int, int] | None:
         """The stored object's file identity, or None when it is absent."""
@@ -428,6 +455,14 @@ class DryRunBodyStore:
             byte_length=len(held) if access.can_read_body else None,
             redacted=not access.can_read_body,
         )
+
+    def shard_digests(self, hex_prefix: str) -> tuple[str, ...]:
+        held = {
+            digest
+            for digest in self._held
+            if digest.removeprefix("sha256:").startswith(hex_prefix[:2])
+        }
+        return tuple(sorted({*self._base.shard_digests(hex_prefix), *held}))
 
     def erase(self, digest: str) -> bool:
         raise PlaybillCasError("a dry run erases nothing")

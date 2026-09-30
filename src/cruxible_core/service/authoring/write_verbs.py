@@ -137,6 +137,8 @@ _MAX_CANDIDATES = 8
 # How many of a contract's Captures about the Subject, newest first, are tried
 # for the newest one that verifies.
 _MAX_CONTRACT_CAPTURES = 32
+# How many digests sharing a handle's prefix are verified before giving up.
+_MAX_HANDLE_SCAN = 64
 # How many of a contract's newest Captures no Claim on the Subject cites are
 # read to find the ones whose own source names the Subject.
 _MAX_CONTRACT_SCAN = 256
@@ -405,6 +407,7 @@ class _Planner:
         self.exact = ExactContentReader(instance)
         self.plan = _Plan()
         self._subject_exists: dict[str, bool] = {}
+        self._verified: dict[str, bool] = {}
         self._read_sequence: int | None = None
 
     # -- accepted state ----------------------------------------------------------
@@ -880,46 +883,105 @@ class _Planner:
             )
         return None
 
-    def _captures_with_prefix(self, prefix: str, limit: int) -> list[str]:
-        with self.instance.bind_accepted_projection(self.head) as projection:
-            rows = projection.typed.connection.execute(
-                "SELECT capture_digest FROM captures WHERE capture_digest >= ? "
-                "AND capture_digest < ? ORDER BY capture_digest LIMIT ?",
-                (prefix, prefix + "g", limit),
-            ).fetchall()
-        return [str(row[0]) for row in rows]
+    def _verified_capture(self, digest: str) -> bool:
+        """Whether ``digest`` is a Capture this instance holds that verifies at the head."""
+
+        from cruxible_core.service.evidence.capture_reads import (
+            CaptureReadInvalid,
+            verify_accepted_capture,
+        )
+
+        if digest not in self._verified:
+            try:
+                verified = verify_accepted_capture(
+                    self.instance, self.head, digest, access=_VALUE_READ_ACCESS
+                )
+            except (CaptureReadInvalid, ReadRefusalError, PlaybillError, ValueError):
+                self._verified[digest] = False
+            else:
+                self._verified[digest] = not isinstance(verified, str)
+        return self._verified[digest]
+
+    def _verified_captures_with_prefix(self, hex_prefix: str) -> list[str]:
+        """The verified Captures whose digest starts with ``hex_prefix``, at most a few."""
+
+        found: list[str] = []
+        matching = (
+            digest
+            for digest in self.instance.body_store().shard_digests(hex_prefix)
+            if digest.removeprefix("sha256:").startswith(hex_prefix)
+        )
+        for position, digest in enumerate(matching):
+            if position >= _MAX_HANDLE_SCAN or len(found) > _MAX_CANDIDATES:
+                break
+            if self._verified_capture(digest):
+                found.append(digest)
+        return found
+
+    def _nearest_captures(self, hex_prefix: str) -> list[str]:
+        """Verified Captures sharing the longest digest prefix with ``hex_prefix``."""
+
+        def shared(digest: str) -> int:
+            value = digest.removeprefix("sha256:")
+            length = 0
+            while length < len(hex_prefix) and value[length] == hex_prefix[length]:
+                length += 1
+            return length
+
+        ranked = sorted(
+            self.instance.body_store().shard_digests(hex_prefix),
+            key=lambda digest: (-shared(digest), digest),
+        )
+        found = [digest for digest in ranked[:_MAX_HANDLE_SCAN] if self._verified_capture(digest)]
+        if not found:
+            # Nothing near it in its shard: the accepted Captures on either side
+            # of it in digest order, which the index answers without a scan.
+            key = "sha256:" + hex_prefix
+            half = _MAX_CANDIDATES // 2
+            with self.instance.bind_accepted_projection(self.head) as projection:
+                connection = projection.typed.connection
+                after = connection.execute(
+                    "SELECT capture_digest FROM captures WHERE capture_digest >= ? "
+                    "ORDER BY capture_digest LIMIT ?",
+                    (key, half),
+                ).fetchall()
+                before = connection.execute(
+                    "SELECT capture_digest FROM captures WHERE capture_digest < ? "
+                    "ORDER BY capture_digest DESC LIMIT ?",
+                    (key, half),
+                ).fetchall()
+            found = sorted(str(row[0]) for row in (*before, *after))
+        return found[:_MAX_CANDIDATES]
 
     def capture_by_handle(self, handle: str, *, index: int, path: str) -> str:
-        """Resolve ``CAP-<hex>`` by unique digest prefix among the accepted Captures."""
+        """Resolve ``CAP-<hex>`` by unique digest prefix among the verified Captures held.
+
+        Every Capture the instance holds counts, cited or not -- citing one for the
+        first time is the common case -- as long as it verifies against its
+        contract accepted at the head.
+        """
 
         hex_prefix = handle.removeprefix("CAP-")
-        found = self._captures_with_prefix("sha256:" + hex_prefix, _MAX_CANDIDATES + 1)
+        found = self._verified_captures_with_prefix(hex_prefix)
         if len(found) == 1:
             return found[0]
         if found:
             raise _refuse(
                 "playbill.write.capture_ambiguous",
-                f"{handle} is the prefix of more than one accepted Capture",
+                f"{handle} is the prefix of more than one verified Capture",
                 change=index,
                 candidates=_distinct_handles(found, at_least=len(hex_prefix) + 1),
                 repair="Pass a longer handle, or the full sha256 digest",
                 field_path=path,
             )
-        nearest_found: list[str] = []
-        for length in range(len(hex_prefix) - 1, -1, -1):
-            nearest_found = self._captures_with_prefix(
-                "sha256:" + hex_prefix[:length], _MAX_CANDIDATES
-            )
-            if nearest_found:
-                break
         raise _refuse(
             "playbill.write.capture_not_found",
-            f"no accepted Capture has the handle {handle}",
+            f"no verified Capture this instance holds has the handle {handle}",
             change=index,
-            candidates=_distinct_handles(nearest_found, at_least=12),
+            candidates=_distinct_handles(self._nearest_captures(hex_prefix), at_least=12),
             repair=(
-                "Name an accepted Capture: get on a Claim with detail=evidence lists the "
-                "Captures behind it; a Capture not yet cited takes its full sha256 digest"
+                "Name a Capture by the CAP- handle a run, a capture or get with "
+                "detail=evidence printed, or by its full sha256 digest"
             ),
             field_path=path,
         )

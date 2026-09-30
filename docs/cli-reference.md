@@ -1747,8 +1747,8 @@ itself for exact content (which is also its own evidence). The default evidence
 is `--because` as self evidence; `--evidence-file` cites text found once in a
 catalogued workspace file, read on this side, and `--capture` an existing
 Capture by its sha256 digest or its handle `CAP-<12+ hex>` (a digest prefix
-unique among accepted Captures; ambiguous or unknown handles refuse with the
-nearest handles). `--evidence-contract NAME` cites the newest verified Capture of
+unique among the verified Captures the instance holds, cited or not; ambiguous
+or unknown handles refuse with the nearest handles). `--evidence-contract NAME` cites the newest verified Capture of
 that CaptureContract about SUBJECT: one an accepted Claim on SUBJECT cites, or
 whose own source names SUBJECT; with none it refuses
 `playbill.write.contract_capture_not_found`. Either resolves to the digest

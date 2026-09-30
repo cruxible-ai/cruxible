@@ -175,3 +175,29 @@ def test_availability_refuses_a_fifo_without_waiting_for_a_writer(tmp_path):
     os.mkfifo(path)
     # Opening a FIFO for reading blocks until a writer appears; this must not.
     assert store.availability(digest) == "corrupt"
+
+
+def test_shard_digests_lists_one_shard_including_a_dry_runs_held_bodies(tmp_path: Path) -> None:
+    from cruxible_core.storage.cas import DryRunBodyStore
+
+    root = tmp_path / "cas"
+    root.mkdir()
+    store = ContentAddressedBodyStore(root)
+    stored = [store.store(f"body {index}".encode()).digest for index in range(40)]
+    first = stored[0].removeprefix("sha256:")
+    shard = store.shard_digests(first[:2])
+    assert stored[0] in shard and list(shard) == sorted(shard)
+    assert all(item.removeprefix("sha256:").startswith(first[:2]) for item in shard)
+    assert store.shard_digests(first[:12]) == shard  # the shard, whatever follows
+    with pytest.raises(PlaybillCasError):
+        store.shard_digests("A")
+    held: dict[str, bytes] = {}
+    dry = DryRunBodyStore(store, held)
+    extra = next(
+        dry.store(f"held {index}".encode()).digest
+        for index in range(4096)
+        if ContentAddressedBodyStore.digest_bytes(f"held {index}".encode())
+        .tagged.removeprefix("sha256:")
+        .startswith(first[:2])
+    )
+    assert extra in dry.shard_digests(first[:2]) and extra not in store.shard_digests(first[:2])

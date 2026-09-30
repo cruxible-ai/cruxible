@@ -462,13 +462,92 @@ def test_a_capture_handle_resolves_to_its_digest_before_lowering(
     assert all(item.startswith("CAP-") for item in unknown.candidates)
 
 
+def _held_captures(instance: PlaybillInstance) -> set[str]:
+    """Every Capture envelope the instance's body store holds, by digest."""
+
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    store = instance.body_store()
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    found: set[str] = set()
+    for shard in (store.root / "sha256").iterdir():
+        for digest in store.shard_digests(shard.name):
+            try:
+                parse_capture_envelope(store.read(digest, access=access))
+            except Exception:  # noqa: BLE001 - bodies of every other kind
+                continue
+            found.add(digest)
+    return found
+
+
+def test_a_capture_handle_names_a_capture_no_accepted_claim_cites_yet(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    """Citing a Capture for the first time is the common case: held and verified is enough."""
+
+    from cruxible_client.contracts.write import capture_handle
+
+    before = _held_captures(instance)
+    pending = _write(
+        instance,
+        _set(WI1, "measured", 3, evidence=report_evidence(tmp_path, "Count: 3")),
+        accept="never",
+    )
+    assert pending.status == "awaiting_approval", pending
+    (fresh,) = {
+        digest
+        for digest in _held_captures(instance) - before
+        if _contract_of(instance, digest) == REPORTS.identity.name
+    }
+    assert fresh not in _accepted_capture_digests(instance)
+    handle = capture_handle(fresh)
+    cited = _write(
+        instance, _set(WI2, "measured", 3, evidence={"kind": "capture", "capture": handle})
+    )
+    assert cited.status == "accepted", cited
+    assert cited.changes[0].capture == handle and cited.changes[0].verdict == "supported"
+    assert cited_captures(instance, cited.changes[0].claim or "") == {fresh}
+    # A held body that is not a Capture never answers a handle.
+    body = instance.body_store().store(b"not a capture").digest
+    stray = _refusal(
+        _write(
+            instance,
+            _set(WI3, "measured", 3, evidence={"kind": "capture", "capture": capture_handle(body)}),
+        )
+    )
+    assert stray.code == "playbill.write.capture_not_found"
+    assert capture_handle(body) not in stray.candidates
+
+
+def _accepted_capture_digests(instance: PlaybillInstance) -> set[str]:
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        rows = projection.typed.connection.execute("SELECT capture_digest FROM captures")
+        return {str(row[0]) for row in rows}
+
+
+def _contract_of(instance: PlaybillInstance, digest: str) -> str:
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.service.discovery.contract_names import CaptureContractNames
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            digest, access=BodyAccessContext(principal_id="test", can_read_body=True)
+        )
+    )
+    return CaptureContractNames(instance, instance.accepted_coordinate()).name(
+        envelope.capture_contract_digest
+    )
+
+
 def test_an_ambiguous_capture_handle_refuses_with_the_longer_handles(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     prefix = "sha256:" + "a" * 12
     found = [prefix + "0" * 52, prefix + "1" * 52]
     monkeypatch.setattr(
-        write_verbs._Planner, "_captures_with_prefix", lambda _self, _prefix, _limit: found
+        write_verbs._Planner, "_verified_captures_with_prefix", lambda _self, _prefix: found
     )
     refusal = _refusal(
         _write(

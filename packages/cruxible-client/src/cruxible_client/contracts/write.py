@@ -127,14 +127,14 @@ class CaptureEvidence(_StrictWriteModel):
     """An existing Capture, cited as evidence for the value.
 
     ``capture`` is its digest, or its handle ``CAP-<12+ hex>``: a digest prefix
-    unique among the accepted Captures. The handle is resolved to the digest
-    before the write is lowered.
+    unique among the verified Captures the instance holds, cited or not. The
+    handle is resolved to the digest before the write is lowered.
     """
 
     kind: Literal["capture"] = "capture"
     capture: str = Field(
         pattern=CAPTURE_REF_PATTERN,
-        description="sha256:<64 hex>, or the handle CAP-<12+ hex> of an accepted Capture.",
+        description="sha256:<64 hex>, or the handle CAP-<12+ hex> of a verified Capture.",
     )
 
 
