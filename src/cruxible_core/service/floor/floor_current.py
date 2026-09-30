@@ -57,6 +57,7 @@ from cruxible_client.contracts.claims import (
     claim_path,
 )
 from cruxible_client.contracts.errors import ProjectionIntegrityError
+from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.primitives import pretty_json
 from cruxible_client.contracts.subjects import SubjectShell, parse_subject
 from cruxible_core.indexes.history.history_index import HistoryReader
@@ -241,10 +242,6 @@ def current_path(ref: str) -> str:
 
 def claim_handle(claim: ClaimArtifactAny) -> str:
     return claim.identity.name
-
-
-def capture_handle(digest: str) -> str:
-    return "CAP-" + digest.rsplit(":", 1)[-1][:12]
 
 
 def _note(claim: ClaimArtifactAny) -> str:

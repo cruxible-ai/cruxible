@@ -368,9 +368,7 @@ def test_every_floor_reader_still_verifies_the_export(
     workspace = tmp_path_factory.mktemp("floor-workspace")
     written = materialize_playbill_floor(workspace, export=export)
     assert written.file_count == len(files)
-    record_playbill_floor_output(
-        workspace, instance_id="inst_floor", server_socket="daemon.sock"
-    )
+    record_playbill_floor_output(workspace, instance_id="inst_floor", server_socket="daemon.sock")
     status = inspect_workspace_floor(
         workspace,
         current_coordinate=PlaybillAcceptedCoordinate.model_validate(
@@ -583,3 +581,28 @@ def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
     assert "include" not in json.loads(config.read_text(encoding="utf-8"))["floor_output"]
     refresh_workspace_floor(_Client(), "inst_floor", workspace=tmp_path)  # type: ignore[arg-type]
     assert seen[-1] == {"at": None}
+
+
+def test_every_handle_the_floor_prints_resolves_through_get(world: dict[str, Any]) -> None:
+    import re
+
+    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_core.service.discovery.get import service_playbill_get
+
+    instance: PlaybillInstance = world["instance"]
+    text = "".join(
+        content.decode()
+        for path, content in world["files"].items()
+        if path.startswith("current/") and path.endswith(".yaml")
+    )
+    captures = sorted(set(re.findall(r"CAP-[0-9a-f]{12}\b", text)))
+    claims = sorted(set(re.findall(r"CLM-[0-9a-f]{32}\b", text)))
+    refs = sorted(set(re.findall(rf"^# ({KIND}/[\w-]+) ", text, re.MULTILINE)))
+    assert captures and claims and refs
+    for ref in (*captures, *claims, *refs, "Document:design-note"):
+        result = service_playbill_get(
+            instance,
+            request=PlaybillGetRequestV1(ref=ref),
+            access=BodyAccessContext(principal_id="owner"),
+        )
+        assert result.card is not None, ref
