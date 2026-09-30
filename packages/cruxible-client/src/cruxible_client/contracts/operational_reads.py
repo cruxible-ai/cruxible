@@ -81,9 +81,13 @@ class PlaybillGetLineArmV1(_StrictOperationalModel):
 
     arm: str
     state: PlaybillLineArmState
-    armed_by: str
     principal_kind: Literal["runtime_credential", "local_operator"]
+    # Who armed it: the local operator, or a runtime credential's label and id.
+    # A runtime credential's are shown only to that credential or an admin;
+    # anyone else reads ``armed_by_withheld``.
+    armed_by: str | None = Field(default=None, exclude_if=_omit_none)
     credential: str | None = Field(default=None, exclude_if=_omit_none)
+    armed_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
     armed_at: datetime
     stopped_at: datetime | None = Field(default=None, exclude_if=_omit_none)
     stop_reason: str | None = Field(default=None, exclude_if=_omit_none)
@@ -207,7 +211,12 @@ class PlaybillGetRunTriggerV1(_StrictOperationalModel):
     line: str
     occurrence: str | None = Field(default=None, exclude_if=_omit_none)
     arm: str | None = Field(default=None, exclude_if=_omit_none)
+    principal_kind: Literal["runtime_credential", "local_operator"] | None = Field(
+        default=None, exclude_if=_omit_none
+    )
+    # Withheld, as on a Line card, unless the reader is the arming credential or an admin.
     armed_by: str | None = Field(default=None, exclude_if=_omit_none)
+    armed_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
 class PlaybillGetPendingInputV1(_StrictOperationalModel):

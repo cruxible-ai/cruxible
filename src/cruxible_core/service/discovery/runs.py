@@ -33,6 +33,7 @@ from cruxible_core.exhaust.journal_index import RunLocator, RunLocatorKey
 from cruxible_core.exhaust.records import JournalStreamIdentityV1, parse_journal_payload
 from cruxible_core.procedures.execution import parse_admission_payload, procedure_line_partition
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.operational_viewer import OperationalViewer, may_see_arming
 from cruxible_core.storage.cas import BodyAccessContext
 
 _ACCESS = BodyAccessContext(principal_id="playbill-run-reads", can_read_body=True)
@@ -189,16 +190,23 @@ def _payload(instance: PlaybillInstance, digest: str) -> object:
 
 
 def _run_trigger(
-    instance: PlaybillInstance, run_id: str, line: ArtifactIdentity | None, occurrence: str | None
+    instance: PlaybillInstance,
+    run_id: str,
+    line: ArtifactIdentity | None,
+    occurrence: str | None,
+    viewer: OperationalViewer | None,
 ) -> PlaybillGetRunTriggerV1 | None:
-    """The Line, occurrence and arm that admitted a Line run; ``None`` for a direct run."""
+    """The Line, occurrence and arm that admitted a Line run; ``None`` for a direct run.
+
+    Who armed it is shown only to a reader who may see that arming credential.
+    """
 
     if line is None:
         return None
+    from cruxible_client.contracts.line_dispatch import LineArmPrincipalV1
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 
-    arm: str | None = None
-    armed_by: str | None = None
+    fields: dict[str, object] = {}
     if dispatch_root(instance).exists():
         with LineDispatchStore(instance).locked() as conn:
             row = conn.execute(
@@ -208,12 +216,17 @@ def _run_trigger(
             ).fetchone()
         if row is not None:
             data = json.loads(row[0])
-            arm = str(data.get("arm_id")) if data.get("arm_id") else None
+            if data.get("arm_id"):
+                fields["arm"] = str(data["arm_id"])
             by = data.get("armed_by")
-            armed_by = str(by.get("label")) if isinstance(by, Mapping) else None
-    return PlaybillGetRunTriggerV1(
-        line=line.qualified, occurrence=occurrence, arm=arm, armed_by=armed_by
-    )
+            if isinstance(by, Mapping):
+                principal = LineArmPrincipalV1.model_validate(by)
+                fields["principal_kind"] = principal.kind
+                if may_see_arming(viewer, principal):
+                    fields["armed_by"] = principal.label
+                else:
+                    fields["armed_by_withheld"] = True
+    return PlaybillGetRunTriggerV1(line=line.qualified, occurrence=occurrence, **fields)  # type: ignore[arg-type]
 
 
 def procedure_run_card(
@@ -222,6 +235,7 @@ def procedure_run_card(
     *,
     evaluation_time: datetime,
     render: Callable[[str, str | None], str],
+    viewer: OperationalViewer | None = None,
 ) -> PlaybillGetProcedureRunCardV1:
     """One run with its live progress, read from the journal index and a few payloads.
 
@@ -301,6 +315,18 @@ def procedure_run_card(
         if isinstance(wall, int) and wall >= 0:
             elapsed, basis = wall, "measured_wall_clock"
     line = getattr(bound, "line_identity", None)
+    trigger = _run_trigger(
+        instance,
+        run_id,
+        line if isinstance(line, ArtifactIdentity) else None,
+        bound.occurrence_id,
+        viewer,
+    )
+    # An armed run acts as its arming credential's label; that label is the
+    # arming credential's to see, as on the Line card.
+    actor = (
+        None if trigger is not None and trigger.armed_by_withheld else bound.actor_context.actor_id
+    )
     next_steps = [render(bound.procedure_identity.qualified, None)]
     if line is not None:
         next_steps.append(render(line.qualified, None))
@@ -317,13 +343,8 @@ def procedure_run_card(
         elapsed_basis=basis,
         nodes=tuple(nodes),
         pending_inputs=(),
-        triggered_by=_run_trigger(
-            instance,
-            run_id,
-            line if isinstance(line, ArtifactIdentity) else None,
-            bound.occurrence_id,
-        ),
-        actor=bound.actor_context.actor_id,
+        triggered_by=trigger,
+        actor=actor,
         receipt_digest=receipt_digest,
         terminal=terminal or None,
         next=tuple(next_steps),

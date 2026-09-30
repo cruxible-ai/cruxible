@@ -1784,7 +1784,9 @@ predicate (full, or a leaf unique across kinds) or `ClaimType:<predicate>`,
 an artifact path, or a proposal id or prefix. Operational things resolve too:
 `Line:<name>` (or the Line identity digest `next` names a due Line by, in full
 or as a 12+ hex prefix) answers the Line's Procedure, trigger, authority, its
-arms (who armed each, the principal kind, state and stop reason), due and
+arms (the principal kind, state and stop reason, and who armed each: a runtime
+credential's id and label only to that credential or an admin, otherwise
+`armed_by_withheld`), due and
 waiting occurrences and recent runs; `CAP-<12+ hex>` or `Capture:<digest>`
 answers a Capture's contract and version, observation time, size, availability
 and the Claims (and their Subjects) that cite it; `ResolutionContract:<name>`

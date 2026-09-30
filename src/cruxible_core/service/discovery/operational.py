@@ -74,6 +74,10 @@ from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.operational_viewer import (
+    OperationalViewer,
+    may_see_arming,
+)
 from cruxible_core.service.discovery.runs import run_counts, run_rows
 from cruxible_core.storage.cas import BodyAccessContext
 
@@ -233,6 +237,7 @@ def _arm(
     data: dict[str, Any],
     *,
     now: datetime,
+    viewer: OperationalViewer | None,
 ) -> PlaybillGetLineArmV1:
     active = data["stops_at"] is None
     automatic = (
@@ -262,12 +267,14 @@ def _arm(
         state = "stalled" if stalled else "running"
     else:
         state = "disarmed" if view.stop_reason in {None, "disarmed"} else "stopped"
+    visible = may_see_arming(viewer, view.armed_by)
     return PlaybillGetLineArmV1(
         arm=view.arm_id,
         state=state,
-        armed_by=view.armed_by.label,
         principal_kind=view.armed_by.kind,
-        credential=view.armed_by.credential_id,
+        armed_by=view.armed_by.label if visible else None,
+        credential=view.armed_by.credential_id if visible else None,
+        armed_by_withheld=not visible,
         armed_at=view.armed_at,
         stopped_at=view.stopped_at,
         stop_reason=view.stop_reason,
@@ -284,6 +291,7 @@ def line_operations(
     now: datetime,
     arm_limit: int = LINE_CARD_ARMS,
     occurrence_limit: int = OPERATIONAL_CARD_LIST_LIMIT,
+    viewer: OperationalViewer | None = None,
 ) -> LineOperations:
     """One Line's arms (latest first) and pending occurrences, each list bounded.
 
@@ -302,6 +310,7 @@ def line_operations(
             now=now,
             arm_limit=arm_limit,
             occurrence_limit=occurrence_limit,
+            viewer=viewer,
         )
 
 
@@ -313,6 +322,7 @@ def _line_operations(
     now: datetime,
     arm_limit: int,
     occurrence_limit: int,
+    viewer: OperationalViewer | None = None,
 ) -> LineOperations:
     stamp = str(format_datetime(now))
     arms_total = int(
@@ -329,7 +339,7 @@ def _line_operations(
         latest.setdefault(str(data["arm_id"]), data)
         if len(latest) >= arm_limit:
             break
-    arms = tuple(_arm(store, conn, data, now=now) for data in latest.values())
+    arms = tuple(_arm(store, conn, data, now=now, viewer=viewer) for data in latest.values())
     due, pending = conn.execute(
         "SELECT coalesce(sum(eligible_at<=?),0), count(*) FROM pending "
         "WHERE line_id=? AND disposition='pending'",
@@ -365,6 +375,7 @@ def line_card(
     at_head: bool,
     evaluation_time: datetime,
     render: RenderGet,
+    viewer: OperationalViewer | None = None,
 ) -> PlaybillGetLineCardV1:
     with instance.bind_accepted_projection(coordinate) as projection:
         line = cast(LineSpecV1, projection.typed.source(identity))
@@ -374,7 +385,7 @@ def line_card(
     fields: dict[str, Any] = {}
     next_steps = [render(procedure, None)]
     if at_head:
-        operations = line_operations(instance, digest, now=evaluation_time)
+        operations = line_operations(instance, digest, now=evaluation_time, viewer=viewer)
         runs, _more = run_rows(instance, limit=LINE_CARD_RUNS, line=line.identity)
         total, _running = run_counts(instance, line=line.identity)
         fields.update(
@@ -841,6 +852,7 @@ def mandate_rows(
 __all__ = [
     "HISTORICAL_NOTE",
     "LineOperations",
+    "OperationalViewer",
     "capture_card",
     "capture_contract_rows",
     "capture_count",
@@ -855,6 +867,7 @@ __all__ = [
     "mandate_card",
     "mandate_rows",
     "mandate_state",
+    "may_see_arming",
     "prediction_rows",
     "resolution_contract_card",
     "trigger_summary",

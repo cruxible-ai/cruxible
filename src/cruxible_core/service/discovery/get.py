@@ -99,6 +99,7 @@ from cruxible_core.service.discovery.operational import (
     resolution_contract_card,
     uncited_capture_present,
 )
+from cruxible_core.service.discovery.operational_viewer import OperationalViewer
 from cruxible_core.service.discovery.read_flags import (
     answer_flags,
     ordered_flags,
@@ -1711,11 +1712,14 @@ def service_playbill_get(
     *,
     request: PlaybillGetRequestV1,
     access: BodyAccessContext,
+    viewer: OperationalViewer | None = None,
 ) -> PlaybillGetResultV1:
     """Resolve one reference and answer it at one ``detail`` level.
 
     ``access`` gates Document bodies. Exact-content Claim values are Claim
-    values, so every caller reads them as text.
+    values, so every caller reads them as text. ``viewer`` is the
+    authenticated reader: a Line or run card names a runtime arming
+    credential only to that credential or an admin (``None`` sees none).
     """
 
     continuation, at = _history_continuation(instance, request)
@@ -1800,6 +1804,7 @@ def service_playbill_get(
                 at_head=at_head,
                 evaluation_time=evaluation_time,
                 render=render,
+                viewer=viewer,
             )
         elif resolved.kind == "capture":
             card = capture_card(
@@ -1815,7 +1820,11 @@ def service_playbill_get(
             )
         elif resolved.kind == "procedure_run":
             card = procedure_run_card(
-                instance, resolved.identity, evaluation_time=evaluation_time, render=render
+                instance,
+                resolved.identity,
+                evaluation_time=evaluation_time,
+                render=render,
+                viewer=viewer,
             )
         elif resolved.kind == "mandate":
             card = mandate_card(
