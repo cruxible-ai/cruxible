@@ -59,6 +59,7 @@ from cruxible_core.service.procedures.line_triggers import service_check_line_tr
 from cruxible_core.service.procedures.procedure_runs import (
     LineNeverArmed,
     LineRunRequestV1,
+    LineTriggersChanged,
     _accepted_line_by_reference,
     _journal,
     _line_admissions,
@@ -979,6 +980,7 @@ def service_dispatch_line(
                             occurrence_basis_time=occurrence.eligible_at,
                             expected_line_artifact_digest=data["line_artifact_digest"],
                             expected_trigger_artifact_digest=data.get("trigger_artifact_digest"),
+                            expected_trigger_pins=pinned_trigger_pins,
                             explicit_occurrence=session_id is None,
                         )
                         # The journal, not the execution response, establishes admission.
@@ -1020,6 +1022,8 @@ def service_dispatch_line(
                                 detail = "No durable admission was produced."
                     except LineArmSegmentEnded:
                         raise
+                    except LineTriggersChanged as exc:
+                        raise LineArmAuthorityLost("trigger_changed", _TRIGGER_CHANGED) from exc
                     except PlaybillExecutionError as exc:
                         detail = str(exc)
                     finally:

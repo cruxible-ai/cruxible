@@ -942,6 +942,10 @@ class LineTriggerMismatch(PlaybillExecutionError):
     """A run names a Trigger that does not aim at the Line, or names none when some do."""
 
 
+class LineTriggersChanged(PlaybillExecutionError):
+    """The Triggers aimed at a Line differ at admission from the set an arm pinned."""
+
+
 def select_line_trigger(
     triggers: tuple[AcceptedTriggerV1, ...],
     reference: str | None,
@@ -3746,6 +3750,7 @@ def service_run_playbill_line(
     occurrence_basis_time: datetime | None = None,
     expected_line_artifact_digest: str | None = None,
     expected_trigger_artifact_digest: str | None = None,
+    expected_trigger_pins: dict[str, str] | None = None,
     explicit_occurrence: bool = False,
 ) -> ProcedureRunStateV2:
     instance.require_writable()
@@ -3769,6 +3774,7 @@ def service_run_playbill_line(
             occurrence_basis_time=occurrence_basis_time,
             expected_line_artifact_digest=expected_line_artifact_digest,
             expected_trigger_artifact_digest=expected_trigger_artifact_digest,
+            expected_trigger_pins=expected_trigger_pins,
             explicit_occurrence=explicit_occurrence,
         )
 
@@ -3787,6 +3793,7 @@ def _run_playbill_line(
     occurrence_basis_time: datetime | None = None,
     expected_line_artifact_digest: str | None = None,
     expected_trigger_artifact_digest: str | None = None,
+    expected_trigger_pins: dict[str, str] | None = None,
     explicit_occurrence: bool = False,
 ) -> ProcedureRunStateV2:
     """Derive, admit, and execute one occurrence of an accepted Line.
@@ -3925,9 +3932,19 @@ def _run_playbill_line(
                 "repair": "Author and accept a ProcedureMandate pinning this exact Procedure."
             },
         )
+    current_triggers = line_triggers(instance, accepted_line, coordinate=coordinate)
+    if (
+        expected_trigger_pins is not None
+        and line_trigger_pins(current_triggers) != expected_trigger_pins
+    ):
+        # An arm runs only under the complete Trigger set it pinned; one added,
+        # changed or retired since dispatch checked it stops the arm instead.
+        raise LineTriggersChanged(
+            "the Triggers aimed at this Line changed after the arm pinned them"
+        )
     try:
         trigger = select_line_trigger(
-            line_triggers(instance, accepted_line, coordinate=coordinate),
+            current_triggers,
             request.trigger,
             line=accepted_line.line.identity,
         )

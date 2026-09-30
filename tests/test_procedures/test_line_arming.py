@@ -1027,3 +1027,54 @@ def _accepted_line(instance, line):  # type: ignore[no-untyped-def]
     return _accepted_line_by_reference(
         instance, coordinate=instance.accepted_coordinate(), reference=line.identity.name
     )
+
+
+def test_a_trigger_accepted_just_before_admission_stops_the_arm_instead_of_running(
+    tmp_path, monkeypatch
+):
+    import cruxible_core.service.procedures.line_dispatch as dispatch_service
+    from tests.support.lines import line_trigger, trigger_members
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, line, procedure, owner = line_world(
+        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+    )
+    start = READ_TIME + timedelta(seconds=10)
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+    )
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree.update(
+        trigger_members(
+            line_trigger(
+                "another", line=line.identity.name, schedule=CadenceScheduleV1(interval_seconds=60)
+            )
+        )
+    )
+    original = dispatch_service.service_run_playbill_line
+
+    def added_meanwhile(*args, **kwargs):  # type: ignore[no-untyped-def]
+        # Dispatch has already compared the arm's Trigger set; admission must again.
+        _accept_tree(
+            instance, owner, tree, timestamp="2026-08-28T15:02:00.000000Z", proposal_name="added"
+        )
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(dispatch_service, "service_run_playbill_line", added_meanwhile)
+    dispatch_armed_line(
+        _manager(instance), instance.descriptor.instance_id, arm, now=start + timedelta(seconds=3)
+    )
+
+    assert _admissions(instance) == 0
+    status = service_line_status(instance, line.identity.name)
+    assert (status.state, status.stop_reason) == ("stopped", "trigger_changed")
+    assert status.pending_explicit == 1
