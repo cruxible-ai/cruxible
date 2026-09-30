@@ -11,7 +11,7 @@ import json
 from collections import defaultdict
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.claims import ClaimArtifactAny, claim_artifact_digest, claim_path
+from cruxible_client.contracts.claims import ClaimArtifactAny
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.primitives import pretty_json
 from cruxible_client.contracts.proposal_models import (
@@ -23,6 +23,18 @@ from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProject
 from cruxible_core.proposals.proposal_notes import admission_bytes, evaluation_bytes
 from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.floor.floor_current import (
+    PROVENANCE_SUBJECTS_PREFIX,
+    ValueRenderer,
+    accepted_claim_types,
+    accepted_subjects,
+    claim_verdicts,
+    claims_by_subject,
+    current_path,
+    floor_stamp,
+    render_subject,
+    stamped,
+)
 
 MAX_REVIEW_SNAPSHOT_BYTES = 64 * 1024 * 1024
 
@@ -99,42 +111,39 @@ def current_content(
     notes_oid: str | None,
 ) -> dict[str, bytes]:
     context, context_status = review_context(instance, notes_oid)
-    grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
+    live = tuple(claim for claim in claims if claim.lifecycle.state == "live")
+    grouped = claims_by_subject(live)
+    shells = accepted_subjects(instance, coordinate)
+    claim_types = accepted_claim_types(instance, coordinate)
+    values = ValueRenderer()
+    files: dict[str, bytes] = {}
     relevant_changes: dict[int, tuple[AcceptedGenerationLocation, ChangeSetRecordAnyVersion]] = {}
+    records = instance.retained_record_reader()
     with instance.accepted_history_reader(
         at=AcceptedCoordinate.from_internal(coordinate)
     ) as history:
-        for claim in claims:
-            if claim.lifecycle.state != "live":
-                continue
-            location = history.latest_member(claim_path(claim.identity.name))
-            sequence = None if location is None else location.sequence
-            if location is not None and location.sequence not in relevant_changes:
-                relevant_changes[location.sequence] = (
-                    history.generation(location.sequence),
-                    history.read_member_record(location, instance.blob_at),
-                )
-            grouped[claim.statement.subject.artifact_path].append(
-                {
-                    "claim": claim.identity.qualified,
-                    "artifact_digest": claim_artifact_digest(claim).tagged,
-                    "statement": claim.statement.model_dump(mode="json"),
-                    "latest_change_sequence": sequence,
-                }
+        stamp = floor_stamp(instance, coordinate, history)
+        verdicts = claim_verdicts(instance, coordinate, live, evaluation_time=stamp.accepted_at)
+        for path, shell in shells.items():
+            part = render_subject(
+                path=path,
+                shell=shell,
+                claims=grouped.get(path, ()),
+                claim_types=claim_types,
+                accepted_predicates=frozenset(claim_types),
+                verdicts=verdicts,
+                values=values,
+                history=history,
             )
-    files: dict[str, bytes] = {}
-    for subject, rows in sorted(grouped.items()):
-        relative = subject.removeprefix("subjects/")
-        sorted_claims = sorted(rows, key=lambda row: str(row["claim"]).encode())
-        files["current/" + relative] = _render(
-            {
-                "subject": subject,
-                "scope": (
-                    "all live accepted Claims; contenders are preserved; no current verdict implied"
-                ),
-                "claims": sorted_claims,
-            }
-        )
+            files[current_path(part.ref)] = stamped(part, stamp)
+            files[f"{PROVENANCE_SUBJECTS_PREFIX}{part.ref}.json"] = part.provenance
+            for sequence in part.sequences:
+                if sequence not in relevant_changes:
+                    generation = history.generation(sequence)
+                    relevant_changes[sequence] = (
+                        generation,
+                        history.read_generation_record(sequence, records),
+                    )
     for sequence, (generation, record) in sorted(relevant_changes.items()):
         review_entries = tuple(
             row
@@ -173,8 +182,11 @@ def current_content(
     )
     files["README.md"] = (
         "# Playbill searchable floor\n\n"
-        "Start with current/ for full live Claim values, including competing values. "
-        "These are accepted statements, not time-relative supported verdicts.\n\n"
+        "Start with current/<kind>/<id>.yaml: one file per Subject, its first line "
+        "the ref, kind and accepted coordinate, then each field's current value "
+        "(every value of a many-valued or contested field), each followed by the "
+        "Claim and Captures that state it, then the verdict flags as of that "
+        "coordinate. Digests and full statements are under provenance/subjects/.\n\n"
         "subjects/ and claim-types/ provide bounded discovery summaries. "
         "provenance/ contains the latest changes behind current Claims and separately "
         "attributed review rationale, where retained in the pinned Git notes snapshot.\n\n"
