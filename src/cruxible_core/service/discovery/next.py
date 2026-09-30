@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import shlex
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -3901,6 +3901,10 @@ def _consumers_health(
             for health in healths
             if health.kind == kind.name
         )
+    # Armed Lines are governed consumers: their health is not a finding the
+    # facet's state is about, but an instance caller reads it here without
+    # the daemon's registry.
+    arms = Counter(health.state for health in healths if health.kind == "line")
     states = {str(worker["state"]) for worker in workers}
     state = (
         "not_running"
@@ -3911,7 +3915,14 @@ def _consumers_health(
         if "lagging" in states
         else "current"
     )
-    return PlaybillNextHealthV1(state=state, detail={"workers": workers})
+    detail: dict[str, object] = {"workers": workers}
+    if arms:
+        detail["line_arms"] = {
+            "running": arms["running"],
+            "stalled": arms["stalled"],
+            "stopped": arms["stopped"],
+        }
+    return PlaybillNextHealthV1(state=state, detail=detail)
 
 
 def _procedure_catalog_health(

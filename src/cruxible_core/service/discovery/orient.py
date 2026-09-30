@@ -34,6 +34,7 @@ from cruxible_client.contracts.orient import (
     PLAYBILL_ORIENT_DEFAULT_LIMIT,
     PLAYBILL_ORIENT_DEFAULT_QUERIES,
     PLAYBILL_ORIENT_SAMPLE_SUBJECTS,
+    PlaybillOrientArmsV1,
     PlaybillOrientArtifactCountsV1,
     PlaybillOrientAttentionV1,
     PlaybillOrientDocumentV1,
@@ -530,6 +531,8 @@ def _attention(
     caller_rung: int | None,
     surface: PlaybillOrientSurface,
     caller_tools: tuple[str, ...] | None,
+    provider_lane: contracts.ProviderLaneStatusV1 | None = None,
+    consumers_running: bool = False,
 ) -> tuple[PlaybillOrientAttentionV1, bool]:
     notes: list[str] = []
     terminal = instance.descriptor.decommissioned
@@ -571,6 +574,17 @@ def _attention(
             f"{state.digest_named} {noun} CaptureContracts by digest; run evidence_rules_upgrade"
         )
         upgrade = True
+    arms = _arms(instance, evaluation_time=evaluation_time)
+    if provider_lane is not None and provider_lane.state == "unavailable":
+        notes.append(
+            f"the provider lane is unavailable ({provider_lane.code}): Procedures that call "
+            "providers refuse until the daemon's provider runtime is repaired"
+        )
+    if arms is not None and arms.running + arms.stalled and not consumers_running:
+        notes.append(
+            "the daemon's consumer loop is not running here: armed Lines do not admit their "
+            "own work and worker findings do not advance until a daemon runs it"
+        )
     open_proposals = len(service_list_playbill_proposals(instance, status="open").entries)
     return (
         PlaybillOrientAttentionV1(
@@ -578,8 +592,32 @@ def _attention(
             open_proposals=open_proposals,
             top=tuple(_line(item) for item in items[:PLAYBILL_ORIENT_ATTENTION_TOP]),
             notes=tuple(notes),
+            arms=arms,
         ),
         upgrade,
+    )
+
+
+def _arms(instance: PlaybillInstance, *, evaluation_time: datetime) -> PlaybillOrientArmsV1 | None:
+    """Every Line's latest arm as the Line consumer reports it, read from the instance alone."""
+
+    from cruxible_core.consumers.lines import LINE_STALL_AFTER
+    from cruxible_core.service.procedures.line_dispatch import line_arm_health
+
+    health = line_arm_health(instance, now=evaluation_time, stall_after=LINE_STALL_AFTER)
+    if not health:
+        return None
+    counts = Counter(state for state, _arm in health)
+    flagged = [
+        f"{arm.line} {state}" + (f" ({arm.stop_reason})" if arm.stop_reason else "")
+        for state, arm in health
+        if state != "running"
+    ]
+    return PlaybillOrientArmsV1(
+        running=counts["running"],
+        stalled=counts["stalled"],
+        stopped=counts["stopped"],
+        needs_attention=tuple(flagged[:PLAYBILL_ORIENT_ATTENTION_TOP]),
     )
 
 
@@ -832,6 +870,8 @@ def service_playbill_orient(
         caller_rung=caller_rung,
         surface=surface,
         caller_tools=caller_tools,
+        provider_lane=provider_lane,
+        consumers_running=consumers_running,
     )
     focus = max(kinds_page, key=lambda row: (row.subjects, len(row.predicates)), default=None)
     if focus is not None:

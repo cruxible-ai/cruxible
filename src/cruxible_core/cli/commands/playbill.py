@@ -5255,6 +5255,16 @@ def _echo_next_status(status: contracts.PlaybillNextStatus) -> None:
             hint = f"(repair withheld: {_next_requirement_hint(health.repair_requires)})"
         label = facet.replace("_", " ")
         click.echo(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
+    arms = (
+        status.consumers.detail.get("line_arms")
+        if isinstance(status.consumers.detail, dict)
+        else None
+    )
+    if isinstance(arms, dict) and (arms.get("stalled") or arms.get("stopped")):
+        click.echo(
+            f"Status: line arms stalled={arms.get('stalled', 0)} stopped={arms.get('stopped', 0)}"
+            "  next=cruxible playbill orient --section lines"
+        )
     if status.hidden:
         click.echo(f"Hidden: {status.hidden} rows")
 
@@ -5858,6 +5868,13 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         )
         lines.extend(f"  {line}" for line in attention["top"])
         lines.extend(f"  note: {line}" for line in attention.get("notes", ()))
+        arms = attention.get("arms")
+        if arms is not None:
+            lines.append(
+                f"  Line arms: running={arms['running']} stalled={arms['stalled']} "
+                f"stopped={arms['stopped']}"
+            )
+            lines.extend(f"    {line}" for line in arms.get("needs_attention", ()))
     if result.get("next"):
         lines.append("Next:")
         lines.extend(f"  {line}" for line in result["next"])

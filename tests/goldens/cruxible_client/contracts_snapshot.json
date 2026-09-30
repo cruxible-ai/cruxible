@@ -27780,6 +27780,40 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "PlaybillOrientArmsV1": {
+            "additionalProperties": false,
+            "description": "The instance's armed Lines as its Line consumer reports them, no daemon scope needed.\n\n``running`` arms are admitting their own due work; ``stalled`` ones have\ndue work older than the stall horizon; ``stopped`` ones stopped for any\nreason but a deliberate disarm. ``needs_attention`` names up to three\nstalled or stopped Lines (``Line:<name> stopped (<reason>)``), each a\n``get`` reference.",
+            "properties": {
+              "needs_attention": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Needs Attention",
+                "type": "array"
+              },
+              "running": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Running",
+                "type": "integer"
+              },
+              "stalled": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Stalled",
+                "type": "integer"
+              },
+              "stopped": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Stopped",
+                "type": "integer"
+              }
+            },
+            "title": "PlaybillOrientArmsV1",
+            "type": "object"
+          },
           "PlaybillOrientArtifactCountsV1": {
             "additionalProperties": false,
             "description": "How many of each family exist; each operational family is its own section.\n\n``lines``, ``capture_contracts``, ``resolution_contracts`` and ``mandates``\ncount accepted artifacts, ``captures`` the Captures accepted Claims cite,\nand ``runs`` / ``running`` the Procedure runs admitted and still running.",
@@ -27866,6 +27900,17 @@
             "additionalProperties": false,
             "description": "What the ``next`` queue holds, and anything else the instance needs.",
             "properties": {
+              "arms": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillOrientArmsV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "next_items": {
                 "minimum": 0,
                 "title": "Next Items",

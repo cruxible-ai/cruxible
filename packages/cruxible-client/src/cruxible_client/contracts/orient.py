@@ -197,6 +197,22 @@ class PlaybillOrientInterfaceV1(_StrictOrientModel):
     providers: tuple[str, ...] = ()
 
 
+class PlaybillOrientArmsV1(_StrictOrientModel):
+    """The instance's armed Lines as its Line consumer reports them, no daemon scope needed.
+
+    ``running`` arms are admitting their own due work; ``stalled`` ones have
+    due work older than the stall horizon; ``stopped`` ones stopped for any
+    reason but a deliberate disarm. ``needs_attention`` names up to three
+    stalled or stopped Lines (``Line:<name> stopped (<reason>)``), each a
+    ``get`` reference.
+    """
+
+    running: int = Field(default=0, ge=0)
+    stalled: int = Field(default=0, ge=0)
+    stopped: int = Field(default=0, ge=0)
+    needs_attention: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
+
+
 class PlaybillOrientAttentionV1(_StrictOrientModel):
     """What the ``next`` queue holds, and anything else the instance needs."""
 
@@ -204,6 +220,8 @@ class PlaybillOrientAttentionV1(_StrictOrientModel):
     open_proposals: int = Field(ge=0)
     top: tuple[str, ...] = ()
     notes: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
+    # Present when any Line was ever armed on this instance.
+    arms: PlaybillOrientArmsV1 | None = Field(default=None, exclude_if=_is_none)
 
 
 class PlaybillOrientResultV1(_StrictOrientModel):
@@ -273,6 +291,7 @@ __all__ = [
     "PLAYBILL_ORIENT_DEFAULT_QUERIES",
     "PLAYBILL_ORIENT_MAX_LIMIT",
     "PLAYBILL_ORIENT_SAMPLE_SUBJECTS",
+    "PlaybillOrientArmsV1",
     "PlaybillOrientArtifactCountsV1",
     "PlaybillOrientAttentionV1",
     "PlaybillOrientDocumentV1",

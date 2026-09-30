@@ -1589,8 +1589,10 @@ generations or overdue on its sweep; this is the facet that asks for
 attention), `stalled` (already a `consumer_stalled` row), or `not_running` when
 no consumer loop is running, as in a library read. There, worker rows stand as
 of each worker's last pass. `detail.workers` lists each built-in worker's state
-and cursor, including disabled ones. Worker-derived rows carry when they were
-observed in their own detail.
+and cursor, including disabled ones, and `detail.line_arms` counts the
+instance's armed Lines as `running`, `stalled` or `stopped` (the text header
+prints `Status: line arms ...` when any is stalled or stopped). Worker-derived
+rows carry when they were observed in their own detail.
 
 A current `unsure` examined attestation holds a row, and `status.held` counts
 the rows held. A hold lasts only while its basis is unchanged:
@@ -1826,7 +1828,12 @@ kind with its live Subject count and its predicates (short name, cardinality,
 type or enum members, and the CaptureContracts whose evidence the ClaimType
 admits, by name), the artifact counts, the named queries with their parameters,
 who you are and whether you can author (and why not), what the `next` queue
-holds, and the next commands to run. When any live ClaimType still names
+holds, and the next commands to run. When any Line was ever armed, attention
+counts the arms as the instance's Line consumer reports them (running,
+stalled, stopped) and names up to three stalled or stopped Lines with the stop
+reason, for any caller of the instance, without daemon scope; it also notes
+when armed Lines have no consumer loop running here and when the provider lane
+is unavailable. When any live ClaimType still names
 CaptureContracts by digest, attention says so and suggests
 `cruxible playbill claim-type upgrade-evidence-rules`.
 
