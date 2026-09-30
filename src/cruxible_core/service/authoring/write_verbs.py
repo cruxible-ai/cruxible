@@ -61,6 +61,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    classify_capture_reuse,
     foreign_source_capture_contract,
     parse_capture_envelope,
 )
@@ -87,6 +88,7 @@ from cruxible_client.contracts.get_reads import (
     PlaybillReadSurface,
     summary_value,
 )
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_client.contracts.temporal import utc_now
@@ -96,17 +98,22 @@ from cruxible_client.contracts.write import (
     ApprovalReason,
     CaptureEvidence,
     ChangeOutcome,
+    ContractEvidence,
+    ExpectedValue,
     FileEvidence,
+    NewerCaptureNotCitableWarning,
     PlaybillWriteRequestV1,
     RetireChange,
     SelfEvidence,
     SetChange,
     SlotRef,
+    VerdictNotSupportedWarning,
     WriteOutcome,
     WriteProposalRef,
     WriteRefusal,
     WriteStatus,
     WriteWarning,
+    capture_handle,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import ComputedPreflight
@@ -129,6 +136,16 @@ from cruxible_core.storage.cas import BodyAccessContext
 
 _AUTHORABLE_ROLES = ("normative", "observation", "environment_binding")
 _MAX_CANDIDATES = 8
+# How many of a contract's Captures about the Subject, newest first, are tried
+# for the newest one that verifies.
+_MAX_CONTRACT_CAPTURES = 32
+# How many Captures sharing a handle's prefix are verified before giving up.
+_MAX_HANDLE_SCAN = 64
+# How many stored objects one handle lookup examines in its shard.
+_CAPTURE_SCAN_BUDGET = 65_536
+# How many stored objects one contract lookup examines for its Captures.
+_CONTRACT_SCAN_BUDGET = 16_384
+_CONTRACT_QUALIFIER = "CaptureContract:"
 
 
 @dataclass(frozen=True)
@@ -263,6 +280,84 @@ def _coerce_text(value: object, info: PredicateInfo) -> object:
     return value
 
 
+def _named(subject: str | None) -> str:
+    """A change's Subject, once the write's default subject has been filled in."""
+
+    assert subject is not None, "the default subject is filled in before planning"
+    return subject
+
+
+def _with_default_subject(request: PlaybillWriteRequestV1) -> PlaybillWriteRequestV1:
+    """Give every change that names no Subject the write's own ``subject``.
+
+    A change's own subject overrides the default. A change with neither
+    refuses ``playbill.write.subject_required`` before anything is planned.
+    """
+
+    changes: list[SetChange | AddChange | RetireChange] = []
+    for index, change in enumerate(request.changes):
+        if isinstance(change, RetireChange):
+            target = change.target
+            if isinstance(target, SlotRef) and target.subject is None:
+                owner = _default_subject(request, index=index, path=f"changes[{index}].target")
+                change = change.model_copy(
+                    update={"target": target.model_copy(update={"subject": owner})}
+                )
+        elif change.subject is None:
+            owner = _default_subject(request, index=index, path=f"changes[{index}]")
+            change = change.model_copy(update={"subject": owner})
+        changes.append(change)
+    return request.model_copy(update={"changes": tuple(changes)})
+
+
+def _default_subject(request: PlaybillWriteRequestV1, *, index: int, path: str) -> str:
+    if request.subject is None:
+        raise _refuse(
+            "playbill.write.subject_required",
+            f"change {index} names no Subject, and the write has no default subject",
+            change=index,
+            repair=(
+                "Name the Subject on the change as kind/id, or give the write a "
+                "top-level subject for every change that names none"
+            ),
+            field_path=f"{path}.subject",
+        )
+    return request.subject
+
+
+_EXACT_BYTES_REPAIR = (
+    "Cite evidence committed as exact bytes: a span of the record's source as file "
+    "evidence (--evidence-file PATH#ANCHOR), or a Capture a Procedure or Line stored "
+    "with an exact-bytes commitment. The external record reader commits records as "
+    "canonical values, so reading the same record again does not help"
+)
+
+
+def _commitment_kind(item: Any) -> str:
+    return (
+        "a canonical value"
+        if item.envelope.commitment.digest_kind == "canonical_value"
+        else (f"{item.envelope.commitment.digest_kind.replace('_', ' ')}")
+    )
+
+
+def _distinct_handles(digests: Sequence[str], *, at_least: int) -> tuple[str, ...]:
+    """Each digest's shortest handle, at least ``at_least`` hex, that tells them apart."""
+
+    length = max(12, at_least)
+    while length < 64 and len({capture_handle(item, length=length) for item in digests}) < len(
+        digests
+    ):
+        length += 1
+    return tuple(capture_handle(item, length=length) for item in digests)
+
+
+def _value_key(value: object) -> str:
+    """One value's comparison key: ``1``, ``true`` and ``"1"`` stay distinct."""
+
+    return canonical_json(value)
+
+
 # -- planning ------------------------------------------------------------------------
 
 
@@ -303,6 +398,8 @@ class _Planned:
     used_contract: str | None = None
     # The slot this change was planned against, pinned through admission.
     pin: _SlotPin | None = None
+    # The Capture the evidence cites, by digest, once a handle or contract resolved.
+    capture: str | None = None
 
 
 @dataclass
@@ -310,6 +407,8 @@ class _Plan:
     changes: list[_Planned] = field(default_factory=list)
     subjects: dict[str, SubjectShell] = field(default_factory=dict)
     retire_notes: list[str] = field(default_factory=list)
+    # What planning chose for the writer and says so: see WriteWarning.
+    notes: list[WriteWarning] = field(default_factory=list)
 
 
 class _Planner:
@@ -329,6 +428,7 @@ class _Planner:
         self.exact = ExactContentReader(instance)
         self.plan = _Plan()
         self._subject_exists: dict[str, bool] = {}
+        self._verified: dict[str, bool] = {}
         self._read_sequence: int | None = None
 
     # -- accepted state ----------------------------------------------------------
@@ -338,14 +438,16 @@ class _Planner:
             self._subject_exists[path] = self.instance.blob_at(self.head.git_oid, path) is not None
         return self._subject_exists[path]
 
-    def slot_claims(self, subject_path_value: str, predicate: str) -> tuple[_SlotClaim, ...]:
-        """The live unqualified Claims of one slot at the head, with their shown values."""
+    def slot_claims(
+        self, subject_path_value: str, predicate: str, qualifier: str | None = None
+    ) -> tuple[_SlotClaim, ...]:
+        """The live Claims of one slot at the head, with their shown values."""
 
         with self.instance.bind_accepted_projection(self.head) as projection:
             rows = projection.typed.connection.execute(
                 "SELECT identity, artifact_digest FROM claims WHERE subject_path=? "
-                "AND predicate=? AND qualifier IS NULL AND lifecycle='live' ORDER BY identity",
-                (subject_path_value, predicate),
+                "AND predicate=? AND qualifier IS ? AND lifecycle='live' ORDER BY identity",
+                (subject_path_value, predicate, qualifier),
             ).fetchall()
         wanted = {str(row[0]): str(row[1]) for row in rows}
         if not wanted:
@@ -450,6 +552,85 @@ class _Planner:
             repair="Re-set it to replace it, or set it with contend: true to contest it",
         )
 
+    def expected_keys(
+        self, info: PredicateInfo, expect: ExpectedValue, *, index: int, field_name: str
+    ) -> dict[str, object]:
+        """The values ``expect`` names, checked like values and keyed for comparison."""
+
+        path = f"changes[{index}].expect"
+        items = expect if isinstance(expect, tuple) else (expect,)
+        found: dict[str, object] = {}
+        for item in items:
+            shown: object
+            if info.claim_type.object_kind == "literal":
+                shown = self.literal(
+                    info, item, index=index, field_name=field_name, path=path
+                ).value
+            elif isinstance(item, str) and item:
+                # A Subject as kind/id, or exact content as its text: compared as
+                # written, so a value no Claim holds is simply not what it holds.
+                shown = item
+            else:
+                taken = (
+                    "a Subject as kind/id" if info.claim_type.object_kind == "subject" else "text"
+                )
+                raise _refuse(
+                    "playbill.write.value_type_mismatch",
+                    f"{field_name} takes {taken}, so expect {item!r} can never match it",
+                    change=index,
+                    repair=f"Pass expect as {taken}",
+                    field_path=path,
+                )
+            found[_value_key(shown)] = shown
+        return found
+
+    def check_expected(
+        self,
+        *,
+        index: int,
+        label: str,
+        info: PredicateInfo,
+        field_name: str,
+        expect: ExpectedValue | None,
+        live: tuple[_SlotClaim, ...],
+    ) -> None:
+        """Compare-and-set: refuse unless the slot holds exactly the values expected.
+
+        The comparison is by value, at the head the write is planned at. When it
+        holds, the slot expectation the plan already pins carries exactly the
+        live Claim IDs that matched, so a Claim joining or leaving the slot after
+        this check still refuses the write at admission or settlement.
+        """
+
+        if expect is None:
+            return
+        wanted = self.expected_keys(info, expect, index=index, field_name=field_name)
+        holds = {_value_key(item.value): item.value for item in live}
+        if set(wanted) == set(holds):
+            return
+        current = [summary_value(item.value) for item in live]
+        now = (
+            "holds no value"
+            if not current
+            else f"holds {current[0]!r}"
+            if len(current) == 1
+            else f"holds {current!r}"
+        )
+        expected = [summary_value(value) for value in wanted.values()]
+        spelled = expected[0] if isinstance(expect, str | int | float | bool) else expected
+        repair_value: object = None if not current else current[0] if len(current) == 1 else current
+        raise _refuse(
+            "playbill.write.slot_changed",
+            f"{label} {now}, not {spelled!r} as expected",
+            change=index,
+            candidates=tuple(item.claim_id for item in live),
+            repair=(
+                "Read it again; to write over what it holds now, expect "
+                + ("[]" if repair_value is None else json.dumps(repair_value))
+            ),
+            field_path=f"changes[{index}].expect",
+        )
+
     # -- vocabulary --------------------------------------------------------------
 
     def resolve_subject(self, subject: str, *, index: int, path: str) -> tuple[str, str, str]:
@@ -531,9 +712,15 @@ class _Planner:
     # -- values ------------------------------------------------------------------
 
     def literal(
-        self, info: PredicateInfo, value: object, *, index: int, field_name: str
+        self,
+        info: PredicateInfo,
+        value: object,
+        *,
+        index: int,
+        field_name: str,
+        path: str | None = None,
     ) -> LiteralClaimObject:
-        path = f"changes[{index}].value"
+        path = path or f"changes[{index}].value"
         value = _coerce_text(value, info)
         if isinstance(value, float):
             if not value.is_integer():
@@ -639,13 +826,14 @@ class _Planner:
         index: int,
         field_name: str,
         exact: bytes | None,
+        capture: str | None,
     ) -> tuple[Any, Literal["evidence", "copy"] | None]:
         """The Claim's source and citation role for this change's evidence."""
 
         evidence = change.evidence
         path = f"changes[{index}].evidence"
-        if isinstance(evidence, CaptureEvidence):
-            return ExistingCaptureCitationSourceV1(capture_digest=evidence.capture), "evidence"
+        if capture is not None:
+            return ExistingCaptureCitationSourceV1(capture_digest=capture), "evidence"
         if isinstance(evidence, FileEvidence):
             if evidence.observation is None:
                 raise _refuse(
@@ -693,17 +881,284 @@ class _Planner:
             )
         return SelfSourceBodyV1(content_base64=base64.b64encode(body).decode("ascii")), None
 
+    # -- Captures by handle or by contract ----------------------------------------
+
+    def cited_capture(
+        self, change: SetChange | AddChange, *, subject_path_value: str, index: int
+    ) -> str | None:
+        """The digest of the Capture this change's evidence cites, if it cites one."""
+
+        evidence = change.evidence
+        path = f"changes[{index}].evidence"
+        if isinstance(evidence, CaptureEvidence):
+            if evidence.capture.startswith("sha256:"):
+                return evidence.capture
+            return self.capture_by_handle(evidence.capture, index=index, path=f"{path}.capture")
+        if isinstance(evidence, ContractEvidence):
+            return self.capture_by_contract(
+                evidence.contract,
+                subject=_named(change.subject),
+                subject_path_value=subject_path_value,
+                index=index,
+                path=f"{path}.contract",
+            )
+        return None
+
+    def _verified_capture(self, digest: str) -> bool:
+        """Whether ``digest`` is a Capture this instance holds that verifies at the head."""
+
+        from cruxible_core.service.evidence.capture_reads import (
+            CaptureReadInvalid,
+            verify_accepted_capture,
+        )
+
+        if digest not in self._verified:
+            try:
+                verified = verify_accepted_capture(
+                    self.instance, self.head, digest, access=_VALUE_READ_ACCESS
+                )
+            except (CaptureReadInvalid, ReadRefusalError, PlaybillError, ValueError):
+                self._verified[digest] = False
+            else:
+                self._verified[digest] = not isinstance(verified, str)
+        return self._verified[digest]
+
+    def _nearest_captures(self, near: Sequence[str], hex_prefix: str) -> list[str]:
+        """Verified Captures near an unknown handle, at most a few.
+
+        ``near`` is what the bounded scan kept as sharing the longest prefix;
+        with none of those verifying, the accepted Captures on either side of
+        the handle in digest order, which the index answers without a scan.
+        """
+
+        found = [digest for digest in near if self._verified_capture(digest)]
+        if not found:
+            key = "sha256:" + hex_prefix
+            half = _MAX_CANDIDATES // 2
+            with self.instance.bind_accepted_projection(self.head) as projection:
+                connection = projection.typed.connection
+                after = connection.execute(
+                    "SELECT capture_digest FROM captures WHERE capture_digest >= ? "
+                    "ORDER BY capture_digest LIMIT ?",
+                    (key, half),
+                ).fetchall()
+                before = connection.execute(
+                    "SELECT capture_digest FROM captures WHERE capture_digest < ? "
+                    "ORDER BY capture_digest DESC LIMIT ?",
+                    (key, half),
+                ).fetchall()
+            found = sorted(str(row[0]) for row in (*before, *after))
+        return found[:_MAX_CANDIDATES]
+
+    def capture_by_handle(self, handle: str, *, index: int, path: str) -> str:
+        """Resolve ``CAP-<hex>`` by unique digest prefix among the verified Captures held.
+
+        Every Capture the instance holds counts, cited or not -- citing one for the
+        first time is the common case -- as long as it verifies against its
+        contract accepted at the head. The lookup is bounded: when the store
+        holds more under the prefix than one lookup examines, it refuses rather
+        than call a partial answer unique.
+        """
+
+        from cruxible_core.service.evidence.capture_reads import retained_captures
+
+        hex_prefix = handle.removeprefix("CAP-")
+        inventory = retained_captures(
+            self.instance,
+            budget=_CAPTURE_SCAN_BUDGET,
+            hex_prefix=hex_prefix,
+            nearest=_MAX_CANDIDATES,
+        )
+        if not inventory.complete or len(inventory.captures) > _MAX_HANDLE_SCAN:
+            # Out of budget, a Capture past the limit could match too: the scan
+            # never calls what it verified so far unique.
+            what = (
+                "objects under it than one lookup examines"
+                if not inventory.complete
+                else f"more than {_MAX_HANDLE_SCAN} Captures under it to verify"
+            )
+            raise _refuse(
+                "playbill.write.capture_scan_exhausted",
+                f"{handle} was not resolved: the body store holds {what}",
+                change=index,
+                repair="Pass a longer handle, or the full sha256 digest",
+                field_path=path,
+            )
+        found = [item.digest for item in inventory.captures if self._verified_capture(item.digest)]
+        if len(found) == 1:
+            return found[0]
+        if found:
+            raise _refuse(
+                "playbill.write.capture_ambiguous",
+                f"{handle} is the prefix of more than one verified Capture",
+                change=index,
+                candidates=_distinct_handles(found, at_least=len(hex_prefix) + 1),
+                repair="Pass a longer handle, or the full sha256 digest",
+                field_path=path,
+            )
+        raise _refuse(
+            "playbill.write.capture_not_found",
+            f"no verified Capture this instance holds has the handle {handle}",
+            change=index,
+            candidates=_distinct_handles(
+                self._nearest_captures(inventory.nearest, hex_prefix), at_least=12
+            ),
+            repair=(
+                "Name a Capture by the CAP- handle a run, a capture or get with "
+                "detail=evidence printed, or by its full sha256 digest"
+            ),
+            field_path=path,
+        )
+
+    def capture_by_contract(
+        self,
+        name: str,
+        *,
+        subject: str,
+        subject_path_value: str,
+        index: int,
+        path: str,
+    ) -> str:
+        """The newest verified, citable Capture of one contract about one Subject."""
+
+        from cruxible_core.service.evidence.capture_reads import (
+            CaptureReadInvalid,
+            RetainedCapture,
+            retained_captures,
+            verify_accepted_capture,
+        )
+
+        bare = name.removeprefix(_CONTRACT_QUALIFIER)
+        qualified = _CONTRACT_QUALIFIER + bare
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            connection = projection.typed.connection
+            known = [
+                str(row[0]).removeprefix(_CONTRACT_QUALIFIER)
+                for row in connection.execute("SELECT identity FROM capture_contracts")
+            ]
+            if bare not in known:
+                raise _refuse(
+                    "playbill.write.unknown_contract",
+                    f"no accepted CaptureContract is named {bare!r}",
+                    change=index,
+                    candidates=nearest(bare, known),
+                    repair="Name a CaptureContract the field admits; orient lists them",
+                    field_path=path,
+                )
+            versions = CaptureContractNames(self.instance, self.head).lineage(qualified)
+            marks = ",".join("?" for _ in versions)
+            cited = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT DISTINCT u.capture_digest FROM citation_uses u "
+                    "JOIN claims c ON c.identity = u.owner_key "
+                    "JOIN captures p ON p.capture_digest = u.capture_digest "
+                    f"WHERE u.owner_kind = 'Claim' AND c.subject_path = ? "
+                    f"AND p.contract_digest IN ({marks})",
+                    (subject_path_value, *versions),
+                )
+            }
+        # Every retained Capture of the contract counts, cited or not.
+        inventory = retained_captures(
+            self.instance, budget=_CONTRACT_SCAN_BUDGET, contract_digests=versions
+        )
+        if not inventory.complete:
+            raise _refuse(
+                "playbill.write.capture_scan_exhausted",
+                f"the newest Capture of {bare} about {subject} was not found: the body "
+                "store holds more objects than one lookup examines",
+                change=index,
+                repair="Cite the Capture by its CAP- handle or its full sha256 digest",
+                field_path=path,
+            )
+        address = SemanticAddress.whole_artifact(subject_path_value).model_dump(mode="json")
+
+        def about_subject(envelope: Any) -> bool:
+            selector = getattr(envelope.source, "selector", None)
+            return isinstance(selector, Mapping) and selector.get("semantic_subject") == address
+
+        bound = sorted(
+            (
+                item
+                for item in inventory.captures
+                if item.digest in cited or about_subject(item.envelope)
+            ),
+            key=lambda item: (item.envelope.observed_at, item.digest),
+            reverse=True,
+        )
+        store = self.instance.body_store()
+        # A Claim maps a byte span onto what it cites, so only an exact-bytes
+        # commitment can back one. A newer Capture committed any other way is
+        # never skipped silently: it is named, as a refusal or as a warning.
+        uncitable: RetainedCapture | None = None
+        for item in bound[:_MAX_CONTRACT_CAPTURES]:
+            try:
+                verified = verify_accepted_capture(
+                    self.instance, self.head, item.digest, access=_VALUE_READ_ACCESS
+                )
+            except (CaptureReadInvalid, ReadRefusalError):
+                continue
+            if isinstance(verified, str):
+                continue
+            reuse = classify_capture_reuse(
+                verified.envelope, contract=verified.contract, store=store, claim_id=""
+            )
+            if reuse != "shareable":
+                continue
+            if item.envelope.commitment.digest_kind != "exact_bytes":
+                uncitable = uncitable or item
+                continue
+            if uncitable is not None and uncitable.envelope.observed_at > item.envelope.observed_at:
+                self.plan.notes.append(
+                    NewerCaptureNotCitableWarning(
+                        change=index,
+                        capture=capture_handle(uncitable.digest),
+                        message=(
+                            f"{subject}: the newest Capture of {bare}, "
+                            f"{capture_handle(uncitable.digest)}, is committed as "
+                            f"{_commitment_kind(uncitable)}, which no Claim can cite; the "
+                            f"write cites the older {capture_handle(item.digest)} instead"
+                        ),
+                        repair=_EXACT_BYTES_REPAIR,
+                    )
+                )
+            return item.digest
+        if uncitable is not None:
+            raise _refuse(
+                "playbill.write.contract_capture_not_citable",
+                f"the newest Capture of {bare} about {subject}, "
+                f"{capture_handle(uncitable.digest)}, is committed as "
+                f"{_commitment_kind(uncitable)}, which no Claim can cite: a Claim maps a "
+                "byte span onto its evidence, and only an exact-bytes commitment has bytes",
+                change=index,
+                candidates=(capture_handle(uncitable.digest),),
+                repair=_EXACT_BYTES_REPAIR,
+                field_path=path,
+            )
+        raise _refuse(
+            "playbill.write.contract_capture_not_found",
+            f"no verified Capture of {bare} is about {subject}",
+            change=index,
+            repair=(
+                f"Capture {subject} under {bare} first (a Procedure or Line that produces it, "
+                "or --evidence-file / file evidence from its source), or cite a Capture "
+                "by its CAP- handle or digest"
+            ),
+            field_path=path,
+        )
+
     # -- changes -----------------------------------------------------------------
 
     def claim_change(self, index: int, change: SetChange | AddChange) -> _Planned:
         prefix = f"changes[{index}]"
+        subject = _named(change.subject)
         kind, subject_id, path = self.resolve_subject(
-            change.subject, index=index, path=f"{prefix}.subject"
+            subject, index=index, path=f"{prefix}.subject"
         )
         info = self.resolve_field(kind, change.field, index=index, path=f"{prefix}.field")
         claim_type = info.claim_type
         name = self.field_name(info, kind)
-        label = f"{change.subject} {name}"
+        label = f"{subject} {name}"
         if isinstance(change, SetChange) and claim_type.cardinality == "many":
             raise _refuse(
                 "playbill.write.field_is_many",
@@ -748,8 +1203,9 @@ class _Planner:
         else:
             statement_object = self.literal(info, change.value, index=index, field_name=name)
             shown_after = statement_object.value
+        capture = self.cited_capture(change, subject_path_value=path, index=index)
         source, citation_role = self.source(
-            info, change, role=role, index=index, field_name=name, exact=exact
+            info, change, role=role, index=index, field_name=name, exact=exact, capture=capture
         )
         if not self.subject_exists(path) and path not in self.plan.subjects:
             if kind not in claim_type.allowed_subject_kinds:  # pragma: no cover - resolve_field
@@ -768,12 +1224,20 @@ class _Planner:
         before: object = None
         contenders: tuple[str, ...] = ()
         if isinstance(change, SetChange):
+            self.check_expected(
+                index=index,
+                label=label,
+                info=info,
+                field_name=name,
+                expect=change.expect,
+                live=live,
+            )
             if change.contend:
                 contenders = tuple(item.claim_id for item in live)
             else:
                 self.check_slot_unchanged(
                     index=index,
-                    subject=change.subject,
+                    subject=subject,
                     field_name=name,
                     subject_path_value=path,
                     predicate=info.predicate,
@@ -807,6 +1271,16 @@ class _Planner:
                 ),
                 None,
             )
+            if present is not None and change.expect_absent:
+                raise _refuse(
+                    "playbill.write.value_already_present",
+                    f"{label} already holds {summary_value(present.value)!r} as "
+                    f"{present.claim_id}, and the add expected it absent",
+                    change=index,
+                    candidates=(present.claim_id,),
+                    repair="Leave it out, or drop expect_absent to accept it as already done",
+                    field_path=f"changes[{index}].expect_absent",
+                )
             if present is not None:
                 # Adding what is already there is done already: an idempotent
                 # success, with nothing to submit for this change.
@@ -814,7 +1288,7 @@ class _Planner:
                     index=index,
                     op=change.op,
                     outcome={
-                        "subject": change.subject,
+                        "subject": subject,
                         "field": name,
                         "predicate": info.predicate,
                         "before": summary_value(present.value),
@@ -860,15 +1334,17 @@ class _Planner:
             index=index,
             op=change.op,
             outcome={
-                "subject": change.subject,
+                "subject": subject,
                 "field": name,
                 "predicate": info.predicate,
                 "before": summary_value(before),
                 "after": summary_value(shown_after),
                 "revises": revises,
                 "contenders_created": contenders,
+                "capture": None if capture is None else capture_handle(capture),
             },
             member=member,
+            capture=capture,
             slot=(path, info.predicate),
             revises=revises,
             existing=tuple(item.claim_id for item in live if item.claim_id != revises),
@@ -886,17 +1362,26 @@ class _Planner:
         prefix = f"changes[{index}].target"
         target = change.target
         if isinstance(target, SlotRef):
+            owner = _named(target.subject)
             kind, _subject_id, path = self.resolve_subject(
-                target.subject, index=index, path=f"{prefix}.subject"
+                owner, index=index, path=f"{prefix}.subject"
             )
             info = self.resolve_field(kind, target.field, index=index, path=f"{prefix}.field")
             name = self.field_name(info, kind)
             live = self.slot_claims(path, info.predicate) if self.subject_exists(path) else ()
             # A slot that moved since the read is named as moved first, before
             # what it holds now makes the retire empty or ambiguous.
+            self.check_expected(
+                index=index,
+                label=f"{owner} {name}",
+                info=info,
+                field_name=name,
+                expect=change.expect,
+                live=live,
+            )
             self.check_slot_unchanged(
                 index=index,
-                subject=target.subject,
+                subject=owner,
                 field_name=name,
                 subject_path_value=path,
                 predicate=info.predicate,
@@ -905,21 +1390,21 @@ class _Planner:
             if not live:
                 raise _refuse(
                     "playbill.write.slot_empty",
-                    f"{target.subject} {name} holds no live value to retire",
+                    f"{owner} {name} holds no live value to retire",
                     change=index,
-                    repair=f"Read it first: {_render_get(self.request.surface, target.subject)}",
+                    repair=f"Read it first: {_render_get(self.request.surface, owner)}",
                     field_path=prefix,
                 )
             if len(live) > 1:
                 raise _refuse(
                     "playbill.write.slot_ambiguous",
-                    f"{target.subject} {name} holds {len(live)} values; name the one to retire",
+                    f"{owner} {name} holds {len(live)} values; name the one to retire",
                     change=index,
                     candidates=tuple(item.claim_id for item in live),
                     repair="Retire one of the listed Claims by ID",
                     field_path=prefix,
                 )
-            return live[0].claim_id, target.subject, name, info.predicate, live[0].value
+            return live[0].claim_id, owner, name, info.predicate, live[0].value
         claim_id = _bare(target)
         content = self.instance.blob_at(self.head.git_oid, claim_path(claim_id))
         if content is None:
@@ -964,13 +1449,30 @@ class _Planner:
                         candidates=(claim_id,),
                         repair="Read it again, then retire it at the new coordinate",
                     )
-        value: object = None
-        if claim.statement.qualifier is None and retired_info is not None:
-            for item in self.slot_claims(
-                claim.statement.subject.artifact_path, retired_info.predicate
-            ):
-                if item.claim_id == claim_id:
-                    value = item.value
+        live = self.slot_claims(
+            claim.statement.subject.artifact_path,
+            claim.statement.predicate,
+            claim.statement.qualifier,
+        )
+        if change.expect is not None:
+            if retired_info is None:
+                raise _refuse(
+                    "playbill.write.unknown_field",
+                    f"{claim_id} states {claim.statement.predicate}, which no live ClaimType "
+                    "defines, so its values cannot be compared",
+                    change=index,
+                    repair="Retire it without expect",
+                    field_path=f"changes[{index}].expect",
+                )
+            self.check_expected(
+                index=index,
+                label=f"{subject} {name}",
+                info=retired_info,
+                field_name=name,
+                expect=change.expect,
+                live=live,
+            )
+        value = next((item.value for item in live if item.claim_id == claim_id), None)
         return claim_id, subject, name, claim.statement.predicate, value
 
     def retire_change(self, index: int, change: RetireChange) -> _Planned:
@@ -1312,12 +1814,11 @@ def _used_contract(
 ) -> str | None:
     if planned.used_contract is not None:
         return planned.used_contract
-    change = planned.change
-    if change is None or not isinstance(change.evidence, CaptureEvidence):
+    if planned.capture is None:
         return None
     try:
         envelope = parse_capture_envelope(
-            instance.body_store().read(change.evidence.capture, access=_VALUE_READ_ACCESS)
+            instance.body_store().read(planned.capture, access=_VALUE_READ_ACCESS)
         )
     except (PlaybillError, ValueError):
         return None
@@ -1331,23 +1832,24 @@ def _render_evidence_repair(
     because: str,
     contracts: Sequence[str],
 ) -> str:
-    placeholder = f"<digest of a Capture under {' or '.join(contracts) or 'an admitted contract'}>"
+    subject = _named(change.subject)
+    placeholder = (
+        f"<CAP- handle of a Capture under {' or '.join(contracts) or 'an admitted contract'}>"
+    )
     value = change.value
     if surface == "cli":
-        if isinstance(change, SetChange):
-            return (
-                f"cruxible playbill set {shlex.quote(change.subject)} "
-                f"{shlex.quote(change.field)} {shlex.quote(str(value))} "
-                f"--because {shlex.quote(because)} --capture {placeholder}"
-            )
+        verb = "set" if isinstance(change, SetChange) else "add"
+        role = "" if change.role is None else f" --role {change.role}"
+        contend = " --contend" if isinstance(change, SetChange) and change.contend else ""
         return (
-            "cruxible playbill write FILE, with this change carrying "
-            f'"evidence": {{"kind": "capture", "capture": "{placeholder}"}}'
+            f"cruxible playbill {verb} {shlex.quote(subject)} "
+            f"{shlex.quote(change.field)} {shlex.quote(str(value))} "
+            f"--because {shlex.quote(because)} --capture {placeholder}{role}{contend}"
         )
     if surface == "sdk":
         # Rendered against the builder signatures: ``pb.set`` takes ``because``;
         # a batch ``add`` does not, so it goes on ``pb.changes`` instead.
-        arguments = [json.dumps(change.subject), json.dumps(change.field), json.dumps(value)]
+        arguments = [json.dumps(subject), json.dumps(change.field), json.dumps(value)]
         options = [f"evidence=CaptureEvidence(capture={json.dumps(placeholder)})"]
         if change.role is not None:
             options.append(f"role={json.dumps(change.role)}")
@@ -1365,13 +1867,13 @@ def _render_evidence_repair(
     evidence = json.dumps({"kind": "capture", "capture": placeholder})
     if isinstance(change, SetChange):
         return (
-            f"cruxible_playbill_set(subject={json.dumps(change.subject)}, "
+            f"cruxible_playbill_set(subject={json.dumps(subject)}, "
             f"field={json.dumps(change.field)}, value={json.dumps(value)}, "
             f"because={json.dumps(because)}, evidence={evidence})"
         )
     item = {
         "op": "add",
-        "subject": change.subject,
+        "subject": subject,
         "field": change.field,
         "value": value,
         "evidence": {"kind": "capture", "capture": placeholder},
@@ -1393,7 +1895,7 @@ def _with_verdicts(
 
     planned_by_index = {item.index: item for item in plan.changes}
     updated: list[ChangeOutcome] = []
-    warnings: list[WriteWarning] = []
+    warnings: list[WriteWarning] = list(plan.notes)
     names: CaptureContractNames | None = None
     for position, outcome in enumerate(changes):
         planned = plan.changes[position]
@@ -1432,8 +1934,7 @@ def _with_verdicts(
             else None
         )
         warnings.append(
-            WriteWarning(
-                code="playbill.write.verdict_not_supported",
+            VerdictNotSupportedWarning(
                 change=planned.index,
                 claim=outcome.claim,
                 verdict=verdict,
@@ -1447,7 +1948,14 @@ def _with_verdicts(
 
 
 def _first_repair(warnings: Sequence[WriteWarning]) -> str | None:
-    return next((item.repair for item in warnings if item.repair is not None), None)
+    return next(
+        (
+            item.repair
+            for item in warnings
+            if isinstance(item, VerdictNotSupportedWarning) and item.repair is not None
+        ),
+        None,
+    )
 
 
 # -- refusals as outcomes -------------------------------------------------------------
@@ -1621,6 +2129,7 @@ def _service_write(
         )
 
     try:
+        request = _with_default_subject(request)
         read_at = resolve_read_coordinate(instance, request.at) if request.at is not None else head
         plan = _Planner(instance, head=head, read_at=read_at, request=request).build()
         if all(item.member is None for item in plan.changes) and not plan.subjects:

@@ -51,6 +51,7 @@ def _object_properties(schema: dict[str, Any], defs: dict[str, Any]) -> list[dic
                 "evidence",
                 "role",
                 "contend",
+                "expect",
                 "dry_run",
                 "accept",
                 "at",
@@ -59,12 +60,12 @@ def _object_properties(schema: dict[str, Any], defs: dict[str, Any]) -> list[dic
         (
             "cruxible_playbill_retire",
             ["target", "because"],
-            {"instance_id", "target", "because", "reason", "dry_run", "accept", "at"},
+            {"instance_id", "target", "because", "reason", "expect", "dry_run", "accept", "at"},
         ),
         (
             "cruxible_playbill_write",
             ["changes", "because"],
-            {"instance_id", "changes", "because", "dry_run", "accept", "at"},
+            {"instance_id", "changes", "because", "subject", "dry_run", "accept", "at"},
         ),
     ],
 )
@@ -115,24 +116,51 @@ def test_handlers_build_typed_requests_for_the_mcp_surface(
         because="Shipped.",
         dry_run=True,
         at="0123456789ab",
+        expect="ready",
+        evidence={"kind": "capture", "capture": "CAP-0123456789ab"},
     )
     handlers.handle_playbill_retire(
-        "inst_write", target={"subject": "dev.item/a", "field": "status"}, because="Gone."
+        "inst_write",
+        target={"subject": "dev.item/a", "field": "status"},
+        because="Gone.",
+        expect=["done", "ready"],
     )
     handlers.handle_playbill_write(
         "inst_write",
-        changes=[{"op": "add", "subject": "dev.item/a", "field": "governs", "value": "dev.item/b"}],
+        changes=[
+            {
+                "op": "add",
+                "subject": "dev.item/a",
+                "field": "governs",
+                "value": "dev.item/b",
+                "expect_absent": True,
+            },
+            {
+                "op": "set",
+                "field": "status",
+                "value": "done",
+                "evidence": {"kind": "contract", "contract": "repo.reports"},
+            },
+        ],
         because="Linked.",
+        subject="dev.item/a",
     )
 
     (set_request,) = sets
     assert isinstance(set_request, PlaybillSetRequestV1)
     assert set_request.surface == "mcp" and set_request.dry_run and set_request.at == "0123456789ab"
+    assert set_request.expect == "ready"
+    assert set_request.evidence.capture == "CAP-0123456789ab"  # type: ignore[union-attr]
     (retire_request,) = retires
     assert isinstance(retire_request, PlaybillRetireRequestV1) and retire_request.surface == "mcp"
+    assert retire_request.expect == ("done", "ready")
     (write_request,) = writes
     assert isinstance(write_request, PlaybillWriteRequestV1)
     assert write_request.changes[0].op == "add"
+    assert write_request.changes[0].expect_absent  # type: ignore[union-attr]
+    assert write_request.subject == "dev.item/a"
+    assert write_request.changes[1].subject is None  # type: ignore[union-attr]
+    assert write_request.changes[1].evidence.contract == "repo.reports"  # type: ignore[union-attr]
 
 
 def test_a_malformed_write_names_the_json_path_and_an_example(
@@ -205,3 +233,20 @@ entries:
     change = writes[0].changes[0]
     assert isinstance(change, SetChange) and isinstance(change.evidence, FileEvidence)
     assert change.evidence.observation == observed.observation
+
+
+def test_write_tool_outputs_declare_each_warning_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+    tools = {item.name: item for item in asyncio.run(create_server().list_tools())}
+    for name in ("cruxible_playbill_set", "cruxible_playbill_retire", "cruxible_playbill_write"):
+        schema = tools[name].outputSchema
+        assert schema is not None
+        defs = schema.get("$defs", {})
+        verdict = defs["VerdictNotSupportedWarning"]
+        newer = defs["NewerCaptureNotCitableWarning"]
+        assert verdict["properties"]["code"]["const"] == "playbill.write.verdict_not_supported"
+        assert newer["properties"]["code"]["const"] == "playbill.write.newer_capture_not_citable"
+        assert "verdict" in verdict["required"] and "capture" not in verdict["properties"]
+        assert "capture" in newer["required"] and "verdict" not in newer["properties"]

@@ -33,6 +33,8 @@ from cruxible_client.contracts.get_reads import PlaybillGetCoordinateV1, Playbil
 SUBJECT_REF_PATTERN = r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$"
 CLAIM_ID_PATTERN = r"^(?:Claim:)?CLM-[0-9a-f]{32}$"
 CAPTURE_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
+CAPTURE_HANDLE_PATTERN = r"^CAP-[0-9a-f]{12,64}$"
+CAPTURE_REF_PATTERN = r"^(?:sha256:[0-9a-f]{64}|CAP-[0-9a-f]{12,64})$"
 FILE_ANCHOR_PATTERN = r"^[^#]+#.+$"
 _GIT_OID = re.compile(r"^[0-9a-f]{1,64}$")
 
@@ -61,6 +63,16 @@ FieldName = Annotated[
 ClaimValue = bool | int | float | str
 """A scalar value. A Subject-valued field takes the Subject as kind/id; an
 exact-content field takes the text itself."""
+
+ExpectedValue = ClaimValue | tuple[ClaimValue, ...]
+"""What a field must hold for a write to go ahead: one value, or every live
+value of the field as a list (``[]`` when it must hold none)."""
+
+_EXPECT_DESCRIPTION = (
+    "Compare-and-set: the value the field holds now, as you read it (a list of "
+    "every live value for a many-valued field; [] for none). If it holds anything "
+    "else the write refuses playbill.write.slot_changed, showing what it holds."
+)
 
 WriteRole = Literal["normative", "observation", "environment_binding"]
 WriteAccept = Literal["if_allowed", "never"]
@@ -105,11 +117,43 @@ class SelfEvidence(_StrictWriteModel):
     self: str = Field(min_length=1, description="The text that backs the value.")
 
 
+def capture_handle(digest: str, *, length: int = 12) -> str:
+    """A Capture's short handle: ``CAP-`` and the first ``length`` hex of its digest."""
+
+    return "CAP-" + digest.partition(":")[2][:length]
+
+
 class CaptureEvidence(_StrictWriteModel):
-    """An existing Capture, by digest, cited as evidence for the value."""
+    """An existing Capture, cited as evidence for the value.
+
+    ``capture`` is its digest, or its handle ``CAP-<12+ hex>``: a digest prefix
+    unique among the verified Captures the instance holds, cited or not. The
+    handle is resolved to the digest before the write is lowered.
+    """
 
     kind: Literal["capture"] = "capture"
-    capture: str = Field(pattern=CAPTURE_DIGEST_PATTERN, description="sha256:<64 hex>.")
+    capture: str = Field(
+        pattern=CAPTURE_REF_PATTERN,
+        description="sha256:<64 hex>, or the handle CAP-<12+ hex> of a verified Capture.",
+    )
+
+
+class ContractEvidence(_StrictWriteModel):
+    """The newest verified Capture of one CaptureContract about the change's Subject.
+
+    Every Capture the instance holds counts, cited or not. One is about the
+    Subject when an accepted Claim on that Subject cites it, or when its source
+    names the Subject itself; only a Capture committed as exact bytes can back a
+    Claim. It is resolved to its digest before the write is lowered, and the
+    outcome names it as ``capture``.
+    """
+
+    kind: Literal["contract"] = "contract"
+    contract: str = Field(
+        min_length=1,
+        max_length=512,
+        description="A CaptureContract by name, as admitted_contracts names it.",
+    )
 
 
 class FileEvidence(_StrictWriteModel):
@@ -139,7 +183,10 @@ class FileEvidence(_StrictWriteModel):
         return self.file.partition("#")[2]
 
 
-Evidence = Annotated[SelfEvidence | CaptureEvidence | FileEvidence, Field(discriminator="kind")]
+Evidence = Annotated[
+    SelfEvidence | CaptureEvidence | FileEvidence | ContractEvidence,
+    Field(discriminator="kind"),
+]
 
 
 # -- changes --------------------------------------------------------------------
@@ -148,7 +195,10 @@ Evidence = Annotated[SelfEvidence | CaptureEvidence | FileEvidence, Field(discri
 class SlotRef(_StrictWriteModel):
     """One field of one Subject: the slot a single-value Claim fills."""
 
-    subject: SubjectRef
+    subject: SubjectRef | None = Field(
+        default=None,
+        description="The Subject as kind/id; default: the write's own subject.",
+    )
     field: FieldName
 
 
@@ -160,7 +210,10 @@ class SetChange(_StrictWriteModel):
     """
 
     op: Literal["set"] = "set"
-    subject: SubjectRef
+    subject: SubjectRef | None = Field(
+        default=None,
+        description="The Subject as kind/id; default: the write's own subject.",
+    )
     field: FieldName
     value: ClaimValue
     role: WriteRole | None = Field(
@@ -171,13 +224,17 @@ class SetChange(_StrictWriteModel):
         default=None, description="Default: the write's `because` as self evidence."
     )
     contend: bool = False
+    expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
 
 
 class AddChange(_StrictWriteModel):
     """Add one more value to a many-valued field, beside the values already there."""
 
     op: Literal["add"] = "add"
-    subject: SubjectRef
+    subject: SubjectRef | None = Field(
+        default=None,
+        description="The Subject as kind/id; default: the write's own subject.",
+    )
     field: FieldName
     value: ClaimValue
     role: WriteRole | None = Field(
@@ -186,6 +243,13 @@ class AddChange(_StrictWriteModel):
     )
     evidence: Evidence | None = Field(
         default=None, description="Default: the write's `because` as self evidence."
+    )
+    expect_absent: bool = Field(
+        default=False,
+        description=(
+            "Refuse playbill.write.value_already_present when the value is already "
+            "live, instead of answering it as already done."
+        ),
     )
 
 
@@ -206,6 +270,7 @@ class RetireChange(_StrictWriteModel):
             "superseded: it stood, but the shape it was stated in no longer does."
         ),
     )
+    expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
 
 
 Change = Annotated[SetChange | AddChange | RetireChange, Field(discriminator="op")]
@@ -252,6 +317,7 @@ class PlaybillSetRequestV1(_WriteRequestBase):
     role: WriteRole | None = None
     evidence: Evidence | None = None
     contend: bool = False
+    expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
 
     def change(self) -> SetChange:
         return SetChange(
@@ -261,6 +327,7 @@ class PlaybillSetRequestV1(_WriteRequestBase):
             role=self.role,
             evidence=self.evidence,
             contend=self.contend,
+            expect=self.expect,
         )
 
 
@@ -268,13 +335,21 @@ class PlaybillRetireRequestV1(_WriteRequestBase):
     tag: Literal["playbill-retire-request-v1"] = "playbill-retire-request-v1"
     target: ClaimId | SlotRef
     reason: WriteRetireReason = "was-rescinded"
+    expect: ExpectedValue | None = Field(default=None, description=_EXPECT_DESCRIPTION)
 
     def change(self) -> RetireChange:
-        return RetireChange(target=self.target, reason=self.reason)
+        return RetireChange(target=self.target, reason=self.reason, expect=self.expect)
 
 
 class PlaybillWriteRequestV1(_WriteRequestBase):
     tag: Literal["playbill-write-request-v1"] = "playbill-write-request-v1"
+    subject: SubjectRef | None = Field(
+        default=None,
+        description=(
+            "The Subject every change that names none is about; a change's own "
+            "subject overrides it."
+        ),
+    )
     changes: tuple[Change, ...] = Field(min_length=1, max_length=500)
 
 
@@ -333,6 +408,11 @@ class ChangeOutcome(_StrictWriteModel):
             "otherwise as the candidate evaluation found it."
         ),
     )
+    capture: str | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="The Capture cited as evidence, as its handle CAP-<12 hex>.",
+    )
 
 
 class WriteProposalRef(_StrictWriteModel):
@@ -354,15 +434,15 @@ class ApprovalNeeded(_StrictWriteModel):
     activate: str = Field(description="The call that accepts it once approved.")
 
 
-class WriteWarning(_StrictWriteModel):
-    """Something the write did that the writer did not ask for, said plainly.
+class VerdictNotSupportedWarning(_StrictWriteModel):
+    """The written Claim's verdict is not ``supported``; the write still lands.
 
-    ``playbill.write.verdict_not_supported``: the written Claim's verdict is not
-    ``supported`` -- for example ``uncovered`` because the ClaimType's evidence
-    policy does not admit the evidence given. The write still lands.
+    For example ``uncovered``, because the ClaimType's evidence policy does not
+    admit the evidence given (R05). ``repair`` is the write again with admitted
+    evidence, and becomes the outcome's ``next``.
     """
 
-    code: str
+    code: Literal["playbill.write.verdict_not_supported"] = "playbill.write.verdict_not_supported"
     change: int
     claim: str | None = Field(default=None, exclude_if=_omit_none)
     verdict: str
@@ -370,6 +450,33 @@ class WriteWarning(_StrictWriteModel):
     admitted_contracts: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
     used_contract: str | None = Field(default=None, exclude_if=_omit_none)
     repair: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+class NewerCaptureNotCitableWarning(_StrictWriteModel):
+    """Contract evidence cited an older Capture: the newest cannot back a Claim.
+
+    ``capture`` is that newest Capture. It is not committed as exact bytes, so no
+    Claim can map a source span onto it; the write cited the change's
+    ``capture`` instead.
+    """
+
+    code: Literal["playbill.write.newer_capture_not_citable"] = (
+        "playbill.write.newer_capture_not_citable"
+    )
+    change: int
+    capture: str = Field(
+        pattern=CAPTURE_HANDLE_PATTERN,
+        description="The newest Capture, which no Claim can cite, as its handle CAP-<12 hex>.",
+    )
+    message: str
+    repair: str | None = Field(default=None, exclude_if=_omit_none)
+
+
+WriteWarning = Annotated[
+    VerdictNotSupportedWarning | NewerCaptureNotCitableWarning,
+    Field(discriminator="code"),
+]
+"""Something the write did that the writer did not ask for, said plainly."""
 
 
 class WriteRefusal(_StrictWriteModel):
@@ -425,11 +532,14 @@ __all__ = [
     "CaptureEvidence",
     "Change",
     "ChangeOutcome",
+    "ContractEvidence",
     "ClaimId",
     "ClaimValue",
     "Evidence",
+    "ExpectedValue",
     "FieldName",
     "FileEvidence",
+    "NewerCaptureNotCitableWarning",
     "PlaybillRetireRequestV1",
     "PlaybillSetRequestV1",
     "PlaybillWriteRequestV1",
@@ -439,6 +549,7 @@ __all__ = [
     "AddChange",
     "SlotRef",
     "SubjectRef",
+    "VerdictNotSupportedWarning",
     "WriteAccept",
     "WriteOp",
     "WriteOutcome",
@@ -448,4 +559,5 @@ __all__ = [
     "WriteRole",
     "WriteStatus",
     "as_write_request",
+    "capture_handle",
 ]

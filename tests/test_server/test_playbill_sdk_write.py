@@ -14,7 +14,13 @@ from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.write import SlotRef, WriteOutcome
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
-from tests.core_support._write_support import KIND, seed_write_vocabulary
+from tests.core_support._write_support import (
+    KIND,
+    REPORTS,
+    cited_captures,
+    report_evidence,
+    seed_write_vocabulary,
+)
 
 WI1 = f"{KIND}/wi-1"
 
@@ -98,6 +104,100 @@ def test_a_batch_writes_two_adds_and_a_retire_as_one_change_set(pb: Playbill) ->
     assert isinstance(pb.changes(), ChangeSetDraft)
 
 
+def test_expect_compares_by_value_on_set_retire_and_a_batch(
+    pb: Playbill, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    pb.set(WI1, "status", "ready", because="Checked.", expect=[])
+    client, instance_id, _key = playbill_http
+    _sdk(client, instance_id, tmp_path, name="other").set(
+        WI1, "status", "blocked", because="Someone else."
+    )
+    with pytest.raises(WriteRefusalError) as caught:
+        pb.set(WI1, "status", "done", because="Stale.", expect="ready", at=None)
+    assert caught.value.error_code == "playbill.write.slot_changed"
+    assert "holds 'blocked'" in str(caught.value)
+    replaced = pb.set(WI1, "status", "done", because="Seen.", expect="blocked", at=None)
+    assert replaced.status == "accepted" and replaced.changes[0].before == "blocked"
+
+    linked = (
+        pb.changes(because="Linked.")
+        .add(WI1, "governs", f"{KIND}/wi-2", expect_absent=True)
+        .write()
+    )
+    assert linked.status == "accepted", linked
+    with pytest.raises(WriteRefusalError) as present:
+        pb.changes(because="Again.").add(WI1, "governs", f"{KIND}/wi-2", expect_absent=True).write()
+    assert present.value.error_code == "playbill.write.value_already_present"
+    ended = pb.retire(SlotRef(subject=WI1, field="status"), because="Withdrawn.", expect="done")
+    assert ended.status == "accepted", ended
+    batch = pb.changes(because="Unlinked.").retire(
+        SlotRef(subject=WI1, field="governs"), expect=[f"{KIND}/wi-2"]
+    )
+    assert batch.changes[0].expect == (f"{KIND}/wi-2",)  # type: ignore[union-attr]
+    assert batch.write().status == "accepted"
+
+
+def test_a_batch_names_its_subject_once(pb: Playbill) -> None:
+    pb.set(WI1, "title", "Old", because="x")
+    batch = pb.changes(because="Triaged.", subject=WI1)
+    batch.set("status", "ready").add("governs", f"{KIND}/wi-2")
+    batch.set("status", "done", subject=f"{KIND}/wi-3").retire(SlotRef(field="title"))
+    assert "subject='project.work_item/wi-1'" in repr(batch)
+    outcome = batch.write()
+    assert outcome.status == "accepted", outcome
+    assert [item.subject for item in outcome.changes] == [WI1, WI1, f"{KIND}/wi-3", WI1]
+    with pytest.raises(TypeError, match="names its subject once"):
+        batch.set(WI1, "status", "ready", subject=WI1)  # type: ignore[call-overload]
+    with pytest.raises(WriteRefusalError) as caught:
+        pb.changes(because="No subject.").set("status", "ready").write()
+    assert caught.value.error_code == "playbill.write.subject_required"
+    with pytest.raises(ValueError, match="write batch"):
+        pb.changes(rationale="x", subject=WI1)  # type: ignore[call-overload]
+
+
+def test_capture_handles_and_contract_evidence_from_the_sdk(
+    pb: Playbill, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.write import (
+        CaptureEvidence,
+        ContractEvidence,
+        FileEvidence,
+        capture_handle,
+    )
+
+    workspace = pb._workspace  # noqa: SLF001
+    report_evidence(workspace, "Count: 3")
+    first = pb.set(
+        WI1, "measured", 3, because="Counted.", evidence=FileEvidence(file="reports.md#Count: 3")
+    )
+    assert first.changes[0].verdict == "supported", first
+    _client, instance_id, _key = playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    (digest,) = cited_captures(instance, first.changes[0].claim or "")
+    handle = capture_handle(digest)
+    cited = pb.set(
+        f"{KIND}/wi-2",
+        "measured",
+        3,
+        because="Same report.",
+        evidence=CaptureEvidence(capture=handle),
+    )
+    assert cited.changes[0].capture == handle
+    batch = pb.changes(because="Counted.", subject=WI1).add(
+        "labels", "counted", evidence=ContractEvidence(contract=REPORTS.identity.name)
+    )
+    assert batch.write().changes[0].capture == handle
+    with pytest.raises(WriteRefusalError) as caught:
+        pb.set(
+            f"{KIND}/wi-3",
+            "measured",
+            3,
+            because="x",
+            evidence=CaptureEvidence(capture="CAP-" + "0" * 12),
+        )
+    assert caught.value.error_code == "playbill.write.capture_not_found"
+
+
 def test_retire_dry_run_and_proposal_accept(pb: Playbill) -> None:
     claim = pb.set(WI1, "title", "Old", because="x").changes[0].claim
     assert claim is not None
@@ -122,6 +222,12 @@ def test_world_writes_keep_references_valid_after_their_own_write(
     assert again.status == "accepted", again
     assert [change.field for change in again.changes] == ["status", "title"]
     assert item.add(governs=world.project.work_item["wi-2"], because="Linked.").status == "accepted"
+    with pytest.raises(WriteRefusalError) as present:
+        item.add(governs=world.project.work_item["wi-2"], because="Again.", expect_absent=True)
+    assert present.value.error_code == "playbill.write.value_already_present"
+    assert (
+        item.add(governs=world.project.work_item["wi-2"], because="Again.").changes[0].already_live
+    )
     assert item.retire("title", because="Untitled.").status == "accepted"
     # A name the World does not know refuses before the wire.
     with pytest.raises(AttributeError, match="stauts"):
@@ -142,6 +248,8 @@ def test_the_world_stub_types_set_with_enum_literals(pb: Playbill) -> None:
     stub = pb.world().stub()
     ast.parse(stub)
     assert "def set(" in stub and "def add(" in stub and "def retire(" in stub
+    add = stub[stub.index("def add(") :]
+    assert "expect_absent: bool = ...," in add[: add.index(") -> WriteOutcome")]
     assert "status: Literal['blocked', 'done', 'ready'] = ...," in stub
     assert "governs: str | SubjectRef = ...," in stub
     assert "ruling: str = ...," in stub

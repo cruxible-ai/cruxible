@@ -234,6 +234,7 @@ from cruxible_client.contracts.write import (
     Change,
     ClaimValue,
     Evidence,
+    ExpectedValue,
     PlaybillRetireRequestV1,
     PlaybillSetRequestV1,
     PlaybillWriteRequestV1,
@@ -1249,10 +1250,52 @@ def _write_value(value: ClaimValue | SubjectRef | LiteralValue) -> ClaimValue:
     return value
 
 
+WriteExpect = (
+    ClaimValue | SubjectRef | LiteralValue | Sequence[ClaimValue | SubjectRef | LiteralValue]
+)
+
+
+def _write_expect(expect: WriteExpect | None) -> ExpectedValue | None:
+    """``expect`` on the wire: one value, or every live value as a tuple."""
+
+    if expect is None:
+        return None
+    if isinstance(expect, bool | int | float | str | SubjectRef | LiteralValue):
+        return _write_value(expect)
+    return tuple(_write_value(item) for item in expect)
+
+
 def _write_target(target: str | ClaimRef | SlotRef) -> str | SlotRef:
     if isinstance(target, ClaimRef):
         return target.address
     return target
+
+
+_WriteSubject = str | SubjectRef
+_WriteField = str | ClaimTypeRef
+_WriteValue = ClaimValue | SubjectRef | LiteralValue
+
+
+def _batch_operands(
+    verb: str, operands: tuple[Any, ...], subject: _WriteSubject | None
+) -> tuple[str | None, str, ClaimValue]:
+    """``(subject, field, value)`` positionally, or ``(field, value)`` with a default subject."""
+
+    if len(operands) == 3:
+        if subject is not None:
+            raise TypeError(f"{verb}() names its subject once: positionally or as subject=")
+        subject, field_name, value = operands
+    elif len(operands) == 2:
+        field_name, value = operands
+    else:
+        raise TypeError(
+            f"{verb}() takes (subject, field, value), or (field, value) under a default subject"
+        )
+    return (
+        None if subject is None else _write_subject(subject),
+        _write_field(field_name),
+        _write_value(value),
+    )
 
 
 class WriteBatch:
@@ -1261,51 +1304,115 @@ class WriteBatch:
     ``set`` replaces a single-value field, ``add`` puts one more value in a
     many-valued field, and ``retire`` ends one live Claim; ``write()`` sends them
     all and returns the outcome, raising ``WriteRefusalError`` on a refusal.
+
+    ``pb.changes(because=..., subject="kind/id")`` names the Subject once:
+    ``.set(field, value)`` and ``.add(field, value)`` are about it, and
+    ``.retire(SlotRef(field=...))`` ends one of its fields. A change that names
+    its own subject overrides the default.
     """
 
-    def __init__(self, playbill: Playbill, *, because: str) -> None:
+    def __init__(
+        self, playbill: Playbill, *, because: str, subject: _WriteSubject | None = None
+    ) -> None:
         self._playbill = playbill
         self.because = because
+        self.subject = None if subject is None else _write_subject(subject)
         self.changes: list[Change] = []
 
+    @overload
     def set(
         self,
-        subject: str | SubjectRef,
-        field: str | ClaimTypeRef,
-        value: ClaimValue | SubjectRef | LiteralValue,
+        subject: _WriteSubject,
+        field: _WriteField,
+        value: _WriteValue,
+        /,
         *,
         evidence: Evidence | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
+        expect: WriteExpect | None = None,
+    ) -> WriteBatch: ...
+
+    @overload
+    def set(
+        self,
+        field: _WriteField,
+        value: _WriteValue,
+        /,
+        *,
+        subject: _WriteSubject | None = None,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        expect: WriteExpect | None = None,
+    ) -> WriteBatch: ...
+
+    def set(
+        self,
+        *operands: Any,
+        subject: _WriteSubject | None = None,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        expect: WriteExpect | None = None,
     ) -> WriteBatch:
+        named, field_name, value = _batch_operands("set", operands, subject)
         self.changes.append(
             SetChange(
-                subject=_write_subject(subject),
-                field=_write_field(field),
-                value=_write_value(value),
+                subject=named,
+                field=field_name,
+                value=value,
                 evidence=evidence,
                 role=role,
                 contend=contend,
+                expect=_write_expect(expect),
             )
         )
         return self
 
+    @overload
     def add(
         self,
-        subject: str | SubjectRef,
-        field: str | ClaimTypeRef,
-        value: ClaimValue | SubjectRef | LiteralValue,
+        subject: _WriteSubject,
+        field: _WriteField,
+        value: _WriteValue,
+        /,
         *,
         evidence: Evidence | None = None,
         role: WriteRole | None = None,
+        expect_absent: bool = False,
+    ) -> WriteBatch: ...
+
+    @overload
+    def add(
+        self,
+        field: _WriteField,
+        value: _WriteValue,
+        /,
+        *,
+        subject: _WriteSubject | None = None,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        expect_absent: bool = False,
+    ) -> WriteBatch: ...
+
+    def add(
+        self,
+        *operands: Any,
+        subject: _WriteSubject | None = None,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        expect_absent: bool = False,
     ) -> WriteBatch:
+        named, field_name, value = _batch_operands("add", operands, subject)
         self.changes.append(
             AddChange(
-                subject=_write_subject(subject),
-                field=_write_field(field),
-                value=_write_value(value),
+                subject=named,
+                field=field_name,
+                value=value,
                 evidence=evidence,
                 role=role,
+                expect_absent=expect_absent,
             )
         )
         return self
@@ -1316,9 +1423,15 @@ class WriteBatch:
         *,
         because: str | None = None,
         reason: WriteRetireReason = "was-rescinded",
+        expect: WriteExpect | None = None,
     ) -> WriteBatch:
         self.changes.append(
-            RetireChange(target=_write_target(target), because=because, reason=reason)
+            RetireChange(
+                target=_write_target(target),
+                because=because,
+                reason=reason,
+                expect=_write_expect(expect),
+            )
         )
         return self
 
@@ -1334,6 +1447,7 @@ class WriteBatch:
         return self._playbill._write(
             PlaybillWriteRequestV1(
                 because=self.because,
+                subject=self.subject,
                 changes=tuple(self.changes),
                 dry_run=dry_run,
                 accept=accept,
@@ -1345,12 +1459,13 @@ class WriteBatch:
 
     def __repr__(self) -> str:
         spelled = ", ".join(
-            f"{item.op} {getattr(item, 'subject', '')} {getattr(item, 'field', '')}".strip()
+            f"{item.op} {item.subject or self.subject or ''} {item.field}".replace("  ", " ")
             if not isinstance(item, RetireChange)
             else f"retire {item.target}"
             for item in self.changes
         )
-        return f"WriteBatch(because={self.because!r}, changes=[{spelled}])"
+        about = "" if self.subject is None else f", subject={self.subject!r}"
+        return f"WriteBatch(because={self.because!r}{about}, changes=[{spelled}])"
 
 
 @dataclass(frozen=True)
@@ -2384,19 +2499,24 @@ class Playbill:
         )
 
     @overload
-    def changes(self, *, because: str) -> WriteBatch: ...
+    def changes(self, *, because: str, subject: str | SubjectRef | None = None) -> WriteBatch: ...
 
     @overload
     def changes(self, *, rationale: str | None = None) -> ChangeSetDraft: ...
 
     def changes(
-        self, *, rationale: str | None = None, because: str | None = None
+        self,
+        *,
+        rationale: str | None = None,
+        because: str | None = None,
+        subject: str | SubjectRef | None = None,
     ) -> ChangeSetDraft | WriteBatch:
         """Open one changeset that any mix of members can be authored into.
 
         ``changes(because=...)`` opens the typed write batch instead:
         ``.set(...)``, ``.add(...)`` and ``.retire(...)`` changes, sent together by
-        ``.write()``. ``changes(rationale=...)`` is the full authoring changeset.
+        ``.write()``; ``subject=`` names the Subject of every change that names
+        none. ``changes(rationale=...)`` is the full authoring changeset.
 
         `pb.claim(...)` still authors exactly one Claim. This is the same
         authoring surface for an intent that carries more than one: it lowers
@@ -2410,7 +2530,9 @@ class Playbill:
                 raise ValueError(
                     "pass because (a write batch) or rationale (a changeset), not both"
                 )
-            return WriteBatch(self, because=because)
+            return WriteBatch(self, because=because, subject=subject)
+        if subject is not None:
+            raise ValueError("subject= names the default Subject of a write batch (because=)")
         return ChangeSetDraft(self.at(self.coordinate), rationale)
 
     # -- the write verbs -------------------------------------------------------
@@ -2464,6 +2586,7 @@ class Playbill:
         evidence: Evidence | None = None,
         role: WriteRole | None = None,
         contend: bool = False,
+        expect: WriteExpect | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
@@ -2474,7 +2597,9 @@ class Playbill:
         kind is added. It accepts in the same call when policy lets you
         (``accept="never"`` only proposes); ``dry_run`` checks everything and
         writes nothing. By default it refuses when the field changed since this
-        context's coordinate. A refusal raises ``WriteRefusalError``; check
+        context's coordinate; ``expect`` compares by value instead: it refuses
+        unless the field holds that value now (a list for several, ``[]`` for
+        none). A refusal raises ``WriteRefusalError``; check
         ``outcome.warnings`` for a verdict that is not supported.
         """
 
@@ -2486,6 +2611,7 @@ class Playbill:
             evidence=evidence,
             role=role,
             contend=contend,
+            expect=_write_expect(expect),
             dry_run=dry_run,
             accept=accept,
             at=self._write_at(at),
@@ -2503,19 +2629,23 @@ class Playbill:
         *,
         because: str,
         reason: WriteRetireReason = "was-rescinded",
+        expect: WriteExpect | None = None,
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
         at: WriteAt | _Unset = _UNSET,
     ) -> WriteOutcome:
         """End one live Claim, named by ID or ``SlotRef(subject=..., field=...)``.
 
-        Claims that depend on it retire with it, in one change set.
+        Claims that depend on it retire with it, in one change set. ``expect``
+        refuses unless its field holds that value now (every live value, as a
+        list, for a many-valued field).
         """
 
         request = PlaybillRetireRequestV1(
             target=_write_target(target),
             because=because,
             reason=reason,
+            expect=_write_expect(expect),
             dry_run=dry_run,
             accept=accept,
             at=self._write_at(at),

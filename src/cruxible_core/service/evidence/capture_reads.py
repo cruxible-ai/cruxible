@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+from dataclasses import dataclass
+from typing import Literal
+
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
+    CaptureEnvelopeAny,
     classify_capture_reuse,
     parse_capture_envelope,
     verify_capture,
@@ -155,6 +160,160 @@ class _LedgerResolver:
         return content
 
 
+CaptureUnavailableReason = Literal[
+    "capture_unavailable", "contract_not_at_coordinate", "body_unavailable"
+]
+
+
+@dataclass(frozen=True)
+class VerifiedCapture:
+    """A Capture verified against its exact contract accepted at one coordinate."""
+
+    envelope: CaptureEnvelopeAny
+    contract: CaptureContractV1
+    contract_address: str
+
+
+def verify_accepted_capture(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    digest: str,
+    *,
+    access: BodyAccessContext,
+) -> VerifiedCapture | CaptureUnavailableReason:
+    """Verify one retained Capture against the contract accepted at ``coordinate``.
+
+    Answers why it is unavailable when its bytes, its contract at the coordinate
+    or its committed body are missing; raises ``CaptureReadInvalid`` when it is
+    present but does not verify, and ``playbill.capture.not_a_capture`` when the
+    bytes are not a Capture envelope at all.
+    """
+
+    store = instance.body_store()
+    if not store.metadata(digest, access=access).present:
+        return "capture_unavailable"
+    try:
+        raw = store.read(digest, access=access)
+    except PlaybillError as exc:
+        raise CaptureReadInvalid(f"Capture verification failed: {exc}") from exc
+    try:
+        envelope = parse_capture_envelope(raw)
+    except (PlaybillError, ValueError):
+        # The bytes are present and intact but are not a Capture envelope: say
+        # what they are and which read answers them, not "verification failed".
+        raise _not_a_capture(instance, coordinate, digest) from None
+    try:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            path = projection.citations.capture_contract_path(envelope.capture_contract_digest)
+            if path is None:
+                return "contract_not_at_coordinate"
+            row = projection.typed.connection.execute(
+                "SELECT identity FROM capture_contracts WHERE path=? AND artifact_digest=?",
+                (path, envelope.capture_contract_digest),
+            ).fetchone()
+            if row is None:
+                raise CaptureReadInvalid("CaptureContract index does not reproduce")
+            contract = projection.typed.source(row[0])
+            if not isinstance(contract, CaptureContractV1):
+                raise CaptureReadInvalid("CaptureContract source has the wrong type")
+            producers = {}
+            for identity in {envelope.producer, envelope.run_coordinate.executable_identity}:
+                owner = projection.typed.envelope(identity.qualified)
+                if owner is not None:
+                    # source() validates the indexed member against the accepted tree.
+                    projection.typed.source(identity.qualified)
+                    producers[identity.qualified] = owner.artifact_digest
+        if (
+            envelope.commitment.materialization == "cas"
+            and not store.metadata(envelope.commitment.digest, access=access).present
+        ):
+            return "body_unavailable"
+        envelope = verify_capture(
+            digest,
+            store=store,
+            contract=contract,
+            ledger_resolver=_LedgerResolver(instance),
+            producer_artifact_digests=producers,
+            producer_receipt_resolver=local_producer_receipt_resolver(
+                exhaust_root=instance.root / instance.descriptor.storage.exhaust,
+                instance_id=instance.descriptor.instance_id,
+                bodies=store,
+            ),
+        )
+    except CaptureReadInvalid:
+        raise
+    except (PlaybillError, ValueError) as exc:
+        raise CaptureReadInvalid(f"Capture verification failed: {exc}") from exc
+    return VerifiedCapture(envelope=envelope, contract=contract, contract_address=path)
+
+
+@dataclass(frozen=True)
+class RetainedCapture:
+    """One Capture envelope the instance's body store holds, cited or not."""
+
+    digest: str
+    envelope: CaptureEnvelopeAny
+
+
+@dataclass(frozen=True)
+class RetainedCaptureInventory:
+    """A bounded inventory of retained Captures; ``complete`` says it saw them all."""
+
+    captures: tuple[RetainedCapture, ...]
+    complete: bool
+    nearest: tuple[str, ...] = ()
+
+
+# Canonical envelopes sort their keys, and this one sorts first.
+_ENVELOPE_HEAD = b'{"capture_contract_digest":"'
+_HEAD_LENGTH = len(_ENVELOPE_HEAD) + len("sha256:") + 64
+
+
+def retained_captures(
+    instance: PlaybillInstance,
+    *,
+    budget: int,
+    hex_prefix: str = "",
+    contract_digests: Collection[str] | None = None,
+    nearest: int = 0,
+) -> RetainedCaptureInventory:
+    """The Captures the instance holds whose digest starts with ``hex_prefix``.
+
+    Cited or not: a Capture is retained as soon as it is stored. At most
+    ``budget`` stored objects are examined; when the store holds more under the
+    prefix the inventory is incomplete and says so, and callers refuse rather
+    than treat a partial inventory as the whole. ``contract_digests`` keeps only
+    Captures under those contract versions, judged from each object's leading
+    bytes before it is read in full. ``nearest`` passes on that many digests
+    sharing the longest prefix with ``hex_prefix``. Nothing here is verified;
+    ``verify_accepted_capture`` verifies what a caller keeps.
+    """
+
+    store = instance.body_store()
+    scan = store.scan(hex_prefix, budget=budget, nearest=nearest)
+    wanted = (
+        None if contract_digests is None else {item.encode("ascii") for item in contract_digests}
+    )
+    found: list[RetainedCapture] = []
+    for digest in scan.digests:
+        head = store.peek(digest, _HEAD_LENGTH)
+        if not head.startswith(_ENVELOPE_HEAD):
+            continue
+        if wanted is not None and head[len(_ENVELOPE_HEAD) :] not in wanted:
+            continue
+        try:
+            envelope = parse_capture_envelope(store.read(digest, access=_INVENTORY_ACCESS))
+        except (PlaybillError, ValueError):
+            continue
+        found.append(RetainedCapture(digest=digest, envelope=envelope))
+    return RetainedCaptureInventory(
+        captures=tuple(found), complete=scan.complete, nearest=scan.nearest
+    )
+
+
+_INVENTORY_ACCESS = BodyAccessContext(principal_id="playbill-capture-inventory", can_read_body=True)
+
+
 def service_read_playbill_capture(
     instance: PlaybillInstance,
     *,
@@ -178,72 +337,17 @@ def service_read_playbill_capture(
             "capture_digest": _full_capture_digest(instance, coordinate, request.capture_digest)
         }
     )
-    store = instance.body_store()
-    if not store.metadata(request.capture_digest, access=access).present:
+    verified = verify_accepted_capture(instance, coordinate, request.capture_digest, access=access)
+    if isinstance(verified, str):
         return CaptureReadV1(
             capture_digest=request.capture_digest,
             coordinate=public,
             status="unavailable",
-            reason="capture_unavailable",
+            reason=verified,
         )
+    store = instance.body_store()
+    envelope, contract, path = verified.envelope, verified.contract, verified.contract_address
     try:
-        raw = store.read(request.capture_digest, access=access)
-    except PlaybillError as exc:
-        raise CaptureReadInvalid(f"Capture verification failed: {exc}") from exc
-    try:
-        envelope = parse_capture_envelope(raw)
-    except (PlaybillError, ValueError):
-        # The bytes are present and intact but are not a Capture envelope: say
-        # what they are and which read answers them, not "verification failed".
-        raise _not_a_capture(instance, coordinate, request.capture_digest) from None
-    try:
-        with instance.bind_accepted_projection(coordinate) as projection:
-            path = projection.citations.capture_contract_path(envelope.capture_contract_digest)
-            if path is None:
-                return CaptureReadV1(
-                    capture_digest=request.capture_digest,
-                    coordinate=public,
-                    status="unavailable",
-                    reason="contract_not_at_coordinate",
-                )
-            row = projection.typed.connection.execute(
-                "SELECT identity FROM capture_contracts WHERE path=? AND artifact_digest=?",
-                (path, envelope.capture_contract_digest),
-            ).fetchone()
-            if row is None:
-                raise CaptureReadInvalid("CaptureContract index does not reproduce")
-            contract = projection.typed.source(row[0])
-            if not isinstance(contract, CaptureContractV1):
-                raise CaptureReadInvalid("CaptureContract source has the wrong type")
-            producers = {}
-            for identity in {envelope.producer, envelope.run_coordinate.executable_identity}:
-                owner = projection.typed.envelope(identity.qualified)
-                if owner is not None:
-                    # source() validates the indexed member against the accepted tree.
-                    projection.typed.source(identity.qualified)
-                    producers[identity.qualified] = owner.artifact_digest
-        if (
-            envelope.commitment.materialization == "cas"
-            and not store.metadata(envelope.commitment.digest, access=access).present
-        ):
-            return CaptureReadV1(
-                capture_digest=request.capture_digest,
-                coordinate=public,
-                status="unavailable",
-                reason="body_unavailable",
-            )
-        envelope = verify_capture(
-            request.capture_digest,
-            store=store,
-            contract=contract,
-            ledger_resolver=_LedgerResolver(instance),
-            producer_artifact_digests=producers,
-            producer_receipt_resolver=local_producer_receipt_resolver(
-                exhaust_root=instance.root / instance.descriptor.storage.exhaust,
-                instance_id=instance.descriptor.instance_id,
-                bodies=store,
-            ),
-        )
         # An external Capture can retain exact bytes locally. Open those bytes,
         # not the remote location; the original source remains in the envelope.
         source = (

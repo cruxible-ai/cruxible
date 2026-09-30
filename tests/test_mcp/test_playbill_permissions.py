@@ -78,6 +78,8 @@ def test_the_write_verbs_replace_the_authoring_tools_in_the_default_profile(
     assert {"cruxible_playbill_set", "cruxible_playbill_retire", "cruxible_playbill_write"} <= names
     assert not {name for name in names if name.startswith("cruxible_playbill_authoring_")}
     assert "cruxible_playbill_claim_retire" not in TOOL_PERMISSIONS
+    # add stays a change of cruxible_playbill_write on MCP: no tool of its own.
+    assert "cruxible_playbill_add" not in TOOL_PERMISSIONS
     for verb in ("set", "retire", "write"):
         assert TOOL_PERMISSIONS[f"cruxible_playbill_{verb}"] == PermissionMode.GOVERNED_WRITE
 

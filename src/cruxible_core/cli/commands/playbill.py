@@ -109,6 +109,7 @@ from cruxible_client.contracts.write import (
     PlaybillRetireRequestV1,
     PlaybillSetRequestV1,
     PlaybillWriteRequestV1,
+    SubjectRef,
     WriteOutcome,
 )
 from cruxible_client.errors import DataValidationError
@@ -3409,6 +3410,10 @@ class _WriteFileV1(BaseModel):
     because: str | None = Field(
         default=None, min_length=1, description="Why; --because overrides it."
     )
+    subject: SubjectRef | None = Field(
+        default=None,
+        description="The Subject (kind/id) of every change that names none.",
+    )
     changes: list[Change] = Field(min_length=1)
 
 
@@ -3455,6 +3460,8 @@ def _write_text(outcome: WriteOutcome) -> None:
             details.append("already live")
         if change.verdict is not None:
             details.append(f"verdict {change.verdict}")
+        if change.capture is not None:
+            details.append(f"evidence {change.capture}")
         if change.retired:
             details.append(f"also retires {', '.join(change.retired)}")
         if change.contenders_created:
@@ -3501,13 +3508,41 @@ def _write_request(model: type[ResultT], fields: Mapping[str, Any], *, example: 
         ) from None
 
 
+def _expect_option_value(values: tuple[str, ...]) -> str | tuple[str, ...] | None:
+    """``--expect`` given once is the value; given again, every live value."""
+
+    if not values:
+        return None
+    return values[0] if len(values) == 1 else values
+
+
+_EXPECT_HELP = (
+    "Refuse unless the field holds this value now (compare-and-set); repeat it "
+    "for every value of a many-valued field."
+)
+
+
 def _evidence_option_value(
-    evidence_file: str | None, capture: str | None, workspace_root: str
+    evidence_file: str | None,
+    capture: str | None,
+    workspace_root: str,
+    contract: str | None = None,
 ) -> dict[str, Any] | None:
-    if evidence_file is not None and capture is not None:
-        raise click.UsageError("pass --evidence-file or --capture, not both")
+    given = [
+        flag
+        for flag, value in (
+            ("--evidence-file", evidence_file),
+            ("--capture", capture),
+            ("--evidence-contract", contract),
+        )
+        if value is not None
+    ]
+    if len(given) > 1:
+        raise click.UsageError(f"pass one of {', '.join(given)}, not both")
     if capture is not None:
         return {"kind": "capture", "capture": capture}
+    if contract is not None:
+        return {"kind": "contract", "contract": contract}
     if evidence_file is None:
         return None
     try:
@@ -3530,9 +3565,24 @@ def _evidence_option_value(
     default=None,
     help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
 )
-@click.option("--capture", default=None, help="Cite an existing Capture by digest.")
+@click.option(
+    "--capture",
+    default=None,
+    help="Cite an existing Capture: its handle CAP-<12+ hex>, or its sha256 digest.",
+)
+@click.option(
+    "--evidence-contract",
+    default=None,
+    help="Cite the newest verified Capture of this CaptureContract about SUBJECT.",
+)
 @click.option("--role", default=None, help="Only when the field permits several roles.")
 @click.option("--contend", is_flag=True, help="Contest the live value instead of replacing it.")
+@click.option("--expect", "expect", multiple=True, help=_EXPECT_HELP)
+@click.option(
+    "--expect-absent",
+    is_flag=True,
+    help="Refuse unless the field holds no value now (compare-and-set on an empty field).",
+)
 @click.option(
     "--workspace-root",
     default=".",
@@ -3549,8 +3599,11 @@ def set_value(
     because: str,
     evidence_file: str | None,
     capture: str | None,
+    evidence_contract: str | None,
     role: str | None,
     contend: bool,
+    expect: tuple[str, ...],
+    expect_absent: bool,
     workspace_root: str,
     dry_run: bool,
     no_accept: bool,
@@ -3564,6 +3617,8 @@ def set_value(
     for such fields, a Subject as kind/id, or the text itself for exact content.
     """
 
+    if expect_absent and expect:
+        raise click.UsageError("pass --expect or --expect-absent, not both")
     request = _write_request(
         PlaybillSetRequestV1,
         {
@@ -3571,9 +3626,12 @@ def set_value(
             "field": field,
             "value": value,
             "because": because,
-            "evidence": _evidence_option_value(evidence_file, capture, workspace_root),
+            "evidence": _evidence_option_value(
+                evidence_file, capture, workspace_root, evidence_contract
+            ),
             "role": role,
             "contend": contend,
+            "expect": () if expect_absent else _expect_option_value(expect),
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,
@@ -3583,6 +3641,97 @@ def set_value(
     outcome = _server_call(
         lambda client, instance_id: client.playbill_set(instance_id, request=request),
         command_name="playbill set",
+    )
+    _finish_write(outcome, output_json=output_json)
+
+
+@playbill_group.command("add")
+@click.argument("subject")
+@click.argument("field")
+@click.argument("value")
+@click.option("--because", required=True, help="Why; also the default evidence.")
+@click.option(
+    "--evidence-file",
+    default=None,
+    help="PATH#ANCHOR: cite text found once in a catalogued workspace file.",
+)
+@click.option(
+    "--capture",
+    default=None,
+    help="Cite an existing Capture: its handle CAP-<12+ hex>, or its sha256 digest.",
+)
+@click.option(
+    "--evidence-contract",
+    default=None,
+    help="Cite the newest verified Capture of this CaptureContract about SUBJECT.",
+)
+@click.option("--role", default=None, help="Only when the field permits several roles.")
+@click.option(
+    "--expect-absent",
+    is_flag=True,
+    help="Refuse when the value is already there, instead of answering it as done.",
+)
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose source catalog --evidence-file reads.",
+)
+@_write_options
+@handle_errors
+def add_value(
+    subject: str,
+    field: str,
+    value: str,
+    because: str,
+    evidence_file: str | None,
+    capture: str | None,
+    evidence_contract: str | None,
+    role: str | None,
+    expect_absent: bool,
+    workspace_root: str,
+    dry_run: bool,
+    no_accept: bool,
+    at_oid: str | None,
+    output_json: bool,
+) -> None:
+    """Add VALUE to many-valued FIELD of SUBJECT (kind/id), beside the values there.
+
+    A value already there is answered as done (--expect-absent refuses instead).
+    A Subject of a known kind that does not exist yet is added. VALUE is text, as
+    for set: a Subject as kind/id for a Subject-valued field.
+    """
+
+    request = _write_request(
+        PlaybillWriteRequestV1,
+        {
+            "changes": [
+                {
+                    "op": "add",
+                    "subject": subject,
+                    "field": field,
+                    "value": value,
+                    "evidence": _evidence_option_value(
+                        evidence_file, capture, workspace_root, evidence_contract
+                    ),
+                    "role": role,
+                    "expect_absent": expect_absent,
+                }
+            ],
+            "because": because,
+            "dry_run": dry_run,
+            "accept": "never" if no_accept else "if_allowed",
+            "at": at_oid,
+        },
+        example=(
+            "cruxible playbill add dev.item/tidy-cli governs dev.item/cli-docs "
+            '--because "Linked in review."'
+        ),
+    )
+    outcome = _server_call(
+        lambda client, instance_id: client.playbill_write(instance_id, request=request),
+        command_name="playbill add",
     )
     _finish_write(outcome, output_json=output_json)
 
@@ -3598,6 +3747,7 @@ def set_value(
     show_default=True,
     help="was-rescinded: withdrawn; was-wrong: it was false; superseded: its shape is gone.",
 )
+@click.option("--expect", "expect", multiple=True, help=_EXPECT_HELP)
 @_write_options
 @handle_errors
 def retire(
@@ -3605,6 +3755,7 @@ def retire(
     field: str | None,
     because: str,
     reason: str,
+    expect: tuple[str, ...],
     dry_run: bool,
     no_accept: bool,
     at_oid: str | None,
@@ -3621,6 +3772,7 @@ def retire(
             "target": target if field is None else {"subject": target, "field": field},
             "because": because,
             "reason": reason,
+            "expect": _expect_option_value(expect),
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",
             "at": at_oid,
@@ -3661,7 +3813,8 @@ def write_changes(
 
     FILE (YAML or JSON) holds {"because": ..., "changes": [...]}, or a bare list
     of changes with --because. Each change is {"op": "set" | "add", "subject",
-    "field", "value"} or {"op": "retire", "target"}; --schema prints the schema.
+    "field", "value"} or {"op": "retire", "target"}; a top-level "subject" is
+    the Subject of every change that names none. --schema prints the schema.
     """
 
     if schema:
@@ -3690,6 +3843,7 @@ def write_changes(
         PlaybillWriteRequestV1,
         {
             "changes": observe_changes(parsed.changes, workspace=Path(workspace_root)),
+            "subject": parsed.subject,
             "because": rationale,
             "dry_run": dry_run,
             "accept": "never" if no_accept else "if_allowed",

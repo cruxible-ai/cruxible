@@ -42,6 +42,7 @@ from cruxible_client.contracts.write import (
     Change,
     ClaimValue,
     Evidence,
+    ExpectedValue,
     SlotRef,
     WriteAccept,
     WriteOutcome,
@@ -913,7 +914,9 @@ def register_tools(
             Field(
                 description=(
                     'Default {"kind": "self", "self": because}. Or {"kind": "capture", '
-                    '"capture": "sha256:…"}, or {"kind": "file", "file": "PATH#ANCHOR"}.'
+                    '"capture": "CAP-<12 hex>" or "sha256:…"}, {"kind": "contract", "contract": '
+                    '"<CaptureContract>"} (its newest Capture about the Subject), or '
+                    '{"kind": "file", "file": "PATH#ANCHOR"}.'
                 )
             ),
         ] = None,
@@ -925,6 +928,15 @@ def register_tools(
             bool,
             Field(description="Contest the live value instead of replacing it."),
         ] = False,
+        expect: Annotated[
+            ExpectedValue | None,
+            Field(
+                description=(
+                    "Compare-and-set: the value you read (a list for several, [] for none); "
+                    "refuses slot_changed, showing the value, if the field holds another."
+                )
+            ),
+        ] = None,
         dry_run: Annotated[
             bool, Field(description="Run every check up to the commit; write nothing.")
         ] = False,
@@ -952,6 +964,7 @@ def register_tools(
             evidence=evidence,
             role=role,
             contend=contend,
+            expect=expect,
             dry_run=dry_run,
             accept=accept,
             at=at,
@@ -977,6 +990,15 @@ def register_tools(
                 description=("was-rescinded (withdrawn), was-wrong (it was false), or superseded.")
             ),
         ] = "was-rescinded",
+        expect: Annotated[
+            ExpectedValue | None,
+            Field(
+                description=(
+                    "Compare-and-set: the field's live value (every live value, as a list, "
+                    "for a many-valued field); refuses slot_changed if it holds another."
+                )
+            ),
+        ] = None,
         dry_run: Annotated[
             bool, Field(description="Run every check up to the commit; write nothing.")
         ] = False,
@@ -995,6 +1017,7 @@ def register_tools(
             target=target,
             because=because,
             reason=reason,
+            expect=expect,
             dry_run=dry_run,
             accept=accept,
             at=at,
@@ -1015,6 +1038,15 @@ def register_tools(
             ),
         ],
         because: Annotated[str, Field(description="Why: the change set's rationale.")],
+        subject: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "The Subject (kind/id) of every change that names none; a change's own "
+                    "subject overrides it."
+                )
+            ),
+        ] = None,
         dry_run: Annotated[
             bool, Field(description="Run every check up to the commit; write nothing.")
         ] = False,
@@ -1032,6 +1064,7 @@ def register_tools(
             require_instance_id(instance_id),
             changes=changes,
             because=because,
+            subject=subject,
             dry_run=dry_run,
             accept=accept,
             at=at,

@@ -33,6 +33,8 @@ from tests.core_support._write_support import (
     OWNER,
     REPORTS,
     caller,
+    cited_captures,
+    report_evidence,
     seed_write_surface,
 )
 
@@ -365,7 +367,7 @@ def test_every_sdk_evidence_repair_runs_against_the_real_builders(
     from cruxible_client.authoring.sdk import Playbill
     from cruxible_client.contracts.write import CaptureEvidence
 
-    digest = "sha256:" + "b" * 64
+    digest = "CAP-" + "b" * 12
     outcome = _write(
         instance,
         _set(WI1, "measured", 3),
@@ -376,7 +378,7 @@ def test_every_sdk_evidence_repair_runs_against_the_real_builders(
     assert [item.change for item in outcome.warnings] == [0, 1]
     for warning in outcome.warnings:
         assert warning.repair is not None
-        placeholder = f"<digest of a Capture under {REPORTS.identity.name}>"
+        placeholder = f"<CAP- handle of a Capture under {REPORTS.identity.name}>"
         assert placeholder in warning.repair
         pb = Playbill(
             client=_Recorder(),  # type: ignore[arg-type]
@@ -417,6 +419,462 @@ def test_evidence_required_waits_for_a_claim_type_flag(
         _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "sha256:" + "a" * 64}),
     )
     assert _refusal(captured).code != "playbill.write.evidence_required"
+
+
+def test_a_capture_handle_resolves_to_its_digest_before_lowering(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.write import capture_handle
+
+    first = _write(
+        instance, _set(WI1, "measured", 3, evidence=report_evidence(tmp_path, "Count: 3"))
+    )
+    assert first.status == "accepted", first
+    assert first.changes[0].verdict == "supported" and first.warnings == ()
+    (digest,) = cited_captures(instance, first.changes[0].claim or "")
+    handle = capture_handle(digest)
+    assert handle == "CAP-" + digest.removeprefix("sha256:")[:12]
+
+    cited = _write(
+        instance, _set(WI2, "measured", 3, evidence={"kind": "capture", "capture": handle})
+    )
+    assert cited.status == "accepted", cited
+    (change,) = cited.changes
+    assert change.capture == handle and change.verdict == "supported"
+    assert cited_captures(instance, change.claim or "") == {digest}
+    # The lowered payload names the digest, exactly as a digest-cited write would.
+    preview = _write(
+        instance,
+        _add(WI3, "labels", "urgent") | {"evidence": {"kind": "capture", "capture": digest}},
+        dry_run=True,
+    )
+    assert preview.changes[0].capture == handle
+
+    unknown = _refusal(
+        _write(
+            instance,
+            _set(WI3, "measured", 3, evidence={"kind": "capture", "capture": "CAP-" + "f" * 12}),
+        )
+    )
+    assert unknown.code == "playbill.write.capture_not_found"
+    assert unknown.field_path == "changes[0].evidence.capture"
+    assert 1 <= len(unknown.candidates) <= 8
+    assert all(item.startswith("CAP-") for item in unknown.candidates)
+
+
+def _held_captures(instance: PlaybillInstance) -> set[str]:
+    """Every Capture envelope the instance's body store holds, by digest."""
+
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    store = instance.body_store()
+    access = BodyAccessContext(principal_id="test", can_read_body=True)
+    found: set[str] = set()
+    scan = store.scan("", budget=1_000_000)
+    assert scan.complete
+    for digest in scan.digests:
+        try:
+            parse_capture_envelope(store.read(digest, access=access))
+        except Exception:  # noqa: BLE001 - bodies of every other kind
+            continue
+        found.add(digest)
+    return found
+
+
+def test_a_capture_handle_names_a_capture_no_accepted_claim_cites_yet(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    """Citing a Capture for the first time is the common case: held and verified is enough."""
+
+    from cruxible_client.contracts.write import capture_handle
+
+    before = _held_captures(instance)
+    pending = _write(
+        instance,
+        _set(WI1, "measured", 3, evidence=report_evidence(tmp_path, "Count: 3")),
+        accept="never",
+    )
+    assert pending.status == "awaiting_approval", pending
+    (fresh,) = {
+        digest
+        for digest in _held_captures(instance) - before
+        if _contract_of(instance, digest) == REPORTS.identity.name
+    }
+    assert fresh not in _accepted_capture_digests(instance)
+    handle = capture_handle(fresh)
+    cited = _write(
+        instance, _set(WI2, "measured", 3, evidence={"kind": "capture", "capture": handle})
+    )
+    assert cited.status == "accepted", cited
+    assert cited.changes[0].capture == handle and cited.changes[0].verdict == "supported"
+    assert cited_captures(instance, cited.changes[0].claim or "") == {fresh}
+    # A held body that is not a Capture never answers a handle.
+    body = instance.body_store().store(b"not a capture").digest
+    stray = _refusal(
+        _write(
+            instance,
+            _set(WI3, "measured", 3, evidence={"kind": "capture", "capture": capture_handle(body)}),
+        )
+    )
+    assert stray.code == "playbill.write.capture_not_found"
+    assert capture_handle(body) not in stray.candidates
+
+
+def _accepted_capture_digests(instance: PlaybillInstance) -> set[str]:
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        rows = projection.typed.connection.execute("SELECT capture_digest FROM captures")
+        return {str(row[0]) for row in rows}
+
+
+def _contract_of(instance: PlaybillInstance, digest: str) -> str:
+    from cruxible_client.contracts.captures import parse_capture_envelope
+    from cruxible_core.service.discovery.contract_names import CaptureContractNames
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            digest, access=BodyAccessContext(principal_id="test", can_read_body=True)
+        )
+    )
+    return CaptureContractNames(instance, instance.accepted_coordinate()).name(
+        envelope.capture_contract_digest
+    )
+
+
+def _seed_record_source(instance: PlaybillInstance) -> tuple[Any, Any]:
+    """Accept an external record contract and its provider; answer (contract, provider)."""
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.captures import (
+        capture_contract_digest,
+        capture_contract_path,
+        render_capture_contract,
+    )
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicyV1,
+        ClaimEvidenceAdmissionRuleV1,
+    )
+    from cruxible_client.contracts.providers import provider_path, render_provider
+    from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.core_support._pc_c_support import capture_contract, provider
+
+    contract = capture_contract()
+    provider_artifact = provider(contract)
+    # A field whose evidence is the record, bound to its Subject by the source.
+    predicate = f"{KIND}.recorded_status"
+    recorded = CLAIM_TYPES[2].model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
+            "predicate": predicate,
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                rules=(
+                    ClaimEvidenceAdmissionRuleV1(
+                        rule_id="order-record",
+                        claim_roles=("observation",),
+                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
+                        evidence_kinds=("database_record",),
+                        admission="direct",
+                        subject_binding="contract_source_mapping",
+                    ),
+                )
+            ),
+        }
+    )
+    base = instance.accepted_coordinate()
+    proposed = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/record-source", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree={
+            **instance.tree_at(base.git_oid),
+            capture_contract_path(contract.identity.name): render_capture_contract(contract),
+            provider_path(provider_artifact.identity.name): render_provider(provider_artifact),
+            claim_type_path(predicate): render_claim_type(recorded),
+        },
+        timestamp="2026-09-30T11:00:00.000000Z",
+    )
+    assert proposed.candidate is not None, proposed.evaluation
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    return contract, provider_artifact
+
+
+def _record_capture(
+    instance: PlaybillInstance,
+    contract: Any,
+    provider_artifact: Any,
+    subject: str,
+    *,
+    exact: bool = True,
+    observed_at: Any = None,
+) -> str:
+    """Store (and cite nowhere) external record Captures whose selector names ``subject``.
+
+    The reader stores the record as a canonical value; with ``exact`` the same
+    record is also stored as exact bytes, which a Claim can cite, and that one
+    is answered.
+    """
+
+    from cruxible_core.evidence.source_readers import (
+        ExternalSourceReadRequestV1,
+        FakeVersionedExternalSourceReader,
+        ProducerBindingV1,
+    )
+    from tests.core_support._pc_c_support import NOW, digest, provider_run
+
+    kind, subject_id = subject.split("/", 1)
+    selector = {
+        "relation": "orders",
+        "key": {"order_id": subject_id},
+        "semantic_subject": SemanticAddress.whole_artifact(
+            subject_path(kind, subject_id)
+        ).model_dump(mode="json"),
+    }
+    reader = FakeVersionedExternalSourceReader()
+    reader.seed(
+        source_identity="commerce.production.orders",
+        coordinate_type="postgres-lsn-v1",
+        coordinate="0/16B6C50",
+        selector_type="relation-primary-key-v1",
+        selector=selector,
+        value={"order_id": subject_id, "status": "ready"},
+    )
+    acquired = reader.acquire(
+        ExternalSourceReadRequestV1(
+            contract=contract,
+            provider=provider_artifact,
+            binding=ProducerBindingV1(
+                provider=provider_artifact.identity,
+                logical_source_identity="commerce.production.orders",
+                adapter_digest=digest("test-adapter", "postgres-v1"),
+            ),
+            coordinate_type="postgres-lsn-v1",
+            coordinate="0/16B6C50",
+            selector_type="relation-primary-key-v1",
+            selector=selector,
+            materialization="cas",
+            run_coordinate=provider_run(provider_artifact),
+            observed_at=NOW if observed_at is None else observed_at,
+            resource_budget=contract.selection_budget,
+        ),
+        store=instance.body_store(),
+    )
+    if not exact:
+        return str(acquired.capture_digest)
+    # The reader commits the record as a canonical value, which a Claim cannot
+    # map a byte span onto; the same record committed as exact bytes can be cited.
+    from cruxible_client.contracts.captures import render_capture_envelope
+
+    store = instance.body_store()
+    body = f'{{"order_id":"{subject_id}","status":"ready"}}'.encode()
+    exact = acquired.envelope.model_dump(mode="json")
+    exact["commitment"] = {
+        "tag": "playbill-evidence-commitment-v1",
+        "digest_kind": "exact_bytes",
+        "digest": store.store(body).digest,
+        "byte_length": len(body),
+        "materialization": "cas",
+    }
+    envelope = type(acquired.envelope).model_validate(exact)
+    return store.store(render_capture_envelope(envelope)).digest
+
+
+def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subject(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.contracts.write import capture_handle
+
+    contract, provider_artifact = _seed_record_source(instance)
+    held = _record_capture(instance, contract, provider_artifact, WI1)
+    assert held not in _accepted_capture_digests(instance)
+    by_contract = {"kind": "contract", "contract": contract.identity.name}
+    outcome = _write(instance, _set(WI1, "recorded_status", "ready") | {"evidence": by_contract})
+    assert outcome.status == "accepted", outcome
+    assert outcome.changes[0].capture == capture_handle(held)
+    assert outcome.changes[0].verdict == "supported"
+    assert cited_captures(instance, outcome.changes[0].claim or "") == {held}
+    # Its selector names wi-1 exactly, so it is nobody else's.
+    other = _refusal(
+        _write(instance, _set(WI2, "recorded_status", "ready") | {"evidence": by_contract})
+    )
+    assert other.code == "playbill.write.contract_capture_not_found"
+
+
+def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
+    instance: PlaybillInstance,
+) -> None:
+    """Only a canonical-value record: a refusal naming it, never 'capture it first'."""
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.write import capture_handle
+    from tests.core_support._pc_c_support import NOW
+
+    contract, provider_artifact = _seed_record_source(instance)
+    canonical = _record_capture(instance, contract, provider_artifact, WI1, exact=False)
+    by_contract = {"kind": "contract", "contract": contract.identity.name}
+    only = _refusal(
+        _write(instance, _set(WI1, "recorded_status", "ready") | {"evidence": by_contract})
+    )
+    assert only.code == "playbill.write.contract_capture_not_citable"
+    assert only.candidates == (capture_handle(canonical),)
+    assert capture_handle(canonical) in only.message and "canonical value" in only.message
+    assert only.repair is not None and "exact bytes" in only.repair
+    assert "first" not in only.repair
+
+    # An older exact-bytes record is cited, with a note naming the newer one.
+    older = _record_capture(
+        instance, contract, provider_artifact, WI1, observed_at=NOW - timedelta(hours=1)
+    )
+    outcome = _write(instance, _set(WI1, "recorded_status", "ready") | {"evidence": by_contract})
+    assert outcome.status == "accepted", outcome
+    assert outcome.changes[0].capture == capture_handle(older)
+    (note,) = [
+        item for item in outcome.warnings if item.code != "playbill.write.verdict_not_supported"
+    ]
+    assert note.code == "playbill.write.newer_capture_not_citable"
+    assert (note.change, note.capture) == (0, capture_handle(canonical))  # type: ignore[union-attr]
+    assert "verdict" not in note.model_dump(mode="json")
+    assert capture_handle(older) in note.message and "canonical value" in note.message
+    assert outcome.next != note.repair
+    # A dry run says the same.
+    preview = _write(
+        instance, _set(WI1, "recorded_status", "done") | {"evidence": by_contract}, dry_run=True
+    )
+    assert preview.status == "would_accept", preview
+    assert "playbill.write.newer_capture_not_citable" in {item.code for item in preview.warnings}
+
+
+def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real prefix scan runs out: that is never taken as a unique match."""
+
+    from cruxible_client.contracts.errors import WriteRefusalError
+
+    for index, subject in enumerate((WI1, WI2, WI3)):
+        assert _write(instance, _set(subject, "title", f"T{index}")).status == "accepted"
+    head = instance.accepted_coordinate()
+    planner = write_verbs._Planner(
+        instance,
+        head=head,
+        read_at=head,
+        request=PlaybillWriteRequestV1.model_validate(
+            {"because": "x", "changes": [_set(WI1, "title", "x")]}
+        ),
+    )
+    monkeypatch.setattr(write_verbs, "_MAX_HANDLE_SCAN", 1)
+    with pytest.raises(WriteRefusalError) as caught:
+        planner.capture_by_handle("CAP-", index=0, path="changes[0].evidence.capture")
+    assert caught.value.error_code == "playbill.write.capture_scan_exhausted"
+    assert "longer handle" in (caught.value.repair_line or "")
+
+
+def test_a_handle_in_a_crowded_shard_stops_at_the_work_limit(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Almost nothing in the shard matches the full prefix, and the scan still stops."""
+
+    shard = instance.body_store().root / "sha256" / "ab"
+    shard.mkdir(exist_ok=True)
+    for index in range(3000):
+        (shard / f"ab{index:062x}").touch()
+    monkeypatch.setattr(write_verbs, "_CAPTURE_SCAN_BUDGET", 500)
+    refusal = _refusal(
+        _write(
+            instance,
+            _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "CAP-abffffffffff"}),
+        )
+    )
+    assert refusal.code == "playbill.write.capture_scan_exhausted"
+    scan = instance.body_store().scan("abffffffffff", budget=500, nearest=8)
+    assert not scan.complete and scan.examined <= 500 and len(scan.nearest) <= 8
+
+
+def test_an_ambiguous_capture_handle_refuses_with_the_longer_handles(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prefix = "sha256:" + "a" * 12
+    found = [prefix + "0" * 52, prefix + "1" * 52]
+    from cruxible_core.service.evidence import capture_reads
+
+    monkeypatch.setattr(
+        capture_reads,
+        "retained_captures",
+        lambda _instance, **_kw: capture_reads.RetainedCaptureInventory(
+            captures=tuple(
+                capture_reads.RetainedCapture(digest=item, envelope=None)  # type: ignore[arg-type]
+                for item in found
+            ),
+            complete=True,
+        ),
+    )
+    monkeypatch.setattr(write_verbs._Planner, "_verified_capture", lambda _self, _digest: True)
+    refusal = _refusal(
+        _write(
+            instance,
+            _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "CAP-" + "a" * 12}),
+        )
+    )
+    assert refusal.code == "playbill.write.capture_ambiguous"
+    assert refusal.candidates == ("CAP-" + "a" * 12 + "0", "CAP-" + "a" * 12 + "1")
+
+
+def test_contract_evidence_cites_the_newest_capture_about_the_subject(
+    instance: PlaybillInstance, tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.write import capture_handle
+
+    older = _write(
+        instance, _set(WI1, "measured", 3, evidence=report_evidence(tmp_path, "Count: 3"))
+    )
+    newer = _write(
+        instance, _add(WI1, "labels", "four") | {"evidence": report_evidence(tmp_path, "Count: 4")}
+    )
+    assert older.status == newer.status == "accepted"
+    (newest,) = cited_captures(instance, newer.changes[0].claim or "")
+    assert {newest} != cited_captures(instance, older.changes[0].claim or "")
+
+    by_contract = {"kind": "contract", "contract": REPORTS.identity.name}
+    outcome = _write(instance, _set(WI1, "measured", 4) | {"evidence": by_contract})
+    assert outcome.status == "accepted", outcome
+    (change,) = outcome.changes
+    assert change.capture == capture_handle(newest) and change.verdict == "supported"
+    assert newest in cited_captures(instance, change.claim or "")
+    qualified = {"kind": "contract", "contract": f"CaptureContract:{REPORTS.identity.name}"}
+    assert _write(instance, _add(WI1, "labels", "again") | {"evidence": qualified}).status == (
+        "accepted"
+    )
+
+    # wi-2 has no Capture under the contract: refused, with a repair.
+    none = _refusal(_write(instance, _add(WI2, "labels", "counted") | {"evidence": by_contract}))
+    assert none.code == "playbill.write.contract_capture_not_found"
+    assert none.field_path == "changes[0].evidence.contract"
+    assert none.repair is not None and "CAP-" in none.repair
+    typo = _refusal(
+        _write(
+            instance,
+            _add(WI1, "labels", "x")
+            | {"evidence": {"kind": "contract", "contract": "repo.reprots"}},
+        )
+    )
+    assert typo.code == "playbill.write.unknown_contract"
+    # Self-source Captures are bound to their own Claim, so they are never picked.
+    self_source = {
+        "kind": "contract",
+        "contract": COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name,
+    }
+    _write(instance, _set(WI2, "title", "Named"))
+    refused = _refusal(
+        _write(instance, _set(WI2, "priority", "high", role="normative", evidence=self_source))
+    )
+    assert refused.code == "playbill.write.contract_capture_not_found"
 
 
 def test_file_evidence_must_be_observed_by_the_writer(instance: PlaybillInstance) -> None:
@@ -711,6 +1169,158 @@ def test_one_write_may_retire_one_contender_and_replace_the_other(
         {"op": "retire", "target": {"subject": WI1, "field": "status"}},
     )
     assert _refusal(twice).code == "playbill.write.claim_changed_twice"
+
+
+# -- expect: compare-and-set by value ------------------------------------------------
+
+
+def test_set_with_expect_replaces_only_the_value_it_expected(instance: PlaybillInstance) -> None:
+    first = _write(instance, _set(WI1, "status", "ready", expect=[]))
+    assert first.status == "accepted", first
+    head = instance.accepted_coordinate().git_oid
+
+    refused = _write(instance, _set(WI1, "status", "done", expect="blocked"))
+    refusal = _refusal(refused)
+    assert refusal.code == "playbill.write.slot_changed"
+    assert refusal.field_path == "changes[0].expect"
+    assert "holds 'ready', not 'blocked' as expected" in refusal.message
+    assert refusal.candidates == (first.changes[0].claim,)
+    assert refusal.repair is not None and '"ready"' in refusal.repair
+    assert instance.accepted_coordinate().git_oid == head
+    assert _refusal(_write(instance, _set(WI1, "status", "done", expect=[]))).code == (
+        "playbill.write.slot_changed"
+    )
+
+    replaced = _write(instance, _set(WI1, "status", "done", expect="ready"))
+    assert replaced.status == "accepted", replaced
+    assert replaced.changes[0].revises == first.changes[0].claim
+    assert _values(instance, WI1, "status") == ["done"]
+
+    empty = _refusal(_write(instance, _set(WI2, "status", "done", expect="ready")))
+    assert empty.code == "playbill.write.slot_changed" and "holds no value" in empty.message
+
+
+def test_expect_is_checked_like_a_value_before_it_is_compared(instance: PlaybillInstance) -> None:
+    member = _refusal(_write(instance, _set(WI1, "status", "done", expect="dne")))
+    assert member.code == "playbill.write.value_not_member"
+    assert member.field_path == "changes[0].expect"
+    # The CLI's text spelling of an integer is read by the field's type.
+    assert _write(instance, _set(WI1, "measured", 3)).status == "accepted"
+    assert _write(instance, _set(WI1, "measured", 4, expect="3")).status == "accepted"
+    wrong = _refusal(_write(instance, _set(WI1, "measured", 5, expect="3")))
+    assert wrong.code == "playbill.write.slot_changed" and "holds 4" in wrong.message
+
+
+def test_retire_with_expect_compares_every_live_value_of_the_slot(
+    instance: PlaybillInstance,
+) -> None:
+    links = _write(instance, _add(WI1, "governs", WI2), _add(WI1, "governs", WI3))
+    by_value = {item.after: item.claim for item in links.changes}
+    partial = _refusal(_write(instance, {"op": "retire", "target": by_value[WI2], "expect": [WI2]}))
+    assert partial.code == "playbill.write.slot_changed"
+    assert set(partial.candidates) == set(by_value.values())
+    retired = _write(instance, {"op": "retire", "target": by_value[WI2], "expect": [WI3, WI2]})
+    assert retired.status == "accepted", retired
+    assert _values(instance, WI1, "governs") == [WI3]
+
+    _write(instance, _set(WI1, "title", "Old"))
+    slot = {"subject": WI1, "field": "title"}
+    stale = _refusal(_write(instance, {"op": "retire", "target": slot, "expect": "New"}))
+    assert stale.code == "playbill.write.slot_changed" and "holds 'Old'" in stale.message
+    ended = _write(instance, {"op": "retire", "target": slot, "expect": "Old"})
+    assert ended.status == "accepted", ended
+
+
+def test_add_with_expect_absent_refuses_what_would_be_already_done(
+    instance: PlaybillInstance,
+) -> None:
+    first = _write(instance, {**_add(WI1, "governs", WI2), "expect_absent": True})
+    assert first.status == "accepted", first
+    again = _refusal(_write(instance, {**_add(WI1, "governs", WI2), "expect_absent": True}))
+    assert again.code == "playbill.write.value_already_present"
+    assert again.candidates == (first.changes[0].claim,)
+    assert again.field_path == "changes[0].expect_absent"
+    # Without it, the same add is answered as done.
+    assert _write(instance, _add(WI1, "governs", WI2)).changes[0].already_live
+
+
+def test_expect_composes_with_the_read_coordinate(instance: PlaybillInstance) -> None:
+    _write(instance, _set(WI1, "status", "ready"))
+    read_at = instance.accepted_coordinate().git_oid
+    # Unmoved since the read, and holding what was expected: accepted.
+    assert _write(instance, _set(WI1, "status", "blocked", expect="ready"), at=read_at).status == (
+        "accepted"
+    )
+    # Moved back to the expected value since the read: the value matches, but the
+    # read coordinate still refuses the slot that moved.
+    _write(instance, _set(WI1, "status", "ready"), because="Back again.")
+    moved = _refusal(_write(instance, _set(WI1, "status", "done", expect="ready"), at=read_at))
+    assert moved.code == "playbill.write.slot_changed" and "after your read" in moved.message
+
+
+def test_a_contender_after_the_expect_check_still_refuses_at_admission(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The matched Claim IDs are pinned, so a value joining the slot later refuses."""
+
+    ready = _write(instance, _set(WI1, "status", "ready")).changes[0].claim
+    real = write_verbs._coordinator
+    landed: list[bool] = []
+
+    def coordinator(target: PlaybillInstance, claim_ids: Any) -> Any:
+        if not landed:
+            landed.append(True)
+            _contend(target)
+        return real(target, claim_ids)
+
+    monkeypatch.setattr(write_verbs, "_coordinator", coordinator)
+    outcome = _write(instance, _set(WI1, "status", "done", expect="ready"))
+    assert landed
+    refusal = _refusal(outcome)
+    assert refusal.code == "playbill.write.slot_changed", refusal
+    assert outcome.proposal is None
+    assert _values(instance, WI1, "status") == ["blocked", "ready"]
+    assert ready in _live_status_claims(instance)
+    _no_proposal_to_activate(instance)
+
+
+# -- the write's default subject ------------------------------------------------------
+
+
+def test_changes_that_name_no_subject_take_the_writes_own(instance: PlaybillInstance) -> None:
+    _write(instance, _set(WI1, "title", "Old"))
+    outcome = _write(
+        instance,
+        {"op": "set", "field": "status", "value": "ready"},
+        {"op": "add", "field": "governs", "value": WI3},
+        {"op": "set", "subject": WI2, "field": "status", "value": "done"},
+        {"op": "retire", "target": {"field": "title"}},
+        subject=WI1,
+    )
+    assert outcome.status == "accepted", outcome
+    assert [item.subject for item in outcome.changes] == [WI1, WI1, WI2, WI1]
+    assert _values(instance, WI1, "status") == ["ready"]
+    assert _values(instance, WI1, "governs") == [WI3]
+    assert _values(instance, WI2, "status") == ["done"]
+    assert _values(instance, WI1, "title") == []
+
+
+def test_a_change_with_no_subject_and_no_default_refuses_by_name(
+    instance: PlaybillInstance,
+) -> None:
+    refusal = _refusal(
+        _write(
+            instance, _set(WI1, "status", "ready"), {"op": "add", "field": "governs", "value": WI2}
+        )
+    )
+    assert refusal.code == "playbill.write.subject_required"
+    assert (refusal.change, refusal.field_path) == (1, "changes[1].subject")
+    retire = _refusal(_write(instance, {"op": "retire", "target": {"field": "title"}}))
+    assert retire.code == "playbill.write.subject_required"
+    assert retire.field_path == "changes[0].target.subject"
+    assert _write(
+        instance, {"op": "retire", "target": {"field": "title"}}, dry_run=True
+    ).status == ("would_refuse")
 
 
 # -- dry runs (R12) -----------------------------------------------------------------

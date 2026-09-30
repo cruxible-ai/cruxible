@@ -2516,8 +2516,9 @@ Import: `cruxible_client.authoring.world.WorldSubject`. [Source](src/cruxible_cl
 
 Writes by field leaf: `subject.set(status="done", because=...)` sets
 single-value fields, `subject.add(governs=other, because=...)` adds to
-many-valued ones, and `subject.retire("status", because=...)` retires a field's
-one live value. Every field in one call is one change of one change set, and
+many-valued ones (`expect_absent=True` refuses a value already there instead of
+answering it as done), and `subject.retire("status", because=...)` retires a
+field's one live value. Every field in one call is one change of one change set, and
 names are checked against the World before the wire. A World's writes are
 checked from its coordinate advanced past its own accepted writes, so its
 references stay valid after them; only a field someone else moved refuses. The
