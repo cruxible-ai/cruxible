@@ -25,6 +25,7 @@ PlaybillGetRefKind = Literal[
     "procedure",
     "query",
     "capture_contract",
+    "trigger",
     "proposal",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
@@ -55,6 +56,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "procedure": ("summary", "history", "proof"),
     "query": ("summary", "history", "proof"),
     "capture_contract": ("summary", "history", "proof"),
+    "trigger": ("summary", "history", "proof"),
     "proposal": ("summary", "proof"),
 }
 
@@ -290,6 +292,17 @@ class PlaybillGetCaptureContractCardV1(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class PlaybillGetTriggerCardV1(_StrictGetModel):
+    """One Trigger: when it fires and what it sets off."""
+
+    trigger: str
+    lifecycle: str
+    schedule: dict[str, Any]
+    #: ``Line:<name>`` or the internal action it fires.
+    target: str
+    next: tuple[str, ...] = ()
+
+
 class PlaybillGetProposalChangeV1(_StrictGetModel):
     path: str
     change: str
@@ -317,6 +330,7 @@ PlaybillGetCardV1 = (
     | PlaybillGetProcedureCardV1
     | PlaybillGetQueryCardV1
     | PlaybillGetCaptureContractCardV1
+    | PlaybillGetTriggerCardV1
     | PlaybillGetProposalCardV1
 )
 
@@ -417,6 +431,7 @@ __all__ = [
     "PlaybillGetAttestationEvidenceV1",
     "PlaybillGetBodyV1",
     "PlaybillGetCaptureContractCardV1",
+    "PlaybillGetTriggerCardV1",
     "PlaybillGetCaptureEvidenceV1",
     "PlaybillGetCardV1",
     "PlaybillGetClaimCardV1",

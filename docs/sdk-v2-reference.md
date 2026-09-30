@@ -1496,9 +1496,12 @@ parse its entries or author exposure Claims.
 
 Set `trigger_input="feed"` on `ChangeSetDraft.line(...)` to bind the event's
 Capture to the Procedure's Source alias `feed`. Every new Line authors as
-Line v5 under compiler revision 31. The Source's exact CaptureContract must match the
-capture-arrival selector, or the selector anchoring an event-relative window.
-Manual, cadence, and fixed-window triggers cannot provide this input.
+Line v6 under compiler revision 32, and declares the exact event that input
+accepts: the Source's CaptureContract. A Line runs on the Triggers aimed at it;
+`ChangeSetDraft.trigger(name=..., schedule=..., line=...)` defines one. Every
+Trigger aimed at a `trigger_input` Line must fire on that event, as a
+capture-arrival schedule or an event-relative window. Cadence and fixed-window
+Triggers cannot provide this input.
 
 Use `pb.check_line(name)` to inspect trigger matches and their `dispatch_status`.
 `pb.dispatch_line(name)` processes pending work; unusable exact Captures close as
@@ -1508,9 +1511,10 @@ and repair hints. To explicitly retry closed work after repair, use
 successor Line only in the same epoch and never substitutes another event or
 Capture. Historical evaluation alone does not reopen closed work.
 
-`pb.arm_line(name)` has the daemon admit what the Line matches from now on,
-under this connection's credential (rechecked before each run) and the Line
-version current now. It never catches up: earlier pending work and daemon
+`pb.arm_line(name)` has the daemon admit what the Line's Triggers match from now
+on, under this connection's credential (rechecked before each run), the Line
+version current now and the Trigger versions aimed at it now; a change to any
+of them stops the arm until it is rearmed. It never catches up: earlier pending work and daemon
 downtime still need `evaluate_line` and `dispatch_line`. `pb.line_status(name)`
 reports whether the Line is armed, its automatic and explicit pending counts,
 and why an arm stopped; `pb.disarm_line(name)` stops further admissions.
@@ -1526,8 +1530,9 @@ stale, incompatible, or unavailable material refuses admission, even if an ordin
 acquisition rule permits omission or a default. A retry reuses the admitted binding.
 
 Omitting `trigger_input` preserves trigger-only behavior. Existing instances need
-an explicit governed compiler upgrade to revision 31 before accepting new Lines;
-Lines accepted as v4 under revision 30 keep their meaning.
+an explicit governed compiler upgrade to revision 32 before accepting new Lines
+or Triggers; the upgrade refuses while a live Line still embeds its trigger
+(v1-v5), which stays readable as retired history.
 
 ### Compare a feed observation with an accepted baseline
 

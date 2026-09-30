@@ -385,3 +385,67 @@ def test_new_instances_start_with_the_default_internal_triggers(tmp_path):
         ("evidence.sweep", 86400),
         ("prediction.anchor_retry", 3600),
     ]
+
+
+def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path):
+    from datetime import UTC, datetime
+
+    from cruxible_client.authoring.examples import (
+        AUTHORING_EXAMPLE_FACTORIES,
+        AUTHORING_EXAMPLE_NAMES,
+    )
+    from cruxible_client.contracts.authoring.inputs import TriggerInput, lower_authoring_input
+    from cruxible_client.contracts.authoring.models import TriggerAuthoringPayloadV1
+    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_core.authoring.lowering import AuthoringLoweringError, _render_trigger_member
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    instance, owner, line = _line_world(tmp_path)
+    assert "trigger" in AUTHORING_EXAMPLE_NAMES
+    example = AUTHORING_EXAMPLE_FACTORIES["trigger"]()
+    assert isinstance(example, TriggerInput) and example.line_name == "replace-me"
+    payload = lower_authoring_input(
+        TriggerInput(
+            kind="trigger",
+            name="hourly",
+            schedule=CadenceScheduleV1(interval_seconds=3600),
+            line_name=line.identity.name,
+        )
+    )
+    assert isinstance(payload, TriggerAuthoringPayloadV1)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path, content, digest = _render_trigger_member(payload, tree=tree)
+    authored = parse_trigger(content, path=path)
+    assert path == trigger_path("hourly") and digest == trigger_digest(authored).tagged
+    assert authored.line == line.identity and authored.lifecycle.predecessor_digest is None
+    with pytest.raises(AuthoringLoweringError) as missing:
+        _render_trigger_member(payload.model_copy(update={"line_name": "absent"}), tree=tree)
+    assert missing.value.code == "playbill.authoring.trigger_line_missing"
+
+    tree[path] = content
+    _accept_tree(instance, owner, tree, timestamp="2026-09-30T10:02:00.000000Z", proposal_name="a")
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    # Unchanged, it lowers to the accepted bytes; changed, to a successor of them.
+    assert _render_trigger_member(payload, tree=tree)[1] == content
+    _path, retired, _digest = _render_trigger_member(
+        payload.model_copy(update={"retire": True}), tree=tree
+    )
+    successor_trigger = parse_trigger(retired, path=path)
+    assert successor_trigger.lifecycle.state == "retired"
+    assert successor_trigger.lifecycle.predecessor_digest == digest
+
+    card = service_playbill_get(
+        instance,
+        request=PlaybillGetRequestV1(
+            ref="Trigger:hourly", evaluation_time=datetime(2026, 9, 30, tzinfo=UTC)
+        ),
+        access=BodyAccessContext(principal_id="reader", can_read_body=True),
+    )
+    assert card.kind == "trigger"
+    assert (card.card.trigger, card.card.target, card.card.lifecycle) == (
+        "Trigger:hourly",
+        line.identity.qualified,
+        "live",
+    )
+    assert card.card.schedule == {"interval_seconds": 3600, "kind": "cadence"}

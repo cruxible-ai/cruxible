@@ -71,6 +71,7 @@ from cruxible_client.contracts.resolution_contracts import ResolutionContractV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_client.contracts.triggers import InternalAction, TriggerScheduleV1
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -99,7 +100,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:b699aab089b74dffd7fc3be6eccc03117c1bbf5dc989d721b4a60e8486497c13"
+    "sha256:51c85db53343b6399bd6a93a2bbdaefb20978e898b2103f111a1b7ae43e06b21"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -1014,6 +1015,34 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
         return normalize_canonical(value)
 
 
+class TriggerAuthoringPayloadV1(_StrictAuthoringModel):
+    """Decision-only Trigger input: a schedule and exactly one target.
+
+    ``line_name`` names an accepted or same-set Line, which lowering refers to by
+    identity; ``action`` names an internal action instead.
+    """
+
+    tag: Literal["playbill-trigger-authoring-payload-v1"] = "playbill-trigger-authoring-payload-v1"
+    name: str
+    schedule: TriggerScheduleV1
+    line_name: str | None = None
+    action: InternalAction | None = None
+    retire: bool = False
+
+    @field_validator("name", "line_name")
+    @classmethod
+    def _names(cls, value: str | None) -> str | None:
+        if value is not None and (not value or value.strip() != value):
+            raise ValueError("Trigger authoring names must be nonblank and normalized")
+        return value
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "TriggerAuthoringPayloadV1":
+        if (self.line_name is None) == (self.action is None):
+            raise ValueError("a Trigger names exactly one target: line_name or action")
+        return self
+
+
 class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
     tag: Literal["playbill-procedure-authoring-payload-v1"] = (
         "playbill-procedure-authoring-payload-v1"
@@ -1309,6 +1338,7 @@ AuthoringChangeSetMemberV1: TypeAlias = Annotated[
     | CaptureContractAuthoringPayloadV1
     | SourceAcquisitionPolicyAuthoringPayloadV1
     | LineAuthoringPayloadV1
+    | TriggerAuthoringPayloadV1
     | ProcedureAuthoringPayloadV1
     | ProcedureAuthoringPayloadV2,
     Field(discriminator="tag"),
@@ -1366,6 +1396,8 @@ def authoring_member_identity(payload: AuthoringChangeSetMemberV1) -> str:
         return f"SourceAcquisitionPolicy:{payload.acquisition_policy.identity.name}"
     if isinstance(payload, LineAuthoringPayloadV1):
         return f"Line:{payload.name}"
+    if isinstance(payload, TriggerAuthoringPayloadV1):
+        return f"Trigger:{payload.name}"
     return f"Procedure:{payload.definition['name']}"
 
 
@@ -1454,6 +1486,7 @@ AuthoringPayloadV1 = Annotated[
     | CaptureContractAuthoringPayloadV1
     | SourceAcquisitionPolicyAuthoringPayloadV1
     | LineAuthoringPayloadV1
+    | TriggerAuthoringPayloadV1
     | ChangeSetAuthoringPayloadV1,
     Field(discriminator="tag"),
 ]
@@ -2977,6 +3010,7 @@ __all__ = [
     "MandateConditionAuthoringV1",
     "MandateScopeAuthoringV1",
     "ProcedureMandateAuthoringPayloadV1",
+    "TriggerAuthoringPayloadV1",
     "QueryDefinitionAuthoringPayloadV1",
     "AttestationAuthoringPayloadV1",
     "ResolutionContractAuthoringPayloadV1",

@@ -47,6 +47,7 @@
         "procedure-runtime-policy",
         "procedure-mandate",
         "line",
+        "trigger",
         "acquisition-policy",
         "change-set",
         "claim-type-succession"
@@ -205,6 +206,153 @@
   },
   "manifest_version": 1,
   "models": {
+    "CadenceScheduleV1": {
+      "fields": {
+        "interval_seconds": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "interval_seconds",
+          "required": true,
+          "schema": {
+            "description": "Reads VALIDITY WINDOW.",
+            "exclusiveMinimum": 0,
+            "title": "Interval Seconds",
+            "type": "integer"
+          }
+        },
+        "kind": {
+          "default": "cadence",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "const": "cadence",
+            "default": "cadence",
+            "title": "Kind",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Fire one interval after the last fire; a new schedule fires on its first tick.",
+        "properties": {
+          "interval_seconds": {
+            "description": "Reads VALIDITY WINDOW.",
+            "exclusiveMinimum": 0,
+            "title": "Interval Seconds",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "cadence",
+            "default": "cadence",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "interval_seconds"
+        ],
+        "title": "CadenceScheduleV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "interval_seconds"
+      ]
+    },
+    "CaptureLandingScheduleV1": {
+      "fields": {
+        "event": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "event",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/CaptureEventSelectorV1"
+          }
+        },
+        "kind": {
+          "default": "capture_landing",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "const": "capture_landing",
+            "default": "capture_landing",
+            "title": "Kind",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "CaptureEventSelectorV1": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelectorV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Fire once for each retained Capture landing under one exact CaptureContract.",
+        "properties": {
+          "event": {
+            "$ref": "#/$defs/CaptureEventSelectorV1"
+          },
+          "kind": {
+            "const": "capture_landing",
+            "default": "capture_landing",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event"
+        ],
+        "title": "CaptureLandingScheduleV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "event"
+      ]
+    },
     "ClaimStatementCardV1": {
       "fields": {
         "lifecycle": {
@@ -7460,6 +7608,7 @@
               "procedure-runtime-policy",
               "procedure-mandate",
               "line",
+              "trigger",
               "acquisition-policy",
               "change-set",
               "claim-type-succession"
@@ -7485,7 +7634,8 @@
                 "procedure_mandate": "#/$defs/ProcedureMandateInputV1",
                 "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
                 "query_definition": "#/$defs/QueryDefinitionInput",
-                "subject": "#/$defs/SubjectInput"
+                "subject": "#/$defs/SubjectInput",
+                "trigger": "#/$defs/TriggerInput"
               },
               "propertyName": "kind"
             },
@@ -7516,6 +7666,9 @@
               },
               {
                 "$ref": "#/$defs/LineInput"
+              },
+              {
+                "$ref": "#/$defs/TriggerInput"
               },
               {
                 "$ref": "#/$defs/ChangeSetInput"
@@ -7719,6 +7872,29 @@
             "title": "BoundedWindowCoherenceV1",
             "type": "object"
           },
+          "CadenceScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire one interval after the last fire; a new schedule fires on its first tick.",
+            "properties": {
+              "interval_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Interval Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "cadence",
+                "default": "cadence",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "interval_seconds"
+            ],
+            "title": "CadenceScheduleV1",
+            "type": "object"
+          },
           "CanonicalDurationV1": {
             "additionalProperties": false,
             "properties": {
@@ -7738,6 +7914,71 @@
               "microseconds"
             ],
             "title": "CanonicalDurationV1",
+            "type": "object"
+          },
+          "CaptureEventSelectorV1": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelectorV1",
+            "type": "object"
+          },
+          "CaptureEventWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_event",
+                "default": "capture_event",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "duration_seconds"
+            ],
+            "title": "CaptureEventWindowV1",
+            "type": "object"
+          },
+          "CaptureLandingScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire once for each retained Capture landing under one exact CaptureContract.",
+            "properties": {
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_landing",
+                "default": "capture_landing",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "title": "CaptureLandingScheduleV1",
             "type": "object"
           },
           "CarriedContractInput": {
@@ -7802,7 +8043,8 @@
                       "procedure_mandate": "#/$defs/ProcedureMandateInputV1",
                       "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
                       "query_definition": "#/$defs/QueryDefinitionInput",
-                      "subject": "#/$defs/SubjectInput"
+                      "subject": "#/$defs/SubjectInput",
+                      "trigger": "#/$defs/TriggerInput"
                     },
                     "propertyName": "kind"
                   },
@@ -7839,6 +8081,9 @@
                     },
                     {
                       "$ref": "#/$defs/LineInput"
+                    },
+                    {
+                      "$ref": "#/$defs/TriggerInput"
                     },
                     {
                       "$ref": "#/$defs/ProcedureInput"
@@ -9101,6 +9346,35 @@
               "capture_digest"
             ],
             "title": "ExistingCaptureInput",
+            "type": "object"
+          },
+          "FixedWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fixed",
+                "default": "fixed",
+                "title": "Kind",
+                "type": "string"
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "duration_seconds"
+            ],
+            "title": "FixedWindowV1",
             "type": "object"
           },
           "FreezeRequirementV1": {
@@ -11736,6 +12010,120 @@
             "title": "SubjectShell",
             "type": "object"
           },
+          "TriggerInput": {
+            "additionalProperties": false,
+            "description": "One Trigger: a schedule aimed at exactly one Line or internal action.\n\nA Line target names an accepted or same-set Line; an internal action\n(`evidence.sweep`, `prediction.anchor_retry`) takes a cadence only. A Trigger\nis changed or retired (`retire`) through a successor, like any definition.",
+            "properties": {
+              "action": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "evidence.sweep",
+                      "prediction.anchor_retry"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The internal action this Trigger fires; omit for a Line.",
+                "title": "Action"
+              },
+              "kind": {
+                "const": "trigger",
+                "title": "Kind",
+                "type": "string"
+              },
+              "line_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The Line this Trigger runs; omit when naming an action.",
+                "title": "Line Name"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "retire": {
+                "default": false,
+                "title": "Retire",
+                "type": "boolean"
+              },
+              "schedule": {
+                "discriminator": {
+                  "mapping": {
+                    "cadence": "#/$defs/CadenceScheduleV1",
+                    "capture_landing": "#/$defs/CaptureLandingScheduleV1",
+                    "window_close": "#/$defs/WindowCloseScheduleV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/CadenceScheduleV1"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureLandingScheduleV1"
+                  },
+                  {
+                    "$ref": "#/$defs/WindowCloseScheduleV1"
+                  }
+                ],
+                "title": "Schedule"
+              }
+            },
+            "required": [
+              "kind",
+              "name",
+              "schedule"
+            ],
+            "title": "TriggerInput",
+            "type": "object"
+          },
+          "WindowCloseScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire when a fixed window, or a window anchored on a Capture landing, closes.",
+            "properties": {
+              "kind": {
+                "const": "window_close",
+                "default": "window_close",
+                "title": "Kind",
+                "type": "string"
+              },
+              "window": {
+                "discriminator": {
+                  "mapping": {
+                    "capture_event": "#/$defs/CaptureEventWindowV1",
+                    "fixed": "#/$defs/FixedWindowV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/FixedWindowV1"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureEventWindowV1"
+                  }
+                ],
+                "title": "Window"
+              }
+            },
+            "required": [
+              "window"
+            ],
+            "title": "WindowCloseScheduleV1",
+            "type": "object"
+          },
           "WorkingSelectionInput": {
             "additionalProperties": false,
             "properties": {
@@ -11780,6 +12168,7 @@
               "procedure-runtime-policy",
               "procedure-mandate",
               "line",
+              "trigger",
               "acquisition-policy",
               "change-set",
               "claim-type-succession"
@@ -11799,7 +12188,8 @@
                 "procedure_mandate": "#/$defs/ProcedureMandateInputV1",
                 "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
                 "query_definition": "#/$defs/QueryDefinitionInput",
-                "subject": "#/$defs/SubjectInput"
+                "subject": "#/$defs/SubjectInput",
+                "trigger": "#/$defs/TriggerInput"
               },
               "propertyName": "kind"
             },
@@ -11830,6 +12220,9 @@
               },
               {
                 "$ref": "#/$defs/LineInput"
+              },
+              {
+                "$ref": "#/$defs/TriggerInput"
               },
               {
                 "$ref": "#/$defs/ChangeSetInput"
@@ -88850,6 +89243,662 @@
         "record_digest",
         "run_id",
         "sequence"
+      ]
+    },
+    "TriggerV1": {
+      "fields": {
+        "artifact_format": {
+          "default": "playbill-trigger-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_format",
+          "required": false,
+          "schema": {
+            "const": "playbill-trigger-v1",
+            "default": "playbill-trigger-v1",
+            "title": "Artifact Format",
+            "type": "string"
+          }
+        },
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          }
+        },
+        "lifecycle": {
+          "default_json_serializable": false,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lifecycle",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/ArtifactLifecycle",
+            "default": {
+              "predecessor_digest": null,
+              "state": "live"
+            }
+          }
+        },
+        "pins": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pins",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ArtifactPin"
+            },
+            "title": "Pins",
+            "type": "array"
+          }
+        },
+        "schedule": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "schedule",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "cadence": "#/$defs/CadenceScheduleV1",
+                "capture_landing": "#/$defs/CaptureLandingScheduleV1",
+                "window_close": "#/$defs/WindowCloseScheduleV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CadenceScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/CaptureLandingScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/WindowCloseScheduleV1"
+              }
+            ],
+            "title": "Schedule"
+          }
+        },
+        "target": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "action": "#/$defs/ActionTargetV1",
+                "line": "#/$defs/LineTargetV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/LineTargetV1"
+              },
+              {
+                "$ref": "#/$defs/ActionTargetV1"
+              }
+            ],
+            "title": "Target"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ActionTargetV1": {
+            "additionalProperties": false,
+            "description": "Fire one internal action; the worker that owns it follows its fires.",
+            "properties": {
+              "action": {
+                "enum": [
+                  "evidence.sweep",
+                  "prediction.anchor_retry"
+                ],
+                "title": "Action",
+                "type": "string"
+              },
+              "kind": {
+                "const": "action",
+                "default": "action",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "title": "ActionTargetV1",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactLifecycle": {
+            "additionalProperties": false,
+            "properties": {
+              "predecessor_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Predecessor Digest"
+              },
+              "state": {
+                "default": "live",
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "title": "ArtifactLifecycle",
+            "type": "object"
+          },
+          "ArtifactPin": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target",
+              "artifact_digest"
+            ],
+            "title": "ArtifactPin",
+            "type": "object"
+          },
+          "ArtifactRef": {
+            "additionalProperties": false,
+            "description": "A governed dependency named by identity: whatever version is accepted.\n\nA pin names exact bytes, which is right for code, fixed content and the\nrecords of what happened. A definition that names another governed\ndefinition names its identity instead, so improving the dependency through an\nordinary successor does not strand everything that names it.",
+            "properties": {
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target"
+            ],
+            "title": "ArtifactRef",
+            "type": "object"
+          },
+          "CadenceScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire one interval after the last fire; a new schedule fires on its first tick.",
+            "properties": {
+              "interval_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Interval Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "cadence",
+                "default": "cadence",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "interval_seconds"
+            ],
+            "title": "CadenceScheduleV1",
+            "type": "object"
+          },
+          "CaptureEventSelectorV1": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelectorV1",
+            "type": "object"
+          },
+          "CaptureEventWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_event",
+                "default": "capture_event",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "duration_seconds"
+            ],
+            "title": "CaptureEventWindowV1",
+            "type": "object"
+          },
+          "CaptureLandingScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire once for each retained Capture landing under one exact CaptureContract.",
+            "properties": {
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_landing",
+                "default": "capture_landing",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "title": "CaptureLandingScheduleV1",
+            "type": "object"
+          },
+          "FixedWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fixed",
+                "default": "fixed",
+                "title": "Kind",
+                "type": "string"
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "duration_seconds"
+            ],
+            "title": "FixedWindowV1",
+            "type": "object"
+          },
+          "LineTargetV1": {
+            "additionalProperties": false,
+            "description": "Run one Line, whatever version of it is accepted when the Trigger fires.",
+            "properties": {
+              "kind": {
+                "const": "line",
+                "default": "line",
+                "title": "Kind",
+                "type": "string"
+              },
+              "line": {
+                "$ref": "#/$defs/ArtifactRef"
+              }
+            },
+            "required": [
+              "line"
+            ],
+            "title": "LineTargetV1",
+            "type": "object"
+          },
+          "WindowCloseScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire when a fixed window, or a window anchored on a Capture landing, closes.",
+            "properties": {
+              "kind": {
+                "const": "window_close",
+                "default": "window_close",
+                "title": "Kind",
+                "type": "string"
+              },
+              "window": {
+                "discriminator": {
+                  "mapping": {
+                    "capture_event": "#/$defs/CaptureEventWindowV1",
+                    "fixed": "#/$defs/FixedWindowV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/FixedWindowV1"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureEventWindowV1"
+                  }
+                ],
+                "title": "Window"
+              }
+            },
+            "required": [
+              "window"
+            ],
+            "title": "WindowCloseScheduleV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One schedule and the one Line or internal action it sets off.",
+        "properties": {
+          "artifact_format": {
+            "const": "playbill-trigger-v1",
+            "default": "playbill-trigger-v1",
+            "title": "Artifact Format",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          },
+          "lifecycle": {
+            "$ref": "#/$defs/ArtifactLifecycle",
+            "default": {
+              "predecessor_digest": null,
+              "state": "live"
+            }
+          },
+          "pins": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ArtifactPin"
+            },
+            "title": "Pins",
+            "type": "array"
+          },
+          "schedule": {
+            "discriminator": {
+              "mapping": {
+                "cadence": "#/$defs/CadenceScheduleV1",
+                "capture_landing": "#/$defs/CaptureLandingScheduleV1",
+                "window_close": "#/$defs/WindowCloseScheduleV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CadenceScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/CaptureLandingScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/WindowCloseScheduleV1"
+              }
+            ],
+            "title": "Schedule"
+          },
+          "target": {
+            "discriminator": {
+              "mapping": {
+                "action": "#/$defs/ActionTargetV1",
+                "line": "#/$defs/LineTargetV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/LineTargetV1"
+              },
+              {
+                "$ref": "#/$defs/ActionTargetV1"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "required": [
+          "identity",
+          "schedule",
+          "target"
+        ],
+        "title": "TriggerV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "identity",
+        "schedule",
+        "target"
+      ]
+    },
+    "WindowCloseScheduleV1": {
+      "fields": {
+        "kind": {
+          "default": "window_close",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "const": "window_close",
+            "default": "window_close",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "window": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "window",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "capture_event": "#/$defs/CaptureEventWindowV1",
+                "fixed": "#/$defs/FixedWindowV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/FixedWindowV1"
+              },
+              {
+                "$ref": "#/$defs/CaptureEventWindowV1"
+              }
+            ],
+            "title": "Window"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "CaptureEventSelectorV1": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelectorV1",
+            "type": "object"
+          },
+          "CaptureEventWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_event",
+                "default": "capture_event",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "duration_seconds"
+            ],
+            "title": "CaptureEventWindowV1",
+            "type": "object"
+          },
+          "FixedWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fixed",
+                "default": "fixed",
+                "title": "Kind",
+                "type": "string"
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "duration_seconds"
+            ],
+            "title": "FixedWindowV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Fire when a fixed window, or a window anchored on a Capture landing, closes.",
+        "properties": {
+          "kind": {
+            "const": "window_close",
+            "default": "window_close",
+            "title": "Kind",
+            "type": "string"
+          },
+          "window": {
+            "discriminator": {
+              "mapping": {
+                "capture_event": "#/$defs/CaptureEventWindowV1",
+                "fixed": "#/$defs/FixedWindowV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/FixedWindowV1"
+              },
+              {
+                "$ref": "#/$defs/CaptureEventWindowV1"
+              }
+            ],
+            "title": "Window"
+          }
+        },
+        "required": [
+          "window"
+        ],
+        "title": "WindowCloseScheduleV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "window"
       ]
     },
     "WorkspaceFileSourceRequestV1": {

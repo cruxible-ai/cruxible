@@ -1172,45 +1172,60 @@ cruxible playbill line disarm LINE [--json]
 cruxible playbill line status LINE [--json]
 cruxible playbill line evaluate LINE --since TS --until TS [--limit 100] [--cursor CURSOR] [--json]
 cruxible playbill line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit 1] [--json]
-cruxible playbill line run LINE --evaluation-time TS
+cruxible playbill line run LINE --evaluation-time TS [--trigger TRIGGER]
   [--occurrence-id ID] [--json]
 ~~~
 
 A Line is authored like any other definition: a `line` input (alone or as a
-change-set member) names its Procedure, trigger policy and `parameters` -- the
-Procedure's input record, which lowering checks against the Procedure's input
-contract, refusing `playbill.authoring.line_parameters_refused` with the
-expected fields. It names an `acquisition_policy` (an `acquisition_policy`
-input) only when the Procedure has Source nodes. `authoring create --example
-line` prints a manual Line over the `--example procedure` Procedure, and
-`--example acquisition-policy` a policy for a Source Procedure's Line.
+change-set member) names its Procedure and `parameters` -- the Procedure's
+input record, which lowering checks against the Procedure's input contract,
+refusing `playbill.authoring.line_parameters_refused` with the expected
+fields. It names an `acquisition_policy` (an `acquisition_policy` input) only
+when the Procedure has Source nodes. `authoring create --example line` prints a
+Line over the `--example procedure` Procedure, and `--example
+acquisition-policy` a policy for a Source Procedure's Line.
 
-`check` is read-only: it returns `met`, `not_met`, or `incomplete`, exact
-matching events/windows, and the dispatch status of each occurrence (pending,
+When a Line runs is not the Line's own: a `trigger` input authors a Trigger
+(`triggers/<name>.json`) whose `schedule` is a `cadence`, a `capture_landing`
+on one exact CaptureContract, or a `window_close`, and whose target is one
+Line (`line_name`) or one internal action (`action`, cadence only). A Line can
+have several Triggers; one with none runs only when run explicitly, and `run`
+of a Line with Triggers names the Trigger it fires on (`--trigger`). Retiring
+a Line with live Triggers aimed at it refuses unless they are retired or
+retargeted in the same change set. `authoring create --example trigger` prints
+an hourly Trigger for the `--example line` Line, and `get Trigger:NAME` reads
+one.
+
+`check` is read-only: it evaluates every live Trigger aimed at the Line and
+returns `met`, `not_met`, or `incomplete`, exact matching events/windows (each
+naming its Trigger), and the dispatch status of each occurrence (pending,
 admitted, rejected, or superseded).
 
-`arm` makes the daemon match the Line's trigger forward from now and admit what
-it matches, with no explicit call. Runs use the arming caller's credential,
+`arm` makes the daemon match the Line's Triggers forward from now and admit what
+they match, with no explicit call. Runs use the arming caller's credential,
 which the daemon rechecks before every admission: a revoked credential, one
 moved to another instance, or one no longer permitted to dispatch stops the arm
 with that reason (`credential_revoked`, `credential_scope_changed`,
 `permission_insufficient`). Arming needs governed write, and keeps only the
 credential's identifier, never a token. A Line that can propose
 or settle refuses to arm while no current mandate covers it. An arm is pinned to the
-Line version current when it was armed: any accepted change to the Line stops
-it (`line_changed`, or `epoch_changed`) until it is rearmed. Because a settle
+Line version and the exact Trigger versions aimed at it when it was armed: any
+accepted change to the Line stops it (`line_changed`, or `epoch_changed`), and
+so does adding, changing or retiring a Trigger aimed at it (`trigger_changed`),
+until it is rearmed. Because a settle
 mandate, not the caller's tier, authorizes settling, an armed Line whose
 Procedure settles does so on its own under its mandate.
 
 An arm never catches up. It admits only what it matched itself since it was
 armed or since the daemon last restarted; anything pending before that, or
 recorded by `evaluate`, waits for explicit `dispatch`. A cadence tick is the
-exception: it is not an event but "the Line is due", so when a cadence Line is
-armed or its arm resumes, a tick still pending from before closes as `lapsed`
+exception: it is not an event but "the Trigger is due", so when a Line is
+armed or its arm resumes, a cadence tick still pending from before closes as `lapsed`
 -- retained, never run implicitly, and still runnable as exactly that tick
 with `dispatch --occurrence-id DIGEST --retry`, even after newer ticks ran --
 and the arm ticks on from its own start rather than catching up on ticks it
-missed. `disarm` stops further
+missed. Each cadence Trigger keeps its own chain: it is due one interval after
+the last occurrence it fired, whatever other Triggers aimed at the Line fired. `disarm` stops further
 admissions; a run already admitted keeps going. Both are idempotent: arming a
 Line already armed by the same credential at the same version returns it
 unchanged with `outcome: already_armed`, and disarming a stopped arm returns
@@ -1235,7 +1250,8 @@ its matches as pending. Follow its cursor to finish a bounded page.
 and the ordinary Line admission checks. `run` and `dispatch` of a Line whose
 runs can propose or settle (and `procedure run` of such a Procedure) need
 governed write; an observe-only Line or Procedure runs at read-only. Permanent input failures close as
-`rejected`; changed Line bindings close as `superseded`. Both leave the runnable
+`rejected`; changed Line bindings, and occurrences whose Trigger changed or no
+longer aims at the Line, close as `superseded`. Both leave the runnable
 queue, retaining their evidence and a typed refusal with repair instructions.
 Invalid event bindings, unavailable event material, and Captures that exceed
 their fixed read budget close as rejected. Budget refusals name the limiting
@@ -1245,7 +1261,8 @@ failures and events whose recorded time has not arrived remain blocked.
 Historical evaluation does not reopen closed work.
 
 `dispatch --occurrence-id DIGEST --retry` explicitly retries one occurrence,
-binding the current accepted Line version only within the same occurrence epoch.
+binding the current accepted Line version only within the same occurrence epoch
+and only while its Trigger still aims at the Line unchanged.
 It preserves the exact event/window and rechecks present authority and freshness;
 it cannot substitute a newer Capture. An existing admission is always reused.
 
@@ -1255,8 +1272,9 @@ replayed automatically, and what the previous range matched but did not admit
 waits for explicit `dispatch`. Rebuilding the disposable event index similarly
 opens a new forward range, while retained pending work survives. Pending work
 bound to an older Line version is closed as superseded rather than silently
-rebound. A Line v4 or v5 can bind its
-trigger Capture to a named Source input. Its `max_age` is checked at admission
+rebound. A Line can bind its
+trigger Capture to a named Source input (`trigger_input`); it then declares the
+exact event it accepts, and every Trigger aimed at it must fire on that event. Its `max_age` is checked at admission
 time, not backdated to when the trigger occurred.
 
 `run` triggers one daemon-derived due occurrence. The occurrence's evaluation

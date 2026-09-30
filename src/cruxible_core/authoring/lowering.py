@@ -24,7 +24,12 @@ from cruxible_client.contracts.approval_policy import (
     approval_policy_digest,
     render_approval_policy,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.artifacts import (
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    ArtifactPin,
+    ArtifactRef,
+)
 from cruxible_client.contracts.authoring.models import (
     ApprovalPolicyAuthoringPayloadV1,
     AttestationAuthoringPayloadV1,
@@ -53,6 +58,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBodyV1,
     SourceAcquisitionPolicyAuthoringPayloadV1,
     SubjectAuthoringPayloadV1,
+    TriggerAuthoringPayloadV1,
     WorkingSelectionObservationV1,
     authoring_member_identity,
 )
@@ -187,6 +193,19 @@ from cruxible_client.contracts.subjects import (
     render_subject,
     subject_digest,
     subject_path,
+)
+from cruxible_client.contracts.triggers import (
+    TRIGGER_LINE_REF_ROLE,
+    ActionTargetV1,
+    LineTargetV1,
+    TriggerTargetV1,
+    TriggerV1,
+    parse_trigger,
+    render_trigger,
+    schedule_capture_selector,
+    trigger_digest,
+    trigger_path,
+    trigger_schedule_pins,
 )
 from cruxible_core.authoring.registrations import registered_projection_blocks
 from cruxible_core.claims.claim_retirement import (
@@ -2301,6 +2320,73 @@ def _render_line_member(
     return path, render_line_spec(line), line_spec_digest(line).tagged
 
 
+def _render_trigger_member(
+    payload: TriggerAuthoringPayloadV1,
+    *,
+    tree: Mapping[str, bytes],
+) -> tuple[str, bytes, str]:
+    """Lower one Trigger decision; a Line target is named by identity, never pinned.
+
+    A live Trigger's Line must be present in the staged tree -- accepted at the
+    base or authored earlier in the same set -- and an event schedule's exact
+    CaptureContract must be too. Whether the Line is live and accepts the event
+    is the Trigger law's to judge at acceptance.
+    """
+
+    live = not payload.retire
+    if payload.line_name is not None:
+        if live and line_spec_path(payload.line_name) not in tree:
+            _refuse(
+                "playbill.authoring.trigger_line_missing",
+                "line_name",
+                "Trigger authoring requires the named accepted or same-ChangeSet Line.",
+                repair_kind="replace_line_name",
+                repair_description="Use a Line name present at the authoring coordinate.",
+            )
+        target: TriggerTargetV1 = LineTargetV1(
+            line=ArtifactRef(
+                role=TRIGGER_LINE_REF_ROLE,
+                target=ArtifactIdentity(kind="Line", name=payload.line_name),
+            )
+        )
+    else:
+        assert payload.action is not None
+        target = ActionTargetV1(action=payload.action)
+    selector = schedule_capture_selector(payload.schedule)
+    if live and selector is not None:
+        capture_path = capture_contract_path(selector.capture_contract_identity.name)
+        content = tree.get(capture_path)
+        if (
+            content is None
+            or capture_contract_digest(parse_capture_contract(content, path=capture_path)).tagged
+            != selector.capture_contract_digest
+        ):
+            _refuse(
+                "playbill.authoring.trigger_capture_missing",
+                "schedule",
+                "The Trigger's CaptureContract does not match the accepted or staged version.",
+                repair_kind="replace_schedule",
+                repair_description="Use the exact accepted CaptureContract identity and digest.",
+            )
+    path = trigger_path(payload.name)
+    previous_content = tree.get(path)
+    previous = None if previous_content is None else parse_trigger(previous_content, path=path)
+    trigger = TriggerV1(
+        identity=ArtifactIdentity(kind="Trigger", name=payload.name),
+        schedule=payload.schedule,
+        target=target,
+        pins=trigger_schedule_pins(payload.schedule),
+        lifecycle=ArtifactLifecycle(
+            state="retired" if payload.retire else "live",
+            predecessor_digest=None if previous is None else trigger_digest(previous).tagged,
+        ),
+    )
+    if previous_content is not None and previous is not None:
+        if _same_revision_content(trigger, previous):
+            return path, previous_content, trigger_digest(previous).tagged
+    return path, render_trigger(trigger), trigger_digest(trigger).tagged
+
+
 def _contract_fields_summary(
     procedure: ProcedureArtifactV2, contract: ArtifactPin
 ) -> dict[str, str]:
@@ -2513,6 +2599,7 @@ MEMBER_STAGING_ORDER = (
     "procedure",
     "procedure_mandate",
     "line",
+    "trigger",
     "claim_retirement",
 )
 
@@ -2549,6 +2636,8 @@ def _member_stage(member: AuthoringChangeSetMemberV1) -> str:
         return "procedure_mandate"
     if isinstance(member, LineAuthoringPayloadV1):
         return "line"
+    if isinstance(member, TriggerAuthoringPayloadV1):
+        return "trigger"
     return "definition"
 
 
@@ -2571,6 +2660,8 @@ def _member_primary_path(
         return procedure_mandate_path(member.name)
     if isinstance(member, LineAuthoringPayloadV1):
         return line_spec_path(member.name)
+    if isinstance(member, TriggerAuthoringPayloadV1):
+        return trigger_path(member.name)
     if isinstance(member, QueryDefinitionAuthoringPayloadV1):
         return query_definition_path(member.query_definition.identity.name)
     path, _content, _digest = _render_non_procedure_member(member)
@@ -2912,6 +3003,11 @@ def _stage_change_set_member(
         line_path, content, digest = _render_line_member(member, tree=staged_tree)
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[line_path] = content
+        return candidate_tree, {"artifact_digest": digest}, set(), {}
+    if isinstance(member, TriggerAuthoringPayloadV1):
+        trigger_member_path, content, digest = _render_trigger_member(member, tree=staged_tree)
+        candidate_tree = fork_tree(staged_tree)
+        candidate_tree[trigger_member_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
     _path, content, digest = _render_non_procedure_member(member, tree=staged_tree)
     candidate_tree = fork_tree(staged_tree)
@@ -3496,8 +3592,12 @@ def lower_authoring(
             base_tree=base_tree,
             derivation_procedure=derivation_procedure,
         )
-    if isinstance(intent.payload, LineAuthoringPayloadV1):
-        path, content, digest = _render_line_member(intent.payload, tree=base_tree)
+    if isinstance(intent.payload, LineAuthoringPayloadV1 | TriggerAuthoringPayloadV1):
+        path, content, digest = (
+            _render_line_member(intent.payload, tree=base_tree)
+            if isinstance(intent.payload, LineAuthoringPayloadV1)
+            else _render_trigger_member(intent.payload, tree=base_tree)
+        )
         candidate_tree = fork_tree(base_tree)
         candidate_tree[path] = content
         changed = () if base_tree.get(path) == content else ((path, content),)

@@ -135,6 +135,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBodyV1,
     SourceAcquisitionPolicyAuthoringPayloadV1,
     SubjectAuthoringPayloadV1,
+    TriggerAuthoringPayloadV1,
     authoring_member_identity,
     authoring_program_digest,
 )
@@ -223,6 +224,7 @@ from cruxible_client.contracts.resolution_contracts import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
+from cruxible_client.contracts.triggers import InternalAction, TriggerScheduleV1
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 
@@ -974,9 +976,9 @@ class ChangeSetDraft:
 
         Lowering resolves both names -- accepted at the base or defined earlier
         in this same set -- into the exact pins the LineSpec carries. A Line
-        runs when run explicitly, or when a Trigger aimed at it fires, and
-        inherits the Procedure's hard caps as its budget unless one is given.
-        ``trigger_input`` binds the triggering Capture to a
+        runs when run explicitly, or when a Trigger aimed at it fires
+        (:meth:`trigger`), and inherits the Procedure's hard caps as its budget
+        unless one is given. ``trigger_input`` binds the triggering Capture to a
         named Source alias; the Line then accepts only that Source's exact
         CaptureContract event, and every Trigger aimed at it must fire on it.
         Missing or ineligible trigger material refuses admission, without a re-fetch.
@@ -1009,6 +1011,37 @@ class ChangeSetDraft:
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={"kind": "line", "name": name, "procedure": procedure},
+            )
+        )
+        return self
+
+    def trigger(
+        self,
+        *,
+        name: str,
+        schedule: TriggerScheduleV1,
+        line: str | None = None,
+        action: InternalAction | None = None,
+        retire: bool = False,
+    ) -> ChangeSetDraft:
+        """Define one Trigger inside this changeset: a schedule aimed at one target.
+
+        Name exactly one of ``line`` (an accepted Line, or one defined in this
+        same set) or ``action`` (``evidence.sweep`` or
+        ``prediction.anchor_retry``, which take a cadence schedule only). A Line
+        can have several Triggers; retiring a Line needs its live Triggers
+        retired or retargeted in the same set.
+        """
+
+        payload = TriggerAuthoringPayloadV1(
+            name=name, schedule=schedule, line_name=line, action=action, retire=retire
+        )
+        self._members.append(
+            _ChangeSetMember(
+                payload=payload,
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "trigger", "name": name},
             )
         )
         return self

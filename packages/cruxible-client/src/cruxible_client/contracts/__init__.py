@@ -232,6 +232,18 @@ from cruxible_client.contracts.resolution_contracts import (
 from cruxible_client.contracts.resolution_contracts import (
     ResolutionContractV1 as ResolutionContractV1,
 )
+from cruxible_client.contracts.triggers import (
+    CadenceScheduleV1 as CadenceScheduleV1,
+)
+from cruxible_client.contracts.triggers import (
+    CaptureLandingScheduleV1 as CaptureLandingScheduleV1,
+)
+from cruxible_client.contracts.triggers import (
+    TriggerV1 as TriggerV1,
+)
+from cruxible_client.contracts.triggers import (
+    WindowCloseScheduleV1 as WindowCloseScheduleV1,
+)
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     PlaybillWorkspaceAdvertisement,
@@ -270,6 +282,7 @@ PlaybillAuthoringExampleName = Literal[
     "procedure-runtime-policy",
     "procedure-mandate",
     "line",
+    "trigger",
     "acquisition-policy",
     "change-set",
     "claim-type-succession",

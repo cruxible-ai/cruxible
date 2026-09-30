@@ -42,6 +42,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBodyV1,
     SourceAcquisitionPolicyAuthoringPayloadV1,
     SubjectAuthoringPayloadV1,
+    TriggerAuthoringPayloadV1,
     WorkingSelectionObservationV1,
     authoring_member_identity,
 )
@@ -65,6 +66,7 @@ from cruxible_client.contracts.proposal_models import (
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1, QueryDefinitionV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
+from cruxible_client.contracts.triggers import InternalAction, TriggerScheduleV1
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.records import RecordConstructor
@@ -327,6 +329,26 @@ class LineInput(_StrictInputModel):
     retire: bool = False
 
 
+class TriggerInput(_StrictInputModel):
+    """One Trigger: a schedule aimed at exactly one Line or internal action.
+
+    A Line target names an accepted or same-set Line; an internal action
+    (`evidence.sweep`, `prediction.anchor_retry`) takes a cadence only. A Trigger
+    is changed or retired (`retire`) through a successor, like any definition.
+    """
+
+    kind: Literal["trigger"]
+    name: str
+    schedule: TriggerScheduleV1
+    line_name: str | None = Field(
+        default=None, description="The Line this Trigger runs; omit when naming an action."
+    )
+    action: InternalAction | None = Field(
+        default=None, description="The internal action this Trigger fires; omit for a Line."
+    )
+    retire: bool = False
+
+
 AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
     ClaimInput
     | ClaimTypeInput
@@ -339,6 +361,7 @@ AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
     | ProcedureMandateInputV1
     | AcquisitionPolicyInput
     | LineInput
+    | TriggerInput
     | ProcedureInput,
     Field(discriminator="kind"),
 ]
@@ -369,6 +392,7 @@ AuthoringInputV1: TypeAlias = Annotated[
     | ProcedureMandateInputV1
     | AcquisitionPolicyInput
     | LineInput
+    | TriggerInput
     | ChangeSetInput,
     Field(discriminator="kind"),
 ]
@@ -696,6 +720,12 @@ def _line_payload(value: LineInput) -> LineAuthoringPayloadV1:
     )
 
 
+def _trigger_payload(value: TriggerInput) -> TriggerAuthoringPayloadV1:
+    return TriggerAuthoringPayloadV1.model_validate(
+        value.model_dump(mode="python", exclude={"kind"})
+    )
+
+
 def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChangeSetMemberV1:
     if isinstance(member, ClaimInput):
         return _claim_payload(member)
@@ -731,6 +761,8 @@ def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChan
         )
     if isinstance(member, LineInput):
         return _line_payload(member)
+    if isinstance(member, TriggerInput):
+        return _trigger_payload(member)
     return _mandate_payload(member)
 
 
@@ -758,6 +790,8 @@ def lower_authoring_input(value: AuthoringInputV1) -> AuthoringPayloadV1:
         )
     if isinstance(value, LineInput):
         return _line_payload(value)
+    if isinstance(value, TriggerInput):
+        return _trigger_payload(value)
     members = tuple(_change_set_member(member) for member in value.members)
     identities = tuple(authoring_member_identity(member) for member in members)
     if len(set(identities)) != len(identities):
@@ -799,6 +833,7 @@ __all__ = [
     "ExistingCaptureInput",
     "ExactContentObjectInput",
     "LineInput",
+    "TriggerInput",
     "LiteralObjectInput",
     "ProcedureInput",
     "ProcedureMandateInputV1",

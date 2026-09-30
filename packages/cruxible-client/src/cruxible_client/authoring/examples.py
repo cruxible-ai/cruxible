@@ -26,6 +26,7 @@ from cruxible_client.authoring.inputs import (
     SelfSourceInput,
     SubjectInput,
     SubjectObjectInput,
+    TriggerInput,
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.acquisition_policies import (
@@ -61,6 +62,7 @@ from cruxible_client.contracts.query.grammar import (
     QuerySubjectFieldRefV1,
 )
 from cruxible_client.contracts.subjects import SubjectShell
+from cruxible_client.contracts.triggers import CadenceScheduleV1
 
 AuthoringExampleName = Literal[
     "claim-existing-capture",
@@ -81,6 +83,7 @@ AuthoringExampleName = Literal[
     "procedure-runtime-policy",
     "procedure-mandate",
     "line",
+    "trigger",
     "acquisition-policy",
     "change-set",
     "claim-type-succession",
@@ -257,14 +260,32 @@ def procedure_mandate_example() -> ProcedureMandateInputV1:
 
 
 def line_example() -> LineInput:
-    """A manual Line over the `--example procedure` Procedure.
+    """A Line over the `--example procedure` Procedure.
 
     That Procedure has no Source nodes, so the Line names no acquisition
     policy, and its input contract is empty, so `parameters` is `{}`. It only
-    observes, so it runs without a ProcedureMandate.
+    observes, so it runs without a ProcedureMandate. With no Trigger aimed at it
+    it runs when run explicitly; `--example trigger` schedules it.
     """
 
     return LineInput(kind="line", name="replace-me", procedure_name="replace-me", parameters={})
+
+
+def trigger_example() -> TriggerInput:
+    """An hourly Trigger that runs the `--example line` Line.
+
+    Name `line_name` or `action` (`evidence.sweep`, `prediction.anchor_retry`),
+    never both. A schedule is `cadence` (`interval_seconds`), `capture_landing`
+    (an exact CaptureContract `event`), or `window_close` (a `window`); an
+    internal action takes a cadence only.
+    """
+
+    return TriggerInput(
+        kind="trigger",
+        name="replace-me",
+        schedule=CadenceScheduleV1(interval_seconds=3600),
+        line_name="replace-me",
+    )
 
 
 def acquisition_policy_example() -> AcquisitionPolicyInput:
@@ -699,6 +720,7 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "procedure-runtime-policy": procedure_runtime_policy_example,
     "procedure-mandate": procedure_mandate_example,
     "line": line_example,
+    "trigger": trigger_example,
     "acquisition-policy": acquisition_policy_example,
     "change-set": change_set_example,
     "claim-type-succession": claim_type_succession_example,
@@ -728,6 +750,7 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "procedure-runtime-policy",
     "procedure-mandate",
     "line",
+    "trigger",
     "acquisition-policy",
     "change-set",
     "claim-type-succession",

@@ -2928,12 +2928,12 @@ def create_authoring_intent(
     \b
     Input kind family: claim | procedure | subject | query_definition |
     approval_policy | procedure_runtime_policy | procedure_mandate |
-    acquisition_policy | line | change_set (tagless).
+    acquisition_policy | line | trigger | change_set (tagless).
 
     \b
     Change-set member kind family: claim | claim_type | claim_type_succession |
     claim_retirement | subject | query_definition | procedure_mandate |
-    acquisition_policy | line | procedure. claim_type, claim_type_succession and
+    acquisition_policy | line | trigger | procedure. claim_type, claim_type_succession and
     claim_retirement are member kinds only -- none is a top-level input.
     approval_policy and procedure_runtime_policy are the reverse: the member
     union parses either, but a change set refuses either, so author each as its
@@ -2948,7 +2948,7 @@ def create_authoring_intent(
 
     Use --example for a model-generated starting point; --example change-set
     prints a mixed set and --example claim-type-succession a vocabulary
-    evolution. --example procedure, line, acquisition-policy and
+    evolution. --example procedure, line, trigger, acquisition-policy and
     procedure-mandate are accepted together as members of one change set.
     """
 

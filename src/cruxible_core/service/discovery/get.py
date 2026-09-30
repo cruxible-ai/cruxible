@@ -72,6 +72,7 @@ from cruxible_client.contracts.get_reads import (
     PlaybillGetRevisionV1,
     PlaybillGetSubjectCardV1,
     PlaybillGetSubjectClaimV1,
+    PlaybillGetTriggerCardV1,
     PlaybillGetTruncatedTextV1,
     PlaybillReadFlag,
     PlaybillReadSurface,
@@ -82,6 +83,7 @@ from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
+from cruxible_client.contracts.triggers import TriggerV1
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
@@ -128,6 +130,7 @@ _TYPED_PREFIXES: Mapping[str, PlaybillGetRefKind] = {
     "QueryDefinition": "query",
     "query": "query",
     "CaptureContract": "capture_contract",
+    "Trigger": "trigger",
     "Proposal": "proposal",
 }
 # The projection's artifact kind for each reference kind, and back.
@@ -139,6 +142,7 @@ _PROJECTION_KIND: Mapping[PlaybillGetRefKind, str] = {
     "procedure": "procedure",
     "query": "query-definition",
     "capture_contract": "capture-contract",
+    "trigger": "trigger",
 }
 _REF_KIND = {value: key for key, value in _PROJECTION_KIND.items()}
 _QUALIFIER: Mapping[PlaybillGetRefKind, str] = {
@@ -149,12 +153,14 @@ _QUALIFIER: Mapping[PlaybillGetRefKind, str] = {
     "procedure": "Procedure",
     "query": "QueryDefinition",
     "capture_contract": "CaptureContract",
+    "trigger": "Trigger",
 }
 _NAMED_KINDS: tuple[PlaybillGetRefKind, ...] = (
     "document",
     "procedure",
     "query",
     "capture_contract",
+    "trigger",
 )
 _DISPLAY_PREFIX: Mapping[PlaybillGetRefKind, str] = {
     "claim_type": "ClaimType",
@@ -162,6 +168,7 @@ _DISPLAY_PREFIX: Mapping[PlaybillGetRefKind, str] = {
     "procedure": "Procedure",
     "query": "query",
     "capture_contract": "CaptureContract",
+    "trigger": "Trigger",
     "proposal": "Proposal",
 }
 
@@ -365,6 +372,7 @@ def _resolve_typed(
         "procedure": "Procedure",
         "query": "QueryDefinition",
         "capture_contract": "CaptureContract",
+        "trigger": "Trigger",
     }[kind]
     candidates = tuple(
         item if kind == "subject" else f"{_DISPLAY_PREFIX[kind]}:{item}"
@@ -939,6 +947,25 @@ def _query_card(
     )
 
 
+def _trigger_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: PlaybillReadSurface,
+) -> PlaybillGetTriggerCardV1:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        trigger = cast(TriggerV1, projection.typed.source(resolved.identity))
+    target = trigger.line.qualified if trigger.line is not None else str(trigger.action)
+    return PlaybillGetTriggerCardV1(
+        trigger=resolved.identity,
+        lifecycle=trigger.lifecycle.state,
+        schedule=trigger.schedule.model_dump(mode="json"),
+        target=target,
+        next=(_render_get(surface, resolved.display, "history"),),
+    )
+
+
 def _capture_contract_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -1483,15 +1510,16 @@ def _proof(
             name=name,
             request=ProcedureReadinessRequestV1(at=at, evaluation_time=evaluation_time),
         ).model_dump(mode="json")
-    if resolved.kind == "capture_contract":
+    if resolved.kind in ("capture_contract", "trigger"):
         with instance.bind_accepted_projection(coordinate) as projection:
-            contract = cast(CaptureContractV1, projection.typed.source(resolved.identity))
+            source = projection.typed.source(resolved.identity)
             row = projection.typed.envelope(resolved.identity)
+        assert source is not None
         return {
             "coordinate": at.model_dump(mode="json"),
             "path": row.path if row else None,
             "artifact_digest": row.artifact_digest if row else None,
-            "envelope": contract.model_dump(mode="json"),
+            "envelope": source.model_dump(mode="json"),
         }
     # Proposals are operational: the status entry and the retained records.
     return {
@@ -1610,6 +1638,8 @@ def service_playbill_get(
             card = _query_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "capture_contract":
             card = _capture_contract_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "trigger":
+            card = _trigger_card(instance, coordinate, resolved, surface=surface)
         else:
             card = _proposal_card(instance, resolved, surface=surface)
         fields["card"] = card

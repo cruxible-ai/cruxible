@@ -149,6 +149,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "procedure-runtime-policy",
         "procedure-mandate",
         "line",
+        "trigger",
         "acquisition-policy",
         "change-set",
         "claim-type-succession",

@@ -693,6 +693,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         "procedure_mandate",
         "acquisition_policy",
         "line",
+        "trigger",
         "procedure",
     ]
     assert (
@@ -710,6 +711,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         "procedure-runtime-policy",
         "procedure-mandate",
         "line",
+        "trigger",
         "acquisition-policy",
         "query-claims-by-type",
         "change-set",
@@ -728,6 +730,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
             "procedure_mandate",
             "query_definition",
             "line",
+            "trigger",
             "acquisition_policy",
         }
         if name == "procedure-mandate":
