@@ -88,21 +88,32 @@ def _grew(marker: Path, seconds: float = 0.4) -> bool:
 # ---------------------------------------------------------------- T-A
 
 
-def test_the_process_start_token_does_not_separate_same_second_processes() -> None:
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Known weakness: without procfs the process start token comes from ps at "
+        "1-second granularity, so two processes started in the same second share a "
+        "token and the OS identity fence cannot tell them apart. Strict, so a finer "
+        "fence turns this red and the marker comes off."
+    ),
+)
+def test_the_process_start_token_separates_same_second_processes() -> None:
     """The OS identity fence's resolution is the platform ps/procfs granularity."""
 
-    first = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(3)"])
-    second = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(3)"])
-    try:
-        first_token = _process_start_time(first.pid)
-        second_token = _process_start_time(second.pid)
-    finally:
-        for item in (first, second):
-            item.kill()
-            item.wait(timeout=5)
     if Path("/proc/1/stat").exists():
         pytest.skip("procfs jiffy resolution; the ps 1-second path is the macOS fallback")
-    assert first_token == second_token, (first_token, second_token)
+    # Three pairs, so one pair straddling a second boundary cannot pass it by luck.
+    for _attempt in range(3):
+        first = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(3)"])
+        second = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(3)"])
+        try:
+            first_token = _process_start_time(first.pid)
+            second_token = _process_start_time(second.pid)
+        finally:
+            for item in (first, second):
+                item.kill()
+                item.wait(timeout=5)
+        assert first_token != second_token, (first_token, second_token)
 
 
 def test_a_reused_pid_whose_recorded_identity_matches_is_sigkilled(short_root: Path) -> None:

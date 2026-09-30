@@ -65,7 +65,9 @@ def test_an_unreadable_process_table_refuses_every_invocation_with_repair(
     operator = ProviderRuntimeOperator(short_root)
     store = operator.process_leases
     assert store is not None
-    store.acquisition_timeout_seconds = 0.5
+    # Generous: a loaded machine (a parallel run) must not starve the lease
+    # handshake into echo_failed before the process-table gate is reached.
+    store.acquisition_timeout_seconds = 5.0
     store.descendant_tracker_poll_interval_seconds = 0.01
     interpreter = _fake_interpreter(short_root / "provider.py")
     monkeypatch.setattr(runtime_module, "snapshot_provider_descendants", _unreadable_process_table)

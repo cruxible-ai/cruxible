@@ -68,6 +68,8 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._pc_c_support import capture_contract
+from tests.core_support._support import build_inputs, restamp_state_root
+from tests.core_support._world_templates import TEMPLATES, copy_template
 
 SEATS = "acme.account.seats"
 PLAN = "acme.account.plan"
@@ -233,7 +235,7 @@ def strict_worlds(
     yield from _open_worlds(tmp_path, monkeypatch, independent=True)
 
 
-def _open_worlds(
+def _fresh_open_worlds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, independent: bool
 ) -> Iterator[tuple[_World, _World]]:
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
@@ -270,6 +272,57 @@ def _open_worlds(
                 _World(client, instance_id, keys[1].private_key_path, _workspace(tmp_path / name))
             )
         yield opened[0], opened[1]
+    get_playbill_manager().clear()
+    reset_runtime_credential_store()
+    reset_registry()
+    reset_permissions()
+
+
+def _build_worlds(root: Path, independent: bool) -> tuple[tuple[str, Path, Path], ...]:
+    """Open the publisher/consumer pair under ``root`` as the fixture does, then stop."""
+
+    with pytest.MonkeyPatch.context() as build:
+        opened = _fresh_open_worlds(root, build, independent=independent)
+        pair = next(opened)
+        for _ in opened:
+            pass
+    return tuple(
+        (
+            world.instance_id,
+            world.reviewer_key.relative_to(root),
+            Path(world.pb._workspace).relative_to(root),
+        )
+        for world in pair
+    )
+
+
+def _open_worlds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, independent: bool
+) -> Iterator[tuple[_World, _World]]:
+    """The pair, copied from this process's template pair when one applies."""
+
+    template = TEMPLATES.template(
+        ("kit_worlds", independent, build_inputs()), lambda root: _build_worlds(root, independent)
+    )
+    copied = None if template is None else copy_template(template, tmp_path)
+    if template is None or copied is None:
+        yield from _fresh_open_worlds(tmp_path, monkeypatch, independent=independent)
+        return
+    TEMPLATES.copies += 1
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    reset_permissions()
+    reset_registry()
+    reset_runtime_credential_store()
+    get_playbill_manager().clear()
+    restamp_state_root(tmp_path / "server-state")
+    with TestClient(create_app()) as client:
+        publisher, consumer = (
+            _World(client, instance_id, tmp_path / reviewer_key, tmp_path / workspace)
+            for instance_id, reviewer_key, workspace in template.value
+        )
+        yield publisher, consumer
     get_playbill_manager().clear()
     reset_runtime_credential_store()
     reset_registry()

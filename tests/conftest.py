@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.core_support._world_templates import TEMPLATES, WORLD_STATS_ENV
+
 _DOCKER_TEST_ENV = "CRUXIBLE_RUN_DOCKER_TESTS"
 _WHEEL_TEST_ENV = "CRUXIBLE_RUN_WHEEL_TESTS"
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
@@ -29,6 +31,17 @@ def isolate_server_state_root(
             os.environ.pop("CRUXIBLE_STATE_ROOT", None)
         else:
             os.environ["CRUXIBLE_STATE_ROOT"] = previous
+
+
+@pytest.fixture(scope="session", autouse=True)
+def world_templates(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Share built worlds within this process (see `core_support/_world_templates.py`)."""
+
+    TEMPLATES.configure(tmp_path_factory.mktemp("world-templates"))
+    yield
+    stats = os.environ.get(WORLD_STATS_ENV)
+    if stats:
+        TEMPLATES.report(Path(stats))
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
