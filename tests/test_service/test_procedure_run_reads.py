@@ -4,7 +4,8 @@
 doing without replaying it while it runs: finished nodes over the Procedure
 graph's nodes, the node it is on, elapsed time against the read's evaluation
 time, and the Line, occurrence and arm that admitted it. ``orient(section=
-"runs")`` lists runs running first, then newest first, paged by key.
+"runs")`` lists runs newest first, paged by an immutable key, and
+``section="running"`` keeps only runs still running.
 """
 
 from __future__ import annotations
@@ -147,12 +148,16 @@ def test_run_references_refuse_with_a_repair(run_world) -> None:  # type: ignore
     assert historical.value.error_code == "playbill.get.historical_read_unsupported"
 
 
-def test_orient_lists_running_runs_first_then_newest_and_pages_by_key(run_world) -> None:  # type: ignore[no-untyped-def]
+def test_orient_lists_runs_newest_first_filters_running_and_pages_by_key(run_world) -> None:  # type: ignore[no-untyped-def]
     instance, _procedure, finished = run_world
 
     whole = service_playbill_orient(instance, section="runs", evaluation_time=READ_TIME)
     assert whole.runs is not None
+    # Newest admission first: the crashed run was admitted after the finished one.
     assert [row.status for row in whole.runs] == ["running", "succeeded"]
+    running = service_playbill_orient(instance, section="running")
+    assert running.section == "running" and running.runs is not None
+    assert [row.status for row in running.runs] == ["running"]
     assert whole.runs[1].run == finished.run_id
     assert whole.next[0] == f"cruxible playbill get ProcedureRun:{whole.runs[0].run}"
 

@@ -1853,9 +1853,11 @@ PREDICATE:alias`), plus up to five sample Subject IDs. A kind that
 does not exist is refused as `playbill.orient.kind_not_found` with the nearest
 kinds. `--section` pages one artifact family as compact rows; follow
 `next_cursor` with `--cursor` while `truncated` is true. `--section runs` lists
-Procedure runs, running runs first and then the newest admissions, each with its
-Procedure, status, admission time, Line and finished-node count; it pages by
-key, so runs admitted after the first page never shift a later one. Read one
+Procedure runs, newest admission first, each with its Procedure, status,
+admission time, Line and finished-node count, and `--section running` lists
+only the runs still running. Both page by the admission's immutable position,
+so a run admitted or finished after the first page is never repeated or
+skipped; status is shown, never part of the order. Read one
 with `cruxible playbill get ProcedureRun:RUN-...` (or a `RUN-` prefix of 12+
 hex): nodes done over the graph's nodes, the node a running run is on,
 elapsed time (against the read's evaluation time while it runs, the measured

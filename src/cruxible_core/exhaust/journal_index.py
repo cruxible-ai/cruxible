@@ -77,8 +77,12 @@ def _key(stream: JournalStreamIdentityV1) -> str:
     return canonical_bytes(stream.model_dump(mode="json")).decode()
 
 
-#: Where a run page stopped: (finished 0/1, admission recorded_at, run id).
-RunLocatorKey = tuple[int, str, str]
+#: Where a run page stopped: (the index's identity, the admission row's position).
+RunLocatorKey = tuple[str, int]
+
+
+class RunPageInvalidated(Exception):
+    """A run page key minted before the index was rebuilt: continue from page one."""
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,9 @@ class RunLocator:
     #: The ``attempt_finalized`` payload; ``None`` while the run is running.
     final_payload_digest: str | None
     nodes_done: int
+    index_identity: str
+    #: The admission record's position in the index: immutable once written.
+    row_id: int
 
     @property
     def finished(self) -> bool:
@@ -99,7 +106,7 @@ class RunLocator:
 
     @property
     def key(self) -> RunLocatorKey:
-        return (int(self.finished), self.admitted_at, self.run_id)
+        return (self.index_identity, self.row_id)
 
 
 class JournalIndex:
@@ -335,52 +342,55 @@ class JournalIndex:
         limit: int,
         partition_id: str | None = None,
         run_id: str | None = None,
+        running_only: bool = False,
         after: RunLocatorKey | None = None,
     ) -> tuple[tuple[RunLocator, ...], bool]:
-        """Admitted runs, running first, then newest admission first: a locator read.
+        """Admitted runs, newest admission first: a locator read.
 
-        Index rows only: no payload is read. A run is running until its
-        ``attempt_finalized`` record lands. ``after`` continues a page from the
-        last row it carried (keyset), so runs appended since the first page
-        never shift a later one. Returns the page and whether more follow.
+        Index rows only: no payload is read. The order is the admission
+        record's position in this index, which never changes once written, so
+        a page continues by key and a run that finishes between pages is never
+        repeated or skipped. A run's status is a displayed field, never part of
+        the order; ``running_only`` filters to runs whose ``attempt_finalized``
+        record has not landed. A key minted before the index was rebuilt names
+        positions that no longer exist, so it refuses rather than guess.
         """
 
-        where = ["stream=?", "event_kind='admission_bound'", "run_id IS NOT NULL"]
+        where = ["a.stream=?", "a.event_kind='admission_bound'", "a.run_id IS NOT NULL"]
         args: list[Any] = [_key(stream)]
         if partition_id is not None:
-            where.append("partition_id=?")
+            where.append("a.partition_id=?")
             args.append(partition_id)
         if run_id is not None:
-            where.append("run_id=?")
+            where.append("a.run_id=?")
             args.append(run_id)
-        keyset = ""
-        if after is not None:
-            done, admitted_at, run_id = after
-            keyset = (
-                " WHERE done>? OR (done=? AND admitted_at<?) "
-                "OR (done=? AND admitted_at=? AND run_id>?)"
-            )
-            args_after: list[Any] = [done, done, admitted_at, done, admitted_at, run_id]
-        else:
-            args_after = []
-        # Node counts are taken for the page only, after it is cut.
-        sql = (
-            "WITH runs AS (SELECT a.run_id AS run_id, a.recorded_at AS admitted_at, "
-            "a.partition_id AS partition_id, a.payload_digest AS payload_digest, "
+        final = (
             "(SELECT f.payload_digest FROM records f WHERE f.stream=a.stream "
             "AND f.run_id=a.run_id AND f.event_kind='attempt_finalized' "
-            "ORDER BY f.sequence DESC LIMIT 1) AS final_digest "
-            "FROM records a WHERE " + " AND ".join(where) + "), "
-            "keyed AS (SELECT *, final_digest IS NOT NULL AS done FROM runs), "
-            "page AS (SELECT * FROM keyed"
-            + keyset
-            + " ORDER BY done ASC, admitted_at DESC, run_id ASC LIMIT ?) "
-            "SELECT page.*, (SELECT count(*) FROM records n WHERE n.stream=? "
-            "AND n.run_id=page.run_id AND n.event_kind='node_fired') AS nodes "
-            "FROM page ORDER BY done ASC, admitted_at DESC, run_id ASC"
+            "ORDER BY f.sequence DESC LIMIT 1)"
         )
+        if running_only:
+            where.append(f"{final} IS NULL")
         with self.connection() as conn:
-            rows = conn.execute(sql, (*args, *args_after, limit + 1, _key(stream))).fetchall()
+            identity = conn.execute(
+                "SELECT identity FROM index_identity WHERE singleton=1"
+            ).fetchone()[0]
+            if after is not None:
+                if after[0] != identity:
+                    raise RunPageInvalidated(
+                        "the run index was rebuilt since this page's first read"
+                    )
+                where.append("a.id<?")
+                args.append(after[1])
+            rows = conn.execute(
+                f"SELECT a.id AS row_id, a.run_id AS run_id, a.recorded_at AS admitted_at, "
+                f"a.partition_id AS partition_id, a.payload_digest AS payload_digest, "
+                f"{final} AS final_digest, "
+                "(SELECT count(*) FROM records n WHERE n.stream=a.stream "
+                "AND n.run_id=a.run_id AND n.event_kind='node_fired') AS nodes "
+                "FROM records a WHERE " + " AND ".join(where) + " ORDER BY a.id DESC LIMIT ?",
+                (*args, limit + 1),
+            ).fetchall()
         return (
             tuple(
                 RunLocator(
@@ -390,6 +400,8 @@ class JournalIndex:
                     admission_payload_digest=row["payload_digest"],
                     final_payload_digest=row["final_digest"],
                     nodes_done=int(row["nodes"]),
+                    index_identity=str(identity),
+                    row_id=int(row["row_id"]),
                 )
                 for row in rows[:limit]
             ),

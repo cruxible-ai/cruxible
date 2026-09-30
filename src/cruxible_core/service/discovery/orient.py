@@ -52,6 +52,7 @@ from cruxible_client.contracts.orient import (
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.exhaust.journal_index import RunPageInvalidated
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
@@ -76,6 +77,7 @@ from cruxible_core.service.discovery.runs import run_counts, run_rows
 from cruxible_core.service.list_pages import (
     ListContinuation,
     PlaybillListCursorMismatch,
+    PlaybillListCursorStale,
     decode_list_cursor,
     encode_list_cursor,
     list_snapshot,
@@ -804,9 +806,15 @@ def service_playbill_orient(
             next=tuple(render_orient_call(call, surface) for call in calls),
         )
 
-    if section == "runs":
+    if section in {"runs", "running"}:
         return _runs_section(
-            instance, base, served=served, continuation=continuation, limit=limit, surface=surface
+            instance,
+            base,
+            section="running" if section == "running" else "runs",
+            served=served,
+            continuation=continuation,
+            limit=limit,
+            surface=surface,
         )
     if section == "captures":
         return _captures_section(
@@ -891,7 +899,7 @@ def service_playbill_orient(
     # Operational families are listed by count, never inlined; point at the
     # two an agent most often needs: runs in flight and the Lines.
     if counts["running"]:
-        calls.append(_Call("orient", (("section", "runs"),)))
+        calls.append(_Call("orient", (("section", "running"),)))
     if counts["lines"]:
         calls.append(_Call("orient", (("section", "lines"),)))
     if next_cursor is not None:
@@ -1052,33 +1060,46 @@ def _runs_section(
     instance: PlaybillInstance,
     base: dict[str, Any],
     *,
+    section: Literal["runs", "running"],
     served: AcceptedCoordinate,
     continuation: ListContinuation | None,
     limit: int,
     surface: PlaybillOrientSurface,
 ) -> PlaybillOrientResultV1:
+    """Procedure runs newest admission first; ``running`` keeps only runs still running.
+
+    The order never depends on a run's status, which changes as runs finish,
+    so a page continues by an immutable key: no run is repeated or skipped.
+    """
+
     after = _keyset_after(continuation)
-    if after is not None and (len(after) != 3 or after[0] not in {"0", "1"}):
+    if after is not None and (len(after) != 2 or not after[1].isdigit()):
         raise PlaybillListCursorMismatch(
             f"{PlaybillListCursorMismatch.error_code}: the cursor is malformed; "
             "orient again without a cursor"
         )
-    rows, stop = run_rows(
-        instance,
-        limit=limit,
-        after=None if after is None else (int(after[0]), after[1], after[2]),
-    )
+    try:
+        rows, stop = run_rows(
+            instance,
+            limit=limit,
+            running_only=section == "running",
+            after=None if after is None else (after[0], int(after[1])),
+        )
+    except RunPageInvalidated as exc:
+        raise PlaybillListCursorStale(
+            f"{PlaybillListCursorStale.error_code}: {exc}; orient again without a cursor"
+        ) from exc
     next_cursor = (
         None
         if stop is None
-        else _keyset_cursor(view="runs", served=served, last_key=[str(stop[0]), stop[1], stop[2]])
+        else _keyset_cursor(view=section, served=served, last_key=[stop[0], str(stop[1])])
     )
     calls = [_Call("get", (("ref", f"ProcedureRun:{rows[0].run}"),))] if rows else []
     if next_cursor is not None:
-        calls.append(_Call("orient", (("section", "runs"), ("cursor", next_cursor))))
+        calls.append(_Call("orient", (("section", section), ("cursor", next_cursor))))
     return PlaybillOrientResultV1(
         **base,
-        section="runs",
+        section=section,
         runs=rows,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,

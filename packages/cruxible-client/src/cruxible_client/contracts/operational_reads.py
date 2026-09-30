@@ -65,7 +65,7 @@ def capture_handle(digest: str) -> str:
 
 
 class PlaybillRunRowV1(_StrictOperationalModel):
-    """One Procedure run as a list row: running runs first, then newest first."""
+    """One Procedure run as a list row, newest admission first; ``status`` never orders."""
 
     run: str
     procedure: str

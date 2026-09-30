@@ -149,6 +149,7 @@
         "queries",
         "interfaces",
         "runs",
+        "running",
         "lines",
         "captures",
         "capture_contracts",
@@ -27685,6 +27686,7 @@
                   "queries",
                   "interfaces",
                   "runs",
+                  "running",
                   "lines",
                   "captures",
                   "capture_contracts",
@@ -28640,7 +28642,7 @@
           },
           "PlaybillRunRowV1": {
             "additionalProperties": false,
-            "description": "One Procedure run as a list row: running runs first, then newest first.",
+            "description": "One Procedure run as a list row, newest admission first; ``status`` never orders.",
             "properties": {
               "line": {
                 "anyOf": [
@@ -28698,7 +28700,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``queries``, ``interfaces``, or an operational family:\n  ``runs``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), paged. The default map counts the\n  operational families under ``artifacts`` and never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
+        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``queries``, ``interfaces``, or an operational family:\n  ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), paged. The default map counts the\n  operational families under ``artifacts`` and never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
         "properties": {
           "accepted_at": {
             "format": "date-time",
@@ -28977,6 +28979,7 @@
                   "queries",
                   "interfaces",
                   "runs",
+                  "running",
                   "lines",
                   "captures",
                   "capture_contracts",

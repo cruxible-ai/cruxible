@@ -4,8 +4,8 @@ A run's authoritative account is its journal chain, rebuilt by
 ``service_get_playbill_procedure_run``. Listing many runs never replays them:
 the journal index locates each run's admission and final records, and only a
 page's rows read those two payloads (the Procedure and Line from the admission,
-the terminal status from the final record). Rows list running runs first, then
-the newest admissions first.
+the terminal status from the final record). Rows list the newest admissions
+first, in an order a run's status never changes; a filter keeps running runs.
 """
 
 from __future__ import annotations
@@ -101,10 +101,13 @@ def run_rows(
     *,
     limit: int,
     line: ArtifactIdentity | None = None,
+    running_only: bool = False,
     after: RunLocatorKey | None = None,
 ) -> tuple[tuple[PlaybillRunRowV1, ...], RunLocatorKey | None]:
-    """One page of runs (of one Line when ``line`` is its identity) and where it stopped.
+    """One page of runs, newest admission first, and where it stopped.
 
+    ``line`` keeps one Line's runs; ``running_only`` keeps runs still running.
+    ``RunPageInvalidated`` refuses a key minted before the index was rebuilt.
     The key is ``None`` when the page is the last one.
     """
 
@@ -113,7 +116,11 @@ def run_rows(
         return (), None
     partition = None if line is None else procedure_line_partition(line)
     locators, more = journal.index.run_locators(
-        _stream(instance), limit=limit, partition_id=partition, after=after
+        _stream(instance),
+        limit=limit,
+        partition_id=partition,
+        running_only=running_only,
+        after=after,
     )
     rows = tuple(run_row(instance, locator) for locator in locators)
     return rows, (locators[-1].key if more and locators else None)

@@ -38,6 +38,7 @@ PlaybillOrientSection: TypeAlias = Literal[
     "queries",
     "interfaces",
     "runs",
+    "running",
     "lines",
     "captures",
     "capture_contracts",
@@ -232,7 +233,7 @@ class PlaybillOrientResultV1(_StrictOrientModel):
     - ``kind``: ``kind_detail``;
     - ``section``: that section's rows (``documents``, ``procedures``,
       ``claim_types``, ``queries``, ``interfaces``, or an operational family:
-      ``runs``, ``lines``, ``captures``, ``capture_contracts``,
+      ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,
       ``predictions``, ``mandates``), paged. The default map counts the
       operational families under ``artifacts`` and never inlines their rows.
 
@@ -265,8 +266,8 @@ class PlaybillOrientResultV1(_StrictOrientModel):
     interfaces: tuple[PlaybillOrientInterfaceV1, ...] | None = Field(
         default=None, exclude_if=_is_none
     )
-    # Procedure runs: running first, then newest admission first. Runs are
-    # operational state, listed as of now whatever coordinate is read.
+    # Procedure runs, newest admission first (section "runs"), or only the runs
+    # still running (section "running"). Runs are operational state, read live.
     runs: tuple[PlaybillRunRowV1, ...] | None = Field(default=None, exclude_if=_is_none)
     # Accepted Lines, with each arm's state and pending counts at the head.
     lines: tuple[PlaybillOrientLineV1, ...] | None = Field(default=None, exclude_if=_is_none)
