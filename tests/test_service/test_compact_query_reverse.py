@@ -398,3 +398,53 @@ def test_the_wire_omits_the_default_direction_and_the_cursor_binds_it() -> None:
         {"kind": "k", "follow": [{**BATCH, "direction": "forward"}]}
     )
     assert _selection(flipped, "inline") != _selection(reverse, "inline")
+
+
+def test_follow_refusals_stay_bounded_as_the_vocabulary_grows() -> None:
+    """Refusal candidates are capped, in stable order, however many names qualify."""
+
+    from cruxible_core.service.read_refusals import NEAREST_LIMIT
+
+    target = "t.item"
+    sources = [f"src{index:02d}" for index in range(12)]
+    infos = [
+        *(_info(f"{source}.delivers", source, objects=(target,)) for source in sources),
+        *(_info(f"{source}.state", source) for source in sources),
+        *(_info(f"{target}.rel{index:02d}", target, objects=tuple(sources)) for index in range(12)),
+        _info(f"{target}.title", target),
+    ]
+    vocabulary = QueryVocabulary(
+        predicates={info.predicate: info for info in infos},
+        kinds=(target, *sources),
+    )
+
+    def refused(**fields: Any) -> ReadRefusalError:
+        request = PlaybillQueryRequestV1.model_validate({"kind": target, **fields})
+        with pytest.raises(ReadRefusalError) as caught:
+            plan = _CompactPlan(vocabulary, request)
+            for index, name in enumerate(request.select):
+                plan.field(name, field_path=f"select[{index}]")
+        return caught.value
+
+    incoming = sorted(f"{source}.delivers" for source in sources)
+    relations = sorted(f"rel{index:02d}" for index in range(12))
+
+    # Reverse: a name nothing resembles falls back to the first incoming names.
+    unknown = refused(follow=[{"field": "zzzzzzzzzzzz", "as": "a", "direction": "reverse"}])
+    assert unknown.error_code == "playbill.query.follow_not_incoming"
+    assert unknown.candidates == tuple(incoming[:NEAREST_LIMIT])
+    # Reverse: a short name every source kind carries is ambiguous, capped.
+    ambiguous = refused(follow=[{"field": "delivers", "as": "a", "direction": "reverse"}])
+    assert ambiguous.error_code == "playbill.query.ambiguous_field"
+    assert ambiguous.candidates == tuple(incoming[:NEAREST_LIMIT])
+    assert "names 12 predicates" in str(ambiguous)
+
+    # Forward: a literal predicate of the kind falls back to the first relations.
+    literal = refused(follow=[{"field": "title", "as": "a"}])
+    assert literal.error_code == "playbill.query.follow_not_relation"
+    assert literal.candidates == tuple(relations[:NEAREST_LIMIT])
+    # Forward: an unknown name, and an alias field shared by every target kind.
+    assert len(refused(follow=[{"field": "zzzzzzzzzzzz", "as": "a"}]).candidates) <= 5
+    shared = refused(follow=[{"field": "rel00", "as": "a"}], select=["a.state"])
+    assert shared.error_code == "playbill.query.ambiguous_field"
+    assert shared.candidates == tuple(sorted(f"{s}.state" for s in sources)[:NEAREST_LIMIT])

@@ -28,7 +28,11 @@ def _leaf(name: str) -> str:
     return _SEGMENTS.split(name)[-1]
 
 
-def nearest(value: str, names: Iterable[str], *, limit: int = 5) -> tuple[str, ...]:
+NEAREST_LIMIT = 5
+"""How many candidate names a read refusal carries at most."""
+
+
+def nearest(value: str, names: Iterable[str], *, limit: int = NEAREST_LIMIT) -> tuple[str, ...]:
     """The accepted names a mistyped or shortened one most likely meant.
 
     A name matches on its whole spelling or on its last segment, so a typo in a

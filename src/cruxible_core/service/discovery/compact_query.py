@@ -133,6 +133,7 @@ from cruxible_core.service.list_pages import (
     page_after_boundary,
 )
 from cruxible_core.service.read_refusals import (
+    NEAREST_LIMIT,
     ReadRefusalError,
     nearest,
     resolve_read_coordinate,
@@ -436,7 +437,7 @@ class _CompactPlan:
             raise query_refusal(
                 "playbill.query.follow_not_relation",
                 f"{name!r} is not a Subject-valued predicate of {self.kind}",
-                nearest=relations,
+                nearest=nearest(name, relations) or relations[:NEAREST_LIMIT],
                 repair=repair,
                 field_path=field_path,
             )
@@ -451,8 +452,8 @@ class _CompactPlan:
         if found:
             raise query_refusal(
                 "playbill.query.ambiguous_field",
-                f"{name!r} names more than one predicate that points at {self.kind}",
-                nearest=tuple(info.predicate for info in found),
+                f"{name!r} names {len(found)} predicates that point at {self.kind}",
+                nearest=tuple(sorted(info.predicate for info in found))[:NEAREST_LIMIT],
                 repair="name the predicate in full",
                 field_path=field_path,
             )
@@ -466,7 +467,7 @@ class _CompactPlan:
         raise query_refusal(
             "playbill.query.follow_not_incoming",
             message,
-            nearest=nearest(name, incoming) or incoming,
+            nearest=nearest(name, incoming) or incoming[:NEAREST_LIMIT],
             repair=(
                 f"follow backwards along a predicate whose values are {self.kind} Subjects "
                 f"(orient kind={self.kind} lists them as incoming)"
