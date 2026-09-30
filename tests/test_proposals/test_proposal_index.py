@@ -374,6 +374,10 @@ def test_close_never_blesses_foreign_database_or_source_corruption(tmp_path):
 
     instance, _ = initialize_local(tmp_path)
     first = _submit(instance, "one")
+    # The submission queues an advisory review-ref refresh that reads (and would
+    # repair) this index; let it finish so the foreign delete below is the last
+    # write the reopened owner sees.
+    instance.settled_workspace_advertisement()
     evidence = instance.proposal_evidence()
     index_path = evidence.index.path
     with sqlite3.connect(index_path) as connection:
