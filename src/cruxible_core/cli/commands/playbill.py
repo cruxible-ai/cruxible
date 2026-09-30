@@ -22,7 +22,6 @@ from cruxible_client import (
     CruxibleClient,
     activate_with_workspace_refresh,
     contracts,
-    materialize_playbill_floor,
     observe_playbill_next_workspace,
 )
 from cruxible_client._error_base import CoreError, printable
@@ -59,11 +58,13 @@ from cruxible_client.authoring.sources import (
 )
 from cruxible_client.authoring.workspace import (
     PlaybillWorkspaceAttachmentError,
+    floor_export_parts,
     observe_playbill_next_workspace_with_coverage,
     observe_playbill_projection_coverage,
-    record_playbill_floor_output,
     validate_playbill_workspace_config_write,
+    workspace_floor_freshness,
     write_playbill_workspace_config,
+    write_workspace_floor,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
@@ -6336,6 +6337,20 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         f"Playbill {result['instance']} generation={result['generation']} "
         f"at {result['coordinate']['git_oid'][:12]} accepted {result['accepted_at']}"
     ]
+    floor = result.get("floor")
+    if floor is not None:
+        behind = floor["generations_behind"]
+        lines.append(
+            f"Floor: .playbill/floor at {floor['at'][:12]}, "
+            + (
+                "current"
+                if behind == 0
+                else "generations behind unknown"
+                if behind is None
+                else f"{behind} generation(s) behind"
+            )
+            + ("" if behind == 0 else "; refresh: cruxible playbill floor export --force")
+        )
     you = result.get("you")
     if you is not None:
         refusal = you.get("authoring_refusal") or {}
@@ -6478,6 +6493,9 @@ def orient(
         ),
         command_name="playbill orient",
     )
+    workspace_root = containing_git_workspace_root(Path.cwd())
+    if workspace_root is not None:
+        result = workspace_floor_freshness(workspace_root, result)
     rendered = result.model_dump(mode="json")
     if output_json:
         _emit_json(rendered)
@@ -6559,30 +6577,44 @@ def floor_group() -> None:
 
 @floor_group.command("export")
 @click.option("--force", is_flag=True, help="Replace a non-empty .playbill/floor cache.")
+@click.option(
+    "--with-discovery",
+    is_flag=True,
+    help=(
+        "Also write the discovery cards (subjects/, claim-types/, procedures/, "
+        "coverage-manifest.json); refresh after activation keeps them."
+    ),
+)
 @json_option
 @handle_errors
 def export_floor(
     force: bool,
+    with_discovery: bool,
     output_json: bool,
 ) -> None:
-    """Write the accepted floor to a deterministic local tree."""
+    """Write the accepted greppable floor to a deterministic local tree."""
 
-    result = _server_call(
-        lambda client, instance_id: client.export_playbill_floor(instance_id),
-        command_name="playbill floor export",
+    include: tuple[contracts.PlaybillFloorExportPart, ...] = (
+        ("discovery",) if with_discovery else ()
     )
     workspace_resolution = _local_git_workspace_root()
     _emit_git_workspace_note(workspace_resolution)
     workspace_root = workspace_resolution.workspace_root
     if workspace_root is None:
         raise click.UsageError("playbill floor export must run inside one Git worktree")
-    written = materialize_playbill_floor(workspace_root, export=result, force=force)
-    written = _with_git_workspace_note(written)
-    record_playbill_floor_output(
-        workspace_root,
-        instance_id=_require_instance_id(),
-        **_workspace_config_transport(),
+    transport = _workspace_config_transport()
+    result, written = _server_call(
+        lambda client, instance_id: write_workspace_floor(
+            lambda: client.export_playbill_floor(instance_id, **floor_export_parts(include)),
+            instance_id=instance_id,
+            workspace=workspace_root,
+            include=include,
+            force=force,
+            **transport,
+        ),
+        command_name="playbill floor export",
     )
+    written = _with_git_workspace_note(written)
     if output_json:
         payload = dict(result.manifest)
         if written.git_workspace_note is not None:

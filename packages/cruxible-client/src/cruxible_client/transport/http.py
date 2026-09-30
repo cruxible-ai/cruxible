@@ -2101,7 +2101,8 @@ class CruxibleClient:
         instance_id: str,
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-        format_version: Literal[2, 3] = 3,
+        format_version: Literal[2, 4] = 4,
+        include: Sequence[contracts.PlaybillFloorExportPart] = (),
         review_notes_oid: str | None = None,
     ) -> contracts.PlaybillFloorExport:
         response = self._client.post(
@@ -2109,6 +2110,7 @@ class CruxibleClient:
             json={
                 "at": self._playbill_coordinate_body(at),
                 "format_version": format_version,
+                **({"include": sorted(set(include))} if include else {}),
                 "review_notes_oid": review_notes_oid,
             },
         )

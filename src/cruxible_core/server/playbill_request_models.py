@@ -12,6 +12,7 @@ from cruxible_client.contracts import (
     PLAYBILL_CURATION_LIST_MAX_LIMIT,
     PLAYBILL_NEXT_DEFAULT_LIMIT,
     PLAYBILL_NEXT_MAX_LIMIT,
+    PlaybillFloorExportPart,
 )
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
@@ -400,5 +401,7 @@ class PlaybillResolveCoverageRequest(_StrictPlaybillRequest):
 
 class PlaybillFloorExportRequest(_StrictPlaybillRequest):
     at: AcceptedCoordinate | None = None
-    format_version: Literal[2, 3] = 3
+    format_version: Literal[2, 4] = 4
+    # Opt-in parts of a v4 floor; "discovery" adds the discovery cards.
+    include: tuple[PlaybillFloorExportPart, ...] = ()
     review_notes_oid: str | None = None

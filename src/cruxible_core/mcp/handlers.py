@@ -16,7 +16,6 @@ from cruxible_client import (
     activate_with_workspace_refresh,
     contracts,
     inspect_workspace_floor,
-    materialize_playbill_floor,
     observe_playbill_next_workspace,
 )
 from cruxible_client.authoring.attestations import (
@@ -32,7 +31,12 @@ from cruxible_client.authoring.sources import (
     load_source_catalog,
     mapped_root_aliases,
 )
-from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
+from cruxible_client.authoring.workspace import (
+    floor_export_parts,
+    observe_playbill_next_workspace_with_coverage,
+    workspace_floor_freshness,
+    write_workspace_floor,
+)
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
@@ -174,10 +178,11 @@ class _LocalFloorClient:
         instance_id: str,
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        include: Sequence[contracts.PlaybillFloorExportPart] = (),
     ) -> contracts.PlaybillFloorExport:
         if at is not None:  # pragma: no cover - shared refresh always asks for current
             raise DataValidationError("local floor adapter accepts only the current coordinate")
-        return playbill_api.playbill_export_floor(instance_id)
+        return playbill_api.playbill_export_floor(instance_id, include=tuple(include))
 
     def check_playbill_projection_blocks(
         self, instance_id: str, *, request: contracts.PlaybillProjectionCheckRequestV1
@@ -842,7 +847,7 @@ def handle_playbill_orient(
     from cruxible_core.mcp.curation import session_tool_names
 
     tools = tuple(sorted(session_tool_names()))
-    return _dispatch_remote_or_local(
+    result = _dispatch_remote_or_local(
         lambda client: client.orient_playbill(
             instance_id,
             kind=kind,
@@ -869,6 +874,11 @@ def handle_playbill_orient(
         ),
         operation_name="cruxible_playbill_orient",
     )
+    try:
+        workspace = optional_mcp_git_workspace_root()
+    except ConfigError:
+        workspace = None
+    return result if workspace is None else workspace_floor_freshness(workspace, result)
 
 
 def handle_playbill_list_proposals(
@@ -2716,6 +2726,7 @@ def handle_playbill_floor_export(
     *,
     mode: FloorExportMode,
     force: bool = False,
+    include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
 ) -> (
     contracts.PlaybillFloorExport
     | contracts.PlaybillWorkspaceFloorWriteResult
@@ -2725,6 +2736,8 @@ def handle_playbill_floor_export(
 
     if force and mode != "write":
         raise DataValidationError("force applies only to floor export mode 'write'")
+    if include and mode == "status":
+        raise DataValidationError("include applies only to floor export modes 'bytes' and 'write'")
     if mode == "status":
         search = _dispatch_remote_or_local(
             lambda client: client.search_playbill(instance_id, mode="orient"),
@@ -2735,16 +2748,39 @@ def handle_playbill_floor_export(
             mcp_git_workspace_root(),
             current_coordinate=search.coordinate,
         )
-    workspace = mcp_git_workspace_root() if mode == "write" else None
-    export = _dispatch_remote_or_local(
-        lambda client: client.export_playbill_floor(instance_id),
-        lambda: playbill_api.playbill_export_floor(instance_id),
-        operation_name="cruxible_playbill_floor_export",
+    parts = floor_export_parts(include)
+    if mode == "bytes":
+        return _dispatch_remote_or_local(
+            lambda client: client.export_playbill_floor(instance_id, **parts),
+            lambda: playbill_api.playbill_export_floor(instance_id, **parts),
+            operation_name="cruxible_playbill_floor_export",
+        )
+    # The CLI's write path: export, write, and record the refresh profile with
+    # its opt-in parts, naming the daemon this MCP server talks to.
+    workspace = mcp_git_workspace_root()
+    settings = resolve_server_settings()
+    transport = (
+        {"server_socket": settings.server_socket}
+        if settings.enabled and settings.server_socket
+        else {"server_url": settings.server_url}
+        if settings.enabled and settings.server_url
+        else {}
     )
-    if workspace is None:
-        return export
-    return materialize_playbill_floor(
-        workspace,
-        export=export,
-        force=force,
+
+    def write(
+        export_floor: Callable[[], contracts.PlaybillFloorExport],
+    ) -> contracts.PlaybillWorkspaceFloorWriteResult:
+        return write_workspace_floor(
+            export_floor,
+            instance_id=instance_id,
+            workspace=workspace,
+            include=include,
+            force=force,
+            **transport,
+        )[1]
+
+    return _dispatch_remote_or_local(
+        lambda client: write(lambda: client.export_playbill_floor(instance_id, **parts)),
+        lambda: write(lambda: playbill_api.playbill_export_floor(instance_id, **parts)),
+        operation_name="cruxible_playbill_floor_export",
     )

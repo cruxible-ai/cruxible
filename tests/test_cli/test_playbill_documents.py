@@ -203,7 +203,7 @@ def test_cli_init_writes_an_explicit_remote_workspace_config(monkeypatch, tmp_pa
     config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
     assert config["server_url"] == "https://playbill.example.test"
     assert config["instance_id"] == "inst_cli_init"
-    assert config["floor_output"]["format"] == "playbill-floor-export-v3"
+    assert config["floor_output"]["format"] == "playbill-floor-export-v4"
 
 
 def test_unix_socket_host_attach_uses_the_containing_git_worktree(
@@ -308,7 +308,7 @@ def test_explicit_remote_workspace_config_never_sends_the_client_path(
     CoverageWorkspaceConfigV2.model_validate(config)
     assert config == {
         "floor_output": {
-            "format": "playbill-floor-export-v3",
+            "format": "playbill-floor-export-v4",
             "tag": "playbill-floor-output-v1",
         },
         "instance_id": "inst_remote",

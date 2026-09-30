@@ -248,6 +248,19 @@ class PlaybillOrientAttentionV1(_StrictOrientModel):
     arms: PlaybillOrientArmsV1 | None = Field(default=None, exclude_if=_is_none)
 
 
+class PlaybillOrientFloorV1(_StrictOrientModel):
+    """The workspace's greppable floor: the coordinate it is at, and how stale.
+
+    Only a client that sees the workspace (CLI, MCP, SDK) fills this in, from
+    the floor's own manifest; a daemon answer never carries it.
+    ``generations_behind`` counts accepted generations from the floor to this
+    answer's coordinate; ``None`` when the floor predates generation stamps.
+    """
+
+    at: str
+    generations_behind: int | None = Field(ge=0)
+
+
 class PlaybillOrientResultV1(_StrictOrientModel):
     """One orient answer; which parts are present depends on the request.
 
@@ -270,6 +283,7 @@ class PlaybillOrientResultV1(_StrictOrientModel):
     accepted_at: datetime
     evaluation_time: datetime
     mirror_url: str | None = Field(default=None, exclude_if=_is_none)
+    floor: PlaybillOrientFloorV1 | None = Field(default=None, exclude_if=_is_none)
     you: PlaybillOrientYouV1 | None = Field(default=None, exclude_if=_is_none)
     kinds: tuple[PlaybillOrientKindV1, ...] | None = Field(default=None, exclude_if=_is_none)
     artifacts: PlaybillOrientArtifactCountsV1 | None = Field(default=None, exclude_if=_is_none)
@@ -323,6 +337,7 @@ __all__ = [
     "PlaybillOrientArtifactCountsV1",
     "PlaybillOrientAttentionV1",
     "PlaybillOrientDocumentV1",
+    "PlaybillOrientFloorV1",
     "PlaybillOrientInterfaceV1",
     "PlaybillOrientKindDetailV1",
     "PlaybillOrientKindV1",

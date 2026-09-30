@@ -54,6 +54,11 @@
         "claim-type-succession"
       ]
     },
+    "PlaybillFloorExportPart": {
+      "values": [
+        "discovery"
+      ]
+    },
     "PlaybillHostCompatibilityReasonCodeV1": {
       "values": [
         "legacy_layout_requires_reseed",
@@ -22487,7 +22492,7 @@
             "enum": [
               "playbill-floor-export-v1",
               "playbill-floor-export-v2",
-              "playbill-floor-export-v3"
+              "playbill-floor-export-v4"
             ],
             "title": "Tag",
             "type": "string"
@@ -22578,7 +22583,7 @@
             "enum": [
               "playbill-floor-export-v1",
               "playbill-floor-export-v2",
-              "playbill-floor-export-v3"
+              "playbill-floor-export-v4"
             ],
             "title": "Tag",
             "type": "string"
@@ -28177,6 +28182,70 @@
         "provider_lane"
       ]
     },
+    "PlaybillOrientFloorV1": {
+      "fields": {
+        "at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": true,
+          "schema": {
+            "title": "At",
+            "type": "string"
+          }
+        },
+        "generations_behind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generations_behind",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generations Behind"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "The workspace's greppable floor: the coordinate it is at, and how stale.\n\nOnly a client that sees the workspace (CLI, MCP, SDK) fills this in, from\nthe floor's own manifest; a daemon answer never carries it.\n``generations_behind`` counts accepted generations from the floor to this\nanswer's coordinate; ``None`` when the floor predates generation stamps.",
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "generations_behind": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generations Behind"
+          }
+        },
+        "required": [
+          "at",
+          "generations_behind"
+        ],
+        "title": "PlaybillOrientFloorV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "at",
+        "generations_behind"
+      ]
+    },
     "PlaybillOrientResultV1": {
       "fields": {
         "accepted_at": {
@@ -28338,6 +28407,25 @@
             "format": "date-time",
             "title": "Evaluation Time",
             "type": "string"
+          }
+        },
+        "floor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "floor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillOrientFloorV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "generation": {
@@ -29176,6 +29264,34 @@
             "title": "PlaybillOrientDocumentV1",
             "type": "object"
           },
+          "PlaybillOrientFloorV1": {
+            "additionalProperties": false,
+            "description": "The workspace's greppable floor: the coordinate it is at, and how stale.\n\nOnly a client that sees the workspace (CLI, MCP, SDK) fills this in, from\nthe floor's own manifest; a daemon answer never carries it.\n``generations_behind`` counts accepted generations from the floor to this\nanswer's coordinate; ``None`` when the floor predates generation stamps.",
+            "properties": {
+              "at": {
+                "title": "At",
+                "type": "string"
+              },
+              "generations_behind": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Generations Behind"
+              }
+            },
+            "required": [
+              "at",
+              "generations_behind"
+            ],
+            "title": "PlaybillOrientFloorV1",
+            "type": "object"
+          },
           "PlaybillOrientInterfaceV1": {
             "additionalProperties": false,
             "description": "One live provider interface a Procedure node can call.\n\n``input`` and ``output`` list the operation contract's fields as\n``name: type`` (``?`` when optional); an acquisition interface's output is\nthe named external-capture contract instead. ``effect`` is the interface's\ngoverned effect class: an ``external_mutation`` call needs an effect policy\non its node. ``providers`` are the live Providers implementing it; one with\nnone has nothing to run it yet.",
@@ -30001,6 +30117,17 @@
             "format": "date-time",
             "title": "Evaluation Time",
             "type": "string"
+          },
+          "floor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillOrientFloorV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "generation": {
             "minimum": 0,

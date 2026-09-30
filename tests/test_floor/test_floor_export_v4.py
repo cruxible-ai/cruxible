@@ -20,13 +20,14 @@ from cruxible_core.service.floor.floor_content import (
 from tests.core_support._knowledge_loop_support import seed_claims
 
 
-def test_floor_v3_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> None:
+def test_floor_v4_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> None:
     instance, _ = seed_claims(tmp_path)
     files = service_export_playbill_floor(instance)
     manifest = json.loads(files["manifest.json"])
-    assert manifest["format"] == "playbill-floor-export-v3"
-    current = json.loads(files["current/project.work_item/wi-42.json"])
-    assert current["claims"][0]["statement"]["object"]["value"] == "ready"
+    assert manifest["format"] == "playbill-floor-export-v4"
+    assert b"\nstatus: ready  # CLM-" in files["current/project.work_item/wi-42.yaml"]
+    provenance = json.loads(files["provenance/subjects/project.work_item/wi-42.json"])
+    assert provenance["claims"][0]["statement"]["object"]["value"] == "ready"
     snapshot = json.loads(files["provenance/snapshot.json"])
     assert snapshot["status"] == "available"
     changes = [
@@ -39,7 +40,12 @@ def test_floor_v3_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> 
         for row in change["review_context"]
     )
     assert not any(path.startswith(("history/", "evidence/", "cas/")) for path in files)
-    assert b"status: ready" not in b"".join(files.values())
+    # The evidence body is the bytes "status: ready". current/ shows the Claim's
+    # value "ready" under its field "status", which spells the same; nothing
+    # else may carry those bytes.
+    assert not any(
+        b"status: ready" in body for path, body in files.items() if not path.startswith("current/")
+    )
     # The immutable note snapshot, not a moving ref, is a rebuild input.
     pinned = snapshot["evaluation_notes_oid"]
     instance.floor_export_memo.clear()
@@ -54,15 +60,15 @@ def test_floor_v3_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> 
     # A changed review-context snapshot must not reconstruct accepted content.
     changed_context = service_export_playbill_floor(instance, review_notes_oid="absent")
     assert (
-        changed_context["current/project.work_item/wi-42.json"]
-        == files["current/project.work_item/wi-42.json"]
+        changed_context["current/project.work_item/wi-42.yaml"]
+        == files["current/project.work_item/wi-42.yaml"]
     )
     # Returned maps are caller-owned; mutation must not poison cached exports.
     files.pop("README.md")
     assert "README.md" in service_export_playbill_floor(instance, review_notes_oid=pinned)
 
 
-def test_floor_v3_absent_review_snapshot_is_replayable(tmp_path: Path) -> None:
+def test_floor_v4_absent_review_snapshot_is_replayable(tmp_path: Path) -> None:
     instance, _ = seed_claims(tmp_path)
     files = service_export_playbill_floor(instance, review_notes_oid="absent")
     snapshot = json.loads(files["provenance/snapshot.json"])
@@ -82,6 +88,10 @@ def test_floor_provenance_reads_only_selected_latest_records(tmp_path: Path, mon
     claims = tuple(_claim_from_view(view) for view in service_list_playbill_claims(instance).claims)
     coordinate = instance.accepted_coordinate()
     expected = current_content(instance, coordinate=coordinate, claims=claims[:1], notes_oid=None)
+    # Verified records and the last current/ layer are retained on the
+    # instance; measure a cold read.
+    instance.verified_change_set_records.clear()
+    instance.floor_current_memo.clear()
     reads = []
     original = instance.blob_at
 
@@ -102,6 +112,8 @@ def test_floor_provenance_reads_only_selected_latest_records(tmp_path: Path, mon
         == expected
     )
     assert len(reads) == 1
+    instance.verified_change_set_records.clear()
+    instance.floor_current_memo.clear()
     monkeypatch.setattr(instance, "blob_at", lambda _oid, _path: None)
     with pytest.raises(ProjectionIntegrityError, match="source record is unavailable"):
         current_content(instance, coordinate=coordinate, claims=claims[:1], notes_oid=None)

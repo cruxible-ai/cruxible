@@ -1735,6 +1735,7 @@ async def export_floor(
         resolve_server_instance_id(instance_id),
         at=req.at,
         format_version=req.format_version,
+        include=req.include,
         review_notes_oid=req.review_notes_oid,
     )
 

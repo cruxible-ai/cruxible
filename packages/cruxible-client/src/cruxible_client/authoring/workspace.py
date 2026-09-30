@@ -50,13 +50,35 @@ from cruxible_client.contracts.workspace_layout import PLAYBILL_FLOOR_PATH
 
 _CONFIG_PATH = PurePosixPath(".playbill/coverage.json")
 _CONFIG_EXCLUDE_RULE = b"/.playbill/coverage.json\n"
-_FLOOR_DOMAIN = "playbill-floor-export-v3"
+_FLOOR_DOMAIN = "playbill-floor-export-v4"
 _FLOOR_DOMAINS = {"playbill-floor-export-v2", _FLOOR_DOMAIN}
 _WORKSPACE_CONFIG_TAG = "playbill-coverage-workspace-config-v2"
 _FLOOR_OUTPUT = {
     "tag": "playbill-floor-output-v1",
     "format": _FLOOR_DOMAIN,
 }
+_FLOOR_PARTS: tuple[contracts.PlaybillFloorExportPart, ...] = ("discovery",)
+
+
+def _floor_output(include: Sequence[str] = ()) -> dict[str, Any]:
+    """The floor_output profile: the fixed format, plus any opt-in export parts."""
+
+    parts = sorted(set(include))
+    unknown = [part for part in parts if part not in _FLOOR_PARTS]
+    if unknown:
+        raise PlaybillWorkspaceError(f"unsupported floor export part(s): {', '.join(unknown)}")
+    return {**_FLOOR_OUTPUT, **({"include": parts} if parts else {})}
+
+
+def _profile_include(output: Mapping[str, Any]) -> tuple[contracts.PlaybillFloorExportPart, ...]:
+    include = output.get("include", [])
+    if not isinstance(include, list) or any(item not in _FLOOR_PARTS for item in include):
+        raise PlaybillWorkspaceError("coverage floor_output.include is not a list of export parts")
+    if include != sorted(set(include)) or not include and "include" in output:
+        raise PlaybillWorkspaceError("coverage floor_output.include must be sorted and nonempty")
+    return cast(tuple[contracts.PlaybillFloorExportPart, ...], tuple(include))
+
+
 _WORKSPACE_CONFIG_FIELDS = frozenset(
     {
         "tag",
@@ -309,11 +331,17 @@ def _planned_workspace_config(
         and existing.get("tag") in {"playbill-coverage-workspace-config-v1", _WORKSPACE_CONFIG_TAG}
         else {}
     )
+    previous_output = (existing or {}).get("floor_output")
+    previous_include = (
+        previous_output.get("include", []) if isinstance(previous_output, Mapping) else []
+    )
     desired.update(
         {
             "tag": _WORKSPACE_CONFIG_TAG,
             "instance_id": instance_id,
-            "floor_output": dict(_FLOOR_OUTPUT),
+            "floor_output": _floor_output(
+                previous_include if isinstance(previous_include, list) else ()
+            ),
         }
     )
     desired.pop("server_url", None)
@@ -380,19 +408,29 @@ def record_playbill_floor_output(
     instance_id: str,
     server_url: str | None = None,
     server_socket: str | None = None,
+    include: Sequence[contracts.PlaybillFloorExportPart] = (),
 ) -> Path:
-    """Record the fixed floor output while preserving safe existing coverage fields."""
+    """Record the fixed floor output and its opt-in parts, keeping safe coverage fields.
+
+    Refresh after an activation exports the parts recorded here. A profile an
+    earlier build wrote (the v2 or v3 format) is rewritten to the current one.
+    """
 
     root = _workspace_root(workspace)
     path = root / _CONFIG_PATH
+    desired_output = _floor_output(include)
     existing = _read_workspace_config(path)
     if existing is None:
-        return write_playbill_workspace_config(
+        written = write_playbill_workspace_config(
             root,
             instance_id=instance_id,
             server_url=server_url,
             server_socket=server_socket,
         )
+        current = _read_workspace_config(written)
+        if current is not None and current.get("floor_output") != desired_output:
+            _atomic_write_workspace_config(written, {**current, "floor_output": desired_output})
+        return written
     tag = existing.get("tag")
     if tag not in {
         "playbill-coverage-workspace-config-v1",
@@ -401,16 +439,13 @@ def record_playbill_floor_output(
         raise PlaybillWorkspaceError("coverage config has an unsupported tag")
     output = existing.get("floor_output")
     if output is not None:
-        if output not in (
-            _FLOOR_OUTPUT,
-            {"tag": "playbill-floor-output-v1", "format": "playbill-floor-export-v2"},
-        ):
+        if not isinstance(output, Mapping) or output.get("tag") != "playbill-floor-output-v1":
             raise PlaybillWorkspaceError("coverage floor_output has an unsupported profile")
-        if output == _FLOOR_OUTPUT:
+        if output == desired_output:
             return path
     desired = dict(existing)
     desired["tag"] = _WORKSPACE_CONFIG_TAG
-    desired["floor_output"] = dict(_FLOOR_OUTPUT)
+    desired["floor_output"] = desired_output
     _atomic_write_workspace_config(path, desired)
     return path
 
@@ -471,6 +506,7 @@ class _FloorClient(Protocol):
         instance_id: str,
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        include: Sequence[contracts.PlaybillFloorExportPart] = (),
     ) -> contracts.PlaybillFloorExport: ...
 
     def check_playbill_projection_blocks(
@@ -628,8 +664,10 @@ def _relative_destination(workspace: Path, relative_path: str) -> Path:
     return destination
 
 
-def configured_floor_path(workspace: str | Path) -> str | None:
-    """Return the declared v2 floor path, or ``None`` when absent/unconfigured."""
+def configured_floor_output(
+    workspace: str | Path,
+) -> tuple[str, tuple[contracts.PlaybillFloorExportPart, ...]] | None:
+    """The declared floor path and its opt-in export parts, or ``None`` when unconfigured."""
 
     root = _workspace_root(workspace)
     config_path = root / _CONFIG_PATH
@@ -648,17 +686,29 @@ def configured_floor_path(workspace: str | Path) -> str | None:
         return None
     if not isinstance(output, Mapping):
         raise PlaybillWorkspaceError("coverage floor_output is not an object")
-    if (
-        output.get("tag") != "playbill-floor-output-v1"
-        or output.get("format") not in _FLOOR_DOMAINS
-    ):
-        raise PlaybillWorkspaceError("coverage floor_output has an unsupported profile")
     if "path" in output:
         raise PlaybillWorkspaceError(
             f"coverage floor_output.path is obsolete; the path is fixed at {PLAYBILL_FLOOR_PATH}"
         )
+    if (
+        output.get("tag") != "playbill-floor-output-v1"
+        or output.get("format") not in _FLOOR_DOMAINS
+        or set(output) - {"tag", "format", "include"}
+    ):
+        raise PlaybillWorkspaceError(
+            "coverage floor_output has an unsupported profile; rewrite it with "
+            "`cruxible playbill floor export --force`"
+        )
+    include = _profile_include(output)
     _relative_destination(root, PLAYBILL_FLOOR_PATH)
-    return PLAYBILL_FLOOR_PATH
+    return PLAYBILL_FLOOR_PATH, include
+
+
+def configured_floor_path(workspace: str | Path) -> str | None:
+    """Return the declared floor path, or ``None`` when absent/unconfigured."""
+
+    configured = configured_floor_output(workspace)
+    return None if configured is None else configured[0]
 
 
 def _holds_exactly(destination: Path, files: Mapping[str, bytes]) -> bool:
@@ -764,6 +814,54 @@ def materialize_playbill_floor(
     )
 
 
+def floor_export_parts(
+    include: Sequence[contracts.PlaybillFloorExportPart],
+) -> dict[str, Any]:
+    """Keyword arguments naming opt-in parts, empty for the default floor.
+
+    A client that predates opt-in parts is only ever asked for the default.
+    """
+
+    return {"include": tuple(sorted(set(include)))} if include else {}
+
+
+def write_workspace_floor(
+    export_floor: Callable[[], contracts.PlaybillFloorExport],
+    *,
+    instance_id: str,
+    workspace: str | Path,
+    include: Sequence[contracts.PlaybillFloorExportPart] = (),
+    force: bool = True,
+    server_url: str | None = None,
+    server_socket: str | None = None,
+) -> tuple[contracts.PlaybillFloorExport, contracts.PlaybillWorkspaceFloorWriteResult]:
+    """Write an exported floor into the workspace and record its refresh profile.
+
+    The one write path every surface (CLI, MCP) takes, so a floor written with
+    opt-in parts is refreshed with the same parts after an activation.
+    ``export_floor`` exports exactly ``include`` (see ``floor_export_parts``).
+    The profile is recorded into an existing coverage config, or a new one
+    naming the given transport; with neither, there is no daemon to name and
+    nothing is recorded.
+    """
+
+    export = export_floor()
+    written = materialize_playbill_floor(workspace, export=export, force=force)
+    if (
+        (_workspace_root(workspace) / _CONFIG_PATH).exists()
+        or server_url is not None
+        or server_socket is not None
+    ):
+        record_playbill_floor_output(
+            workspace,
+            instance_id=instance_id,
+            server_url=server_url,
+            server_socket=server_socket,
+            include=include,
+        )
+    return export, written
+
+
 def inspect_workspace_floor(
     workspace: str | Path,
     *,
@@ -811,6 +909,48 @@ def inspect_workspace_floor(
         destination=str(destination),
         installed_coordinate=installed,
         current_coordinate=current_coordinate,
+    )
+
+
+def workspace_floor_freshness(
+    workspace: str | Path,
+    orientation: contracts.PlaybillOrientResultV1,
+) -> contracts.PlaybillOrientResultV1:
+    """``orientation`` with ``floor`` set when the workspace holds this instance's floor.
+
+    Cheap by construction: it reads the floor's manifest (its coordinate) and
+    ``provenance/snapshot.json`` (its generation), never re-exports, and
+    leaves ``orientation`` as it is when there is no readable floor, or when the
+    workspace's coverage config names another instance.
+    """
+
+    root = _workspace_root(workspace)
+    floor = root / PLAYBILL_FLOOR_PATH
+    try:
+        manifest = json.loads((floor / "manifest.json").read_text(encoding="utf-8"))
+        at = manifest["coordinate"]["git_oid"]
+        if not isinstance(at, str):
+            return orientation
+        config = _read_workspace_config(root / _CONFIG_PATH)
+    except (OSError, KeyError, TypeError, ValueError):
+        return orientation
+    if config is not None and config.get("instance_id") not in (None, orientation.instance):
+        return orientation
+    behind: int | None = None
+    if at == orientation.coordinate.git_oid:
+        behind = 0
+    else:
+        try:
+            snapshot = json.loads(
+                (floor / "provenance" / "snapshot.json").read_text(encoding="utf-8")
+            )
+            generation = snapshot["accepted_generation"]
+            if snapshot.get("accepted_git_oid") == at and isinstance(generation, int):
+                behind = max(0, orientation.generation - generation)
+        except (OSError, KeyError, TypeError, ValueError):
+            behind = None
+    return orientation.model_copy(
+        update={"floor": contracts.PlaybillOrientFloorV1(at=at, generations_behind=behind)}
     )
 
 
@@ -1501,10 +1641,13 @@ def refresh_workspace_floor(
     """
 
     try:
-        relative_path = configured_floor_path(workspace)
-        if relative_path is None:
+        configured = configured_floor_output(workspace)
+        if configured is None:
             return contracts.PlaybillFloorRefreshResult(status="not_configured")
-        export = client.export_playbill_floor(instance_id, at=at)
+        relative_path, include = configured
+        # Only a profile with opt-in parts names them, so a client that predates
+        # them keeps refreshing the default floor.
+        export = client.export_playbill_floor(instance_id, at=at, **floor_export_parts(include))
         if at is not None and export.coordinate != at:
             raise PlaybillWorkspaceError("floor export differs from requested coordinate")
         written = materialize_playbill_floor(workspace, export=export)
@@ -1591,7 +1734,10 @@ __all__ = [
     "observe_playbill_next_workspace_with_coverage",
     "observe_playbill_projection_coverage",
     "materialize_playbill_floor",
+    "configured_floor_output",
+    "floor_export_parts",
     "record_playbill_floor_output",
+    "write_workspace_floor",
     "refresh_workspace_floor",
     "validate_playbill_workspace_config_write",
     "verified_floor_files",

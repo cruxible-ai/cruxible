@@ -13,6 +13,9 @@ at the same coordinate, so this remembers it. It is a cache and nothing else:
 * it is keyed on everything the derivation reads -- the instance root, the
   accepted coordinate, the exact Claim set, and a fingerprint of CAS shard
   directories, whose contents decide whether a capture can be replayed now.
+  The shard fingerprint sees bodies arrive and leave, not a body rewritten in
+  place, so each entry also keeps the file identity of every body-store object
+  its verdicts read and is served only while all of them hold (one stat each);
   Accepted attestations are bound by the coordinate; pending door attestations
   are not consumed by this derivation;
 * the evaluation instant is NOT in the key, because every real surface stamps a
@@ -47,7 +50,8 @@ def verdict_input_fingerprint(instance: object) -> str | None:
     Read those shard directories, not their parent or every body. This bounds
     metadata work by the 256 shards while detecting arrivals and removals in
     existing shards. This is a writer-owned availability signal, not a proof
-    against in-place tampering with body bytes. An unreadable store disables
+    against in-place tampering with body bytes; the body fingerprints kept with
+    each remembered derivation cover that. An unreadable store disables
     reuse entirely: two failed observations must never form a reusable key.
     """
 

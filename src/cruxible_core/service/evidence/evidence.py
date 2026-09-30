@@ -168,6 +168,10 @@ def _accepted_claim_artifact(claim: ClaimArtifactAny) -> AcceptedClaim:
     )
 
 
+CasFileIdentity = tuple[int, int, int, int, int]
+BodyFingerprints = tuple[tuple[str, CasFileIdentity | None], ...]
+
+
 @dataclass
 class VerdictReads:
     """Everything one slot's verdicts read, named so it can be re-read later.
@@ -193,6 +197,13 @@ class VerdictReads:
     # this slot was derived: its verdicts rest on inconsistent observations and
     # must not be remembered.
     inconsistent: bool = False
+    # The body-store objects the verdicts' replay availability read, each with
+    # the file identity that read used (taken at the read, never afterwards).
+    body_identities: dict[str, CasFileIdentity | None] = dataclass_field(default_factory=dict)
+    # False when some body read has no identity to stand for it (an external
+    # reader, or a file that moved while it was read): nothing may be
+    # fingerprinted, so the whole derivation is not remembered.
+    bodies_complete: bool = True
 
     def update(self, other: VerdictReads) -> None:
         self.paths |= other.paths
@@ -202,6 +213,18 @@ class VerdictReads:
         self.captures |= other.captures
         self.used_availability.update(other.used_availability)
         self.inconsistent = self.inconsistent or other.inconsistent
+        self.note_bodies(other.body_identities if other.bodies_complete else None)
+
+    def note_bodies(self, identities: Mapping[str, CasFileIdentity | None] | None) -> None:
+        """Add the identities one read used; ``None`` means the read has none."""
+
+        if identities is None:
+            self.bodies_complete = False
+            return
+        for digest, identity in identities.items():
+            if self.body_identities.setdefault(digest, identity) != identity:
+                # Two reads saw one object with two identities.
+                self.bodies_complete = False
 
     def keys(self) -> tuple[tuple[str, ...], ...]:
         return (
@@ -421,19 +444,33 @@ class ClaimVerdictReadContext:
         if self._recording is not None:
             self._recording.law_paths.add(path)
 
-    def note_capture(self, digest: str, available: bool | None = None) -> None:
+    def note_capture(
+        self,
+        digest: str,
+        available: bool | None = None,
+        bodies: Mapping[str, CasFileIdentity | None] | None = None,
+        *,
+        bodies_known: bool = False,
+    ) -> None:
+        """Attribute one Capture read, and the body identities its availability used."""
+
         if self._recording is not None:
             self._recording.captures.add(digest)
             if available is not None:
                 seen = self._recording.used_availability.setdefault(digest, available)
                 if seen != available:
                     self._recording.inconsistent = True
+            if bodies_known:
+                self._recording.note_bodies(bodies)
 
-    def snapshot(self, reads: VerdictReads) -> dict[tuple[str, ...], object]:
+    def snapshot(
+        self, reads: VerdictReads, *, bodies: VerdictReads | None = None
+    ) -> dict[tuple[str, ...], object]:
         """Re-read every named input at this context's coordinate, in batches.
 
         The same function records a slot's reads and later validates them, so a
         remembered answer and its check always agree on what each read means.
+        ``bodies`` collects the body identities each Capture re-read used.
         """
 
         values: dict[tuple[str, ...], object] = {}
@@ -479,9 +516,12 @@ class ClaimVerdictReadContext:
                 for path, head in history.claim_law_heads(tuple(sorted(reads.law_paths))).items():
                     values[("law", path)] = head
         for digest in sorted(reads.captures):
+            used: dict[str, CasFileIdentity | None] = {}
             values[("capture", digest)] = _current_replay_available(
-                self.instance, digest, readers={}, store=self.body_store()
+                self.instance, digest, readers={}, store=self.body_store(), bodies=used
             )
+            if bodies is not None:
+                bodies.note_bodies(None if _UNKNOWN_BODIES in used else used)
         values[("compiler",)] = self.coordinate.compiler.rule_digest
         return values
 
@@ -652,12 +692,26 @@ def _cas_file_identity(store: Any, digest: str) -> tuple[int, int, int, int, int
     return cast(tuple[int, int, int, int, int] | None, identity)
 
 
+_UNKNOWN_BODIES = "\0unknown"
+"""A ``bodies`` key saying no identity can stand for an availability answer."""
+
+
+def body_fingerprints_hold(
+    instance: ClaimReadSourceProtocol, fingerprints: BodyFingerprints, *, store: Any = None
+) -> bool:
+    """Whether every recorded body-store object still has the identity it had: one stat each."""
+
+    store = store if store is not None else instance.body_store()
+    return all(_cas_file_identity(store, digest) == seen for digest, seen in fingerprints)
+
+
 def _current_replay_available(
     instance: ClaimReadSourceProtocol,
     capture_digest_value: str,
     *,
     readers: Mapping[str, ExternalSourceReaderProtocol],
     store: Any = None,
+    bodies: dict[str, CasFileIdentity | None] | None = None,
 ) -> bool:
     """Whether a Capture's evidence can still be replayed from retained material.
 
@@ -667,6 +721,12 @@ def _current_replay_available(
     identity of each consulted CAS object and reused only while every identity
     is unchanged, so any write, removal or rewrite of those files is observed.
     Answers that consulted an external reader are never remembered.
+
+    ``bodies`` receives the identity of every CAS object this answer used, as
+    this call observed it: the remembered identities it just matched, or the
+    identities that bracket a fresh derivation. When no identity can stand for
+    the answer (an external reader, or a file that moved while it was read) it
+    receives ``_UNKNOWN_BODIES`` instead.
     """
 
     root = getattr(instance, "root", None)
@@ -677,12 +737,16 @@ def _current_replay_available(
         if remembered is not None:
             answer, consulted = remembered
             if all(_cas_file_identity(store, digest) == seen for digest, seen in consulted):
+                if bodies is not None:
+                    bodies.update(consulted)
                 return answer
     first: list[str] = []
     available = _replay_available(
         instance, capture_digest_value, readers=readers, store=store, consulted=first
     )
-    if key is None or "external" in first:
+    if key is None:
+        if bodies is not None:
+            bodies[_UNKNOWN_BODIES] = None
         return available
 
     def observe(
@@ -703,7 +767,15 @@ def _current_replay_available(
         instance, capture_digest_value, readers=readers, store=store, consulted=second
     )
     after = observe(second)
-    if second == first and after == before:
+    stable = second == first and after == before
+    if bodies is not None:
+        if stable:
+            # With no reader, an externally held commitment is simply not
+            # replayable: the answer rests on the CAS objects consulted alone.
+            bodies.update((digest, seen) for digest, seen in after if digest != "external")
+        else:
+            bodies[_UNKNOWN_BODIES] = None
+    if stable and "external" not in first:
         memo_put(
             _AVAILABILITY_MEMO,
             key,
@@ -1154,6 +1226,7 @@ def service_evaluate_playbill_claim_verdict(
         history=history,
     )
     readers = external_readers or {}
+    used: dict[str, dict[str, CasFileIdentity | None]] = {}
     captures = tuple(
         item.model_copy(
             update={
@@ -1162,13 +1235,20 @@ def service_evaluate_playbill_claim_verdict(
                     item.capture_digest,
                     readers=readers,
                     store=read_context.body_store() if batched else None,
+                    bodies=used.setdefault(item.capture_digest, {}),
                 )
             }
         )
         for item in evidence.verdict_captures
     )
     for item in captures:
-        read_context.note_capture(item.capture_digest, item.current_replay_available)
+        bodies = used.get(item.capture_digest, {})
+        read_context.note_capture(
+            item.capture_digest,
+            item.current_replay_available,
+            None if _UNKNOWN_BODIES in bodies else bodies,
+            bodies_known=True,
+        )
     if evidence.verdict_result is not None:
         verify_claim_verdict_freshness(
             evidence.verdict_result,

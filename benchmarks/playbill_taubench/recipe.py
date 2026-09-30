@@ -404,14 +404,14 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
 
 
 def export_arm_surface(destination: Path) -> Path:
-    """Write floor-v2 artifacts and the coverage boundary as one tree."""
+    """Write the floor, with its discovery cards and coverage boundary, as one tree."""
 
     destination.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q", "-b", "main", str(destination)], check=True)
     previous = Path.cwd()
     try:
         os.chdir(destination)
-        run_cli_json("playbill", "floor", "export")
+        run_cli_json("playbill", "floor", "export", "--with-discovery")
     finally:
         os.chdir(previous)
     return destination / ".playbill/floor"

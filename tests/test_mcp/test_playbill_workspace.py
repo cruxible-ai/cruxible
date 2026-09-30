@@ -402,3 +402,93 @@ def test_workspace_path_refuses_symlink_escape(tmp_path: Path) -> None:
 
     with pytest.raises(DataValidationError, match="escapes the configured root"):
         resolve_workspace_path("escape/source.md", root=workspace, kind="file")
+
+
+def _export_files(files: dict[str, bytes]) -> contracts.PlaybillFloorExport:
+    inventory = [
+        {
+            "path": path,
+            "content_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+            "byte_length": len(content),
+        }
+        for path, content in sorted(files.items())
+    ]
+    manifest = {
+        "tag": "playbill-floor-manifest-v4",
+        "format": "playbill-floor-export-v4",
+        "coordinate": _coordinate().model_dump(mode="json"),
+        "files": inventory,
+        "floor_digest": typed_digest(
+            Sha256Value, "playbill-floor-export-v4", {"files": inventory}
+        ).tagged,
+    }
+    return contracts.PlaybillFloorExport(
+        tag="playbill-floor-export-v4",
+        coordinate=_coordinate(),
+        manifest=manifest,
+        files=[
+            contracts.PlaybillFloorFile(
+                path=path, content_base64=base64.b64encode(content).decode()
+            )
+            for path, content in {
+                "manifest.json": json.dumps(manifest).encode(),
+                **files,
+            }.items()
+        ],
+    )
+
+
+class _PartsClient(_StubClient):
+    """Exports the discovery cards only when asked for them."""
+
+    def __init__(self) -> None:
+        self.includes: list[tuple[str, ...]] = []
+
+    def export_playbill_floor(  # type: ignore[override]
+        self,
+        instance_id: str,
+        *,
+        at=None,
+        include=(),  # type: ignore[no-untyped-def]
+    ) -> contracts.PlaybillFloorExport:
+        self.includes.append(tuple(include))
+        files = {"current/k/a.yaml": b"# k/a  kind=k\n"}
+        if "discovery" in include:
+            files["subjects/k/a.profile.json"] = b"{}\n"
+        return _export_files(files)
+
+
+def test_an_mcp_write_with_discovery_survives_an_activation_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    client = _PartsClient()
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setattr(handlers, "_get_client", lambda: client)
+    profile = workspace / ".playbill/floor/subjects/k/a.profile.json"
+
+    written = handlers.handle_playbill_floor_export(
+        "inst_test", mode="write", force=True, include=("discovery",)
+    )
+
+    assert written.status == "written"
+    assert profile.is_file()
+    config = json.loads((workspace / ".playbill/coverage.json").read_text(encoding="utf-8"))
+    assert config["floor_output"] == {
+        "tag": "playbill-floor-output-v1",
+        "format": "playbill-floor-export-v4",
+        "include": ["discovery"],
+    }
+
+    activated = handlers.handle_playbill_activate("inst_test", "proposal-1")
+
+    assert activated.floor_refresh.status == "refreshed"
+    assert client.includes == [("discovery",), ("discovery",)]
+    assert profile.is_file()
+
+    # Writing without the part records that too, and the next refresh follows it.
+    handlers.handle_playbill_floor_export("inst_test", mode="write", force=True)
+    handlers.handle_playbill_activate("inst_test", "proposal-2")
+    assert client.includes[-2:] == [(), ()]
+    assert not profile.exists()

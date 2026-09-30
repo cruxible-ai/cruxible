@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,13 @@ def test_sdk_orient_reads_the_map_for_the_sdk_surface(tmp_path: Path) -> None:
     assert call["surface"] == "sdk" and call["kind"] == "dev.roadmap_item"
     assert call["section"] is None and call["cursor"] is None
     assert pb.coordinate == result.coordinate
+
+    assert result.floor is None
+    floor = tmp_path / ".playbill/floor"
+    (floor / "provenance").mkdir(parents=True)
+    oid = _COORDINATE.git_oid
+    (floor / "manifest.json").write_text(json.dumps({"coordinate": {"git_oid": oid}}))
+    assert pb.orient().floor == api.PlaybillOrientFloorV1(at=oid, generations_behind=0)
 
     pinned = pb.at(pb.coordinate)
     pinned.orient(section="queries", limit=5)

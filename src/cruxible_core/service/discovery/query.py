@@ -315,6 +315,11 @@ class _AcceptedQueryFactsRead:
             self._context.prefetch(reachable)
         return reachable
 
+    @property
+    def verdict_context(self) -> ClaimVerdictReadContext | None:
+        """This request's verdict read context, once ``build`` has read through one."""
+        return self._context
+
     def live_claims(self) -> tuple[ClaimArtifactAny, ...]:
         """Return the source Claims already read by this request's live fact fold."""
         self.build()

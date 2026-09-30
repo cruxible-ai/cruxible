@@ -293,11 +293,13 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     _bootstrap(cruxible, tmp_path)
     claim_identity = _govern_the_bytes(cruxible, tmp_path)
 
-    # 1. The floor exports its own coverage boundary beside the render manifest,
+    # 1. The floor's opt-in discovery part carries its own coverage boundary,
     #    enumerated like every other floor file.
     monkeypatch.chdir(tmp_path)
     floor = tmp_path / ".playbill/floor"
-    exported = cruxible.json("playbill", "floor", "export")
+    default = cruxible.json("playbill", "floor", "export")
+    assert "coverage-manifest.json" not in {item["path"] for item in default["files"]}
+    exported = cruxible.json("playbill", "floor", "export", "--force", "--with-discovery")
     boundary = json.loads((floor / "coverage-manifest.json").read_text(encoding="utf-8"))
     assert "coverage-manifest.json" in {item["path"] for item in exported["files"]}
     assert boundary["format"] == "playbill-coverage-manifest-v2"

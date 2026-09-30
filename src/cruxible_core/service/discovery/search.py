@@ -57,7 +57,12 @@ from cruxible_core.service.claims.verdict_memo import (
     memo_key,
     verdict_input_fingerprint,
 )
-from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext, VerdictReads
+from cruxible_core.service.evidence.evidence import (
+    BodyFingerprints,
+    ClaimVerdictReadContext,
+    VerdictReads,
+    body_fingerprints_hold,
+)
 
 
 class PlaybillSearchError(PlaybillError):
@@ -82,10 +87,14 @@ def _accepted_coordinate(request: PlaybillSearchRequestV1) -> PlaybillAcceptedCo
 
 # Bounded, per-process, and keyed on every input the derivation reads. See
 # `playbill_verdict_memo` for why each part of the key is there.
+# Each entry also keeps the file identity of every body-store object its
+# verdicts read (``VerdictReads.body_identities``) and is served only while all
+# of them hold: the shard fingerprint in the key sees arrivals and removals, not
+# a body rewritten in place.
 _RESOLUTION_MEMO: (
     "OrderedDict[tuple[str, str, str, str], "
     "tuple[dict[str, SearchStatus], dict[str, ClaimVerdictResultAny], "
-    "tuple[datetime | None, datetime | None]]]"
+    "tuple[datetime | None, datetime | None], BodyFingerprints]]"
 ) = OrderedDict()
 
 
@@ -157,7 +166,11 @@ def remembered_resolution_statuses(
             instance, identities=identities, at=at, input_fingerprint=input_fingerprint
         ),
     )
-    if remembered is None or not interval_holds(remembered[2], evaluation_time=evaluation_time):
+    if (
+        remembered is None
+        or not interval_holds(remembered[2], evaluation_time=evaluation_time)
+        or not body_fingerprints_hold(instance, remembered[3])
+    ):
         return None
     return dict(remembered[0])
 
@@ -179,10 +192,12 @@ def claim_resolution_statuses(
 
     The whole derivation is memoized per process on the instance, the accepted
     coordinate, the exact Claim set, and CAS shard metadata for live replay
-    availability. Pending door attestations are not an input. The evaluation instant is NOT in
-    the key: every real surface stamps a fresh `utc_now()`, so a wall-clock key
-    could never be hit twice. A verdict is a step function of time whose only
-    breakpoints are the instants it compares against, so the entry carries the
+    availability, and served only while every body-store object its verdicts
+    read keeps its file identity. Pending door attestations are not an input.
+    The evaluation instant is NOT in the key: every real surface stamps a fresh
+    `utc_now()`, so a wall-clock key could never be hit twice. A verdict is a
+    step function of time whose only breakpoints are the instants it compares
+    against, so the entry carries the
     interval over which its answer holds and is served for any instant inside
     it, with each remembered verdict re-stamped with the instant it is served
     at. An `orient` is a READ, and this read used to cross the client's own
@@ -200,8 +215,10 @@ def claim_resolution_statuses(
     )
     remembered = None if input_fingerprint is None else memo_get(_RESOLUTION_MEMO, key)
     if remembered is not None:
-        memoized_statuses, memoized_verdicts, interval = remembered
-        if interval_holds(interval, evaluation_time=evaluation_time):
+        memoized_statuses, memoized_verdicts, interval, bodies = remembered
+        if interval_holds(interval, evaluation_time=evaluation_time) and body_fingerprints_hold(
+            instance, bodies, store=read_context.body_store() if read_context else None
+        ):
             if verdicts_by_identity is not None:
                 verdicts_by_identity.update(
                     {
@@ -237,6 +254,9 @@ def claim_resolution_statuses(
     # verdicts made still returns the same value here: one batched re-read of
     # all their inputs instead of re-deriving them.
     pending = dict(live_groups)
+    # Every body-store object the verdicts' replay availability read, reused or
+    # derived, with the identity each read used: the entry's fingerprints.
+    bodies_read = VerdictReads()
     if remember:
         candidates: dict[bytes, _RememberedSlot] = {}
         for slot_key, group in live_groups.items():
@@ -251,7 +271,11 @@ def claim_resolution_statuses(
             union = VerdictReads()
             for entry in candidates.values():
                 union.update(entry.reads)
-            current = read_context.snapshot(union)
+            # A reused slot rests on the Captures just re-read to validate it,
+            # with the identities that re-read used.
+            validated = VerdictReads()
+            current = read_context.snapshot(union, bodies=validated)
+            bodies_read.update(validated)
             for slot_key, entry in candidates.items():
                 if all(current.get(read) == value for read, value in entry.observed.items()):
                     _SLOT_MEMO.move_to_end((root, compiler, slot_key))
@@ -328,6 +352,7 @@ def claim_resolution_statuses(
             remember = False
         if reads is not None and not reads.inconsistent:
             derived[slot_key] = (reads, group_boundaries, group_statuses)
+            bodies_read.note_bodies(reads.body_identities if reads.bodies_complete else None)
     if derived:
         union = VerdictReads()
         for reads, _bounds, _statuses in derived.values():
@@ -357,7 +382,15 @@ def claim_resolution_statuses(
             _SLOT_MEMO.move_to_end((root, compiler, slot_key))
         while len(_SLOT_MEMO) > _SLOT_MEMO_CAPACITY:
             _SLOT_MEMO.popitem(last=False)
-    if remember:
+    fingerprints = tuple(sorted(bodies_read.body_identities.items()))
+    # Only a derivation whose every body read has the identity it used, and
+    # whose bodies still have those identities now, is remembered: anything
+    # that moved between a read and this insert forgoes the memo.
+    if (
+        remember
+        and bodies_read.bodies_complete
+        and body_fingerprints_hold(instance, fingerprints, store=read_context.body_store())
+    ):
         memo_put(
             _RESOLUTION_MEMO,
             key,
@@ -365,6 +398,7 @@ def claim_resolution_statuses(
                 dict(statuses),
                 dict(verdicts),
                 invariance_interval(boundaries, evaluation_time=evaluation_time),
+                fingerprints,
             ),
             capacity=MEMO_CAPACITY,
         )

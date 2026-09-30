@@ -339,6 +339,19 @@ class HistoryReader:
             )
         )
 
+    def member_paths_after(self, sequence: int) -> frozenset[str]:
+        """Every member path the change records after ``sequence`` touched, to this cutoff."""
+        if sequence < 0 or sequence > self.sequence:
+            raise PlaybillFormatError("generation is outside requested accepted history")
+        return frozenset(
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT DISTINCT member_path FROM accepted_member_locations "
+                "WHERE sequence>? AND sequence<=?",
+                (sequence, self.sequence),
+            )
+        )
+
     def latest_member(self, path: str) -> AcceptedMemberLocation | None:
         row = self._connection.execute(
             "SELECT * FROM accepted_member_locations WHERE member_path=? AND sequence<=? "
