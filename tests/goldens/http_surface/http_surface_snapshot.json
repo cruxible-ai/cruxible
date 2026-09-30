@@ -75,6 +75,9 @@
   "/api/v1/{instance_id}/playbill/claim-types/proposals": {
     "POST": "PlaybillProposalInspection | PlaybillClaimTypeInputProposalResult"
   },
+  "/api/v1/{instance_id}/playbill/claim-types/upgrade": {
+    "POST": "ClaimTypeUpgradeResultV1"
+  },
   "/api/v1/{instance_id}/playbill/claim-types/{predicate}": {
     "GET": "PlaybillClaimTypeView"
   },
