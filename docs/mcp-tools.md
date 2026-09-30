@@ -18,18 +18,16 @@ everyday agent loop:
   `cruxible_playbill_list_claim_types`, `cruxible_playbill_get_claim_type`,
   `cruxible_playbill_list_subjects`, `cruxible_playbill_get_subject`, and
   `cruxible_playbill_run_query`;
-- the authoring write loop: `cruxible_playbill_authoring_example`,
-  `cruxible_playbill_authoring_create`, `cruxible_playbill_authoring_compile`,
-  `cruxible_playbill_authoring_preflight`, `cruxible_playbill_authoring_submit`,
-  `cruxible_playbill_authoring_status`, `cruxible_playbill_authoring_get`,
-  `cruxible_playbill_authoring_resume`, and
-  `cruxible_playbill_authoring_list_pending`;
+- the write verbs: `cruxible_playbill_set` (one value in one field, replacing
+  the live value), `cruxible_playbill_retire` (end one live Claim), and
+  `cruxible_playbill_write` (set, add and retire changes as one change set);
 - proposals through activation: `cruxible_playbill_proposal_list`,
   `cruxible_playbill_review`, `cruxible_playbill_approve`, and
   `cruxible_playbill_activate`;
 - identity and versions: `cruxible_playbill_whoami` and `cruxible_server_info`.
 
-`full` advertises the complete catalog below, including curation, coverage, the
+`full` advertises the complete catalog below, including the `authoring_*`
+intent tools, curation, coverage, the
 floor, sources, blocks, kits, Procedures, Lines, and the split approval pair
 `cruxible_playbill_prepare_approval` and `cruxible_playbill_submit_approval` for
 a signer outside the MCP process. Curation changes
@@ -192,10 +190,12 @@ paths and root aliases, not compilation wire.
 | `cruxible_playbill_list_claim_types` | List the accepted predicate vocabulary | `READ_ONLY` |
 | `cruxible_playbill_get_claim_type` | Read one accepted ClaimType | `READ_ONLY` |
 | `cruxible_playbill_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
-| `cruxible_playbill_claim_retire` | Preflight or submit one attributed, dependency-closed Claim retirement | `GOVERNED_WRITE` |
 | `cruxible_playbill_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
 | `cruxible_playbill_list_claims` | List accepted Claims by Subject, `subject_kind` or predicate | `READ_ONLY` |
 | `cruxible_playbill_claim_values` | Status table: each live Claim's `subject_id`, value and verdict for every Subject of one kind (or named `subject_ids`) and the given predicates | `READ_ONLY` |
+| `cruxible_playbill_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `playbill.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
+| `cruxible_playbill_retire` | End one live Claim, by Claim ID or by Subject and single-value field, with its dependent Claims, in one change set | `GOVERNED_WRITE` |
+| `cruxible_playbill_write` | Apply `set`, `add` (one more value in a many-valued field) and `retire` changes as one change set, accepted or refused together | `GOVERNED_WRITE` |
 | `cruxible_playbill_get` | Read one thing by any reference (Claim id or prefix, `kind/id`, predicate, `Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, artifact path, proposal id); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is cut to `{value, truncated: true, length}`, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why`, `history` (newest first, paged by `limit` and `cursor`), `proof` (with the full `accepted_coordinate`), or `body` with a byte `range`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`); a wrong name refuses with the nearest names | `READ_ONLY` |
 | `cruxible_playbill_get_claim` | Read one accepted Claim | `READ_ONLY` |
 | `cruxible_playbill_claim_history` | Read one Claim's accepted lineage | `READ_ONLY` |

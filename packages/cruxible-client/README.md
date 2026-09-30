@@ -278,15 +278,22 @@ capture-contract and evidence-kind parameters, with no reducer digest parameter.
 
 ```text
 changes(*, rationale: str | None=None) -> ChangeSetDraft
+changes(*, because: str) -> WriteBatch
 ```
 
-Returns a changeset builder retaining the last observed coordinate for references and vocabulary.
+With `rationale` (or nothing), returns a changeset builder retaining the last
+observed coordinate for references and vocabulary. With `because`, returns a
+`WriteBatch` of typed write changes: `.set(subject, field, value, ...)`,
+`.add(subject, field, value, ...)` and `.retire(target, ...)`, sent as one change
+set by `.write(dry_run=False, accept="if_allowed", at=...)`, which returns the
+`WriteOutcome` or raises `WriteRefusalError`.
 
 **Conditions and effects:** No prepare/submit/accept at construction. The set admits or refuses as one governed decision.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `rationale` | `None` | Author-supplied explanation retained with this Claim/change decision. |
+| `because` | `None` | Why: opens a `WriteBatch`, whose change set carries it as its rationale. |
 
 <a id="api-playbill-subject"></a>
 
@@ -407,34 +414,77 @@ Builds a ClaimDraft; may read accepted metadata to interpret objects and evidenc
 | `subject_definition` | `None` | Subject draft carried with the Claim, if defining its Subject in the same operation. |
 | `claim_type_definition` | `None` | ClaimType draft carried with the Claim, if defining its predicate in the same operation. |
 
-<a id="api-playbill-retire-claim"></a>
+<a id="api-playbill-set"></a>
 
-### `Playbill.retire_claim`
+### `Playbill.set`
 
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-retire_claim(
-    claim: str | ClaimRef,
+set(
+    subject: str | SubjectRef,
+    field: str | ClaimTypeRef,
+    value: ClaimValue | SubjectRef | LiteralValue,
     *,
-    reason: ClaimRetirementReason,
-    mode: Literal['preflight', 'submit'] = 'preflight',
-    effective_until: datetime | None = None,
-    dependents: Sequence[ClaimRetireDependentV1] = (),
-) -> api.PlaybillClaimRetireResponse
+    because: str,
+    evidence: Evidence | None = None,
+    role: WriteRole | None = None,
+    contend: bool = False,
+    dry_run: bool = False,
+    accept: Literal['if_allowed', 'never'] = 'if_allowed',
+    at: AcceptedCoordinate | str | None = <this context's coordinate>,
+) -> WriteOutcome
 ```
 
-Preflights or submits an attributed retirement with explicit dependency closure.
+Puts one value in one field of one Subject. On a single-value field it replaces
+the live value; the Claim it revises is found for you. A missing Subject of a
+known kind is added in the same change set.
 
-**Conditions and effects:** Default mode is preflight. Submission is a governed proposal, not automatic acceptance.
+**Conditions and effects:** Accepts in the same call when the approval policy
+and the caller's tier allow it; otherwise the outcome is `awaiting_approval` with
+the eligible approvers and the approve call. `dry_run` runs every check and
+writes nothing. By default the write refuses `playbill.write.slot_changed` when
+the field moved since this context's coordinate; after that refusal the context
+has seen the new value, so setting again replaces it. A refusal raises
+`WriteRefusalError` carrying the outcome. Each change carries its `verdict`; a
+verdict other than `supported` comes with a warning in `outcome.warnings`.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `claim` | Required | Claim ID or typed ClaimRef; typed refs also assert their observed coordinate. |
-| `reason` | Required | Attributed reason for refusal, retirement, or operational action as specified by the API. |
-| `mode` | `'preflight'` | preflight validates; submit requests the corresponding governed retirement proposal. |
-| `effective_until` | `None` | Optional effective-end instant for retirement. |
-| `dependents` | `()` | Explicit dependency-closure dispositions required by retirement or ClaimType succession. |
+| `subject` | Required | The Subject as `kind/id`, or a typed SubjectRef. |
+| `field` | Required | A field of the kind as `orient` names it, or the full predicate. |
+| `value` | Required | An enum member, text, number or boolean; a Subject for a Subject-valued field; the text itself for exact content. |
+| `because` | Required | Why; also the default self evidence. |
+| `evidence` | `None` | `SelfEvidence`, `CaptureEvidence` or `FileEvidence` (`PATH#ANCHOR`, read from this workspace). |
+| `role` | `None` | Only when the field permits more than one role. |
+| `contend` | `False` | Contest the live value instead of replacing it. |
+| `dry_run` | `False` | Check everything and write nothing. |
+| `accept` | `'if_allowed'` | `'never'` only proposes. |
+| `at` | this context's coordinate | The coordinate you read at; `None` checks against the head. |
+
+<a id="api-playbill-retire"></a>
+
+### `Playbill.retire`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+retire(
+    target: str | ClaimRef | SlotRef,
+    *,
+    because: str,
+    reason: Literal['was-rescinded', 'was-wrong', 'superseded'] = 'was-rescinded',
+    dry_run: bool = False,
+    accept: Literal['if_allowed', 'never'] = 'if_allowed',
+    at: AcceptedCoordinate | str | None = <this context's coordinate>,
+) -> WriteOutcome
+```
+
+Ends one live Claim, named by Claim ID or by `SlotRef(subject=..., field=...)`
+for a field that holds one value. The Claims that depend on it retire with it,
+in one change set.
+
+**Conditions and effects:** As `Playbill.set`.
 
 <a id="api-playbill-query-definition"></a>
 
@@ -1525,11 +1575,11 @@ retire(
 
 Retire one accepted Claim, and its live closure, inside this changeset.
 
-Takes exactly what `Playbill.retire_claim` takes: the SDK's own rows
-and refs spell a Claim identity `Claim:CLM-...`, so a builder that
-refused the prefix made one library disagree with itself. The member
-carries the one canonical bare spelling, which is what keeps two
-spellings of one retirement on one member identity and one digest.
+Takes a Claim ID in either spelling the SDK's rows and refs use
+(`CLM-...` or `Claim:CLM-...`). The member carries the one canonical bare
+spelling as `retires`, which is what keeps two spellings of one
+retirement on one member identity and one digest. `Playbill.retire` is
+the typed write verb for the common case: it computes the closure.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -1927,6 +1977,18 @@ review() -> ReviewedProposal
 ```
 
 Fetch an immutable full review; inspect its details before approving.
+
+<a id="api-proposal-accept"></a>
+
+### `Proposal.accept`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+accept() -> api.PlaybillActivationReceipt
+```
+
+Accepts this proposal once its approvals are in: `Playbill.accept` by handle.
 
 <a id="api-proposal-approve"></a>
 
@@ -2452,6 +2514,15 @@ most 8192 returned Claims; a larger selection refuses rather than truncating.
 
 Import: `cruxible_client.authoring.world.WorldSubject`. [Source](src/cruxible_client/authoring/world.py)
 
+Writes by field leaf: `subject.set(status="done", because=...)` sets
+single-value fields, `subject.add(governs=other, because=...)` adds to
+many-valued ones, and `subject.retire("status", because=...)` retires a field's
+one live value. Every field in one call is one change of one change set, and
+names are checked against the World before the wire. A World's writes are
+checked from its coordinate advanced past its own accepted writes, so its
+references stay valid after them; only a field someone else moved refuses. The
+generated stub types `set` and `add` per kind, enum members as `Literal`s.
+
 <a id="api-worldsubject-subject-kind"></a>
 
 ### `WorldSubject.subject_kind`
@@ -2797,9 +2868,12 @@ Import: `cruxible_client.authoring.sdk_types.SourceRef`. [Source](src/cruxible_c
 
 <a id="api-slotref"></a>
 
-## `SlotRef`
+## `ProcedureSlotRef`
 
-Import: `cruxible_client.authoring.sdk_types.SlotRef`. [Source](src/cruxible_client/authoring/sdk_types.py)
+One input slot of a Procedure, as `Procedure.bind` names it. A Subject's field is
+`cruxible_client.contracts.write.SlotRef` (also `cruxible_client.SlotRef`).
+
+Import: `cruxible_client.authoring.sdk_types.ProcedureSlotRef`. [Source](src/cruxible_client/authoring/sdk_types.py)
 
 | Field | Type | Default / construction |
 |---|---|---|
@@ -3632,7 +3706,7 @@ readiness() -> api.PlaybillProcedureReadiness
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-bind(*, bindings: Mapping[str | SlotRef, TypedRef]) -> api.PlaybillProcedureBindResult
+bind(*, bindings: Mapping[str | ProcedureSlotRef, TypedRef]) -> api.PlaybillProcedureBindResult
 ```
 
 <a id="api-procedure-run"></a>
@@ -5621,22 +5695,42 @@ get_playbill_claim_type(
 
 HTTP: `GET f'/api/v1/{instance_id}/playbill/claim-types/{predicate}'`.
 
-<a id="api-cruxibleclient-retire-playbill-claim"></a>
+<a id="api-cruxibleclient-playbill-set"></a>
 
-### `CruxibleClient.retire_playbill_claim`
+### `CruxibleClient.playbill_set`
 
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-retire_playbill_claim(
-    instance_id: str,
-    claim_id: str,
-    *,
-    request: Mapping[str, Any],
-) -> contracts.PlaybillClaimRetireResponse
+playbill_set(instance_id: str, *, request: PlaybillSetRequestV1) -> WriteOutcome
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/claims/{claim_id}/retire'`.
+HTTP: `POST f'/api/v1/{instance_id}/playbill/set'`. A refused write is an
+outcome (`status: refused`), not an HTTP error.
+
+<a id="api-cruxibleclient-playbill-retire"></a>
+
+### `CruxibleClient.playbill_retire`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+playbill_retire(instance_id: str, *, request: PlaybillRetireRequestV1) -> WriteOutcome
+```
+
+HTTP: `POST f'/api/v1/{instance_id}/playbill/retire'`.
+
+<a id="api-cruxibleclient-playbill-write"></a>
+
+### `CruxibleClient.playbill_write`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+playbill_write(instance_id: str, *, request: PlaybillWriteRequestV1) -> WriteOutcome
+```
+
+HTTP: `POST f'/api/v1/{instance_id}/playbill/write'`.
 
 <a id="api-cruxibleclient-append-playbill-claim-attestation"></a>
 
@@ -6537,7 +6631,7 @@ include constructor/validator definitions for request and response contracts.
 | `PropertySchema` | `cruxible_client.contracts.procedures.contract_schema` · [Source](src/cruxible_client/contracts/procedures/contract_schema.py) |
 | `QueryRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ReferentSensitivity` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
-| `SlotRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
+| `ProcedureSlotRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `SourceRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `StateTapNodeV3` | `cruxible_client.contracts.procedures.models` · [Source](src/cruxible_client/contracts/procedures/models.py) |
 | `SubjectRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
@@ -7467,7 +7561,7 @@ fields are documented above; these links keep wire schema definitions singular.
 
 **`contracts.claim_verdicts`** — [ClaimAdjudicationRuleV1](src/cruxible_client/contracts/claim_verdicts.py), [CaptureVerdictEvidenceV1](src/cruxible_client/contracts/claim_verdicts.py), [EvidenceControlComponentV1](src/cruxible_client/contracts/claim_verdicts.py), [ClaimVerdictResultV1](src/cruxible_client/contracts/claim_verdicts.py), [EvidenceFreshnessExpirationV1](src/cruxible_client/contracts/claim_verdicts.py), [ClaimVerdictResultV2](src/cruxible_client/contracts/claim_verdicts.py).
 
-**`contracts.claims`** — [ClaimFormatError](src/cruxible_client/contracts/claims.py), [ClaimUnsupportedFormatError](src/cruxible_client/contracts/claims.py), [LiteralClaimObject](src/cruxible_client/contracts/claims.py), [SubjectClaimObject](src/cruxible_client/contracts/claims.py), [ExactContentClaimObject](src/cruxible_client/contracts/claims.py), [ClaimStatement](src/cruxible_client/contracts/claims.py), [ClaimStatementCardV1](src/cruxible_client/contracts/claims.py), [ClaimReferentContext](src/cruxible_client/contracts/claims.py), [ClaimBacking](src/cruxible_client/contracts/claims.py), [ClaimCitationV1](src/cruxible_client/contracts/claims.py), [LegacyCitationReferenceV1](src/cruxible_client/contracts/claims.py), [ClaimBackingV2](src/cruxible_client/contracts/claims.py), [ClaimArtifactV2](src/cruxible_client/contracts/claims.py), [ClaimRetirementAttributionV1](src/cruxible_client/contracts/claims.py), [ClaimRetireDependentV1](src/cruxible_client/contracts/claims.py), [ClaimRetireRequestV1](src/cruxible_client/contracts/claims.py), [ClaimArtifactV3](src/cruxible_client/contracts/claims.py), [AcceptedClaim](src/cruxible_client/contracts/claims.py), [ClaimLawEvidenceV1](src/cruxible_client/contracts/claims.py), [ClaimLawEvidenceV2](src/cruxible_client/contracts/claims.py), [ClaimLawResult](src/cruxible_client/contracts/claims.py), [CitedSourceWindow](src/cruxible_client/contracts/claims.py), [CaptureEvidenceKindAdmission](src/cruxible_client/contracts/claims.py).
+**`contracts.claims`** — [ClaimFormatError](src/cruxible_client/contracts/claims.py), [ClaimUnsupportedFormatError](src/cruxible_client/contracts/claims.py), [LiteralClaimObject](src/cruxible_client/contracts/claims.py), [SubjectClaimObject](src/cruxible_client/contracts/claims.py), [ExactContentClaimObject](src/cruxible_client/contracts/claims.py), [ClaimStatement](src/cruxible_client/contracts/claims.py), [ClaimStatementCardV1](src/cruxible_client/contracts/claims.py), [ClaimReferentContext](src/cruxible_client/contracts/claims.py), [ClaimBacking](src/cruxible_client/contracts/claims.py), [ClaimCitationV1](src/cruxible_client/contracts/claims.py), [LegacyCitationReferenceV1](src/cruxible_client/contracts/claims.py), [ClaimBackingV2](src/cruxible_client/contracts/claims.py), [ClaimArtifactV2](src/cruxible_client/contracts/claims.py), [ClaimRetirementAttributionV1](src/cruxible_client/contracts/claims.py), [ClaimRetireDependentV1](src/cruxible_client/contracts/claims.py), [ClaimArtifactV3](src/cruxible_client/contracts/claims.py), [AcceptedClaim](src/cruxible_client/contracts/claims.py), [ClaimLawEvidenceV1](src/cruxible_client/contracts/claims.py), [ClaimLawEvidenceV2](src/cruxible_client/contracts/claims.py), [ClaimLawResult](src/cruxible_client/contracts/claims.py), [CitedSourceWindow](src/cruxible_client/contracts/claims.py), [CaptureEvidenceKindAdmission](src/cruxible_client/contracts/claims.py).
 
 **`contracts.compiler_upgrade`** — [CompilerUpgradeV1](src/cruxible_client/contracts/compiler_upgrade.py).
 

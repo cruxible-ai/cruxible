@@ -756,7 +756,45 @@ def test_an_authoring_intent_written_before_revises_is_refused_by_name(
         (directory / name).write_text(str(content), encoding="utf-8")
 
     store = AuthoringIntentStore(exhaust)
-    with pytest.raises(AuthoringIntentStoreError, match="predates the `revises` Claim field"):
+    with pytest.raises(AuthoringIntentStoreError, match="predates the `revises` field"):
+        store.get(intent_id, actor_id="owner")
+
+
+def test_an_authoring_intent_written_before_retires_is_refused_by_name(
+    tmp_path: Path,
+) -> None:
+    """A stored change set whose retirement member still says `claim_ref` is named.
+
+    The retirement member's field became `retires`, parallel to `revises`; an
+    intent stored before that no longer reads, and the refusal says why.
+    """
+
+    intent_id = "AIT-" + "2" * 32
+    event = {
+        "tag": "playbill-authoring-intent-event-v1",
+        "intent": {
+            "intent_id": intent_id,
+            "payload": {
+                "tag": "playbill-change-set-authoring-payload-v1",
+                "members": [
+                    {
+                        "tag": "playbill-claim-retirement-authoring-payload-v1",
+                        "mode": "submit",
+                        "claim_ref": "CLM-" + "3" * 32,
+                        "reason": "was-rescinded",
+                        "dependents": [],
+                    }
+                ],
+            },
+        },
+    }
+    exhaust = tmp_path / "exhaust"
+    directory = exhaust / "authoring-intents" / intent_id / "events"
+    directory.mkdir(parents=True)
+    (directory / "00000000000000000000.json").write_text(json.dumps(event), encoding="utf-8")
+
+    store = AuthoringIntentStore(exhaust)
+    with pytest.raises(AuthoringIntentStoreError, match="predates the `retires` field"):
         store.get(intent_id, actor_id="owner")
 
 

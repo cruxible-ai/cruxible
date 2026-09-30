@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Literal, cast
@@ -17,6 +19,7 @@ from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
     AUTHORING_SDK_VERSION,
     AcceptanceConditionV1,
+    AuthoringExpectationV1,
     AuthoringIntentListV1,
     AuthoringIntentV1,
     AuthoringIntentV2,
@@ -24,6 +27,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringPayloadV1,
     AuthoringProgramStampV1,
     AuthoringReferenceExpectationV1,
+    AuthoringSlotExpectationV1,
     AuthoringSubmitMemberV1,
     AuthoringSubmitResultV1,
     CandidateStatusState,
@@ -70,14 +74,17 @@ from cruxible_core.authoring.preflight import (
 )
 from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.compiler.projection_artifacts import projected_revision
+from cruxible_core.indexes.history.history_index import detached_history_reads
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.candidate_cards import is_candidate_card_path
 from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
+    ProposalHeadMovedError,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.storage.cas import dry_run_bodies
 
 AUTHORING_REBASE_DOMAIN = "playbill-authoring-rebase-v1"
 
@@ -200,7 +207,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         canonical_timestamp: str,
         base_coordinate: AcceptedCoordinate | None = None,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+        reference_expectations: tuple[AuthoringExpectationV1, ...] | None = None,
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> AuthoringIntentViewV1:
         """Open one authoring draft against the accepted coordinate.
@@ -249,38 +256,13 @@ class AuthoringIntentCoordinator:
                     "playbill.authoring.program_stamp_contract_mismatch",
                     "a v3 program stamp requires the v2 reference-assertion envelope",
                 )
-        intent_id = self.store.mint_intent_id()
-        semantic_identity = self._mint_semantic_identity(payload)
-        status = CandidateStatusV1(
-            state="draft",
-            current_accepted_coordinate=at,
-        )
-        intent_values = {
-            "intent_id": intent_id,
-            "instance_id": self.instance.descriptor.instance_id,
-            "actor_id": actor.actor_id,
-            "canonical_timestamp": canonical_timestamp,
-            "base_coordinate": at,
-            "semantic_identity": semantic_identity,
-            "payload": payload,
-            "payload_digest": authoring_payload_digest(payload),
-            "create_fingerprint": authoring_create_fingerprint(
-                instance_id=self.instance.descriptor.instance_id,
-                actor_id=actor.actor_id,
-                payload=payload,
-            ),
-            "candidate_status": status,
-            "change_set_claim_identities": self._mint_change_set_claim_identities(payload),
-        }
-        intent = (
-            AuthoringIntentV1.model_validate(intent_values)
-            if reference_expectations is None
-            else AuthoringIntentV2.model_validate(
-                {
-                    **intent_values,
-                    "reference_expectations": reference_expectations,
-                }
-            )
+        intent = self._draft_intent(
+            actor=actor,
+            payload=payload,
+            canonical_timestamp=canonical_timestamp,
+            at=at,
+            reference_expectations=reference_expectations,
+            intent_id=self.store.mint_intent_id(),
         )
         operation_key = typed_digest(
             Sha256Value,
@@ -309,6 +291,80 @@ class AuthoringIntentCoordinator:
                 program_stamp=program_stamp,
             )
         return AuthoringIntentViewV1(intent=stored)
+
+    def _draft_intent(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        payload: AuthoringPayloadV1,
+        canonical_timestamp: str,
+        at: AcceptedCoordinate,
+        reference_expectations: tuple[AuthoringExpectationV1, ...] | None,
+        intent_id: str,
+    ) -> AuthoringIntentV1:
+        """Build one draft intent in memory, minting its identities; nothing is stored."""
+
+        semantic_identity = self._mint_semantic_identity(payload)
+        status = CandidateStatusV1(
+            state="draft",
+            current_accepted_coordinate=at,
+        )
+        intent_values = {
+            "intent_id": intent_id,
+            "instance_id": self.instance.descriptor.instance_id,
+            "actor_id": actor.actor_id,
+            "canonical_timestamp": canonical_timestamp,
+            "base_coordinate": at,
+            "semantic_identity": semantic_identity,
+            "payload": payload,
+            "payload_digest": authoring_payload_digest(payload),
+            "create_fingerprint": authoring_create_fingerprint(
+                instance_id=self.instance.descriptor.instance_id,
+                actor_id=actor.actor_id,
+                payload=payload,
+            ),
+            "candidate_status": status,
+            "change_set_claim_identities": self._mint_change_set_claim_identities(payload),
+        }
+        return (
+            AuthoringIntentV1.model_validate(intent_values)
+            if reference_expectations is None
+            else AuthoringIntentV2.model_validate(
+                {
+                    **intent_values,
+                    "reference_expectations": reference_expectations,
+                }
+            )
+        )
+
+    def preview(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        payload: AuthoringPayloadV1,
+        canonical_timestamp: str,
+    ) -> tuple[AuthoringIntentV1, ComputedPreflight]:
+        """Preflight one payload exactly as submit would, and write nothing.
+
+        This is a dry run: the draft is built in memory under a fresh intent ID
+        instead of being stored, and the bodies lowering stores are held in
+        memory (``dry_run_bodies``) and history reads never catch the derived
+        index up on disk (``detached_history_reads``), so the same lowering and
+        evaluation run as for a submit, against the current accepted coordinate,
+        without a write.
+        """
+
+        self.instance.require_writable()
+        with dry_run_bodies(), detached_history_reads():
+            intent = self._draft_intent(
+                actor=actor,
+                payload=payload,
+                canonical_timestamp=canonical_timestamp,
+                at=AcceptedCoordinate.from_internal(self.instance.accepted_coordinate()),
+                reference_expectations=None,
+                intent_id=f"AIT-{secrets.token_hex(16)}",
+            )
+            return intent, compute_preflight(self.instance, intent=intent, actor=actor)
 
     def create_input(
         self,
@@ -486,7 +542,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         canonical_timestamp: str,
         intent_id: str | None = None,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+        reference_expectations: tuple[AuthoringExpectationV1, ...] | None = None,
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> PreflightResultV1:
         self.instance.require_writable()
@@ -507,7 +563,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         canonical_timestamp: str,
         intent_id: str | None = None,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+        reference_expectations: tuple[AuthoringExpectationV1, ...] | None = None,
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> AuthoringSubmitResultV1:
         """Create or replace the intent and submit it in one call.
@@ -535,7 +591,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         canonical_timestamp: str,
         intent_id: str | None,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None,
+        reference_expectations: tuple[AuthoringExpectationV1, ...] | None,
         program_stamp: AuthoringProgramStampV1 | None,
     ) -> AuthoringIntentViewV1:
         if intent_id is None:
@@ -594,7 +650,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         *,
         coordinate: AcceptedProjectionCoordinate,
-    ) -> tuple[AuthoringReferenceExpectationV1, ...] | None:
+    ) -> tuple[AuthoringExpectationV1, ...] | None:
         """Assert the exact accepted contract behind a decision-input Capture ref."""
 
         if not isinstance(payload, ClaimAuthoringPayloadV1) or not isinstance(
@@ -845,35 +901,31 @@ class AuthoringIntentCoordinator:
 
             certificate = computed.result.certificate
             handoff = prepared.handoff(authoring_operation(self.instance, preflighted))
-            result = self.instance.proposal_service().submit(
-                actor=actor,
-                request=ProposalAdmissionRequest(
-                    target_ref=certificate.proposal_ref,
-                    proposed_base_oid=certificate.accepted_coordinate.git_oid,
-                    # The one door that carries prose today. Every other submit call
-                    # site authors on the author's behalf -- a migration, a seed, a
-                    # retirement -- and has no sentence of theirs to pass on, so it
-                    # keeps the derived subject.
-                    rationale=(
-                        preflighted.payload.rationale
-                        if isinstance(preflighted.payload, ChangeSetAuthoringPayloadV1)
-                        else None
-                    ),
-                ),
-                candidate_tree=handoff.submission_tree
-                if handoff is not None and handoff.submission_tree is not None
-                else {
-                    path: content
-                    for path, content in computed.evaluated_tree.items()
-                    if not is_candidate_card_path(path)
-                },
-                timestamp=current.canonical_timestamp,
-                prepared=handoff,
+            bound = certificate.accepted_coordinate
+
+            # Slot membership is checked by preflight, at the certificate
+            # coordinate, and nowhere else: a fresh evaluation at a moved head
+            # would admit the change over a slot it never saw. Only an intent
+            # that pins a slot is held to that head; any other re-evaluates
+            # and publishes at whatever head admission finds.
+            pins_slots = isinstance(preflighted, AuthoringIntentV2) and any(
+                isinstance(item, AuthoringSlotExpectationV1)
+                for item in preflighted.reference_expectations
             )
-            if result.candidate is None:
+
+            def at_certificate(
+                evaluated_at: AcceptedProjectionCoordinate, _tree: Mapping[str, bytes]
+            ) -> None:
+                # Refused before evaluation; the service then holds this head
+                # unchanged through publication.
+                if AcceptedCoordinate.from_internal(evaluated_at) != bound:
+                    raise ProposalHeadMovedError(
+                        "accepted main moved after preflight; preflight again at the current head"
+                    )
+                return None
+
+            def moved_on() -> AuthoringSubmitResultV1:
                 latest = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
-                if latest == certificate.accepted_coordinate:
-                    raise RuntimeError("submit broke its unchanged-coordinate preflight binding")
                 status = CandidateStatusV1(
                     state="conflicted_after_rebase",
                     current_accepted_coordinate=latest,
@@ -889,10 +941,49 @@ class AuthoringIntentCoordinator:
                 return AuthoringSubmitResultV1(
                     intent=preflighted.model_copy(update={"candidate_status": status}),
                     status=status,
-                    workspace_advertisement=result.workspace_advertisement,
+                    workspace_advertisement=self.instance.advertise_workspace(),
                 )
-            if result.candidate.candidate_digest != computed.evaluation.candidate.candidate_digest:
-                raise RuntimeError("submit candidate differs from its binding preflight")
+
+            try:
+                result = self.instance.proposal_service().submit(
+                    actor=actor,
+                    request=ProposalAdmissionRequest(
+                        target_ref=certificate.proposal_ref,
+                        proposed_base_oid=certificate.accepted_coordinate.git_oid,
+                        # The one door that carries prose today. Every other submit call
+                        # site authors on the author's behalf -- a migration, a seed, a
+                        # retirement -- and has no sentence of theirs to pass on, so it
+                        # keeps the derived subject.
+                        rationale=(
+                            preflighted.payload.rationale
+                            if isinstance(preflighted.payload, ChangeSetAuthoringPayloadV1)
+                            else None
+                        ),
+                    ),
+                    candidate_tree=handoff.submission_tree
+                    if handoff is not None and handoff.submission_tree is not None
+                    else {
+                        path: content
+                        for path, content in computed.evaluated_tree.items()
+                        if not is_candidate_card_path(path)
+                    },
+                    timestamp=current.canonical_timestamp,
+                    prepared=handoff,
+                    # At the certificate head the evaluation must reproduce the
+                    # preflighted candidate; that is refused before publication.
+                    expected_candidate=(
+                        bound.git_oid,
+                        computed.evaluation.candidate.candidate_digest,
+                    ),
+                    authorize=at_certificate if pins_slots else None,
+                )
+            except ProposalHeadMovedError:
+                return moved_on()
+            if result.candidate is None:
+                if AcceptedCoordinate.from_internal(self.instance.accepted_coordinate()) == bound:
+                    raise RuntimeError("submit broke its unchanged-coordinate preflight binding")
+                # The fresh evaluation at the moved head refused the rebase.
+                return moved_on()
 
             operation_key = typed_digest(
                 Sha256Value,
@@ -1018,7 +1109,7 @@ class AuthoringIntentCoordinator:
         *,
         actor: AuthenticatedActor,
         payload: AuthoringPayloadV1,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+        reference_expectations: tuple[AuthoringExpectationV1, ...] | None = None,
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> AuthoringIntentViewV1:
         self.instance.require_writable()
@@ -1162,7 +1253,7 @@ class AuthoringIntentCoordinator:
         current: AuthoringIntentV1,
         *,
         actor: AuthenticatedActor,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...],
+        reference_expectations: tuple[AuthoringExpectationV1, ...],
     ) -> AuthoringIntentV1:
         if current.candidate_status.state not in {
             "draft",

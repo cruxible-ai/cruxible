@@ -329,6 +329,64 @@ def test_a_repair_command_never_carries_an_unfilled_file_placeholder(
     assert command.startswith("cruxible ")
 
 
+def test_a_retire_repair_names_the_retire_verb_on_every_surface() -> None:
+    """The dedicated retire route is gone; a retire repair names the write verb."""
+    from cruxible_core.service.discovery.next import _REPAIR_TOOLS, _repair_command
+
+    claim = "CLM-" + "1" * 32
+    arguments = {"claim_id": claim}
+    assert _REPAIR_TOOLS["playbill.claim.retire"] == "cruxible_playbill_retire"
+    assert _repair_command("playbill.claim.retire", arguments=arguments) == (
+        f"cruxible playbill retire {claim}"
+    )
+    assert _repair_command("playbill.claim.retire", arguments=arguments, surface="mcp") == (
+        f'cruxible_playbill_retire(target="{claim}")'
+    )
+    assert _repair_command("playbill.claim.retire", arguments=arguments, surface="sdk") == (
+        f'playbill.retire("{claim}")'
+    )
+
+
+def test_restating_and_contest_repairs_run_on_the_default_profile_on_every_surface() -> None:
+    """R07: a repair whose authoring door moved to `full` is a set or write call instead."""
+    from cruxible_core.mcp.curation import _DEFAULT_TOOLS
+    from cruxible_core.service.discovery.next import _REPAIR_TOOLS, _repair_command
+
+    assert _REPAIR_TOOLS["playbill.set"] in _DEFAULT_TOOLS
+    assert _REPAIR_TOOLS["playbill.write"] in _DEFAULT_TOOLS
+    claim = "CLM-" + "1" * 32
+    capture = "sha256:" + "2" * 64
+    restate = {
+        "claim_id": claim,
+        "subject": "dev.item/tidy-cli",
+        "field": "dev.item.status",
+        "value": "done",
+        "role": "observation",
+        "capture_digest": capture,
+    }
+    assert _repair_command("playbill.set", arguments=restate) == (
+        "cruxible playbill set dev.item/tidy-cli dev.item.status done "
+        f"--role observation --capture {capture}"
+    )
+    assert _repair_command("playbill.set", arguments=restate, surface="mcp") == (
+        'cruxible_playbill_set(subject="dev.item/tidy-cli", field="dev.item.status", '
+        'value="done", role="observation", '
+        f'evidence={{"kind": "capture", "capture": "{capture}"}})'
+    )
+    assert _repair_command("playbill.set", arguments=restate, surface="sdk") == (
+        'playbill.set("dev.item/tidy-cli", "dev.item.status", "done", role="observation", '
+        f'evidence={{"kind": "capture", "capture": "{capture}"}})'
+    )
+    one = {"claim_ids": [claim, "CLM-" + "3" * 32], "changes": [{"op": "retire", "target": claim}]}
+    assert _repair_command("playbill.write", arguments=one) == f"cruxible playbill retire {claim}"
+    assert _repair_command("playbill.write", arguments=one, surface="mcp") == (
+        f'cruxible_playbill_write(changes=[{{"op": "retire", "target": "{claim}"}}])'
+    )
+    assert _repair_command("playbill.write", arguments=one, surface="sdk") == (
+        f'playbill.retire("{claim}")'
+    )
+
+
 def test_a_repair_command_fills_the_placeholder_when_the_row_names_the_file() -> None:
     from cruxible_core.service.discovery.next import _repair_command
 

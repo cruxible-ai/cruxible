@@ -157,10 +157,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_get_claim_type": (
         "Use when you need one predicate's accepted structure, cardinality, and policy."
     ),
-    "cruxible_playbill_claim_retire": (
-        "Use when one Claim and its transitive Claim dependents must retire with explicit "
-        "attribution in one governed ChangeSet."
-    ),
     "cruxible_playbill_claim_attest": (
         "Use when you examined a Claim and want to sign support, contradict, or unsure on it, "
         "optionally citing new Captures you examined."
@@ -226,6 +222,22 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need a status table: the value and verdict of each live Claim for "
         "every Subject of one kind (or named subject_ids) and the given predicates, "
         "without full Claim views."
+    ),
+    "cruxible_playbill_set": (
+        "Use to change one value: set a field of a Subject (kind/id) to a value. It replaces "
+        "the live value (no Claim ID needed), adds a missing Subject of a known kind, and "
+        "accepts in the same call when policy lets you; otherwise it answers awaiting_approval "
+        "with the approve call. dry_run previews without writing; pass the coordinate you read "
+        "at as `at` to refuse if the field changed since. Check each change's verdict and "
+        "the warnings."
+    ),
+    "cruxible_playbill_retire": (
+        "Use to end one live Claim: by Claim ID, or by Subject and field when it holds one "
+        "value. Its dependent Claims retire with it, in one change set."
+    ),
+    "cruxible_playbill_write": (
+        "Use to make several changes as one change set: set, add (one more value in a "
+        "many-valued field, e.g. two links) and retire, all accepted or refused together."
     ),
     "cruxible_playbill_get": (
         "Use when you have a reference to one thing -- a Claim id or prefix, kind/id, a "

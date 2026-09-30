@@ -36,7 +36,8 @@ def test_protocol_list_hides_tools_outside_playbill_profile(
 
     names = _run(exercise())
     assert "cruxible_playbill_list_claims" in names
-    assert "cruxible_playbill_authoring_compile" in names
+    assert "cruxible_playbill_set" in names
+    assert "cruxible_playbill_authoring_compile" not in names
     assert "cruxible_playbill_activate" in names
     assert "cruxible_playbill_propose_document" not in names
     assert "cruxible_playbill_block_declare" not in names

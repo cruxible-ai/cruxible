@@ -508,10 +508,12 @@ def test_a_claim_accepted_before_this_law_stays_retirable_and_revisable(
         claim_artifact_digest,
         render_claim,
     )
-    from cruxible_core.claims.claim_retirement import service_retire_claim
+    from tests.core_support._retirement_support import (
+        activate_submitted,
+        retirement_member,
+        submit_retirement,
+    )
     from tests.test_claims.test_claim_citations import _activate
-    from tests.test_claims.test_claim_retirement import _activate as _activate_retirement
-    from tests.test_claims.test_claim_retirement import _request as _retirement_request
 
     instance, owner = initialize_local(tmp_path)
     base = instance.accepted_coordinate()
@@ -619,14 +621,12 @@ def test_a_claim_accepted_before_this_law_stays_retirable_and_revisable(
     assert EVIDENCE_CODE in {item.code for item in refused.evaluation.diagnostics}
 
     # And the exit stays open: the retirement of the accepted Claim is admitted.
-    retirement = service_retire_claim(
-        instance,
-        claim_id=inside.identity.name,
-        request=_retirement_request(instance, mode="submit"),
-        actor=AuthenticatedActor(actor_id="owner"),
+    retirement = submit_retirement(instance, retirement_member(instance, inside.identity.name))
+    assert retirement.status.proposal_id is not None, retirement.intent.last_preflight
+    assert retirement.status.candidate_digest is not None
+    assert (
+        instance.proposal_evidence().read_evaluation(retirement.status.proposal_id).diagnostics
+        == ()
     )
-    assert retirement.proposal is not None
-    assert retirement.proposal.proposal.candidate is not None
-    assert retirement.proposal.proposal.evaluation.diagnostics == ()
-    _activate_retirement(instance, owner, retirement)
+    activate_submitted(instance, owner, retirement)
     instance.refresh()

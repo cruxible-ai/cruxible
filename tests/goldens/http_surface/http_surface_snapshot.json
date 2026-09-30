@@ -90,9 +90,6 @@
   "/api/v1/{instance_id}/playbill/claims/values": {
     "POST": "ClaimValuesResultV1"
   },
-  "/api/v1/{instance_id}/playbill/claims/{claim_id}/retire": {
-    "POST": "PlaybillClaimRetirePreflight | PlaybillClaimRetireResult"
-  },
   "/api/v1/{instance_id}/playbill/claims/{identity}": {
     "GET": "PlaybillClaimViewV2"
   },
@@ -297,8 +294,14 @@
   "/api/v1/{instance_id}/playbill/resolution-contracts/query": {
     "POST": "ResolutionContractsResultV1"
   },
+  "/api/v1/{instance_id}/playbill/retire": {
+    "POST": "WriteOutcome"
+  },
   "/api/v1/{instance_id}/playbill/search": {
     "POST": "PlaybillSearchResult"
+  },
+  "/api/v1/{instance_id}/playbill/set": {
+    "POST": "WriteOutcome"
   },
   "/api/v1/{instance_id}/playbill/since": {
     "POST": "PlaybillSinceResult"
@@ -332,6 +335,9 @@
   },
   "/api/v1/{instance_id}/playbill/workspace-registration": {
     "GET": "PlaybillHostWorkspaceRegistrationV1"
+  },
+  "/api/v1/{instance_id}/playbill/write": {
+    "POST": "WriteOutcome"
   },
   "/api/v1/{instance_id}/runtime/bootstrap/claim": {
     "POST": "RuntimeCredentialBootstrapResult"

@@ -8,7 +8,7 @@ import pytest
 
 from cruxible_client import Playbill
 from cruxible_client import contracts as api
-from cruxible_client.authoring.sdk_types import ClaimRef, SlotRef
+from cruxible_client.authoring.sdk_types import ClaimRef, ProcedureSlotRef
 from cruxible_client.contracts.claim_reads import ClaimReadBatchResultV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
@@ -153,7 +153,7 @@ def test_live_procedure_binding_rejects_mixed_coordinates_before_transport(conne
             bindings={"first": ClaimRef("CLM-old", old), "second": ClaimRef("CLM-new", new)}
         )
     with pytest.raises(ValueError, match="observed coordinate"):
-        procedure.bind(bindings={SlotRef("input", new): ClaimRef("CLM-old", old)})
+        procedure.bind(bindings={ProcedureSlotRef("input", new): ClaimRef("CLM-old", old)})
 
 
 def test_explicit_connect_skips_current_orientation(connection, monkeypatch, tmp_path):

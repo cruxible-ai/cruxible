@@ -38,6 +38,16 @@ from cruxible_client.contracts.provider_installation import (
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
+from cruxible_client.contracts.write import (
+    Change,
+    ClaimValue,
+    Evidence,
+    SlotRef,
+    WriteAccept,
+    WriteOutcome,
+    WriteRetireReason,
+    WriteRole,
+)
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_DEFAULT_MAX_BYTES,
@@ -568,18 +578,6 @@ def register_tools(
         return handlers.handle_playbill_get_claim_type(require_instance_id(instance_id), predicate)
 
     @_tool
-    def cruxible_playbill_claim_retire(
-        instance_id: InstanceId = None,
-        *,
-        claim_id: str,
-        request: dict[str, Any],
-    ) -> contracts.PlaybillClaimRetireResponse:
-        """Preflight or submit one attributed Claim retirement closure."""
-        return handlers.handle_playbill_retire_claim(
-            require_instance_id(instance_id), claim_id, request
-        )
-
-    @_tool
     def cruxible_playbill_claim_attest(
         instance_id: InstanceId = None,
         *,
@@ -881,6 +879,154 @@ def register_tools(
             evaluation_time=evaluation_time,
             limit=limit,
             cursor=cursor,
+        )
+
+    @_tool
+    def cruxible_playbill_set(
+        instance_id: InstanceId = None,
+        *,
+        subject: Annotated[str, Field(description="The Subject as kind/id.")],
+        field: Annotated[
+            str,
+            Field(description="A field of the Subject's kind, as orient names it."),
+        ],
+        value: Annotated[
+            ClaimValue,
+            Field(
+                description=(
+                    "The value: an enum member, text, number or boolean; a Subject as kind/id "
+                    "for a Subject-valued field; the text itself for exact content."
+                )
+            ),
+        ],
+        because: Annotated[str, Field(description="Why; also the default evidence.")],
+        evidence: Annotated[
+            Evidence | None,
+            Field(
+                description=(
+                    'Default {"kind": "self", "self": because}. Or {"kind": "capture", '
+                    '"capture": "sha256:…"}, or {"kind": "file", "file": "PATH#ANCHOR"}.'
+                )
+            ),
+        ] = None,
+        role: Annotated[
+            WriteRole | None,
+            Field(description="Only when the field permits more than one role."),
+        ] = None,
+        contend: Annotated[
+            bool,
+            Field(description="Contest the live value instead of replacing it."),
+        ] = False,
+        dry_run: Annotated[
+            bool, Field(description="Run every check up to the commit; write nothing.")
+        ] = False,
+        accept: Annotated[
+            WriteAccept,
+            Field(description="if_allowed: accept now when policy lets you; never: propose only."),
+        ] = "if_allowed",
+        at: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "The coordinate you read at (git oid or 12+ hex prefix); the set refuses "
+                    "if the field changed since. Default: current head."
+                )
+            ),
+        ] = None,
+    ) -> WriteOutcome:
+        """Put one value in one field of one Subject, replacing the live value."""
+        return handlers.handle_playbill_set(
+            require_instance_id(instance_id),
+            subject=subject,
+            field=field,
+            value=value,
+            because=because,
+            evidence=evidence,
+            role=role,
+            contend=contend,
+            dry_run=dry_run,
+            accept=accept,
+            at=at,
+        )
+
+    @_tool
+    def cruxible_playbill_retire(
+        instance_id: InstanceId = None,
+        *,
+        target: Annotated[
+            str | SlotRef,
+            Field(
+                description=(
+                    'A Claim ID (CLM-…), or {"subject": "kind/id", "field": "…"} for the '
+                    "one live value of a field."
+                )
+            ),
+        ],
+        because: Annotated[str, Field(description="Why it ends.")],
+        reason: Annotated[
+            WriteRetireReason,
+            Field(
+                description=("was-rescinded (withdrawn), was-wrong (it was false), or superseded.")
+            ),
+        ] = "was-rescinded",
+        dry_run: Annotated[
+            bool, Field(description="Run every check up to the commit; write nothing.")
+        ] = False,
+        accept: Annotated[
+            WriteAccept,
+            Field(description="if_allowed: accept now when policy lets you; never: propose only."),
+        ] = "if_allowed",
+        at: Annotated[
+            str | None,
+            Field(description="The coordinate you read at; default: current head."),
+        ] = None,
+    ) -> WriteOutcome:
+        """End one live Claim, and what depends on it, in one change set."""
+        return handlers.handle_playbill_retire(
+            require_instance_id(instance_id),
+            target=target,
+            because=because,
+            reason=reason,
+            dry_run=dry_run,
+            accept=accept,
+            at=at,
+        )
+
+    @_tool
+    def cruxible_playbill_write(
+        instance_id: InstanceId = None,
+        *,
+        changes: Annotated[
+            list[Change],
+            Field(
+                min_length=1,
+                description=(
+                    'Each {"op": "set"|"add", "subject", "field", "value"} or '
+                    '{"op": "retire", "target"}; add puts one more value in a many-valued field.'
+                ),
+            ),
+        ],
+        because: Annotated[str, Field(description="Why: the change set's rationale.")],
+        dry_run: Annotated[
+            bool, Field(description="Run every check up to the commit; write nothing.")
+        ] = False,
+        accept: Annotated[
+            WriteAccept,
+            Field(description="if_allowed: accept now when policy lets you; never: propose only."),
+        ] = "if_allowed",
+        at: Annotated[
+            str | None,
+            Field(description="The coordinate you read at; default: current head."),
+        ] = None,
+    ) -> WriteOutcome:
+        """Apply set, add and retire changes together as one change set."""
+        return handlers.handle_playbill_write(
+            require_instance_id(instance_id),
+            changes=changes,
+            because=because,
+            dry_run=dry_run,
+            accept=accept,
+            at=at,
         )
 
     @_tool

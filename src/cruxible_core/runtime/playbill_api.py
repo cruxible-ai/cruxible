@@ -20,9 +20,9 @@ from cruxible_client import contracts
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
 from cruxible_client.contracts.authoring.models import (
+    AuthoringExpectationV1,
     AuthoringPayloadV1,
     AuthoringProgramStampV1,
-    AuthoringReferenceExpectationV1,
     ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
     ClaimAuthoringPayloadV3,
@@ -45,7 +45,7 @@ from cruxible_client.contracts.claim_reads import (
     ClaimValuesResultV1,
 )
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.claims import ClaimRetireRequestV1, claim_path
+from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
 from cruxible_client.contracts.discovery import (
     DiscoveryBudgetV1,
@@ -105,11 +105,14 @@ from cruxible_client.contracts.types import (
     OperatingProfile,
     PrincipalRecord,
 )
-from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.claims.claim_retirement import (
-    ClaimRetireResponse,
-    service_retire_claim,
+from cruxible_client.contracts.write import (
+    PlaybillRetireRequestV1,
+    PlaybillSetRequestV1,
+    PlaybillWriteRequestV1,
+    WriteOutcome,
+    as_write_request,
 )
+from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1, lint_claim_type_input
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeMigrationRequest,
@@ -154,6 +157,7 @@ from cruxible_core.runtime.execution_policy import (
     enforce_customer_code_execution_supported,
 )
 from cruxible_core.runtime.permissions import (
+    PERMISSION_REQUIREMENTS,
     PermissionMode,
     check_permission,
     current_request_instance_scope,
@@ -184,6 +188,7 @@ from cruxible_core.service.authoring.documents import (
 from cruxible_core.service.authoring.projection_sync import (
     service_read_playbill_block_sync_backing,
 )
+from cruxible_core.service.authoring.write_verbs import WriteCaller, service_playbill_write
 from cruxible_core.service.claims.claim_reads import (
     service_read_claim_backings,
     service_read_claim_batch,
@@ -349,9 +354,6 @@ def _curation_validation_boundary(
 
 _CLAIM_TYPE_MIGRATION_RESPONSE: TypeAdapter[contracts.PlaybillClaimTypeMigrationResponse] = (
     TypeAdapter(contracts.PlaybillClaimTypeMigrationResponse)
-)
-_CLAIM_RETIRE_RESPONSE: TypeAdapter[contracts.PlaybillClaimRetireResponse] = TypeAdapter(
-    contracts.PlaybillClaimRetireResponse
 )
 
 
@@ -1332,20 +1334,44 @@ def playbill_get_claim_type(
     return contracts.PlaybillClaimTypeView.model_validate(result.model_dump(mode="json"))
 
 
-def playbill_retire_claim(
-    instance_id: str,
-    claim_id: str,
-    *,
-    request: ClaimRetireRequestV1,
-) -> contracts.PlaybillClaimRetireResponse:
-    check_permission("cruxible_playbill_claim_retire", instance_id=instance_id)
-    result: ClaimRetireResponse = service_retire_claim(
-        get_playbill_manager().get(instance_id),
-        claim_id=claim_id,
-        request=request,
+def _permits(tool_name: str, *, instance_id: str) -> bool:
+    """Whether the caller's tier and credential scope admit ``tool_name``, without refusing."""
+
+    if get_current_mode() < PERMISSION_REQUIREMENTS[tool_name]:
+        return False
+    scope = current_request_instance_scope()
+    return scope is None or scope == instance_id
+
+
+def _write_outcome(instance_id: str, request: PlaybillWriteRequestV1) -> WriteOutcome:
+    caller = WriteCaller(
         actor=AuthenticatedActor(actor_id=_actor_id()),
+        may_activate=_permits("cruxible_playbill_activate", instance_id=instance_id),
     )
-    return _CLAIM_RETIRE_RESPONSE.validate_python(result.model_dump(mode="json"))
+    return service_playbill_write(
+        get_playbill_manager().get(instance_id), request=request, caller=caller
+    )
+
+
+def playbill_set(instance_id: str, *, request: PlaybillSetRequestV1) -> WriteOutcome:
+    """Put one value in one field of one Subject; see ``service_playbill_write``."""
+
+    check_permission("cruxible_playbill_set", instance_id=instance_id)
+    return _write_outcome(instance_id, as_write_request(request))
+
+
+def playbill_retire(instance_id: str, *, request: PlaybillRetireRequestV1) -> WriteOutcome:
+    """End one live Claim, by ID or by its Subject and field."""
+
+    check_permission("cruxible_playbill_retire", instance_id=instance_id)
+    return _write_outcome(instance_id, as_write_request(request))
+
+
+def playbill_write(instance_id: str, *, request: PlaybillWriteRequestV1) -> WriteOutcome:
+    """Apply a batch of set, add and retire changes as one change set."""
+
+    check_permission("cruxible_playbill_write", instance_id=instance_id)
+    return _write_outcome(instance_id, request)
 
 
 def playbill_append_claim_attestation(
@@ -1380,7 +1406,7 @@ def playbill_authoring_create(
     instance_id: str,
     *,
     payload: AuthoringPayloadV1,
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+    reference_expectations: tuple[AuthoringExpectationV1, ...] | None = None,
     program_stamp: AuthoringProgramStampV1 | None = None,
 ) -> contracts.PlaybillAuthoringIntentView:
     check_permission("cruxible_playbill_authoring_create", instance_id=instance_id)
@@ -1549,7 +1575,7 @@ def playbill_authoring_compile(
     *,
     payload: AuthoringPayloadV1,
     intent_id: str | None = None,
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+    reference_expectations: tuple[AuthoringExpectationV1, ...] | None = None,
     program_stamp: AuthoringProgramStampV1 | None = None,
 ) -> contracts.PlaybillAuthoringPreflightResult:
     check_permission("cruxible_playbill_authoring_compile", instance_id=instance_id)
@@ -1569,7 +1595,7 @@ def playbill_authoring_compile_and_submit(
     instance_id: str,
     *,
     payload: AuthoringPayloadV1,
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...],
+    reference_expectations: tuple[AuthoringExpectationV1, ...],
     program_stamp: AuthoringProgramStampV1,
     intent_id: str | None = None,
 ) -> contracts.PlaybillAuthoringSubmitResult:

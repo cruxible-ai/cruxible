@@ -161,7 +161,12 @@ class CaptureView:
 
 
 @dataclass(frozen=True)
-class SlotRef:
+class ProcedureSlotRef:
+    """One input slot of a Procedure, as ``Procedure.bind`` names it.
+
+    Not a Claim slot: a Subject's field is ``cruxible_client.contracts.write.SlotRef``.
+    """
+
     address: str
     coordinate: AcceptedCoordinate
     kind: ClassVar[RefKind] = RefKind.SLOT
@@ -531,7 +536,7 @@ __all__ = [
     "CaptureView",
     "ReferenceKindError",
     "ReferentSensitivity",
-    "SlotRef",
+    "ProcedureSlotRef",
     "SourceMapEntry",
     "SourceRef",
     "SourceSelectionError",

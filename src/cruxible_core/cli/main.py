@@ -50,7 +50,9 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "claim-type", "migrate"): "active",
     ("playbill", "claim-type", "upgrade-evidence-rules"): "active",
     ("playbill", "block", "depublish"): "active",
-    ("playbill", "claim", "retire"): "active",
+    ("playbill", "set"): "active",
+    ("playbill", "retire"): "active",
+    ("playbill", "write"): "active",
     ("playbill", "claim", "attest"): "active",
     ("playbill", "predict"): "active",
     ("playbill", "settle"): "active",
@@ -148,6 +150,8 @@ def handle_errors(f: Any) -> Any:
                 command_path = _command_path(ctx)
                 target_mode = MUTATING_COMMAND_TARGETS.get(command_path)
                 if command_path == ("playbill", "claim-type", "propose") and kwargs.get("template"):
+                    target_mode = None
+                if command_path == ("playbill", "write") and kwargs.get("schema"):
                     target_mode = None
                 if target_mode is not None and target_mode != "manual":
                     # Runtime import avoids the main <-> commands import cycle.
@@ -577,11 +581,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "attest_claim",
                         "Sign that this caller examined the current exact Claim.",
                     ),
-                    "retire": _command(
-                        "playbill",
-                        "retire_claim",
-                        "Preflight or submit attributed Claim retirement.",
-                    ),
                     "list": _command("playbill", "list_claims", "List accepted Claims."),
                     "values": _command(
                         "playbill",
@@ -795,6 +794,15 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             ),
             "get": _command(
                 "playbill", "get_by_ref", "Read one governed thing by reference, values first."
+            ),
+            "set": _command(
+                "playbill", "set_value", "Set one field of one Subject, replacing its value."
+            ),
+            "retire": _command(
+                "playbill", "retire", "Retire one live Claim, by ID or by Subject and field."
+            ),
+            "write": _command(
+                "playbill", "write_changes", "Apply set, add and retire changes as one change set."
             ),
             "search": _command("playbill", "search", "Search accepted Claims and Procedures."),
             "since": _command("playbill", "since", "Read accepted ChangeSet history."),

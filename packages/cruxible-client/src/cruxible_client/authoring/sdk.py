@@ -7,13 +7,12 @@ import json
 import os
 import re
 import time
-from collections import OrderedDict
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 from pydantic import SecretStr, TypeAdapter
 
@@ -61,11 +60,11 @@ from cruxible_client.authoring.sdk_types import (
     PendingClaimTypeRef,
     PendingSubjectRef,
     ProcedureRef,
+    ProcedureSlotRef,
     QueryRef,
     ReferenceKindError,
     ReferentSensitivity,
     RefKind,
-    SlotRef,
     SourceMapEntry,
     SourceRef,
     SubjectRef,
@@ -89,6 +88,7 @@ from cruxible_client.authoring.workspace import (
     observe_playbill_next_workspace_with_coverage,
     refresh_workspace_floor,
 )
+from cruxible_client.authoring.write_evidence import observe_changes
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyV1,
 )
@@ -140,9 +140,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
-    Sha256Value,
     normalize_canonical,
-    typed_digest,
 )
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
 from cruxible_client.contracts.captures import (
@@ -170,7 +168,6 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactV3,
     ClaimRetireDependentV1,
     ClaimRetirementReason,
-    ClaimRetireRequestV1,
     ClaimUnsupportedFormatError,
     LiteralClaimObject,
     SubjectClaimObject,
@@ -184,6 +181,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV2,
     ProjectionCurrencyPolicy,
 )
+from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.get_reads import (
     PlaybillByteRangeV1,
     PlaybillExactContentRefV1,
@@ -231,6 +229,22 @@ from cruxible_client.contracts.resolution_contracts import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
+from cruxible_client.contracts.write import (
+    AddChange,
+    Change,
+    ClaimValue,
+    Evidence,
+    PlaybillRetireRequestV1,
+    PlaybillSetRequestV1,
+    PlaybillWriteRequestV1,
+    RetireChange,
+    SetChange,
+    SlotRef,
+    WriteAccept,
+    WriteOutcome,
+    WriteRetireReason,
+    WriteRole,
+)
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 
@@ -247,9 +261,6 @@ _SUBJECT_RE = re.compile(
 # Anything outside the set is skew, not caller error; see _claim_type_object_kind.
 _CLAIM_TYPE_OBJECT_KINDS = frozenset({"literal", "subject", "exact_content"})
 _CLAIM_ADAPTER: TypeAdapter[ClaimArtifactAny] = TypeAdapter(ClaimArtifactAny)
-_RETIRE_CLOSURE_MISMATCH_CODE = "playbill.claim.retire_closure_mismatch"
-_CLAIM_RETIRE_OPERATION_DOMAIN = "playbill-claim-retire-operation-v1"
-_RETIREMENT_SUBMISSION_CACHE_LIMIT = 128
 
 
 def _coordinate(value: api.PlaybillAcceptedCoordinate | Mapping[str, object]) -> AcceptedCoordinate:
@@ -1077,18 +1088,18 @@ class ChangeSetDraft:
     ) -> ChangeSetDraft:
         """Retire one accepted Claim, and its live closure, inside this changeset.
 
-        Takes exactly what `Playbill.retire_claim` takes: the SDK's own rows
-        and refs spell a Claim identity `Claim:CLM-...`, so a builder that
-        refused the prefix made one library disagree with itself. The member
-        carries the one canonical bare spelling, which is what keeps two
-        spellings of one retirement on one member identity and one digest.
+        Takes a Claim ID in either spelling the SDK's rows and refs use
+        (`CLM-...` or `Claim:CLM-...`). The member carries the one canonical bare
+        spelling as `retires`, which is what keeps two spellings of one
+        retirement on one member identity and one digest. `Playbill.retire` is
+        the typed write verb for the common case: it computes the closure.
         """
 
         address = _address(claim, RefKind.CLAIM).removeprefix("Claim:")
         self._members.append(
             _ChangeSetMember(
                 payload=ClaimRetirementMemberV1(
-                    claim_ref=address,
+                    retires=address,
                     reason=reason,
                     effective_until=effective_until,
                     dependents=tuple(dependents),
@@ -1206,6 +1217,136 @@ class ChangeSetDraft:
         )
 
 
+class _Unset(Enum):
+    TOKEN = "unset"
+
+
+_UNSET = _Unset.TOKEN
+WriteAt = AcceptedCoordinate | api.PlaybillAcceptedCoordinate | str | None
+
+
+def _write_subject(subject: str | SubjectRef) -> str:
+    return subject.address if isinstance(subject, SubjectRef) else subject
+
+
+def _write_field(field_name: str | ClaimTypeRef) -> str:
+    return field_name.address if isinstance(field_name, ClaimTypeRef) else field_name
+
+
+def _write_value(value: ClaimValue | SubjectRef | LiteralValue) -> ClaimValue:
+    if isinstance(value, SubjectRef):
+        return value.address
+    if isinstance(value, LiteralValue):
+        if not isinstance(value.value, bool | int | float | str):
+            raise ValueError("the write verbs take a scalar value; this literal is structured")
+        return value.value
+    return value
+
+
+def _write_target(target: str | ClaimRef | SlotRef) -> str | SlotRef:
+    if isinstance(target, ClaimRef):
+        return target.address
+    return target
+
+
+class WriteBatch:
+    """Changes that are written together, as one change set: ``pb.changes(because=...)``.
+
+    ``set`` replaces a single-value field, ``add`` puts one more value in a
+    many-valued field, and ``retire`` ends one live Claim; ``write()`` sends them
+    all and returns the outcome, raising ``WriteRefusalError`` on a refusal.
+    """
+
+    def __init__(self, playbill: Playbill, *, because: str) -> None:
+        self._playbill = playbill
+        self.because = because
+        self.changes: list[Change] = []
+
+    def set(
+        self,
+        subject: str | SubjectRef,
+        field: str | ClaimTypeRef,
+        value: ClaimValue | SubjectRef | LiteralValue,
+        *,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+    ) -> WriteBatch:
+        self.changes.append(
+            SetChange(
+                subject=_write_subject(subject),
+                field=_write_field(field),
+                value=_write_value(value),
+                evidence=evidence,
+                role=role,
+                contend=contend,
+            )
+        )
+        return self
+
+    def add(
+        self,
+        subject: str | SubjectRef,
+        field: str | ClaimTypeRef,
+        value: ClaimValue | SubjectRef | LiteralValue,
+        *,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+    ) -> WriteBatch:
+        self.changes.append(
+            AddChange(
+                subject=_write_subject(subject),
+                field=_write_field(field),
+                value=_write_value(value),
+                evidence=evidence,
+                role=role,
+            )
+        )
+        return self
+
+    def retire(
+        self,
+        target: str | ClaimRef | SlotRef,
+        *,
+        because: str | None = None,
+        reason: WriteRetireReason = "was-rescinded",
+    ) -> WriteBatch:
+        self.changes.append(
+            RetireChange(target=_write_target(target), because=because, reason=reason)
+        )
+        return self
+
+    def write(
+        self,
+        *,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        if not self.changes:
+            raise ValueError("a write needs at least one change")
+        return self._playbill._write(
+            PlaybillWriteRequestV1(
+                because=self.because,
+                changes=tuple(self.changes),
+                dry_run=dry_run,
+                accept=accept,
+                at=self._playbill._write_at(at),
+                surface="sdk",
+                full_coordinate=True,
+            )
+        )
+
+    def __repr__(self) -> str:
+        spelled = ", ".join(
+            f"{item.op} {getattr(item, 'subject', '')} {getattr(item, 'field', '')}".strip()
+            if not isinstance(item, RetireChange)
+            else f"retire {item.target}"
+            for item in self.changes
+        )
+        return f"WriteBatch(because={self.because!r}, changes=[{spelled}])"
+
+
 @dataclass(frozen=True)
 class SubjectDraft(_IntentDraft):
     shell: SubjectShell
@@ -1245,6 +1386,11 @@ class Intent:
             playbill._instance_id, intent_id
         ).intent
         return cls(playbill, draft, raw, preflight=result)
+
+    def __repr__(self) -> str:
+        status = self._candidate_status
+        state = "unknown" if status is None else status.state
+        return f"Intent({self._raw.get('intent_id')!r}, state={state!r})"
 
     @property
     def intent_id(self) -> str:
@@ -1420,27 +1566,6 @@ class Intent:
         )
 
 
-def _all_proposals(
-    client: CruxibleClient,
-    instance_id: str,
-    *,
-    status: Literal["open", "settled", "incomplete"] | None = None,
-) -> Iterator[api.PlaybillProposalListEntry]:
-    """Every listed proposal, following the list's pages at one pinned coordinate."""
-    cursor: str | None = None
-    while True:
-        page = client.list_playbill_proposals(
-            instance_id,
-            status=status,
-            limit=api.PLAYBILL_PROPOSAL_LIST_MAX_LIMIT,
-            cursor=cursor,
-        )
-        yield from page.entries
-        if page.next_cursor is None:
-            return
-        cursor = page.next_cursor
-
-
 class Proposal:
     def __init__(
         self,
@@ -1467,6 +1592,13 @@ class Proposal:
     def review(self) -> ReviewedProposal:
         """Fetch an immutable full review; inspect its details before approving."""
         return review_proposal(self._playbill, self.proposal_id)
+
+    def accept(self) -> api.PlaybillActivationReceipt:
+        """Accept this proposal once its approvals are in: ``Playbill.accept`` by handle."""
+        return self._playbill.accept(self.proposal_id)
+
+    def __repr__(self) -> str:
+        return f"Proposal({self.proposal_id!r})"
 
     def approve(
         self, *, signer: ApprovalSigner, reviewed: ReviewedProposal
@@ -1575,9 +1707,6 @@ class Playbill:
         self._coordinate: AcceptedCoordinate | None = None
         self._pinned = False
         self._owns_client = True
-        self._retirement_submissions: OrderedDict[str, tuple[ClaimRetireRequestV1, str]] = (
-            OrderedDict()
-        )
         # An accepted ClaimType at an exact coordinate never changes, so one read
         # answers every Claim this connection drafts under that predicate there.
         self._claim_type_envelopes: dict[tuple[str, str], Mapping[str, object]] = {}
@@ -2248,8 +2377,20 @@ class Playbill:
             claim_type_envelopes=tuple(view.envelope for view in listing.claim_types),
         )
 
-    def changes(self, *, rationale: str | None = None) -> ChangeSetDraft:
+    @overload
+    def changes(self, *, because: str) -> WriteBatch: ...
+
+    @overload
+    def changes(self, *, rationale: str | None = None) -> ChangeSetDraft: ...
+
+    def changes(
+        self, *, rationale: str | None = None, because: str | None = None
+    ) -> ChangeSetDraft | WriteBatch:
         """Open one changeset that any mix of members can be authored into.
+
+        ``changes(because=...)`` opens the typed write batch instead:
+        ``.set(...)``, ``.add(...)`` and ``.retire(...)`` changes, sent together by
+        ``.write()``. ``changes(rationale=...)`` is the full authoring changeset.
 
         `pb.claim(...)` still authors exactly one Claim. This is the same
         authoring surface for an intent that carries more than one: it lowers
@@ -2258,7 +2399,124 @@ class Playbill:
         current daemon admission still checks whether its inputs are stale.
         """
 
+        if because is not None:
+            if rationale is not None:
+                raise ValueError(
+                    "pass because (a write batch) or rationale (a changeset), not both"
+                )
+            return WriteBatch(self, because=because)
         return ChangeSetDraft(self.at(self.coordinate), rationale)
+
+    # -- the write verbs -------------------------------------------------------
+
+    def _write_at(self, at: WriteAt | _Unset) -> api.PlaybillAcceptedCoordinate | str | None:
+        """The read coordinate a write names: by default this context's own."""
+
+        if isinstance(at, _Unset):
+            return None if self._coordinate is None else _api_coordinate(self.coordinate)
+        if at is None or isinstance(at, str):
+            return at
+        return api.PlaybillAcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+
+    def _write(self, request: PlaybillWriteRequestV1) -> WriteOutcome:
+        """Send one write and answer its outcome, or raise its refusal."""
+
+        request = request.model_copy(
+            update={"changes": observe_changes(request.changes, workspace=self._workspace)}
+        )
+        outcome = self._client.playbill_write(self._instance_id, request=request)
+        return self._written(outcome)
+
+    def _written(self, outcome: WriteOutcome) -> WriteOutcome:
+        pinned = outcome.accepted_coordinate
+        if outcome.status == "accepted" and pinned is not None:
+            self._observe_read(_coordinate(pinned), expected=None)
+        if not outcome.refused:
+            return outcome
+        refusal = outcome.refusal
+        if refusal is not None and refusal.code == "playbill.write.slot_changed" and pinned:
+            # The refusal showed the value the slot holds now; setting again
+            # replaces that value, which is its repair.
+            self._observe_read(_coordinate(pinned), expected=None)
+        raise WriteRefusalError(
+            "playbill.write.refused" if refusal is None else refusal.code,
+            "the write refused" if refusal is None else refusal.message,
+            change=None if refusal is None else refusal.change,
+            candidates=() if refusal is None else refusal.candidates,
+            repair_line=None if refusal is None else refusal.repair,
+            field_path=None if refusal is None else refusal.field_path,
+            outcome=outcome,
+        )
+
+    def set(
+        self,
+        subject: str | SubjectRef,
+        field: str | ClaimTypeRef,
+        value: ClaimValue | SubjectRef | LiteralValue,
+        *,
+        because: str,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        """Put one value in one field of one Subject, replacing the live value.
+
+        The Claim it replaces is found for you, and a missing Subject of a known
+        kind is added. It accepts in the same call when policy lets you
+        (``accept="never"`` only proposes); ``dry_run`` checks everything and
+        writes nothing. By default it refuses when the field changed since this
+        context's coordinate. A refusal raises ``WriteRefusalError``; check
+        ``outcome.warnings`` for a verdict that is not supported.
+        """
+
+        request = PlaybillSetRequestV1(
+            subject=_write_subject(subject),
+            field=_write_field(field),
+            value=_write_value(value),
+            because=because,
+            evidence=evidence,
+            role=role,
+            contend=contend,
+            dry_run=dry_run,
+            accept=accept,
+            at=self._write_at(at),
+            surface="sdk",
+            full_coordinate=True,
+        )
+        if request.evidence is not None:
+            (change,) = observe_changes((request.change(),), workspace=self._workspace)
+            request = request.model_copy(update={"evidence": cast(SetChange, change).evidence})
+        return self._written(self._client.playbill_set(self._instance_id, request=request))
+
+    def retire(
+        self,
+        target: str | ClaimRef | SlotRef,
+        *,
+        because: str,
+        reason: WriteRetireReason = "was-rescinded",
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        """End one live Claim, named by ID or ``SlotRef(subject=..., field=...)``.
+
+        Claims that depend on it retire with it, in one change set.
+        """
+
+        request = PlaybillRetireRequestV1(
+            target=_write_target(target),
+            because=because,
+            reason=reason,
+            dry_run=dry_run,
+            accept=accept,
+            at=self._write_at(at),
+            surface="sdk",
+            full_coordinate=True,
+        )
+        return self._written(self._client.playbill_retire(self._instance_id, request=request))
 
     def claim(
         self,
@@ -2713,164 +2971,6 @@ class Playbill:
             # instead of the SDK raising an untyped, repair-less ValueError.
             return "literal"
         return cast(Literal["literal", "subject", "exact_content"], object_kind)
-
-    def retire_claim(
-        self,
-        claim: str | ClaimRef,
-        *,
-        reason: ClaimRetirementReason,
-        mode: Literal["preflight", "submit"] = "preflight",
-        effective_until: datetime | None = None,
-        dependents: Sequence[ClaimRetireDependentV1] = (),
-    ) -> api.PlaybillClaimRetireResponse:
-        """Preflight or submit one attributed, dependency-closed Claim retirement."""
-
-        claim_address = _address(claim, RefKind.CLAIM)
-        coordinate = claim.coordinate if isinstance(claim, ClaimRef) else self.coordinate
-        request = ClaimRetireRequestV1(
-            mode=mode,
-            claim_ref=claim_address,
-            reason=reason,
-            effective_until=effective_until,
-            expected_coordinate=coordinate,
-            dependents=tuple(dependents),
-        )
-        claim_id = claim_address.removeprefix("Claim:")
-        try:
-            result = self._client.retire_playbill_claim(
-                self._instance_id,
-                claim_id,
-                request=request.model_dump(mode="json"),
-            )
-        except CoreError as original:
-            if (
-                isinstance(claim, ClaimRef)
-                or mode != "submit"
-                or getattr(original, "error_code", None) != _RETIRE_CLOSURE_MISMATCH_CODE
-            ):
-                raise
-            try:
-                history = self._client.playbill_claim_history(self._instance_id, claim_id)
-                cached = self._retirement_submissions.get(claim_id)
-                if cached is None:
-                    submitted_request, submitted_operation_digest = (
-                        self._retirement_submission_from_history(
-                            claim_id=claim_id,
-                            request=request,
-                            entries=history.entries,
-                        )
-                    )
-                else:
-                    self._retirement_submissions.move_to_end(claim_id)
-                    submitted_request, submitted_operation_digest = cached
-                replay_request = request.model_copy(
-                    update={"expected_coordinate": submitted_request.expected_coordinate}
-                )
-                if replay_request != submitted_request:
-                    raise ValueError("retirement request differs from submitted operation")
-                replayed = self._client.retire_playbill_claim(
-                    self._instance_id,
-                    claim_id,
-                    request=replay_request.model_dump(mode="json"),
-                )
-            except (CoreError, KeyError, TypeError, ValueError):
-                raise original from None
-            if (
-                getattr(replayed, "outcome", None) != "already_retired"
-                or replayed.operation_digest != submitted_operation_digest
-            ):
-                raise original
-            self._retirement_submissions.pop(claim_id, None)
-            return replayed
-        if mode == "submit" and getattr(result, "outcome", None) == "proposed":
-            self._retirement_submissions[claim_id] = (request, result.operation_digest)
-            self._retirement_submissions.move_to_end(claim_id)
-            while len(self._retirement_submissions) > _RETIREMENT_SUBMISSION_CACHE_LIMIT:
-                self._retirement_submissions.popitem(last=False)
-        return result
-
-    def _retirement_submission_from_history(
-        self,
-        *,
-        claim_id: str,
-        request: ClaimRetireRequestV1,
-        entries: Sequence[Mapping[str, Any]],
-    ) -> tuple[ClaimRetireRequestV1, str]:
-        """Recover one accepted retirement's original request coordinate and digest."""
-
-        retirement = next(
-            (entry for entry in entries if entry.get("lifecycle_state") == "retired"),
-            None,
-        )
-        if retirement is None:
-            raise ValueError("accepted Claim history has no retirement")
-        candidate_digest = retirement.get("candidate_digest")
-        predecessor_digest = retirement.get("predecessor_digest")
-        if not isinstance(candidate_digest, str) or not isinstance(predecessor_digest, str):
-            raise ValueError("accepted retirement history lacks candidate evidence")
-
-        matches = tuple(
-            entry
-            for entry in _all_proposals(self._client, self._instance_id, status="settled")
-            if entry.candidate_digest == candidate_digest and entry.terminal_reason == "accepted"
-        )
-        if len(matches) != 1:
-            raise ValueError("accepted retirement candidate does not name one proposal")
-        inspection = self._client.inspect_playbill_proposal(
-            self._instance_id, matches[0].proposal_id
-        )
-        proposal = inspection.proposal
-        admission = proposal.get("admission")
-        candidate = proposal.get("candidate")
-        if not isinstance(admission, Mapping) or not isinstance(candidate, Mapping):
-            raise ValueError("accepted retirement proposal evidence is incomplete")
-        if candidate.get("candidate_digest") != candidate_digest:
-            raise ValueError("accepted retirement proposal candidate differs from history")
-
-        law_evidence = candidate.get("law_evidence")
-        if not isinstance(law_evidence, list) or not law_evidence:
-            raise ValueError("accepted retirement candidate lacks law coordinates")
-        coordinates = {
-            json.dumps(item.get("evaluation_coordinate"), sort_keys=True, separators=(",", ":"))
-            for item in law_evidence
-            if isinstance(item, Mapping) and isinstance(item.get("evaluation_coordinate"), Mapping)
-        }
-        if len(coordinates) != 1:
-            raise ValueError("accepted retirement candidate mixes law coordinates")
-        coordinate_payload = json.loads(next(iter(coordinates)))
-        coordinate_payload["tag"] = "playbill-accepted-coordinate-v1"
-        coordinate = AcceptedCoordinate.model_validate(coordinate_payload)
-        if admission.get("proposed_base_oid") != coordinate.git_oid:
-            raise ValueError("accepted retirement proposal base differs from its law coordinate")
-
-        actor_id = admission.get("actor_id")
-        target_ref = admission.get("target_ref")
-        if not isinstance(actor_id, str) or not isinstance(target_ref, str):
-            raise ValueError("accepted retirement proposal lacks operation attribution")
-        target_prefix = f"refs/proposals/{actor_id}/claim-retire-"
-        if not target_ref.startswith(target_prefix):
-            raise ValueError("accepted retirement proposal has another operation family")
-        operation_digest = "sha256:" + target_ref.removeprefix(target_prefix)
-        Sha256Value.from_tagged(operation_digest)
-        root = ClaimRetireDependentV1(
-            artifact_identity=ArtifactIdentity(kind="Claim", name=claim_id),
-            predecessor_digest=predecessor_digest,
-            reason=request.reason,
-            effective_until=request.effective_until,
-        )
-        reproduced = typed_digest(
-            Sha256Value,
-            _CLAIM_RETIRE_OPERATION_DOMAIN,
-            {
-                "actor_principal_id": actor_id,
-                "expected_accepted_coordinate": coordinate.model_dump(mode="json"),
-                "root": root.model_dump(mode="json"),
-                "dependents": [item.model_dump(mode="json") for item in request.dependents],
-            },
-        ).tagged
-        if reproduced != operation_digest:
-            raise ValueError("retirement request differs from accepted operation")
-        return request.model_copy(update={"expected_coordinate": coordinate}), operation_digest
 
     def query_definition(
         self,
@@ -3961,7 +4061,7 @@ class Procedure:
         return result
 
     def bind(
-        self, *, bindings: Mapping[str | SlotRef, TypedRef]
+        self, *, bindings: Mapping[str | ProcedureSlotRef, TypedRef]
     ) -> api.PlaybillProcedureBindResult:
         # Binding is a current-state write with the existing daemon admission
         # contract, not a snapshot read. Preserve its observed-reference guard.
@@ -3970,9 +4070,9 @@ class Procedure:
         rows: list[dict[str, object]] = []
         for key, value in bindings.items():
             slot = key if isinstance(key, str) else _address(key, RefKind.SLOT)
-            if isinstance(key, SlotRef) and key.coordinate != coordinate:
+            if isinstance(key, ProcedureSlotRef) and key.coordinate != coordinate:
                 raise ValueError("procedure binding references must match its observed coordinate")
-            if isinstance(value, SlotRef):
+            if isinstance(value, ProcedureSlotRef):
                 raise ReferenceKindError("a slot cannot be bound to another slot")
             if value.coordinate != coordinate:
                 raise ValueError("procedure binding references must match its observed coordinate")

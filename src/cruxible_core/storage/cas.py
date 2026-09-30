@@ -8,8 +8,11 @@ import stat
 import threading
 import weakref
 from collections import OrderedDict
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from cruxible_client.contracts.canonical import CasDigest
 from cruxible_client.contracts.cas_contracts import (
@@ -351,9 +354,94 @@ class ContentAddressedBodyStore:
         return True
 
 
+# -- dry runs ---------------------------------------------------------------------
+
+_DRY_RUN_BODIES: ContextVar[dict[str, bytes] | None] = ContextVar(
+    "cruxible_cas_dry_run_bodies", default=None
+)
+
+
+@contextmanager
+def dry_run_bodies() -> Iterator[dict[str, bytes]]:
+    """Hold every body stored in this context in memory, so a dry run writes nothing.
+
+    A dry run takes the same path as the write it previews up to the commit, and
+    that path stores bodies as it lowers (a self-source capture, exact content).
+    Inside this context the instance's body store is a ``DryRunBodyStore``: the
+    bodies it stores are held here and read back from here, and nothing reaches
+    the store on disk. The context is per call (a context variable), so a
+    concurrent write in another request is unaffected.
+    """
+
+    held: dict[str, bytes] = {}
+    token = _DRY_RUN_BODIES.set(held)
+    try:
+        yield held
+    finally:
+        _DRY_RUN_BODIES.reset(token)
+
+
+def dry_run_held_bodies() -> dict[str, bytes] | None:
+    """The bodies the current dry run holds, or None outside a dry run."""
+
+    return _DRY_RUN_BODIES.get()
+
+
+class DryRunBodyStore:
+    """A body store that reads through to ``base`` and holds new bodies in memory."""
+
+    def __init__(self, base: ContentAddressedBodyStore, held: dict[str, bytes]) -> None:
+        self._base = base
+        self._held = held
+
+    digest_bytes = staticmethod(ContentAddressedBodyStore.digest_bytes)
+
+    def store(self, content: bytes) -> CasObjectMetadata:
+        digest = self.digest_bytes(content).tagged
+        if not self._base.verify(digest):
+            self._held[digest] = bytes(content)
+        return CasObjectMetadata(
+            digest=digest, present=True, byte_length=len(content), redacted=False
+        )
+
+    def verify(self, digest: str) -> bool:
+        return digest in self._held or self._base.verify(digest)
+
+    def availability(self, digest: str) -> Literal["present", "missing", "corrupt"]:
+        return "present" if digest in self._held else self._base.availability(digest)
+
+    def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
+        held = self._held.get(digest)
+        if held is None:
+            return self._base.read(digest, access=access)
+        if not access.can_read_body:
+            raise PlaybillCasError("body access is denied")
+        return held
+
+    def metadata(self, digest: str, *, access: BodyAccessContext) -> CasObjectMetadata:
+        held = self._held.get(digest)
+        if held is None:
+            return self._base.metadata(digest, access=access)
+        return CasObjectMetadata(
+            digest=digest,
+            present=True,
+            byte_length=len(held) if access.can_read_body else None,
+            redacted=not access.can_read_body,
+        )
+
+    def erase(self, digest: str) -> bool:
+        raise PlaybillCasError("a dry run erases nothing")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._base, name)
+
+
 __all__ = [
     "BodyAccessContext",
     "BodyProjectionProtocol",
     "CasObjectMetadata",
     "ContentAddressedBodyStore",
+    "DryRunBodyStore",
+    "dry_run_bodies",
+    "dry_run_held_bodies",
 ]

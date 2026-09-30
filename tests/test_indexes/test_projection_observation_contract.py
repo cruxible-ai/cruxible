@@ -126,6 +126,10 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "playbill.authoring.create",
         "playbill.authoring.bind",
         "playbill.claim.retire",
+        # The write verbs: a row that asks for a Claim stated again, or a
+        # contest resolved, names the default-profile door that does it.
+        "playbill.set",
+        "playbill.write",
         "playbill.floor.export",
         # A row that names a change a verb performs must name the verb. Two
         # projection rows used to answer `hand_edit` with "depublish this

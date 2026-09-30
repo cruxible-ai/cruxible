@@ -4462,6 +4462,15 @@ class ProposalHeadMovedError(ProposalAdmissionError):
     """
 
 
+class ProposalCandidateMismatchError(ProposalAdmissionError):
+    """The candidate a submission evaluated is not the one its caller bound it to.
+
+    Raised after evaluation and before publication, so nothing reaches the
+    ledger: a caller that preflighted a candidate at one coordinate never has
+    a different candidate published in its name.
+    """
+
+
 def _require_executed_derivations(
     outcome: CandidateEvaluation,
     *,
@@ -4576,6 +4585,7 @@ class ProposalService:
         | None = None,
         prepared: PreparedEvaluationScope | None = None,
         settle_submission: ProposalSettleSubmissionV1 | None = None,
+        expected_candidate: tuple[str, str] | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
 
@@ -4596,6 +4606,12 @@ class ProposalService:
 
         `prepared` may reuse a same-call evaluation; it never replaces the
         fresh authorization callback or the publication head check.
+
+        `expected_candidate`, when given, is ``(base_oid, candidate_digest)``:
+        the candidate the caller already evaluated at that accepted base. When
+        this submission evaluates at that same base, any other outcome raises
+        `ProposalCandidateMismatchError` before publication; at a head that has
+        since moved, the fresh evaluation stands on its own.
 
         `settle_submission` is the settle terminal's alone, and is retained on
         the admission. A `delegated` submission is evaluated under the named
@@ -4710,6 +4726,17 @@ class ProposalService:
         _require_executed_derivations(
             outcome, current_tree=current_tree, authorized=authorized_derivations
         )
+        if (
+            expected_candidate is not None
+            and expected_candidate[0] == current.git_oid
+            and (
+                outcome.candidate is None
+                or outcome.candidate.candidate_digest != expected_candidate[1]
+            )
+        ):
+            raise ProposalCandidateMismatchError(
+                "the evaluated candidate differs from the one this submission was bound to"
+            )
         # A refused proposal has no members to summarize, so it keeps the bare
         # subject the ledger has always written for it -- unless the author said
         # why they proposed it, which is still true of a set that did not pass.
@@ -4882,6 +4909,7 @@ __all__ = [
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",
     "ProposalEvidenceProtocol",
+    "ProposalCandidateMismatchError",
     "ProposalHeadMovedError",
     "ProposalReceiveLimits",
     "ProposalWithdrawalRecordV1",

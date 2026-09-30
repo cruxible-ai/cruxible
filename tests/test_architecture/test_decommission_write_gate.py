@@ -107,8 +107,13 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
             "AuthoringIntentCoordinator.rebase",
             "AuthoringIntentCoordinator.submit",
             "AuthoringIntentCoordinator.abandon_insertion",
+            # A dry run writes nothing, but it is the write's own path up to
+            # the commit, so it refuses exactly where the write would.
+            "AuthoringIntentCoordinator.preview",
         }
     ),
+    # set, retire and write: one door that lowers onto the coordinator above.
+    "cruxible_core/service/authoring/write_verbs.py": frozenset({"service_playbill_write"}),
     # Both roads that register a block are writes: declaring one records that
     # this instance stands behind a marker, and releasing one withdraws that.
     "cruxible_core/service/proposals/publications.py": frozenset(

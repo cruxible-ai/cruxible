@@ -335,11 +335,15 @@ class ProposalReadmitRequiresResubmission(ProposalAdmissionError):
 
     error_code = "playbill.proposal.readmit_requires_resubmission"
 
-    def __init__(self) -> None:
+    def __init__(self, reason: str | None = None) -> None:
         super().__init__(
-            f"{self.error_code}: this stale proposal is a generated dependency-closure "
-            "migration; rerun claim-type migration preflight/submit at current head so "
-            "the dependent inventory and pins are rebuilt"
+            f"{self.error_code}: "
+            + (
+                reason
+                or "this stale proposal is a generated dependency-closure "
+                "migration; rerun claim-type migration preflight/submit at current head so "
+                "the dependent inventory and pins are rebuilt"
+            )
         )
 
 
@@ -447,6 +451,53 @@ class ReadRefusalError(CoreError):
         return refusal
 
 
+class WriteRefusalError(CoreError):
+    """A write verb (``set``, ``retire``, ``write``) refused for a reason the caller can repair.
+
+    The daemon answers a refused write as an outcome (``status: refused``) with
+    its ``refusal``; the SDK raises this with that outcome attached, and the
+    service raises it internally before rendering the outcome. ``change`` is the
+    index of the change that refused, ``candidates`` the valid names it most
+    likely meant, and ``repair_line`` the one-line fix.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        change: int | None = None,
+        candidates: Iterable[str] = (),
+        repair_line: str | None = None,
+        field_path: str | None = None,
+        outcome: Any = None,
+    ) -> None:
+        self.error_code = code
+        self.change = change
+        self.candidates = tuple(candidates)
+        self.repair_line = repair_line
+        self.field_path = field_path
+        self.outcome = outcome
+        self.detail = message
+        self.context: dict[str, Any] = {}
+        if change is not None:
+            self.context["change"] = change
+        if self.candidates:
+            self.context["candidates"] = list(self.candidates)
+        if repair_line is not None:
+            self.context["repair_line"] = repair_line
+        if field_path is not None:
+            self.context["field_path"] = field_path
+        text = f"{code}: {message}"
+        if field_path is not None:
+            text += f" (at {field_path})"
+        if self.candidates:
+            text += f"; nearest: {', '.join(self.candidates)}"
+        if repair_line is not None:
+            text += f". {repair_line}"
+        super().__init__(text)
+
+
 class ProjectionError(PlaybillError):
     """Base refusal for deterministic Playbill projection operations."""
 
@@ -506,4 +557,5 @@ __all__ = [
     "SettlementIntegrityError",
     "SubjectFormatError",
     "SubjectNotFoundError",
+    "WriteRefusalError",
 ]

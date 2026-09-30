@@ -258,7 +258,6 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     claim_type_help = runner.invoke(cli, ["playbill", "claim-type", "propose", "--help"])
     claim_type_example = runner.invoke(cli, ["playbill", "claim-type", "propose", "--example"])
     claim_type_missing = runner.invoke(cli, ["playbill", "claim-type", "propose"])
-    retirement = runner.invoke(cli, ["playbill", "claim", "retire", "--example"])
     create_help = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
 
     assert claim_type_help.exit_code == 0, claim_type_help.output
@@ -268,12 +267,6 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     assert "No such option: --example" in claim_type_example.output
     assert claim_type_missing.exit_code == 2
     assert "provide exactly one of --input or --template" in claim_type_missing.output
-
-    assert retirement.exit_code == 0, retirement.output
-    retirement_payload = json.loads(retirement.stdout)
-    assert retirement_payload["tag"] == "playbill-claim-retire-request-v1"
-    assert retirement_payload["mode"] == "preflight"
-    assert retirement_payload["expected_coordinate"]["tag"] == ("playbill-accepted-coordinate-v1")
 
     assert create_help.exit_code == 0, create_help.output
     assert "PAYLOAD_FILE" in create_help.output
@@ -462,69 +455,6 @@ def test_cli_claim_type_migration_submit_names_the_proposal_and_next_step(
     assert result.exit_code == 0, result.output
     assert f"Proposal: {proposal_id}" in result.stdout
     assert f"Next: cruxible playbill proposal approve {proposal_id}" in result.stdout
-
-
-def test_cli_claim_retire_passes_the_model_validated_request(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:  # type: ignore[no-untyped-def]
-    claim_id = "CLM-0123456789abcdef0123456789abcdef"
-    payload = tmp_path / "retire.json"
-    payload.write_text(
-        json.dumps(
-            {
-                "tag": "playbill-claim-retire-request-v1",
-                "mode": "preflight",
-                "claim_ref": f"Claim:{claim_id}",
-                "reason": "was-rescinded",
-                "effective_until": None,
-                "expected_coordinate": COORDINATE.model_dump(mode="json"),
-                "dependents": [],
-            }
-        )
-    )
-
-    class StubClient:
-        def retire_playbill_claim(
-            self,
-            instance_id: str,
-            selected_claim_id: str,
-            *,
-            request: dict[str, object],
-        ) -> contracts.PlaybillClaimRetireResponse:
-            assert (instance_id, selected_claim_id) == ("inst_authoring", claim_id)
-            assert request["reason"] == "was-rescinded"
-            return contracts.PlaybillClaimRetirePreflight(
-                operation_digest="sha256:" + "8" * 64,
-                coordinate=COORDINATE,
-                root_identity={"kind": "Claim", "name": claim_id},
-                root_predecessor_digest="sha256:" + "9" * 64,
-                reason="was-rescinded",
-                effective_until=None,
-                required_dependents=[],
-                diagnostics=[],
-                submit_ready=True,
-            )
-
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    result = CliRunner().invoke(
-        cli,
-        [
-            "--server-url",
-            "https://authoring.example.test",
-            "--instance-id",
-            "inst_authoring",
-            "playbill",
-            "claim",
-            "retire",
-            claim_id,
-            str(payload),
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)["submit_ready"] is True
 
 
 def test_cli_status_is_a_read_and_emits_no_write_target(monkeypatch) -> None:  # type: ignore[no-untyped-def]

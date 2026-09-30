@@ -33,6 +33,7 @@ from cruxible_client.authoring.sources import (
     mapped_root_aliases,
 )
 from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
+from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import (
@@ -43,7 +44,6 @@ from cruxible_client.contracts.claim_attestations import (
     PreparedClaimAttestationRequestV1,
 )
 from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1, ClaimValuesResultV1
-from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
@@ -73,6 +73,13 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.write import (
+    FileEvidence,
+    PlaybillRetireRequestV1,
+    PlaybillSetRequestV1,
+    PlaybillWriteRequestV1,
+    WriteOutcome,
+)
 from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_core import __version__
@@ -147,7 +154,6 @@ _AUTHORING_INPUT: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringInputV1)
 _CLAIM_TYPE_MIGRATION: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdapter(
     ClaimTypeMigrationRequest
 )
-_CLAIM_RETIRE = TypeAdapter(ClaimRetireRequestV1)
 
 
 class _LocalFloorClient:
@@ -352,7 +358,9 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_block_declare": TypeAdapter(PlaybillBlockDeclareRequest),
     "cruxible_playbill_block_depublish": TypeAdapter(PlaybillBlockDepublishRequest),
     "cruxible_playbill_claim_attest": None,  # shared preparation helper builds the body
-    "cruxible_playbill_claim_retire": TypeAdapter(ClaimRetireRequestV1),
+    "cruxible_playbill_set": TypeAdapter(PlaybillSetRequestV1),
+    "cruxible_playbill_retire": TypeAdapter(PlaybillRetireRequestV1),
+    "cruxible_playbill_write": TypeAdapter(PlaybillWriteRequestV1),
     "cruxible_playbill_claim_type_migrate": TypeAdapter(ClaimTypeMigrationRequest),
     "cruxible_playbill_curation_accept_fixed": TypeAdapter(PlaybillCurationAcceptFixedRequest),
     "cruxible_playbill_curation_overrule": TypeAdapter(PlaybillCurationOverruleRequest),
@@ -1206,28 +1214,6 @@ def handle_playbill_get_claim_type(
     )
 
 
-def handle_playbill_retire_claim(
-    instance_id: str,
-    claim_id: str,
-    request: dict[str, Any],
-) -> contracts.PlaybillClaimRetireResponse:
-    retirement = _CLAIM_RETIRE.validate_python(request)
-    return _dispatch_remote_or_local(
-        lambda client: client.retire_playbill_claim(
-            instance_id,
-            claim_id,
-            request=retirement.model_dump(mode="json"),
-        ),
-        lambda: playbill_api.playbill_retire_claim(
-            instance_id,
-            claim_id,
-            request=retirement,
-        ),
-        operation_name="cruxible_playbill_claim_retire",
-        local_payload=retirement.model_dump(mode="json"),
-    )
-
-
 def _handle_claim_attestation(
     client: Any,
     instance_id: str,
@@ -1752,6 +1738,97 @@ def handle_playbill_query(
         lambda client: client.query_playbill(instance_id, request=request),
         lambda: playbill_api.playbill_query(instance_id, request=request),
         operation_name="cruxible_playbill_query",
+    )
+
+
+_WRITE_EXAMPLES = {
+    "cruxible_playbill_set": (
+        '{"subject": "dev.roadmap_item/tidy-cli", "field": "adoption_state", '
+        '"value": "adopted", "because": "Agreed in review."}'
+    ),
+    "cruxible_playbill_retire": (
+        '{"target": "CLM-0123456789abcdef0123456789abcdef", "because": "Stated in error."}'
+    ),
+    "cruxible_playbill_write": (
+        '{"changes": [{"op": "add", "subject": "dev.card/c1", "field": "governs", '
+        '"value": "dev.roadmap_item/tidy-cli"}], "because": "Linked in review."}'
+    ),
+}
+
+_WriteRequestT = TypeVar(
+    "_WriteRequestT", PlaybillSetRequestV1, PlaybillRetireRequestV1, PlaybillWriteRequestV1
+)
+
+
+def _write_request(
+    model: type[_WriteRequestT], operation: str, fields: Mapping[str, Any]
+) -> _WriteRequestT:
+    """One typed write request for this surface, with its file evidence read here.
+
+    The daemon never reads workspace files, so a ``file`` evidence is observed
+    from the MCP workspace before the request leaves this adapter.
+    """
+
+    try:
+        request = model.model_validate({**fields, "surface": "mcp"})
+    except ValidationError as exc:
+        raise DataValidationError(
+            f"Invalid {operation.removeprefix('cruxible_playbill_')} request; example: "
+            + _WRITE_EXAMPLES[operation],
+            errors=[
+                f"$.{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in exc.errors(include_url=False)
+            ],
+        ) from exc
+    if isinstance(request, PlaybillWriteRequestV1):
+        if any(
+            isinstance(getattr(change, "evidence", None), FileEvidence)
+            for change in request.changes
+        ):
+            workspace = mcp_workspace_root()
+            request = request.model_copy(
+                update={"changes": observe_changes(request.changes, workspace=workspace)}
+            )
+    elif isinstance(request, PlaybillSetRequestV1) and isinstance(request.evidence, FileEvidence):
+        request = request.model_copy(
+            update={"evidence": observe_evidence(request.evidence, workspace=mcp_workspace_root())}
+        )
+    return request
+
+
+def handle_playbill_set(instance_id: str, **fields: Any) -> WriteOutcome:
+    """Put one value in one field of one Subject."""
+
+    request = _write_request(PlaybillSetRequestV1, "cruxible_playbill_set", fields)
+    return _dispatch_remote_or_local(
+        lambda client: client.playbill_set(instance_id, request=request),
+        lambda: playbill_api.playbill_set(instance_id, request=request),
+        operation_name="cruxible_playbill_set",
+        local_payload=request.model_dump(mode="json"),
+    )
+
+
+def handle_playbill_retire(instance_id: str, **fields: Any) -> WriteOutcome:
+    """End one live Claim, by ID or by its Subject and field."""
+
+    request = _write_request(PlaybillRetireRequestV1, "cruxible_playbill_retire", fields)
+    return _dispatch_remote_or_local(
+        lambda client: client.playbill_retire(instance_id, request=request),
+        lambda: playbill_api.playbill_retire(instance_id, request=request),
+        operation_name="cruxible_playbill_retire",
+        local_payload=request.model_dump(mode="json"),
+    )
+
+
+def handle_playbill_write(instance_id: str, **fields: Any) -> WriteOutcome:
+    """Apply set, add and retire changes as one change set."""
+
+    request = _write_request(PlaybillWriteRequestV1, "cruxible_playbill_write", fields)
+    return _dispatch_remote_or_local(
+        lambda client: client.playbill_write(instance_id, request=request),
+        lambda: playbill_api.playbill_write(instance_id, request=request),
+        operation_name="cruxible_playbill_write",
+        local_payload=request.model_dump(mode="json"),
     )
 
 

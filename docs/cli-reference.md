@@ -739,7 +739,6 @@ version; the refusal names them.
 ## playbill claim
 
 ~~~text
-cruxible playbill claim retire IDENTITY REQUEST_FILE
 cruxible playbill claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
   [--valid-until TS]
 cruxible playbill claim list [--subject PATH] [--kind KIND] [--predicate P] [--include-retired]
@@ -762,11 +761,10 @@ CLI form of the SDK's `world.values`): one row per live Claim, with its
 of `--kind` (or only the named `--subject` IDs) and the given predicates,
 without full Claim views. It refuses rather than truncates past 8192 Claims.
 
-Claims are authored through `playbill authoring create`/`compile`; the retired
-direct v1 proposal commands are not a second writer. `retire` preflights or submits one
-attributed retirement over the complete dependent Claim closure; the request
-must name every dependent reason and never receives a daemon-synthesized end
-time. explain returns the verdict together with the law evidence and source
+Claims are written through `playbill set`, `retire` and `write`, or authored
+through `playbill authoring create`/`compile`; the retired direct v1 proposal
+commands are not a second writer. `playbill retire` retires a Claim with its
+complete dependent Claim closure in one change set. explain returns the verdict together with the law evidence and source
 handles it was computed from. When the Claim shares anything with a retired
 Claim, explain also carries a `retirement_context` section, which the CLI prints
 beneath the verdict. It is review context, not queue work, so `next` does not
@@ -1719,6 +1717,46 @@ idempotent completed-run record to the daemon-local operational store so
 Audit reads do not create qualifying consumption touches or change governed
 state. Follow `next_cursor` only while its accepted coordinate, evaluation time,
 scope, and operational input head remain unchanged.
+
+## playbill set, retire and write
+
+~~~text
+cruxible playbill set SUBJECT FIELD VALUE --because TEXT
+  [--evidence-file PATH#ANCHOR | --capture DIGEST] [--role ROLE] [--contend]
+  [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
+cruxible playbill retire TARGET [FIELD] --because TEXT
+  [--reason was-rescinded|was-wrong|superseded] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
+cruxible playbill write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-accept]
+  [--at GIT_OID] [--json]
+cruxible playbill write --schema
+~~~
+
+`set` puts VALUE in FIELD of SUBJECT (`kind/id`). On a single-value field it
+replaces the live value: the Claim it revises is found for you. A Subject of a
+known kind that does not exist yet is added in the same change set; a
+Subject-valued VALUE must already exist. FIELD is a field of the kind as
+`orient` names it, or the full predicate. VALUE is text: an enum member, a
+number or `true`/`false` for such fields, a Subject as `kind/id`, or the text
+itself for exact content (which is also its own evidence). The default evidence
+is `--because` as self evidence; `--evidence-file` cites text found once in a
+catalogued workspace file, read on this side, and `--capture` an existing
+Capture. The write accepts in the same call when the approval policy and your
+tier allow it; otherwise it prints the eligible approvers and the approve
+command. `--no-accept` only proposes. `--dry-run` runs every check and writes
+nothing; pass its coordinate back as `--at` to refuse
+(`playbill.write.slot_changed`) if the field moved since. Each change prints
+before and after, its Claim and its verdict; a verdict other than `supported`
+prints a warning with its repair.
+
+`retire` ends one live Claim, named by ID or by SUBJECT FIELD when that field
+holds one value; the Claims that depend on it retire with it. `write` applies a
+FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":
+[...]}`, or a bare list with `--because`, each change
+`{"op": "set" | "add", "subject", "field", "value"}` or
+`{"op": "retire", "target"}`. `add` puts one more value in a many-valued field;
+two adds on one field land in one change set. `--schema` prints what FILE
+holds. A refusal prints its code, the nearest valid names and the repair, and
+exits 1.
 
 ## playbill get
 

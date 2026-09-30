@@ -254,7 +254,7 @@ class ClaimTypeSuccessionInput(_StrictInputModel):
 
 class ClaimRetirementInput(_StrictInputModel):
     kind: Literal["claim_retirement"]
-    claim_id: str
+    retires: str = Field(description="Claim ID this member retires, parallel to revises.")
     reason: ClaimRetirementReason
     effective_until: datetime | None = None
     dependents: tuple[ClaimRetireDependentV1, ...] = ()
@@ -713,7 +713,7 @@ def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChan
         )
     if isinstance(member, ClaimRetirementInput):
         return ClaimRetirementMemberV1(
-            claim_ref=member.claim_id,
+            retires=member.retires,
             reason=member.reason,
             effective_until=member.effective_until,
             dependents=member.dependents,

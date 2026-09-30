@@ -37,9 +37,9 @@ if TYPE_CHECKING:
         PendingClaimTypeRef,
         PendingSubjectRef,
         ProcedureRef,
+        ProcedureSlotRef,
         QueryRef,
         ReferentSensitivity,
-        SlotRef,
         SourceRef,
         SubjectRef,
         TypedRef,
@@ -84,6 +84,7 @@ if TYPE_CHECKING:
         StateTapNodeV3,
         TransformNodeV3,
     )
+    from cruxible_client.contracts.write import SlotRef
     from cruxible_client.transport.http import CruxibleClient
 
 from .provider_installation import install_provider_package
@@ -146,6 +147,7 @@ __all__ = [
     "ProcedureOwnedContractV1",
     "ProcedurePinSlotRefV1",
     "ProcedurePinSlotV1",
+    "ProcedureSlotRef",
     "ProjectNodeV3",
     "PropertySchema",
     "QueryNameError",
@@ -220,7 +222,7 @@ def __getattr__(name: str) -> Any:
         "ProcedureRef",
         "QueryRef",
         "ReferentSensitivity",
-        "SlotRef",
+        "ProcedureSlotRef",
         "SourceRef",
         "SubjectRef",
         "TypedRef",
@@ -228,6 +230,10 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.authoring import sdk_types
 
         return getattr(sdk_types, name)
+    if name == "SlotRef":
+        from cruxible_client.contracts.write import SlotRef
+
+        return SlotRef
     if name in {
         "KindNamespace",
         "World",

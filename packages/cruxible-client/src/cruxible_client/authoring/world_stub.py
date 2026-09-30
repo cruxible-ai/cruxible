@@ -72,6 +72,13 @@ _STUB_IMPORTS = (
     "from cruxible_client.authoring.world import KindNamespace, WorldClaimType",
     "from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1",
     "from cruxible_client.contracts.projection import AcceptedCoordinate",
+    "from cruxible_client.contracts.write import (",
+    "    Evidence,",
+    "    WriteAccept,",
+    "    WriteOutcome,",
+    "    WriteRetireReason,",
+    "    WriteRole,",
+    ")",
 )
 
 
@@ -191,6 +198,7 @@ def _subject_block(world: World, node: _Node) -> list[str]:
     reachable = world._predicate_leaves(node.path)
     for leaf in _sorted(reachable):
         body.declare(f"{leaf}: tuple[ClaimView, ...]")
+    _write_members(world, node.path, body)
     for leaf, predicates in sorted(world._leaf_map(node.path).items()):
         if leaf in reachable or len(predicates) != 1:
             continue
@@ -200,6 +208,65 @@ def _subject_block(world: World, node: _Node) -> list[str]:
         )
     lines.extend(body.rendered())
     return lines
+
+
+def _write_annotation(claim_type: WorldClaimType) -> str:
+    """The value one write keyword takes: an enum member is a ``Literal``."""
+
+    object_kind = claim_type.object_kind.value
+    if object_kind == "subject":
+        return "str | SubjectRef"
+    if object_kind == "exact_content":
+        return "str"
+    if claim_type.members:
+        return "Literal[" + ", ".join(repr(member) for member in claim_type.members) + "]"
+    declared = (claim_type.literal_schema or {}).get("type")
+    return {"string": "str", "integer": "int", "number": "int", "boolean": "bool"}.get(
+        str(declared), "str | int | bool"
+    )
+
+
+def _write_members(world: World, kind: str, body: _Body) -> None:
+    """Type ``set`` over single-value leaves and ``add`` over many-valued ones."""
+
+    by_cardinality: dict[str, list[str]] = {"one": [], "many": []}
+    for leaf, predicates in sorted(world._leaf_map(kind).items()):
+        spelled = keyword_name(leaf)
+        if len(predicates) != 1 or spelled is None:
+            continue
+        claim_type = world.claim_type(predicates[0])
+        by_cardinality[claim_type.cardinality.value].append(
+            f"    {spelled}: {_write_annotation(claim_type)} = ...,"
+        )
+    common = [
+        "    because: str,",
+        "    evidence: Evidence | None = ...,",
+        "    role: WriteRole | None = ...,",
+    ]
+    tail = ["    dry_run: bool = ...,", "    accept: WriteAccept = ...,"]
+    body.declare_lines(
+        ["def set(", "    self,", "    /,", "    *,", *common, "    contend: bool = ...,", *tail]
+        + by_cardinality["one"]
+        + [") -> WriteOutcome: ..."]
+    )
+    body.declare_lines(
+        ["def add(", "    self,", "    /,", "    *,", *common, *tail]
+        + by_cardinality["many"]
+        + [") -> WriteOutcome: ..."]
+    )
+    body.declare_lines(
+        [
+            "def retire(",
+            "    self,",
+            "    field: str | ClaimTypeRef,",
+            "    /,",
+            "    *,",
+            "    because: str,",
+            "    reason: WriteRetireReason = ...,",
+            *tail,
+            ") -> WriteOutcome: ...",
+        ]
+    )
 
 
 def _namespace_block(world: World, node: _Node, *, class_name: str) -> list[str]:

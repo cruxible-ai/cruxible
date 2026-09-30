@@ -903,7 +903,7 @@ def test_a_dependent_this_set_also_retires_refuses_naming_both_members(
             )
         ),
     )
-    retirement = ClaimRetirementMemberV1(claim_ref=claims["wi-2"], reason="was-wrong")
+    retirement = ClaimRetirementMemberV1(retires=claims["wi-2"], reason="was-wrong")
     payload = _change_set(succession, retirement)
     positions = {
         authoring_member_identity(member): index for index, member in enumerate(payload.members)
