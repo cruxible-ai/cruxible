@@ -91,7 +91,8 @@ These credentials authorize transport operations. Each one acts as exactly one
 Playbill principal, stored with the credential; the label is a description and
 never decides who acts. `credential mint` refuses unless that principal is
 registered and active (`playbill.identity.principal_absent` /
-`principal_revoked`), and it needs the principal's own authority, not just an
+`principal_revoked`) and ordinary (a recovery principal never holds one:
+`runtime_credential.principal_not_ordinary`), and it needs the principal's own authority, not just an
 admin credential: either the request already acts as that principal, or
 `--key-dir` signs the principal's single-use consent with its registered key
 (`runtime_credential.principal_authority_required`,

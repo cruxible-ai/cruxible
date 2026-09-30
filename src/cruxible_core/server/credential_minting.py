@@ -8,8 +8,9 @@ Minting as principal P therefore needs, in addition, P's own authority:
 * P's signed consent: a fresh, single-use mint statement signed with P's key
   as registered at the accepted head.
 
-P must be registered and active. The label is a description and decides nothing.
-Minting needs daemon auth: on an auth-off daemon it is refused, never latched.
+P must be an ordinary principal, registered and active. The label is a
+description and decides nothing. Minting needs daemon auth: on an auth-off
+daemon it is refused, never latched.
 """
 
 from __future__ import annotations
@@ -130,15 +131,25 @@ def mint_principal_credential(
     refusal = principal_refusal(instance, principal_id, configured=True)
     if refusal is not None:
         raise refusal
+    registered = next(
+        item
+        for item in instance.accepted_history()[-1].principals.principals
+        if item.principal_id == principal_id
+    )
+    if registered.kind != "ordinary":
+        # A recovery principal exists only to govern key replacement; it never
+        # authors, so it never holds a bearer credential.
+        raise PrincipalRefusedError(
+            "runtime_credential.principal_not_ordinary",
+            f"principal {principal_id!r} is a {registered.kind} principal, and only ordinary "
+            "principals hold credentials; repair: mint for an ordinary principal "
+            "(`cruxible playbill principal list`)",
+            repair=RepairOperationV1(operation="playbill.principal.list"),
+        )
     description = label or principal_id
     proof_digest: str | None = None
     acts_as_principal = auth_context is not None and auth_context.principal_id == principal_id
     if principal_proof is not None:
-        registered = next(
-            item
-            for item in instance.accepted_history()[-1].principals.principals
-            if item.principal_id == principal_id
-        )
         proof_digest = _verified_proof_digest(
             principal_proof,
             instance_id=instance_id,

@@ -213,6 +213,76 @@ def test_an_unbound_credential_keeps_transport_authority_but_cannot_author(
     assert "cruxible credential mint --principal-id ID --key-dir DIR" in refused.json()["message"]
 
 
+def _accept_principal_change(
+    client: TestClient, instance_id: str, principal: PrincipalRecord, *, owner_key: Path
+) -> None:
+    proposed = client.post(
+        f"/api/v1/{instance_id}/playbill/principals/proposals",
+        json={
+            "principal": principal.model_dump(mode="json"),
+            "proposal_name": f"change-{principal.principal_id}",
+        },
+    )
+    assert proposed.status_code == 200, proposed.text
+    proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
+    challenge = client.post(
+        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
+        json={"signer_id": "operator"},
+    ).json()
+    signer = LocalEd25519ApprovalSigner.open(
+        signer_id="operator",
+        private_key_path=owner_key,
+        expected_public_key=challenge["signer_principal"]["public_key"],
+        forbidden_roots=(),
+    )
+    attestation = signer.sign(ApprovalStatement.model_validate(challenge["statement"]))
+    approved = client.post(
+        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals",
+        json={"attestation": attestation.model_dump(mode="json")},
+    )
+    assert approved.status_code == 200, approved.text
+    activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
+    assert activated.status_code == 200, activated.text
+
+
+def test_a_recovery_principal_never_holds_a_credential(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client, instance_id, reviewer_key = playbill_http
+    rescue = generate_client_principal_key(
+        tmp_path / "rescue", principal_id="rescue", kind="recovery", forbidden_roots=()
+    )
+    _accept_principal_change(
+        client, instance_id, rescue.principal, owner_key=_owner_key(reviewer_key)
+    )
+    admin = _bearer(None, instance_id, PermissionMode.ADMIN)
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    proof = sign_runtime_credential_mint(
+        instance_id=instance_id,
+        principal_id="rescue",
+        permission_mode="governed_write",
+        label="rescue",
+        private_key_path=rescue.private_key_path,
+        forbidden_roots=(),
+    )
+
+    refused = _mint(
+        client,
+        instance_id,
+        admin,
+        principal_id="rescue",
+        permission_mode="governed_write",
+        principal_proof=proof.model_dump(mode="json"),
+    )
+
+    assert refused.status_code == 403  # type: ignore[attr-defined]
+    body = refused.json()  # type: ignore[attr-defined]
+    assert body["error_code"] == "runtime_credential.principal_not_ordinary"
+    assert body["repair"]["operation"] == "playbill.principal.list"
+
+
 def test_revoking_a_principal_revokes_its_credentials(
     playbill_http: tuple[TestClient, str, Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -225,33 +295,12 @@ def test_revoking_a_principal_revokes_its_credentials(
         for item in listing["principals"]
         if item["principal_id"] == "reviewer"
     )
-    proposed = client.post(
-        f"/api/v1/{instance_id}/playbill/principals/proposals",
-        json={
-            "principal": reviewer.model_copy(update={"status": "revoked"}).model_dump(mode="json"),
-            "proposal_name": "revoke-reviewer",
-        },
+    _accept_principal_change(
+        client,
+        instance_id,
+        reviewer.model_copy(update={"status": "revoked"}),
+        owner_key=_owner_key(reviewer_key),
     )
-    assert proposed.status_code == 200, proposed.text
-    proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
-    challenge = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
-        json={"signer_id": "operator"},
-    ).json()
-    signer = LocalEd25519ApprovalSigner.open(
-        signer_id="operator",
-        private_key_path=_owner_key(reviewer_key),
-        expected_public_key=challenge["signer_principal"]["public_key"],
-        forbidden_roots=(),
-    )
-    attestation = signer.sign(ApprovalStatement.model_validate(challenge["statement"]))
-    approved = client.post(
-        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals",
-        json={"attestation": attestation.model_dump(mode="json")},
-    )
-    assert approved.status_code == 200, approved.text
-    activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
-    assert activated.status_code == 200, activated.text
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
 
     refused = client.get(
