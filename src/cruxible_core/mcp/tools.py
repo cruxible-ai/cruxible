@@ -68,6 +68,12 @@ InstanceId = Annotated[
 ]
 
 
+def _read_at(at: Any) -> Any:
+    """A read's ``at`` for the handler: a generation number travels as its decimal."""
+
+    return str(at) if isinstance(at, int) and not isinstance(at, bool) else at
+
+
 def register_tools(
     server: FastMCP,
     *,
@@ -310,11 +316,11 @@ def register_tools(
             str | None, Field(description="next_cursor from the previous page of this view.")
         ] = None,
         at: Annotated[
-            str | contracts.PlaybillAcceptedCoordinate | None,
+            str | int | contracts.PlaybillAcceptedCoordinate | None,
             Field(
                 description=(
-                    "An accepted coordinate, or one accepted generation's Git OID "
-                    "(a unique prefix of 12+ hex characters is enough)."
+                    "An accepted coordinate, one accepted generation's Git OID (a unique "
+                    "prefix of 12+ hex characters is enough), or its generation number."
                 )
             ),
         ] = None,
@@ -329,7 +335,7 @@ def register_tools(
             section=section,
             limit=limit,
             cursor=cursor,
-            at=at,
+            at=_read_at(at),
             evaluation_time=evaluation_time,
         )
 
@@ -846,11 +852,11 @@ def register_tools(
             Field(description='Byte range [start, end) of a Document body; detail="body" only.'),
         ] = None,
         at: Annotated[
-            contracts.PlaybillAcceptedCoordinate | str | None,
+            contracts.PlaybillAcceptedCoordinate | str | int | None,
             Field(
                 description=(
-                    "Accepted coordinate or git oid (or a unique 12+ hex prefix) to read at; "
-                    "default current head."
+                    "Accepted coordinate, git oid (or a unique 12+ hex prefix), or generation "
+                    "number to read at; default current head."
                 )
             ),
         ] = None,
@@ -877,7 +883,7 @@ def register_tools(
             ref=ref,
             detail=detail,
             range=range,
-            at=at,
+            at=_read_at(at),
             evaluation_time=evaluation_time,
             limit=limit,
             cursor=cursor,
@@ -1125,7 +1131,7 @@ def register_tools(
         cursor: str | None = None,
         name: str | None = None,
         params: dict[str, str | int | bool] | None = None,
-        at: AcceptedCoordinate | str | None = None,
+        at: AcceptedCoordinate | str | int | None = None,
         evaluation_time: str | None = None,
     ) -> contracts.PlaybillQueryResult:
         """Query accepted state: rows of values with flags; pass next_cursor while truncated."""
@@ -1141,7 +1147,7 @@ def register_tools(
             cursor=cursor,
             name=name,
             params=params,
-            at=at,
+            at=_read_at(at),
             evaluation_time=evaluation_time,
         )
 
@@ -1154,7 +1160,7 @@ def register_tools(
             int, Field(ge=1, le=contracts.PLAYBILL_QUERY_MAX_LIMIT)
         ] = contracts.PLAYBILL_QUERY_DEFAULT_LIMIT,
         cursor: str | None = None,
-        at: AcceptedCoordinate | str | None = None,
+        at: AcceptedCoordinate | str | int | None = None,
         evaluation_time: str | None = None,
     ) -> contracts.PlaybillQueryResult:
         """Run one full QueryDefinition spec inline: the query verb's rows, flags and paging."""
@@ -1163,7 +1169,7 @@ def register_tools(
             spec=spec,
             limit=limit,
             cursor=cursor,
-            at=at,
+            at=_read_at(at),
             evaluation_time=evaluation_time,
         )
 

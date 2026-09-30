@@ -77,6 +77,7 @@ from cruxible_client.contracts.get_reads import (
     PlaybillReadSurface,
     summary_value,
 )
+from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -1260,7 +1261,7 @@ def _claim_evidence(
             source = version.contract.logical_source_identities[0]
         captures.append(
             PlaybillGetCaptureEvidenceV1(
-                capture=_short_digest(account.capture_digest),
+                capture=capture_handle(account.capture_digest),
                 contract=account.capture_contract_identity,
                 version=names.version_number(
                     account.capture_contract_identity, account.capture_contract_digest
@@ -1324,6 +1325,7 @@ def _revision(
     return PlaybillGetRevisionV1(
         revision=entry.revision,
         sequence=entry.sequence,
+        git_oid=generation.git_oid[:12],
         accepted=str(record.candidate.timestamp),
         actor=generation.actor_id or record.actor_binding.actor_id,
         approved_by=tuple(dict.fromkeys(item.attestation.signer_id for item in record.approvals)),

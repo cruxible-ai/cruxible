@@ -395,6 +395,11 @@ cruxible playbill capture read CAPTURE_DIGEST [--max-bytes BYTES]
 ```
 
 Verify a retained Capture and return its evidence metadata and bounded material as JSON.
+CAPTURE_DIGEST is the full digest, the `CAP-<12 hex>` handle `get --detail
+evidence` and Capture cards print, or a `sha256:` prefix of 12+ hex; a handle
+or prefix must name one Capture accepted Claims cite
+(`playbill.capture.ref_ambiguous` lists the candidates,
+`playbill.capture.not_found` points at `orient --section captures`).
 Uses body-read permission and never refetches the external source. The SDK equivalent
 is `pb.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
 
@@ -1798,7 +1803,11 @@ a Document's bytes. A body over 64 KiB needs `--range`. A summary cuts a string
 value over 500 characters and says how long it is; `--detail evidence` or
 `proof` shows it whole. Subject rows carry the Claim id behind each value. A
 summary's coordinate is the git oid's 12-hex prefix and the generation; the
-full accepted coordinate is under `--detail proof`. A wrong or ambiguous REF
+full accepted coordinate is under `--detail proof`. `--at` takes a git oid, a
+unique 12+ hex prefix of one, or a generation number, so either half of a
+printed coordinate reads back; each history row prints both (`seq N at
+<12 hex>`). Evidence names each Capture by its `CAP-<12 hex>` handle, which
+`get` and `capture read` both accept. A wrong or ambiguous REF
 refuses with a code and the nearest names. `--json` prints the whole structured
 result.
 

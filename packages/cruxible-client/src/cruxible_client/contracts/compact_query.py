@@ -265,8 +265,8 @@ class PlaybillQueryRequestV1(BaseModel):
     at: AcceptedCoordinate | str | None = Field(
         default=None,
         description=(
-            "An accepted coordinate or a git oid (a unique prefix of 12+ hex characters is "
-            "enough); the default is the current head."
+            "An accepted coordinate, a git oid (a unique prefix of 12+ hex characters is "
+            "enough), or a generation number; the default is the current head."
         ),
     )
     evaluation_time: datetime | None = Field(

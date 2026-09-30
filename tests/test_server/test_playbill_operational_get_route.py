@@ -41,6 +41,17 @@ def test_http_get_reads_a_capture_by_handle_and_refuses_unknown_operational_refs
     assert body["card"]["capture"] == handle and body["card"]["status"] == "available"
     assert body["card"]["next"][-1] == f"cruxible playbill capture read {digest}"
 
+    # The handle reads the Capture's material too, and at takes a generation.
+    read = client.post(
+        f"/api/v1/{instance_id}/playbill/captures/read", json={"capture_digest": handle}
+    )
+    assert read.status_code == 200, read.text
+    assert read.json()["capture_digest"] == digest and read.json()["status"] == "verified"
+    head = instance.accepted_history()[-1]
+    pinned = client.post(url, json={"ref": handle, "at": str(head.sequence)})
+    assert pinned.status_code == 200, pinned.text
+    assert pinned.json()["coordinate"] == {"git_oid": head.oid[:12], "generation": head.sequence}
+
     for ref, section in (
         ("Line:hourly", "lines"),
         ("Mandate:nothing", "mandates"),

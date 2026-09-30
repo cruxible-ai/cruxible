@@ -134,8 +134,8 @@ class PlaybillGetRequestV1(_StrictGetModel):
     ) -> PlaybillAcceptedCoordinate | str | None:
         if isinstance(value, str) and not re.fullmatch(_GIT_OID, value):
             raise ValueError(
-                "at must be an accepted coordinate or a lowercase hex git oid "
-                "(a unique prefix of at least 12 characters)"
+                "at must be an accepted coordinate, a lowercase hex git oid (a unique "
+                "prefix of at least 12 characters), or a generation number (for example 42)"
             )
         return value
 
@@ -344,7 +344,10 @@ PlaybillGetCardV1 = (
 
 
 class PlaybillGetCaptureEvidenceV1(_StrictGetModel):
-    capture: str = Field(description="Capture digest prefix.")
+    capture: str = Field(
+        description="Capture handle, CAP- plus the digest's first 12 hex; get and read_capture "
+        "accept it."
+    )
     contract: str = Field(description="CaptureContract identity; never a digest.")
     version: int = Field(description="Accepted version of that contract the capture used.")
     source: str
@@ -372,6 +375,9 @@ class PlaybillGetEvidenceV1(_StrictGetModel):
 class PlaybillGetRevisionV1(_StrictGetModel):
     revision: int
     sequence: int
+    # The accepted generation's git oid (12-hex prefix): pass it, or the
+    # sequence, back as ``at`` to read at that revision.
+    git_oid: str = Field(pattern=r"^[0-9a-f]{12}$")
     accepted: str
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     approved_by: tuple[str, ...] = ()

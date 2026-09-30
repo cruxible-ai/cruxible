@@ -3723,7 +3723,7 @@ def write_changes(
     "--at",
     "at_oid",
     default=None,
-    help="Accepted git oid, or a unique 12+ hex prefix, to read at; default head.",
+    help="Accepted git oid, a unique 12+ hex prefix, or a generation number; default head.",
 )
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @click.option(
@@ -3880,8 +3880,8 @@ def _emit_get_text(result: Any) -> None:
                 else f"  = {_get_value_text(revision.value, width=GET_CLI_HISTORY_VALUE_WIDTH)}"
             )
             click.echo(
-                f"rev {revision.revision}  seq {revision.sequence}  {revision.accepted}  "
-                f"by {revision.actor or '-'}{value}"
+                f"rev {revision.revision}  seq {revision.sequence} at {revision.git_oid}  "
+                f"{revision.accepted}  by {revision.actor or '-'}{value}"
             )
             for step in revision.next:
                 click.echo(f"next: {step}")
@@ -4320,7 +4320,7 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     "--at",
     "at_oid",
     default=None,
-    help="Read at this accepted git oid (or a unique 12+ hex prefix).",
+    help="Read at this accepted git oid (or a unique 12+ hex prefix), or a generation number.",
 )
 @click.option("--evaluation-time", default=None, help="ISO-8601 instant; default now.")
 @json_option
@@ -5900,7 +5900,7 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     "--at",
     "at_oid",
     default=None,
-    help="An accepted generation's Git OID or a unique 12+ hex prefix.",
+    help="An accepted generation's Git OID, a unique 12+ hex prefix, or its number.",
 )
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @json_option
