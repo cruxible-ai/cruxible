@@ -6,6 +6,7 @@
 - ``priority``: a string, single-valued, two roles;
 - ``title``: a string, single-valued;
 - ``governs``: another work item, many-valued;
+- ``labels``: a string, many-valued, that only captured evidence under ``repo.reports`` backs;
 - ``ruling``: exact content, single-valued, one role (``normative``);
 - ``measured``: an integer that only captured evidence under ``repo.reports`` backs.
 
@@ -115,6 +116,9 @@ CLAIM_TYPES = (
         object_kinds=(KIND,),
     ),
     _claim_type("ruling", object_kind="exact_content", roles=("normative",)),
+    _claim_type(
+        "labels", literal_schema={"type": "string"}, cardinality="many", captured_only=True
+    ),
     _claim_type("measured", literal_schema={"type": "integer"}, captured_only=True),
 )
 

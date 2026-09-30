@@ -202,6 +202,26 @@ def test_two_adds_on_one_many_valued_field_land_in_one_change_set(
     assert [item.already_live for item in mixed.changes] == [True, False]
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("labels", "urgent"), ("governs", WI2)],
+    ids=["literal", "relation"],
+)
+def test_an_add_beside_the_retirement_of_the_same_value_states_it_anew(
+    instance: PlaybillInstance, field: str, value: str
+) -> None:
+    """A value retired in the same write is not live, so adding it back is a real add."""
+
+    old = _write(instance, _add(WI1, field, value)).changes[0].claim
+    outcome = _write(instance, {"op": "retire", "target": old}, _add(WI1, field, value))
+    assert outcome.status == "accepted", outcome
+    retired, added = outcome.changes
+    assert retired.claim == old
+    assert not added.already_live and added.claim not in (None, old)
+    assert outcome.proposal is not None
+    assert _values(instance, WI1, field) == [value]
+
+
 def test_without_the_filled_dispositions_the_same_adds_refuse(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:

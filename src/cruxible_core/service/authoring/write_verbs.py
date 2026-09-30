@@ -759,7 +759,17 @@ class _Planner:
                     revises = remaining[0].claim_id
                     before = remaining[0].value
         else:
-            present = next((item for item in live if item.value == shown_after), None)
+            # A Claim retired in this same write is not live after it, so the
+            # value it holds is stated anew rather than reported as present.
+            retiring = self._retiring()
+            present = next(
+                (
+                    item
+                    for item in live
+                    if item.value == shown_after and item.claim_id not in retiring
+                ),
+                None,
+            )
             if present is not None:
                 # Adding what is already there is done already: an idempotent
                 # success, with nothing to submit for this change.
