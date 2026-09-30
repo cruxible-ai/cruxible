@@ -136,15 +136,23 @@ def test_the_guardrail_allow_list_is_exactly_the_gated_dogfood_test() -> None:
     assert "CRUXIBLE_RUN_PLAYBILL_DOGFOOD" in gated.read_text("utf-8")
 
 
-def test_the_scratch_prefix_is_gitignored_and_the_tree_is_clean() -> None:
+def test_the_scratch_prefix_is_gitignored_and_leaves_the_tree_clean(short_root: Path) -> None:
+    """Scoped to the scratch this round owns.
+
+    A whole-tree `git status` failed in any checkout with unrelated edits; the
+    property under test is only that short-root scratch never dirties the tree.
+    """
+
     ignore = (REPOSITORY_ROOT / ".gitignore").read_text("utf-8").splitlines()
     assert "/.b2-*" in ignore
+    (short_root / "nested").mkdir()
+    (short_root / "nested" / "scratch.txt").write_text("scratch", encoding="utf-8")
     completed = subprocess.run(
-        ["git", "status", "--porcelain"],
+        ["git", "status", "--porcelain", "--untracked-files=all", "--", short_root.name],
         cwd=REPOSITORY_ROOT,
         capture_output=True,
         text=True,
-        check=False,
+        check=True,
     )
     assert completed.stdout == "", completed.stdout
 

@@ -1,65 +1,22 @@
-"""Round-4: static/contract re-establishment and new static defects."""
+"""Round-4: static/contract re-establishment and new static defects.
+
+The re-established L-8, L-9, L-12, C-10 and vocabulary checks live in
+`p2b2_round5/test_v5_confirmed.py`; only the checks it does not cover remain.
+"""
 
 from __future__ import annotations
 
 import ast
 import inspect
-import re
 import textwrap
-import typing
 from pathlib import Path
 
 import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
-FENCE_FILES = (
-    "src/cruxible_core/providers/provider_process_leases.py",
-    "src/cruxible_core/providers/provider_local_runtime.py",
-    "src/cruxible_core/runtime/provider_runtime.py",
-    "src/cruxible_core/runtime/playbill_manager.py",
-)
-
 
 # ---------- re-establishment ----------
-
-
-def test_l9_no_tmp_remains_on_the_fence_path() -> None:
-    for name in FENCE_FILES:
-        text = (REPOSITORY_ROOT / name).read_text(encoding="utf-8")
-        assert "/" + "tmp" not in text, name
-
-
-def test_fence_code_literal_is_exactly_five_members() -> None:
-    from cruxible_core.providers.provider_process_leases import ProviderProcessFenceCodeV1
-
-    assert set(typing.get_args(ProviderProcessFenceCodeV1)) == {
-        "provider_process_lease_invalid",
-        "provider_process_lease_missing",
-        "provider_process_lease_echo_failed",
-        "provider_process_lease_echo_mismatch",
-        "provider_process_group_survived_recovery",
-    }
-
-
-def test_lane_code_literal_is_the_closed_ruled_set() -> None:
-    from cruxible_client.contracts import ProviderLaneUnavailableCodeV1
-    from cruxible_core.providers.provider_process_leases import ProviderProcessFenceCodeV1
-
-    members = set(typing.get_args(ProviderLaneUnavailableCodeV1))
-    assert members == set(typing.get_args(ProviderProcessFenceCodeV1)) | {
-        "provider_runtime_recovery_failed"
-    }
-
-
-def test_recovery_failure_code_is_the_fence_literal() -> None:
-    from cruxible_core.providers.provider_process_leases import (
-        ProviderProcessFenceCodeV1,
-        ProviderProcessRecoveryFailureV1,
-    )
-
-    hints = typing.get_type_hints(ProviderProcessRecoveryFailureV1)
-    assert hints["code"] is ProviderProcessFenceCodeV1
 
 
 def test_server_info_provider_lane_is_present_and_required() -> None:
@@ -72,58 +29,6 @@ def test_server_info_provider_lane_is_present_and_required() -> None:
         ProviderLaneStatusV1(state="available", code="provider_runtime_recovery_failed", detail="x")
     with pytest.raises(ValueError):
         ProviderLaneStatusV1(state="unavailable", code=None, detail=None)
-
-
-def test_node_refusal_details_is_semantic_only_no_schema_change() -> None:
-    """T-6 must be propagation, not a field addition."""
-    import subprocess
-
-    from cruxible_client.contracts.procedures.results import ProcedureNodeRefusalV1
-
-    assert "details" in ProcedureNodeRefusalV1.model_fields
-    diff = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(REPOSITORY_ROOT),
-            "diff",
-            "3cbeff5737024182ac0bd77ec0fdf64e7a71fb8d..3de5c80f662994c8ea2c053f5fa334421ad340a6",
-            "--",
-            "packages/cruxible-client/src/cruxible_client/contracts/procedures/results.py",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    assert "details" not in diff or "+    details" not in diff
-
-
-def test_l8_fence_scope_is_required_and_fixed() -> None:
-    from cruxible_client.contracts.provider_execution import ProviderInvocationReceiptV1
-
-    field = ProviderInvocationReceiptV1.model_fields["fence_scope"]
-    assert field.is_required()
-    assert typing.get_args(field.annotation) == ("process_group+descendant_sweep",)
-    assert field.description == (
-        "Process-group kill plus deterministic same-session sweep and best-effort "
-        "cross-session sweep within the configured poll interval."
-    )
-
-
-def test_c10_caps_carry_no_numeric_literal() -> None:
-    from cruxible_core.providers.provider_local_runtime import translate_provider_budget
-
-    source = inspect.getsource(translate_provider_budget)
-    assert not re.search(r"\b\d{3,}\b", source), source
-
-
-def test_l12_f5_no_bare_timeout_literal_on_the_fence_path() -> None:
-    text = (REPOSITORY_ROOT / "src/cruxible_core/providers/provider_process_leases.py").read_text()
-    assert re.search(r"timeout_seconds: float = 5", text) is None
-    runtime = (
-        REPOSITORY_ROOT / "src/cruxible_core/providers/provider_local_runtime.py"
-    ).read_text()
-    assert "timeout=5" not in runtime
 
 
 def test_hand_edit_repair_fabricates_no_command() -> None:
