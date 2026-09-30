@@ -222,6 +222,12 @@ def test_world_writes_keep_references_valid_after_their_own_write(
     assert again.status == "accepted", again
     assert [change.field for change in again.changes] == ["status", "title"]
     assert item.add(governs=world.project.work_item["wi-2"], because="Linked.").status == "accepted"
+    with pytest.raises(WriteRefusalError) as present:
+        item.add(governs=world.project.work_item["wi-2"], because="Again.", expect_absent=True)
+    assert present.value.error_code == "playbill.write.value_already_present"
+    assert (
+        item.add(governs=world.project.work_item["wi-2"], because="Again.").changes[0].already_live
+    )
     assert item.retire("title", because="Untitled.").status == "accepted"
     # A name the World does not know refuses before the wire.
     with pytest.raises(AttributeError, match="stauts"):
@@ -242,6 +248,8 @@ def test_the_world_stub_types_set_with_enum_literals(pb: Playbill) -> None:
     stub = pb.world().stub()
     ast.parse(stub)
     assert "def set(" in stub and "def add(" in stub and "def retire(" in stub
+    add = stub[stub.index("def add(") :]
+    assert "expect_absent: bool = ...," in add[: add.index(") -> WriteOutcome")]
     assert "status: Literal['blocked', 'done', 'ready'] = ...," in stub
     assert "governs: str | SubjectRef = ...," in stub
     assert "ruling: str = ...," in stub
