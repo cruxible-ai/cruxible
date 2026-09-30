@@ -103,9 +103,10 @@ def credential_unbound_refusal(
 ) -> PrincipalRefusedError:
     """An unbound credential keeps transport authority but can never author."""
 
+    who = "request" if credential_label is None else f"bearer credential ({credential_label})"
     return PrincipalRefusedError(
         "playbill.identity.credential_unbound",
-        f"this bearer credential ({credential_label}) acts as no principal, so it cannot "
+        f"this {who} acts as no principal, so it cannot "
         "author or attribute governed work; repair: mint one bound to your principal with "
         "its key: `cruxible credential mint --principal-id ID --key-dir DIR --mode "
         "governed_write`, then revoke this one",

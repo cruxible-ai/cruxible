@@ -5825,7 +5825,12 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     ]
     you = result.get("you")
     if you is not None:
-        verdict = "can author" if you["can_author"] else f"cannot author: {you['reason']}"
+        refusal = you.get("authoring_refusal") or {}
+        verdict = (
+            "can author"
+            if you["can_author"]
+            else f"cannot author ({refusal.get('code')}): {refusal.get('detail')}"
+        )
         lines.append(f"You: {you['actor'] or '(no actor)'}, {verdict}")
     kinds = result.get("kinds")
     if kinds is not None:

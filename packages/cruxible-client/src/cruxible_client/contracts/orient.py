@@ -20,6 +20,7 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 PlaybillOrientSection: TypeAlias = Literal[
@@ -56,7 +57,8 @@ class PlaybillOrientYouV1(_StrictOrientModel):
     actor: str | None
     principal: str | None = Field(default=None, exclude_if=_is_none)
     can_author: bool
-    reason: str | None = Field(default=None, exclude_if=_is_none)
+    # Exactly the refusal whoami reports and authoring returns: code, detail, repair.
+    authoring_refusal: PlaybillAuthoringRefusalV1 | None = Field(default=None, exclude_if=_is_none)
 
 
 class PlaybillOrientPredicateV1(_StrictOrientModel):

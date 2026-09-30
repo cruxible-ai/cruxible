@@ -1828,7 +1828,8 @@ The map of accepted state, in one call. With no option it prints each Subject
 kind with its live Subject count and its predicates (short name, cardinality,
 type or enum members, and the CaptureContracts whose evidence the ClaimType
 admits, by name), the artifact counts, the named queries with their parameters,
-who you are and whether you can author (and why not), what the `next` queue
+who you are and whether you can author (when not, the same `authoring_refusal`
+code, detail and repair that `whoami` reports), what the `next` queue
 holds, and the next commands to run. When any live ClaimType still names
 CaptureContracts by digest, attention says so and suggests
 `cruxible playbill claim-type upgrade-evidence-rules`.

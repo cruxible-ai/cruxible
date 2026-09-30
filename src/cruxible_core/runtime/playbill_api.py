@@ -1015,8 +1015,9 @@ def playbill_orient(
             if identity is None
             else OrientCaller(
                 actor_id=identity.actor_id,
-                principal_registration_status=identity.principal_registration_status,
                 credential_permission_mode=identity.credential_permission_mode,
+                configured=identity.actor_id_source != "local_operator",
+                credential_label=identity.credential_label,
             )
         ),
         provider_lane=contracts.ProviderLaneStatusV1(

@@ -27586,6 +27586,80 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
+          "PlaybillAuthoringRefusalV1": {
+            "additionalProperties": false,
+            "description": "Why this actor cannot author, and the runnable repair.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "playbill.identity.credential_unbound",
+                  "playbill.identity.principal_unconfigured",
+                  "playbill.identity.principal_absent",
+                  "playbill.identity.principal_revoked",
+                  "playbill.identity.permission_insufficient",
+                  "playbill.instance.decommissioned"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "repair"
+            ],
+            "title": "PlaybillAuthoringRefusalV1",
+            "type": "object"
+          },
           "PlaybillOrientArtifactCountsV1": {
             "additionalProperties": false,
             "properties": {
@@ -28064,6 +28138,17 @@
                 ],
                 "title": "Actor"
               },
+              "authoring_refusal": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "can_author": {
                 "title": "Can Author",
                 "type": "boolean"
@@ -28079,18 +28164,6 @@
                 ],
                 "default": null,
                 "title": "Principal"
-              },
-              "reason": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Reason"
               }
             },
             "required": [
@@ -28098,6 +28171,26 @@
               "can_author"
             ],
             "title": "PlaybillOrientYouV1",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
             "type": "object"
           }
         },
