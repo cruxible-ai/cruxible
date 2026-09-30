@@ -70,6 +70,7 @@ _STUB_IMPORTS = (
     "    SubjectRef,",
     ")",
     "from cruxible_client.authoring.world import KindNamespace, WorldClaimType",
+    "from cruxible_client.contracts.claim_types import ClaimTypeMemberDescriptionV1",
     "from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1",
     "from cruxible_client.contracts.projection import AcceptedCoordinate",
     "from cruxible_client.contracts.write import (",
@@ -153,7 +154,47 @@ class _Body:
         return [*self._lines, "    ..."]
 
 
-def _children(node: _Node, body: _Body, *, reserved: frozenset[str]) -> None:
+_DOC_MEMBERS = 12
+_DOC_LINE_CHARS = 120
+
+
+def _escaped(text: str) -> str:
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _clipped(text: str) -> str:
+    return text if len(text) <= _DOC_LINE_CHARS else text[: _DOC_LINE_CHARS - 1] + "\u2026"
+
+
+def _meaning_docstring(claim_type: WorldClaimType) -> list[str]:
+    """The attribute docstring after a predicate leaf: its meaning, member by member.
+
+    Empty for a predicate that describes nothing, so a world without ClaimType
+    v7 descriptions renders exactly as before.
+    """
+
+    if claim_type.description is None and not claim_type.member_descriptions:
+        return []
+    lines = [] if claim_type.description is None else claim_type.description.splitlines()
+    members = [
+        _clipped(f"{item.member!r} \u2014 {' '.join(item.description.split())}")
+        for item in claim_type.member_descriptions
+    ]
+    if members:
+        if lines:
+            lines.append("")
+        lines.extend(members[:_DOC_MEMBERS])
+        if len(members) > _DOC_MEMBERS:
+            lines.append(f"... and {len(members) - _DOC_MEMBERS} more members")
+    escaped = [_escaped(line) for line in lines]
+    if len(escaped) == 1:
+        return [f'"""{escaped[0]}"""']
+    return [f'"""{escaped[0]}', *escaped[1:], '"""']
+
+
+def _children(
+    node: _Node, body: _Body, *, reserved: frozenset[str], world: World | None = None
+) -> None:
     """Declare every child segment attribute access can actually spell.
 
     A segment may be a Python keyword (`dev.class`) or collide with a name the
@@ -177,6 +218,12 @@ def _children(node: _Node, body: _Body, *, reserved: frozenset[str]) -> None:
             )
             continue
         body.declare(f"{child}: {_class_name(path)}")
+        if world is not None and node.children[child].structure is not None:
+            claim_type = world.claim_type(path)
+            if isinstance(claim_type, WorldClaimType):
+                doc = _meaning_docstring(claim_type)
+                if doc:
+                    body.declare_lines(doc)
 
 
 def _subject_block(world: World, node: _Node) -> list[str]:
@@ -198,6 +245,9 @@ def _subject_block(world: World, node: _Node) -> list[str]:
     reachable = world._predicate_leaves(node.path)
     for leaf in _sorted(reachable):
         body.declare(f"{leaf}: tuple[ClaimView, ...]")
+        doc = _meaning_docstring(world.claim_type(reachable[leaf]))
+        if doc:
+            body.declare_lines(doc)
     _write_members(world, node.path, body)
     for leaf, predicates in sorted(world._leaf_map(node.path).items()):
         if leaf in reachable or len(predicates) != 1:
@@ -294,7 +344,7 @@ def _namespace_block(world: World, node: _Node, *, class_name: str) -> list[str]
         _query_members(world, node.path, body, include_run=False)
     else:
         body.declare("subject_kind: None")
-    _children(node, body, reserved=_NAMESPACE_MEMBERS)
+    _children(node, body, reserved=_NAMESPACE_MEMBERS, world=world)
     if node.subject_kind:
         namespace = KindNamespace(world, node)
         for subject_id in _sorted(namespace.subject_ids):
@@ -438,13 +488,18 @@ def _predicate_block(world: World, node: _Node) -> list[str]:
     body.declare("referent_sensitivity: ReferentSensitivity")
     body.declare("literal_schema: dict[str, object] | None")
     body.declare("members: tuple[str, ...]")
+    body.declare("description: str | None")
+    body.declare("member_descriptions: tuple[ClaimTypeMemberDescriptionV1, ...]")
+    body.declare("default_role: ClaimRole | None")
+    body.declare('evidence_requirement: Literal["none", "self", "captured"]')
+    body.declare('revision_evidence: Literal["replace", "accumulate"]')
     body.declare("def __call__(self, value: object) -> LiteralValue: ...")
     if node.subject_kind:
         body.declare(f"as_kind: {_kind_class_name(node.path)}")
         body.declare(
             f"def __getitem__(self, subject_id: str) -> {_subject_class_name(node.path)}: ..."
         )
-    _children(node, body, reserved=CLAIM_TYPE_MEMBERS)
+    _children(node, body, reserved=CLAIM_TYPE_MEMBERS, world=world)
     leaf = node.path.rsplit(".", 1)[-1]
     for member in _sorted(claim_type.members):
         if member in node.children:

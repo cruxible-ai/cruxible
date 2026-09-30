@@ -27,7 +27,11 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from cruxible_client import contracts
-from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    effective_evidence_requirement,
+    effective_revision_evidence,
+)
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.orient import (
     PLAYBILL_ORIENT_ATTENTION_TOP,
@@ -319,6 +323,18 @@ def _short_names(predicates: Iterable[str], kind: str, state: _State) -> dict[st
     return {predicate: short_field_name(predicate, kind, accepted) for predicate in predicates}
 
 
+_COMPACT_DESCRIPTION_CHARS = 160
+
+
+def _compact_description(text: str) -> str:
+    """A description's first sentence, at most 160 characters, for compact descriptors."""
+
+    first = _first_sentence(text) or text
+    if len(first) <= _COMPACT_DESCRIPTION_CHARS:
+        return first
+    return first[: _COMPACT_DESCRIPTION_CHARS - 1].rstrip() + "\u2026"
+
+
 def _descriptor(
     claim_type: ClaimType,
     *,
@@ -329,15 +345,25 @@ def _descriptor(
 ) -> PlaybillOrientPredicateV1:
     value_type, members = _value_type(claim_type)
     freshness = claim_type.evidence_freshness
+    requirement = effective_evidence_requirement(claim_type)
     return PlaybillOrientPredicateV1(
         name=name,
         predicate=claim_type.predicate,
         cardinality=claim_type.cardinality,
         type=value_type,
         members=members,
+        description=(
+            claim_type.description
+            if full or claim_type.description is None
+            else _compact_description(claim_type.description)
+        ),
         evidence=evidence,
+        evidence_requirement=None if requirement == "self" else requirement,
         subject_kinds=claim_type.allowed_subject_kinds if full else None,
         roles=tuple(claim_type.permitted_roles) if full else None,
+        default_role=claim_type.default_role if full else None,
+        member_descriptions=claim_type.member_descriptions if full else (),
+        revision_evidence=effective_revision_evidence(claim_type) if full else None,
         stale_after=(
             _duration(freshness.stale_after.microseconds)
             if full and freshness is not None

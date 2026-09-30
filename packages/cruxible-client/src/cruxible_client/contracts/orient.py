@@ -21,6 +21,12 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from cruxible_client.contracts.claim_type_structure import ClaimRole
+from cruxible_client.contracts.claim_types import (
+    ClaimTypeMemberDescriptionV1,
+    EvidenceRequirement,
+    RevisionEvidence,
+)
 from cruxible_client.contracts.operational_reads import (
     PlaybillLiveViewV1,
     PlaybillOrientCaptureContractV1,
@@ -92,6 +98,14 @@ class PlaybillOrientPredicateV1(_StrictOrientModel):
     ``None`` (omitted on the wire) inherits the kind's evidence set; an empty
     tuple (``[]`` on the wire) explicitly admits no contracts. Standalone
     descriptors always carry an explicit set.
+
+    ``description`` is the ClaimType's (v7) description: its first sentence, at
+    most 160 characters, in a compact descriptor; all of it in full.
+    ``evidence_requirement`` appears only when it is not ``self`` (``none``: the
+    Claim's own origin supports it; ``captured``: a Capture under a declared
+    contract is required). A full descriptor also carries each described enum
+    member, the role a write defaults to, and ``revision_evidence``: what a
+    statement-changing revision keeps (``accumulate`` before v7).
     """
 
     name: str
@@ -103,9 +117,15 @@ class PlaybillOrientPredicateV1(_StrictOrientModel):
     )
     description: str | None = Field(default=None, exclude_if=_is_none)
     evidence: tuple[str, ...] | None = Field(default=None, exclude_if=_is_none)
+    evidence_requirement: EvidenceRequirement | None = Field(default=None, exclude_if=_is_none)
     # Full descriptors (``orient(kind=...)`` and the claim_types section) only.
     subject_kinds: tuple[str, ...] | None = Field(default=None, exclude_if=_is_none)
     roles: tuple[str, ...] | None = Field(default=None, exclude_if=_is_none)
+    default_role: ClaimRole | None = Field(default=None, exclude_if=_is_none)
+    member_descriptions: tuple[ClaimTypeMemberDescriptionV1, ...] = Field(
+        default=(), exclude_if=_is_empty
+    )
+    revision_evidence: RevisionEvidence | None = Field(default=None, exclude_if=_is_none)
     stale_after: str | None = Field(default=None, exclude_if=_is_none)
     live_claims: int | None = Field(default=None, ge=0, exclude_if=_is_none)
 

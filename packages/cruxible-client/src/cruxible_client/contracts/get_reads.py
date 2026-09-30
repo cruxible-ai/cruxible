@@ -15,6 +15,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts import PlaybillAcceptedCoordinate
+from cruxible_client.contracts.claim_type_structure import ClaimRole
+from cruxible_client.contracts.claim_types import (
+    ClaimTypeMemberDescriptionV1,
+    EvidenceRequirement,
+    RevisionEvidence,
+)
 from cruxible_client.contracts.operational_reads import (
     PlaybillGetCaptureCardV1,
     PlaybillGetLineCardV1,
@@ -252,6 +258,15 @@ class PlaybillGetSubjectCardV1(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class PlaybillGetEvidenceRuleV1(_StrictGetModel):
+    """One evidence rule: which roles it admits evidence for, under which contracts."""
+
+    rule_id: str
+    roles: tuple[ClaimRole, ...]
+    contracts: tuple[str, ...]
+    admission: Literal["origin_only", "direct", "derivational"]
+
+
 class PlaybillGetClaimTypeCardV1(_StrictGetModel):
     predicate: str
     subject_kinds: tuple[str, ...]
@@ -259,9 +274,21 @@ class PlaybillGetClaimTypeCardV1(_StrictGetModel):
     cardinality: str
     members: tuple[Any, ...] | None = Field(default=None, exclude_if=_omit_none)
     description: str | None = Field(default=None, exclude_if=_omit_none)
+    # Each described enum member, as its literal value beside what it means.
+    member_descriptions: tuple[ClaimTypeMemberDescriptionV1, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
+    roles: tuple[ClaimRole, ...]
+    # The role a write takes when it names none.
+    default_role: ClaimRole | None = Field(default=None, exclude_if=_omit_none)
+    # What backs a Claim (``self`` before v7) and what a statement-changing
+    # revision keeps (``accumulate`` before v7).
+    evidence_requirement: EvidenceRequirement
+    revision_evidence: RevisionEvidence
     # Accepted evidence, as CaptureContract names; never a digest where the
     # contract's identity resolves. ``unresolved:<digest prefix>`` otherwise.
     evidence: tuple[str, ...]
+    evidence_rules: tuple[PlaybillGetEvidenceRuleV1, ...] = ()
     live_claims: int
     next: tuple[str, ...] = ()
 
@@ -453,6 +480,7 @@ __all__ = [
     "PlaybillGetCardV1",
     "PlaybillGetClaimCardV1",
     "PlaybillGetClaimTypeCardV1",
+    "PlaybillGetEvidenceRuleV1",
     "PlaybillGetContenderV1",
     "PlaybillGetCoordinateV1",
     "PlaybillGetDetail",

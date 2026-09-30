@@ -110,6 +110,7 @@ class _WorldClient:
         self.claim_reads: list[str] = []
         self.claim_predicates: dict[str, str] = {}
         self.retired_severity = False
+        self.severity_overrides: dict[str, Any] = {}
         self.claim_type_reads: list[str] = []
 
     def get_playbill_claim_type(
@@ -160,6 +161,7 @@ class _WorldClient:
                 _claim_type(
                     SEVERITY,
                     lifecycle={"state": "retired" if self.retired_severity else "live"},
+                    **self.severity_overrides,
                 ),
                 _claim_type(
                     AFFECTS,
@@ -735,6 +737,60 @@ def test_the_stub_is_byte_identical_for_the_same_coordinate_and_moves_with_it(
     moved = playbill.world().stub()
     assert moved != first
     assert f"#   git_oid          {'b' * 40}" in moved
+
+
+def test_a_v7_predicate_carries_its_meaning_into_the_world_and_the_stub(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    import ast
+
+    from cruxible_client.authoring.sdk_types import ClaimRole
+
+    playbill, client = connection
+    plain = playbill.world()
+    severity = plain.claim_type(SEVERITY)
+    assert (
+        severity.description,
+        severity.member_descriptions,
+        severity.default_role,
+        severity.evidence_requirement,
+        severity.revision_evidence,
+    ) == (None, (), None, "self", "accumulate")
+    assert "\u2014" not in plain.stub()
+
+    client.severity_overrides = {
+        "artifact_format": "playbill-claim-type-v7",
+        "description": "How bad the vulnerability is.\nRead it before patching.",
+        "member_descriptions": [
+            {"member": "high", "description": "Patch now."},
+            {"member": "low", "description": 'Patch "soon".'},
+        ],
+        "default_role": "observation",
+        "evidence_requirement": "captured",
+        "revision_evidence": "replace",
+    }
+    world = playbill.world()
+    severity = world.claim_type(SEVERITY)
+    assert severity.description == "How bad the vulnerability is.\nRead it before patching."
+    assert [(item.member, item.description) for item in severity.member_descriptions] == [
+        ("high", "Patch now."),
+        ("low", 'Patch "soon".'),
+    ]
+    assert severity.default_role == ClaimRole.OBSERVATION
+    assert (severity.evidence_requirement, severity.revision_evidence) == ("captured", "replace")
+    stub = world.stub()
+    assert stub == world.stub()
+    ast.parse(stub)
+    assert (
+        "    severity: tuple[ClaimView, ...]\n"
+        '    """How bad the vulnerability is.\n'
+        "    Read it before patching.\n"
+        "    \n"
+        "    'high' \u2014 Patch now.\n"
+        "    'low' \u2014 Patch \\\"soon\\\".\n"
+        '    """\n'
+    ) in stub
+    assert '    evidence_requirement: Literal["none", "self", "captured"]' in stub
 
 
 def test_a_type_checker_reads_the_generated_stub_as_exact_types(
