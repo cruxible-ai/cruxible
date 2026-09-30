@@ -451,6 +451,19 @@ def _procedure_cards(
     return files
 
 
+def _cited_captures(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+) -> tuple[str, ...]:
+    """Every Capture an accepted Claim cites: the envelopes the coverage boundary reads."""
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        rows = projection.citations._rows(
+            "SELECT DISTINCT capture_digest FROM citation_uses WHERE owner_kind='Claim' "
+            "ORDER BY capture_digest"
+        )
+    return tuple(str(row["capture_digest"]) for row in rows)
+
+
 def _discovery_layer(
     instance: PlaybillInstance,
     *,
@@ -572,7 +585,7 @@ def service_export_playbill_floor(
     verdict_context: ClaimVerdictReadContext | None = None
     claims: tuple[ClaimArtifactAny, ...]
     # Body-store objects the discovery cards depend on (cited Captures).
-    captures: tuple[tuple[str, bool], ...] = ()
+    captures: tuple[tuple[str, bool | None], ...] = ()
     if with_discovery:
         structure_key = (coordinate.git_oid, body_access.principal_id, body_access.can_read_body)
         structure = (
@@ -584,6 +597,11 @@ def service_export_playbill_floor(
             base_files, claims, captures = structure
             files = base_files.copy()
         else:
+            # Bracket the layer's Capture reads: a Capture that answered one way
+            # before and another after has no answer to record, so the cards
+            # built over it are never reused.
+            cited = _cited_captures(instance, coordinate)
+            before = {digest: body_available(instance, digest) for digest in cited}
             files, claims, verdict_context = _discovery_layer(
                 instance,
                 coordinate=coordinate,
@@ -591,10 +609,8 @@ def service_export_playbill_floor(
                 external_readers=external_readers,
             )
             captures = tuple(
-                (digest, body_available(instance, digest))
-                for digest in sorted(
-                    {item for claim in claims for item in claim.backing.capture_digests}
-                )
+                (digest, held if held == body_available(instance, digest) else None)
+                for digest, held in before.items()
             )
             if (
                 not external_readers
@@ -613,7 +629,7 @@ def service_export_playbill_floor(
     else:
         claims, verdict_context = live_claims(instance, coordinate)
 
-    bodies: tuple[tuple[str, bool], ...] = ()
+    bodies: tuple[tuple[str, bool | None], ...] = ()
     if format_version == 4:
         layer, bodies = current_layer(
             instance,

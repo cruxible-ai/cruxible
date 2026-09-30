@@ -265,7 +265,7 @@ def current_layer(
     notes_oid: str | None,
     access: BodyAccessContext | None = None,
     verdict_context: ClaimVerdictReadContext | None = None,
-) -> tuple[dict[str, bytes], tuple[tuple[str, bool], ...]]:
+) -> tuple[dict[str, bytes], tuple[tuple[str, bool | None], ...]]:
     """The grep-first layer: current/, INDEX, documents/ and their provenance.
 
         Also returns every body-store object the layer's bytes depend on, with

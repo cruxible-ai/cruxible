@@ -309,3 +309,100 @@ def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place
     playbill_search.reset_claim_resolution_memo()
     assert warm == _outcome(read)
     assert warm[0] == "PlaybillCasError"
+
+
+def _capture_and_source(instance, capture: str) -> tuple[str, str]:  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.captures import CasSourceReferenceV1, parse_capture_envelope
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            capture, access=BodyAccessContext(principal_id="test", can_read_body=True)
+        )
+    )
+    # The source bytes replay availability consults after the Capture itself.
+    if isinstance(envelope.source, CasSourceReferenceV1):
+        return capture, envelope.source.content_digest
+    assert envelope.commitment.materialization == "cas"
+    return capture, envelope.commitment.digest
+
+
+@pytest.mark.parametrize("which", ["capture", "source"])
+def test_a_body_rewritten_after_its_read_but_before_the_memo_insert_is_not_remembered(
+    tmp_path: Path, monkeypatch, which: str
+) -> None:
+    """Identities are the ones each read used, never ones collected afterwards.
+
+    Between the derivation's reads and the memo insert, the availability memo is
+    evicted (as concurrent activity would) and a body the verdicts read is
+    rewritten in place with its size and mtime kept. The entry must not record
+    the rewritten file's identity against verdicts derived from the old bytes.
+    """
+
+    from cruxible_core.service.evidence import evidence
+
+    instance, _owner = seed_claims(tmp_path)
+    context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
+    capture = context.claims()[0].backing.capture_digests[0]
+    target = dict(zip(("capture", "source"), _capture_and_source(instance, capture)))[which]
+    snapshot = ClaimVerdictReadContext.snapshot
+    rewritten: list[bool] = []
+
+    def evict_and_rewrite_before_insert(self, reads, **kwargs):  # type: ignore[no-untyped-def]
+        # The last read before the insert; the window opens as it returns.
+        values = snapshot(self, reads, **kwargs)
+        if not rewritten:
+            evidence._AVAILABILITY_MEMO.clear()
+            _rewrite_in_place(instance.body_store()._path(target), keep_mtime=True)
+            rewritten.append(True)
+        return values
+
+    playbill_search.reset_claim_resolution_memo()
+    evidence._AVAILABILITY_MEMO.clear()
+    monkeypatch.setattr(ClaimVerdictReadContext, "snapshot", evict_and_rewrite_before_insert)
+    _remembered_derivation(instance)  # derives from the good bytes; the body moves
+    monkeypatch.setattr(ClaimVerdictReadContext, "snapshot", snapshot)
+    assert rewritten
+
+    warm = _outcome(lambda: _remembered_derivation(instance))
+    cold = _outcome(lambda: _derive(instance, fresh=True))
+    assert warm == cold
+    assert warm[0] == "PlaybillCasError"
+
+
+@pytest.mark.parametrize("which", ["capture", "source"])
+def test_an_availability_evicted_before_the_insert_keeps_every_dependency(
+    tmp_path: Path, monkeypatch, which: str
+) -> None:
+    """Evicting the availability memo mid-request loses no dependency.
+
+    The memo is evicted between the derivation's reads and the insert, then,
+    once the derivation is remembered, a consulted body (the Capture, or the
+    source bytes its availability also read) is rewritten in place with its
+    mtime kept: the next read must re-derive rather than serve the old answer.
+    """
+
+    from cruxible_core.service.evidence import evidence
+
+    instance, _owner = seed_claims(tmp_path)
+    context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
+    capture = context.claims()[0].backing.capture_digests[0]
+    target = dict(zip(("capture", "source"), _capture_and_source(instance, capture)))[which]
+    snapshot = ClaimVerdictReadContext.snapshot
+
+    def evict_before_insert(self, reads, **kwargs):  # type: ignore[no-untyped-def]
+        values = snapshot(self, reads, **kwargs)
+        evidence._AVAILABILITY_MEMO.clear()
+        return values
+
+    playbill_search.reset_claim_resolution_memo()
+    evidence._AVAILABILITY_MEMO.clear()
+    monkeypatch.setattr(ClaimVerdictReadContext, "snapshot", evict_before_insert)
+    _remembered_derivation(instance)
+    monkeypatch.setattr(ClaimVerdictReadContext, "snapshot", snapshot)
+    _rewrite_in_place(instance.body_store()._path(target), keep_mtime=True)
+
+    warm = _outcome(lambda: _remembered_derivation(instance))
+    cold = _outcome(lambda: _derive(instance, fresh=True))
+    assert warm == cold
+    assert warm[0] == "PlaybillCasError"

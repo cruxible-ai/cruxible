@@ -62,7 +62,6 @@ from cruxible_core.service.evidence.evidence import (
     ClaimVerdictReadContext,
     VerdictReads,
     body_fingerprints_hold,
-    capture_body_fingerprints,
 )
 
 
@@ -89,7 +88,7 @@ def _accepted_coordinate(request: PlaybillSearchRequestV1) -> PlaybillAcceptedCo
 # Bounded, per-process, and keyed on every input the derivation reads. See
 # `playbill_verdict_memo` for why each part of the key is there.
 # Each entry also keeps the file identity of every body-store object its
-# verdicts read (see ``capture_body_fingerprints``) and is served only while all
+# verdicts read (``VerdictReads.body_identities``) and is served only while all
 # of them hold: the shard fingerprint in the key sees arrivals and removals, not
 # a body rewritten in place.
 _RESOLUTION_MEMO: (
@@ -255,9 +254,9 @@ def claim_resolution_statuses(
     # verdicts made still returns the same value here: one batched re-read of
     # all their inputs instead of re-deriving them.
     pending = dict(live_groups)
-    # Every Capture the verdicts read, reused or derived, for the entry's
-    # body-store fingerprints.
-    captures_read: set[str] = set()
+    # Every body-store object the verdicts' replay availability read, reused or
+    # derived, with the identity each read used: the entry's fingerprints.
+    bodies_read = VerdictReads()
     if remember:
         candidates: dict[bytes, _RememberedSlot] = {}
         for slot_key, group in live_groups.items():
@@ -272,10 +271,13 @@ def claim_resolution_statuses(
             union = VerdictReads()
             for entry in candidates.values():
                 union.update(entry.reads)
-            current = read_context.snapshot(union)
+            # A reused slot rests on the Captures just re-read to validate it,
+            # with the identities that re-read used.
+            validated = VerdictReads()
+            current = read_context.snapshot(union, bodies=validated)
+            bodies_read.update(validated)
             for slot_key, entry in candidates.items():
                 if all(current.get(read) == value for read, value in entry.observed.items()):
-                    captures_read |= entry.reads.captures
                     _SLOT_MEMO.move_to_end((root, compiler, slot_key))
                     statuses.update(entry.statuses)
                     verdicts.update(
@@ -350,7 +352,7 @@ def claim_resolution_statuses(
             remember = False
         if reads is not None and not reads.inconsistent:
             derived[slot_key] = (reads, group_boundaries, group_statuses)
-            captures_read |= reads.captures
+            bodies_read.note_bodies(reads.body_identities if reads.bodies_complete else None)
     if derived:
         union = VerdictReads()
         for reads, _bounds, _statuses in derived.values():
@@ -380,7 +382,15 @@ def claim_resolution_statuses(
             _SLOT_MEMO.move_to_end((root, compiler, slot_key))
         while len(_SLOT_MEMO) > _SLOT_MEMO_CAPACITY:
             _SLOT_MEMO.popitem(last=False)
-    if remember:
+    fingerprints = tuple(sorted(bodies_read.body_identities.items()))
+    # Only a derivation whose every body read has the identity it used, and
+    # whose bodies still have those identities now, is remembered: anything
+    # that moved between a read and this insert forgoes the memo.
+    if (
+        remember
+        and bodies_read.bodies_complete
+        and body_fingerprints_hold(instance, fingerprints, store=read_context.body_store())
+    ):
         memo_put(
             _RESOLUTION_MEMO,
             key,
@@ -388,7 +398,7 @@ def claim_resolution_statuses(
                 dict(statuses),
                 dict(verdicts),
                 invariance_interval(boundaries, evaluation_time=evaluation_time),
-                capture_body_fingerprints(instance, captures_read, store=read_context.body_store()),
+                fingerprints,
             ),
             capacity=MEMO_CAPACITY,
         )

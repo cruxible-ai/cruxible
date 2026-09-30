@@ -740,3 +740,40 @@ def test_kept_discovery_cards_agree_with_cold_ones_after_a_capture_is_erased(
 
     warm = _outcome(lambda: service_export_playbill_floor(instance, **options))
     assert warm == _outcome(lambda: _cold(instance, **options))
+
+
+def test_a_body_that_moves_while_the_floor_reads_it_is_never_reused(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The floor records what a read used, never an answer taken afterwards.
+
+    A ruling's bytes are rewritten (size and mtime kept) right after the floor
+    reads them and before anything else looks: the render made from the old
+    bytes must not be kept against the new file.
+    """
+
+    from cruxible_core.service.discovery.exact_content import ExactContentReader
+
+    instance, _owner = seed_write_surface(tmp_path)
+    written = _write(instance, _set(WI1, "ruling", RULING))
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        digest = projection.typed.source(
+            f"Claim:{written.changes[0].claim}"
+        ).statement.object.content_digest
+    read = ExactContentReader.of
+    moved: list[bool] = []
+
+    def read_then_move(self, obj):  # type: ignore[no-untyped-def]
+        value = read(self, obj)
+        if not moved:
+            _spoil(instance, digest, "corrupt-keep-mtime")
+            moved.append(True)
+        return value
+
+    monkeypatch.setattr(ExactContentReader, "of", read_then_move)
+    first = _outcome(lambda: service_export_playbill_floor(instance, access=BODY_READER))
+    monkeypatch.setattr(ExactContentReader, "of", read)
+    assert moved and isinstance(first, dict)
+
+    warm = _outcome(lambda: service_export_playbill_floor(instance, access=BODY_READER))
+    assert warm == _outcome(lambda: _cold(instance, access=BODY_READER))

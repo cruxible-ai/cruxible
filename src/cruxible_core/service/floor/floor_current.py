@@ -214,7 +214,7 @@ class _Shown:
     # The value as one line of plain text, for the kind's INDEX.
     plain: str = ""
     # An exact-content value's body digest, and whether the store held it intact.
-    body: tuple[str, bool] | None = None
+    body: tuple[str, bool | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -234,7 +234,7 @@ class SubjectPart:
     index_states: tuple[tuple[str, str], ...] = ()
     # Every body-store object this render read, and whether it was held intact.
     # A render is reused only while each one still answers the same.
-    bodies: tuple[tuple[str, bool], ...] = ()
+    bodies: tuple[tuple[str, bool | None], ...] = ()
 
 
 def body_available(instance: PlaybillInstance, digest: str) -> bool:
@@ -250,7 +250,7 @@ def body_available(instance: PlaybillInstance, digest: str) -> bool:
         return False
 
 
-def bodies_unchanged(instance: PlaybillInstance, bodies: Iterable[tuple[str, bool]]) -> bool:
+def bodies_unchanged(instance: PlaybillInstance, bodies: Iterable[tuple[str, bool | None]]) -> bool:
     """Whether every recorded body still answers as it did when it was rendered."""
 
     return all(body_available(instance, digest) == held for digest, held in bodies)
@@ -309,6 +309,7 @@ class ValueRenderer:
     def __init__(self, instance: PlaybillInstance) -> None:
         self._instance = instance
         self._content = ExactContentReader(instance)
+        self._held: dict[str, bool | None] = {}
 
     def shown(self, claim: ClaimArtifactAny, *, text_name: str) -> _Shown:
         obj = claim.statement.object
@@ -317,8 +318,17 @@ class ValueRenderer:
             other = subject_ref(obj.address.artifact_path)
             return _Shown(yaml_scalar(other), None, note, plain=other)
         if isinstance(obj, ExactContentClaimObject):
-            value = self._content.of(obj)
-            body = (obj.content_digest, body_available(self._instance, obj.content_digest))
+            digest = obj.content_digest
+            if digest not in self._held:
+                # Bracket the one read of these bytes: a body that moved while it
+                # was read has no answer to record, so its render is never reused.
+                before = body_available(self._instance, digest)
+                value = self._content.of(obj)
+                after = body_available(self._instance, digest)
+                self._held[digest] = before if before == after else None
+            else:
+                value = self._content.of(obj)
+            body = (digest, self._held[digest])
             if not isinstance(value, str):
                 size = "null" if value.length is None else str(value.length)
                 marker = f"{{exact_content: {value.exact_content}, bytes: {size}}}"
@@ -458,7 +468,7 @@ def render_subject(
     entries: list[tuple[str, str, list[str]]] = []
     texts: list[tuple[str, str, str]] = []
     plains: dict[str, tuple[str, ...]] = {}
-    bodies: set[tuple[str, bool]] = set()
+    bodies: set[tuple[str, bool | None]] = set()
     flagged: list[tuple[str, list[FloorFlag]]] = []
     for (predicate, qualifier), members in slots.items():
         members.sort(key=lambda item: item.identity.name.encode())
