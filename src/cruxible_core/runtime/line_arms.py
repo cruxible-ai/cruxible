@@ -65,11 +65,13 @@ def current_arm_principal() -> LineArmPrincipalV1:
             label=auth.credential_label,
         )
     if not is_server_auth_enabled() and (auth is None or auth.credential_type == "principal_claim"):
-        # Auth off: the arm dispatches as the principal this request claims, or
-        # as the local operator when it claims none.
-        label = LOCAL_OPERATOR_ACTOR_ID if auth is None else auth.principal_id
-        assert label is not None
-        return LineArmPrincipalV1(kind="local_operator", label=label)
+        # Auth off: the arm records its provenance. A request that claims a
+        # principal arms as that claim, rechecked before every admission; one
+        # that claims none arms as the implicit local operator.
+        if auth is None:
+            return LineArmPrincipalV1(kind="local_operator", label=LOCAL_OPERATOR_ACTOR_ID)
+        assert auth.principal_id is not None
+        return LineArmPrincipalV1(kind="principal_claim", label=auth.principal_id)
     raise AuthenticationError(
         "Arming a Line requires a runtime credential the daemon can recheck before each run"
     )
@@ -104,7 +106,7 @@ def arm_authority(
 
     instance_id = instance.descriptor.instance_id
 
-    if principal.kind == "local_operator":
+    if principal.kind in ("local_operator", "principal_claim"):
         if is_server_auth_enabled():
             raise LineArmAuthorityLost(
                 "authentication_changed",
@@ -117,11 +119,16 @@ def arm_authority(
                 f"The daemon's permission mode {mode.name} no longer permits dispatch.",
             )
         actor = local_operator_actor_context()
-        if principal.label != LOCAL_OPERATOR_ACTOR_ID:
+        if principal.kind == "principal_claim":
             # An auth-off arm made under a claimed principal acts as it only
-            # while that principal stays active.
+            # while that principal stays active, whatever its name -- a
+            # registered principal named "operator" included.
             _require_active_principal(instance, principal.label)
-            actor = actor.model_copy(update={"actor_id": principal.label})
+            actor = actor.model_copy(
+                update={"actor_type": "service_account", "actor_id": principal.label}
+            )
+        # The implicit local operator (no principal claimed) is the OS user's own
+        # authority; it never resolves to a registered principal's standing.
         return actor, mode.value - 1
     assert principal.credential_id is not None
     record = get_runtime_credential_store().get(principal.credential_id)

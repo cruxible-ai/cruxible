@@ -1277,6 +1277,7 @@
           "schema": {
             "enum": [
               "runtime_credential",
+              "principal_claim",
               "local_operator"
             ],
             "title": "Kind",
@@ -1296,7 +1297,7 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "Who armed a Line: the credential rechecked before every automatic admission.\n\nOnly the credential's identifier is retained, never a token.",
+        "description": "Who armed a Line: the authority rechecked before every automatic admission.\n\n``runtime_credential`` retains only the credential's identifier, never a\ntoken. On an auth-off daemon, ``principal_claim`` is an arm made under a\nconfigured principal ID (``label``), whose accepted standing is rechecked\nbefore every admission; ``local_operator`` is the implicit local operator\nthat claimed no principal, and never resolves to a registered principal.",
         "properties": {
           "credential_id": {
             "anyOf": [
@@ -1313,6 +1314,7 @@
           "kind": {
             "enum": [
               "runtime_credential",
+              "principal_claim",
               "local_operator"
             ],
             "title": "Kind",
@@ -1558,7 +1560,7 @@
         "$defs": {
           "LineArmPrincipalV1": {
             "additionalProperties": false,
-            "description": "Who armed a Line: the credential rechecked before every automatic admission.\n\nOnly the credential's identifier is retained, never a token.",
+            "description": "Who armed a Line: the authority rechecked before every automatic admission.\n\n``runtime_credential`` retains only the credential's identifier, never a\ntoken. On an auth-off daemon, ``principal_claim`` is an arm made under a\nconfigured principal ID (``label``), whose accepted standing is rechecked\nbefore every admission; ``local_operator`` is the implicit local operator\nthat claimed no principal, and never resolves to a registered principal.",
             "properties": {
               "credential_id": {
                 "anyOf": [
@@ -1575,6 +1577,7 @@
               "kind": {
                 "enum": [
                   "runtime_credential",
+                  "principal_claim",
                   "local_operator"
                 ],
                 "title": "Kind",

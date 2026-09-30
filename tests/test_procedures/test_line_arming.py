@@ -37,7 +37,7 @@ from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
-LOCAL = LineArmPrincipalV1(kind="local_operator", label="owner")
+LOCAL = LineArmPrincipalV1(kind="local_operator", label="operator")
 CREDENTIAL = LineArmPrincipalV1(
     kind="runtime_credential", credential_id="cred-arm", label="line-operator"
 )
@@ -944,7 +944,7 @@ def test_a_credential_arm_stops_and_revokes_once_its_principal_is_revoked(monkey
 
 def test_a_claimed_local_arm_stops_once_its_principal_is_no_longer_active(monkeypatch):
     monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
-    claimed = LineArmPrincipalV1(kind="local_operator", label="line-operator")
+    claimed = LineArmPrincipalV1(kind="principal_claim", label="line-operator")
 
     with pytest.raises(LineArmAuthorityLost) as lost:
         arm_authority(
@@ -982,3 +982,48 @@ def test_automatic_dispatch_stops_when_the_arming_principal_is_not_registered(
     assert _admissions(instance) == 0
     assert revoked == ["ghost"]
     assert service_line_status(instance, line.identity.name).state != "armed"
+
+
+def test_revoking_a_registered_principal_named_operator_stops_its_claimed_arm(monkeypatch):
+    """A claimed principal named ``operator`` is not the implicit local operator."""
+
+    from cruxible_core.server.auth import ResolvedAuthContext
+
+    monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
+    monkeypatch.setattr(
+        line_arms,
+        "get_current_auth_context",
+        lambda: ResolvedAuthContext(
+            credential_id=None,
+            credential_label=None,
+            credential_type="principal_claim",
+            instance_scope=None,
+            role=None,
+            effective_permission_mode=None,
+            principal_id="operator",
+        ),
+    )
+    armed = line_arms.current_arm_principal()
+    assert armed.kind == "principal_claim" and armed.label == "operator"
+
+    with pytest.raises(LineArmAuthorityLost) as lost:
+        arm_authority(_registry_instance("operator", "revoked"), armed, now=datetime.now(UTC))
+
+    assert lost.value.reason == "principal_inactive"
+
+
+def test_the_implicit_local_operator_never_reads_a_registered_principals_standing(
+    monkeypatch,
+):
+    monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
+    monkeypatch.setattr(line_arms, "get_current_auth_context", lambda: None)
+    implicit = line_arms.current_arm_principal()
+    assert implicit.kind == "local_operator"
+
+    # A revoked registered principal that happens to be named "operator" is a
+    # different identity: the implicit operator's authority is the OS user's.
+    actor, _rung = arm_authority(
+        _registry_instance("operator", "revoked"), implicit, now=datetime.now(UTC)
+    )
+
+    assert actor.actor_type == "human_user" and actor.actor_id == "operator"

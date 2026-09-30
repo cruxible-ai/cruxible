@@ -121,13 +121,17 @@ LineArmOutcomeV1 = Literal["armed", "rearmed", "already_armed", "disarmed", "alr
 
 
 class LineArmPrincipalV1(BaseModel):
-    """Who armed a Line: the credential rechecked before every automatic admission.
+    """Who armed a Line: the authority rechecked before every automatic admission.
 
-    Only the credential's identifier is retained, never a token.
+    ``runtime_credential`` retains only the credential's identifier, never a
+    token. On an auth-off daemon, ``principal_claim`` is an arm made under a
+    configured principal ID (``label``), whose accepted standing is rechecked
+    before every admission; ``local_operator`` is the implicit local operator
+    that claimed no principal, and never resolves to a registered principal.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    kind: Literal["runtime_credential", "local_operator"]
+    kind: Literal["runtime_credential", "principal_claim", "local_operator"]
     credential_id: str | None = None
     label: str
 
