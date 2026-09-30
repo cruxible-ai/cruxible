@@ -573,15 +573,26 @@ def accepted_subjects(
 
 def accepted_claim_types(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
-) -> dict[str, ClaimType]:
+) -> tuple[dict[str, ClaimType], frozenset[str]]:
+    """Accepted ClaimTypes by predicate, and the live predicates short names avoid.
+
+    The live set is the one ``get`` and ``orient`` shorten field names against.
+    """
+
     with instance.bind_accepted_projection(coordinate) as projection:
         rows = tuple(projection.typed.envelopes(kind="claim-type"))
         projection.typed.prefetch_members(tuple(row.path for row in rows))
         raw = {row.path: projection.typed.member_bytes(row.path) for row in rows}
+        live = frozenset(
+            str(identity).removeprefix("ClaimType:")
+            for (identity,) in projection.typed.connection.execute(
+                "SELECT identity FROM claim_types WHERE lifecycle='live'"
+            )
+        )
     parsed = (
         parse_claim_type(content, path=path) for path, content in raw.items() if content is not None
     )
-    return {item.predicate: item for item in parsed}
+    return {item.predicate: item for item in parsed}, live
 
 
 def claim_verdicts(

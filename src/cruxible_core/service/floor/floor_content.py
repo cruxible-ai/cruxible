@@ -260,7 +260,7 @@ def current_content(
     previous = remembered if isinstance(remembered, _CurrentState) else None
     live = tuple(claim for claim in claims if claim.lifecycle.state == "live")
     grouped = claims_by_subject(live)
-    claim_types = accepted_claim_types(instance, coordinate)
+    claim_types, live_predicates = accepted_claim_types(instance, coordinate)
     values = ValueRenderer(instance)
     with instance.bind_accepted_projection(coordinate) as projection:
         subject_paths = tuple(
@@ -318,7 +318,7 @@ def current_content(
                 shell=shells[path],
                 claims=grouped.get(path, ()),
                 claim_types=claim_types,
-                accepted_predicates=frozenset(claim_types),
+                accepted_predicates=live_predicates,
                 verdicts=verdicts,
                 values=values,
                 history=history,
