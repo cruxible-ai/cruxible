@@ -272,6 +272,58 @@ def test_fresh_cas_failure_reenters_evaluator_and_refuses_publication(world, mon
     assert calls[-1]["bodies"].verify("missing") is False
 
 
+def test_an_unpinned_intent_publishes_at_a_head_that_moved_after_preflight(world, monkeypatch):
+    """Only slot-pinned intents are held to the preflight head; others re-evaluate."""
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+
+    instance, coordinator, actor, intent, _oracle = world
+    submit = proposals.ProposalService.submit
+    landed = []
+
+    def unrelated() -> None:
+        base = instance.accepted_coordinate()
+        shell = SubjectShell(
+            identity=ArtifactIdentity(kind="Subject", name="project.work_item/unrelated"),
+            subject_kind="project.work_item",
+            subject_id="unrelated",
+        )
+        tree = instance.tree_at(base.git_oid)
+        tree[subject_path(shell.subject_kind, shell.subject_id)] = render_subject(shell)
+        proposed = instance.proposal_service().submit(
+            actor=actor,
+            request=ProposalAdmissionRequest(
+                target_ref="refs/proposals/owner/unrelated",
+                proposed_base_oid=base.git_oid,
+            ),
+            candidate_tree=tree,
+            timestamp=TIMESTAMP,
+        )
+        assert proposed.candidate is not None, proposed.evaluation
+        receipt = service_activate_playbill_proposal(
+            instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+        )
+        assert receipt.status == "accepted"
+
+    def submitting(self, **kwargs):
+        # Preflight has passed; an unrelated change is accepted before admission.
+        if not landed:
+            landed.append(True)
+            unrelated()
+        return submit(self, **kwargs)
+
+    monkeypatch.setattr(proposals.ProposalService, "submit", submitting)
+    preflight_head = instance.accepted_coordinate()
+    result = coordinator.submit(intent.intent_id, actor=actor)
+    moved = instance.accepted_coordinate()
+    assert landed and moved.git_oid != preflight_head.git_oid
+    assert result.status.proposal_id is not None, result.status
+    candidate = instance.proposal_evidence().read_candidate(result.status.candidate_digest)
+    assert candidate.candidate.parent_semantic_root == moved.semantic_root
+
+
 def test_handoff_does_not_bypass_fresh_write_guard(world):
     instance = world[0]
     adapter = instance.prepared_evaluations

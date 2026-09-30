@@ -27,6 +27,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringPayloadV1,
     AuthoringProgramStampV1,
     AuthoringReferenceExpectationV1,
+    AuthoringSlotExpectationV1,
     AuthoringSubmitMemberV1,
     AuthoringSubmitResultV1,
     CandidateStatusState,
@@ -902,14 +903,21 @@ class AuthoringIntentCoordinator:
             handoff = prepared.handoff(authoring_operation(self.instance, preflighted))
             bound = certificate.accepted_coordinate
 
+            # Slot membership is checked by preflight, at the certificate
+            # coordinate, and nowhere else: a fresh evaluation at a moved head
+            # would admit the change over a slot it never saw. Only an intent
+            # that pins a slot is held to that head; any other re-evaluates
+            # and publishes at whatever head admission finds.
+            pins_slots = isinstance(preflighted, AuthoringIntentV2) and any(
+                isinstance(item, AuthoringSlotExpectationV1)
+                for item in preflighted.reference_expectations
+            )
+
             def at_certificate(
                 evaluated_at: AcceptedProjectionCoordinate, _tree: Mapping[str, bytes]
             ) -> None:
-                # Preflight checked everything the intent asserts -- slot
-                # membership included -- at the certificate coordinate. Admission
-                # at any other head would evaluate without those checks, so it is
-                # refused here, before evaluation; the service then holds this
-                # head unchanged through publication.
+                # Refused before evaluation; the service then holds this head
+                # unchanged through publication.
                 if AcceptedCoordinate.from_internal(evaluated_at) != bound:
                     raise ProposalHeadMovedError(
                         "accepted main moved after preflight; preflight again at the current head"
@@ -961,13 +969,21 @@ class AuthoringIntentCoordinator:
                     },
                     timestamp=current.canonical_timestamp,
                     prepared=handoff,
-                    expected_candidate_digest=computed.evaluation.candidate.candidate_digest,
-                    authorize=at_certificate,
+                    # At the certificate head the evaluation must reproduce the
+                    # preflighted candidate; that is refused before publication.
+                    expected_candidate=(
+                        bound.git_oid,
+                        computed.evaluation.candidate.candidate_digest,
+                    ),
+                    authorize=at_certificate if pins_slots else None,
                 )
             except ProposalHeadMovedError:
                 return moved_on()
-            if result.candidate is None:  # pragma: no cover - the digest is bound above
-                raise RuntimeError("submit broke its unchanged-coordinate preflight binding")
+            if result.candidate is None:
+                if AcceptedCoordinate.from_internal(self.instance.accepted_coordinate()) == bound:
+                    raise RuntimeError("submit broke its unchanged-coordinate preflight binding")
+                # The fresh evaluation at the moved head refused the rebase.
+                return moved_on()
 
             operation_key = typed_digest(
                 Sha256Value,

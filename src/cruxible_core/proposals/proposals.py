@@ -4775,7 +4775,7 @@ class ProposalService:
         | None = None,
         prepared: PreparedEvaluationScope | None = None,
         settle_submission: ProposalSettleSubmissionV1 | None = None,
-        expected_candidate_digest: str | None = None,
+        expected_candidate: tuple[str, str] | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
 
@@ -4797,9 +4797,11 @@ class ProposalService:
         `prepared` may reuse a same-call evaluation; it never replaces the
         fresh authorization callback or the publication head check.
 
-        `expected_candidate_digest`, when given, is the candidate the caller
-        already evaluated; any other outcome raises
-        `ProposalCandidateMismatchError` before publication.
+        `expected_candidate`, when given, is ``(base_oid, candidate_digest)``:
+        the candidate the caller already evaluated at that accepted base. When
+        this submission evaluates at that same base, any other outcome raises
+        `ProposalCandidateMismatchError` before publication; at a head that has
+        since moved, the fresh evaluation stands on its own.
 
         `settle_submission` is the settle terminal's alone, and is retained on
         the admission. A `delegated` submission is evaluated under the named
@@ -4914,9 +4916,13 @@ class ProposalService:
         _require_executed_derivations(
             outcome, current_tree=current_tree, authorized=authorized_derivations
         )
-        if expected_candidate_digest is not None and (
-            outcome.candidate is None
-            or outcome.candidate.candidate_digest != expected_candidate_digest
+        if (
+            expected_candidate is not None
+            and expected_candidate[0] == current.git_oid
+            and (
+                outcome.candidate is None
+                or outcome.candidate.candidate_digest != expected_candidate[1]
+            )
         ):
             raise ProposalCandidateMismatchError(
                 "the evaluated candidate differs from the one this submission was bound to"
