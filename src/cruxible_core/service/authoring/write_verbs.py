@@ -1172,6 +1172,23 @@ def _accepted_verdicts(
     return {_bare(row.claim_id): row.verdict for row in result.values}
 
 
+def _pending_verdicts(
+    instance: PlaybillInstance,
+    head: AcceptedProjectionCoordinate,
+    plan: _Plan,
+    candidate: Mapping[str, str],
+) -> dict[str, str]:
+    """Verdicts for a write not yet accepted: the candidate's, and the head's for no-ops.
+
+    An already-live add submits nothing, so the candidate evaluation never sees
+    its Claim; its verdict is the one it holds at the head.
+    """
+
+    present = [item for item in plan.changes if item.member is None and item.op != "retire"]
+    found = _accepted_verdicts(instance, head, _Plan(changes=present)) if present else {}
+    return {**found, **candidate}
+
+
 def _used_contract(
     instance: PlaybillInstance, planned: _Planned, names: CaptureContractNames
 ) -> str | None:
@@ -1613,12 +1630,15 @@ def _service_write(
         head=evaluated_at,
         plan=plan,
         changes=changes,
-        verdicts=(
+        verdicts=_pending_verdicts(
+            instance,
+            evaluated_at,
+            plan,
             {}
             if status.candidate_digest is None
             else _candidate_verdicts(
                 instance.proposal_evidence().read_candidate(status.candidate_digest)
-            )
+            ),
         ),
         surface=request.surface,
         because=request.because,
@@ -1763,10 +1783,13 @@ def _dry_run(
         head=head,
         plan=plan,
         changes=changes,
-        verdicts=(
+        verdicts=_pending_verdicts(
+            instance,
+            head,
+            plan,
             {}
             if computed.evaluation is None or computed.evaluation.candidate is None
-            else _candidate_verdicts(computed.evaluation.candidate)
+            else _candidate_verdicts(computed.evaluation.candidate),
         ),
         surface=request.surface,
         because=request.because,

@@ -222,6 +222,29 @@ def test_an_add_beside_the_retirement_of_the_same_value_states_it_anew(
     assert _values(instance, WI1, field) == [value]
 
 
+@pytest.mark.parametrize(
+    ("options", "status"),
+    [({"dry_run": True}, "would_accept"), ({"accept": "never"}, "awaiting_approval")],
+    ids=["dry_run", "accept_never"],
+)
+def test_an_already_live_add_keeps_its_verdict_beside_a_pending_change(
+    instance: PlaybillInstance, options: dict[str, Any], status: str
+) -> None:
+    """R05 holds for a no-op member of a batch that is not yet accepted."""
+
+    live = _write(instance, _add(WI1, "labels", "urgent")).changes[0]
+    assert live.verdict == "uncovered"
+    outcome = _write(
+        instance, _add(WI1, "labels", "urgent"), _set(WI1, "status", "ready"), **options
+    )
+    assert outcome.status == status, outcome
+    present, fresh = outcome.changes
+    assert present.already_live and present.claim == live.claim
+    assert (present.verdict, fresh.verdict) == ("uncovered", "supported")
+    (warning,) = outcome.warnings
+    assert (warning.change, warning.claim, warning.verdict) == (0, live.claim, "uncovered")
+
+
 def test_without_the_filled_dispositions_the_same_adds_refuse(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
