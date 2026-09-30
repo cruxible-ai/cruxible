@@ -423,3 +423,68 @@ def test_minting_forgets_spent_consents_past_the_replay_window(
     assert "sha256:old" not in kept
     assert "sha256:recent" in kept
     assert len(kept) == 2  # the recent row and the consent just spent
+
+
+def _rotate(
+    client: TestClient, instance_id: str, token: str, credential_id: str, **body: object
+) -> object:
+    return client.post(
+        f"/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate",
+        json=body or None,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def test_rotating_a_bound_credential_needs_its_principals_authority(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance_id, reviewer_key = playbill_http
+    store = get_runtime_credential_store()
+    reviewer = store.create_credential(
+        instance_id=instance_id,
+        label="reviewer",
+        permission_mode=PermissionMode.GOVERNED_WRITE,
+        principal_id="reviewer",
+    )
+    unbound_admin = _bearer(None, instance_id, PermissionMode.ADMIN)
+    operator_admin = _bearer("operator", instance_id, PermissionMode.ADMIN)
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+
+    for token in (unbound_admin, operator_admin):
+        refused = _rotate(client, instance_id, token, reviewer.record.credential_id)
+        assert refused.status_code == 403, refused.text  # type: ignore[attr-defined]
+        assert (
+            refused.json()["error_code"]  # type: ignore[attr-defined]
+            == "runtime_credential.principal_authority_required"
+        )
+        assert "token" not in refused.text or refused.json().get("token") is None  # type: ignore[attr-defined]
+    current = store.get(reviewer.record.credential_id)
+    assert current is not None and current.revoked_at is None
+
+    # Another admin may still revoke it; it never receives a credential for it.
+    proof = sign_runtime_credential_mint(
+        instance_id=instance_id,
+        principal_id="reviewer",
+        permission_mode="governed_write",
+        label="reviewer",
+        private_key_path=reviewer_key,
+        forbidden_roots=(),
+    )
+    consented = _rotate(
+        client,
+        instance_id,
+        unbound_admin,
+        reviewer.record.credential_id,
+        principal_proof=proof.model_dump(mode="json"),
+    )
+    assert consented.status_code == 200, consented.text  # type: ignore[attr-defined]
+    rotated = consented.json()  # type: ignore[attr-defined]
+    assert rotated["credential"]["principal_id"] == "reviewer"
+    own = _rotate(client, instance_id, rotated["token"], rotated["credential"]["credential_id"])
+    assert own.status_code == 403  # governed_write cannot manage credentials at all
+    revoked = client.post(
+        f"/api/v1/{instance_id}/runtime/credentials/{rotated['credential']['credential_id']}/revoke",
+        headers={"Authorization": f"Bearer {operator_admin}"},
+    )
+    assert revoked.status_code == 200, revoked.text

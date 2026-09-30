@@ -387,10 +387,21 @@ class CruxibleClient:
         return self._parse_model(response, contracts.RuntimeCredentialResult)
 
     def rotate_runtime_credential(
-        self, instance_id: str, credential_id: str
+        self,
+        instance_id: str,
+        credential_id: str,
+        *,
+        principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
     ) -> contracts.RuntimeCredentialResult:
+        """Replace a credential's token; a bound one needs its principal's authority."""
+
         response = self._client.post(
-            f"/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate"
+            f"/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate",
+            json=(
+                None
+                if principal_proof is None
+                else {"principal_proof": principal_proof.model_dump(mode="json")}
+            ),
         )
         return self._parse_model(response, contracts.RuntimeCredentialResult)
 

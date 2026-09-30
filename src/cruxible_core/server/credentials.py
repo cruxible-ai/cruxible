@@ -90,6 +90,15 @@ def _validate_governed_instance_id(instance_id: str) -> None:
         raise InstanceNotFoundError(instance_id)
 
 
+def _proof_replayed() -> PrincipalRefusedError:
+    return PrincipalRefusedError(
+        "runtime_credential.principal_proof_replayed",
+        "this signed consent already minted a credential; repair: sign a fresh "
+        "one with `cruxible credential mint --principal-id ID --key-dir DIR`",
+        repair=RepairOperationV1(operation="credential.mint"),
+    )
+
+
 class RuntimeCredentialStore:
     """SQLite-backed store for instance-scoped runtime bearer credentials."""
 
@@ -200,16 +209,7 @@ class RuntimeCredentialStore:
         try:
             with self._connect() as conn:
                 if proof_digest is not None:
-                    self._prune_spent_proofs_conn(conn, now=created.record.created_at)
-                    conn.execute(
-                        """
-                        INSERT INTO runtime_credential_proofs(
-                            proof_digest, credential_id, used_at
-                        )
-                        VALUES (?, ?, ?)
-                        """,
-                        (proof_digest, created.record.credential_id, created.record.created_at),
-                    )
+                    self._spend_proof_conn(conn, proof_digest, created.record)
                 self._mark_auth_required_conn(
                     conn,
                     updated_at=created.record.created_at,
@@ -219,12 +219,7 @@ class RuntimeCredentialStore:
         except sqlite3.IntegrityError as exc:
             if proof_digest is None:
                 raise
-            raise PrincipalRefusedError(
-                "runtime_credential.principal_proof_replayed",
-                "this signed consent already minted a credential; repair: sign a fresh "
-                "one with `cruxible credential mint --principal-id ID --key-dir DIR`",
-                repair=RepairOperationV1(operation="credential.mint"),
-            ) from exc
+            raise _proof_replayed() from exc
         return created
 
     def create_credential(
@@ -571,13 +566,40 @@ class RuntimeCredentialStore:
         *,
         instance_id: str,
         credential_id: str,
+        proof_digest: str | None = None,
     ) -> CreatedRuntimeCredential:
-        """Revoke an active credential and commit a prepared replacement."""
+        """Revoke an active credential and commit a prepared replacement.
+
+        ``proof_digest`` names the principal's signed consent the replacement
+        consumed, spent in the same transaction exactly as a mint spends one.
+        """
         _validate_governed_instance_id(instance_id)
+        try:
+            return self._commit_rotation(
+                created,
+                instance_id=instance_id,
+                credential_id=credential_id,
+                proof_digest=proof_digest,
+            )
+        except sqlite3.IntegrityError as exc:
+            if proof_digest is None:
+                raise
+            raise _proof_replayed() from exc
+
+    def _commit_rotation(
+        self,
+        created: CreatedRuntimeCredential,
+        *,
+        instance_id: str,
+        credential_id: str,
+        proof_digest: str | None,
+    ) -> CreatedRuntimeCredential:
         with self._connect() as conn:
             existing = self._fetch_record_row(conn, instance_id, credential_id)
             if existing is None or existing["revoked_at"] is not None:
                 raise RuntimeCredentialNotFoundError(credential_id)
+            if proof_digest is not None:
+                self._spend_proof_conn(conn, proof_digest, created.record)
 
             self._mark_auth_required_conn(
                 conn,
@@ -798,6 +820,21 @@ class RuntimeCredentialStore:
             raise RuntimeCredentialRecoveryError(
                 f"No ADMIN runtime credential exists for instance_id {instance_id!r}."
             )
+
+    @classmethod
+    def _spend_proof_conn(
+        cls, conn: sqlite3.Connection, proof_digest: str, record: RuntimeCredentialRecord
+    ) -> None:
+        """Record one signed consent as spent; a second spend raises IntegrityError."""
+
+        cls._prune_spent_proofs_conn(conn, now=record.created_at)
+        conn.execute(
+            """
+            INSERT INTO runtime_credential_proofs(proof_digest, credential_id, used_at)
+            VALUES (?, ?, ?)
+            """,
+            (proof_digest, record.credential_id, record.created_at),
+        )
 
     @staticmethod
     def _prune_spent_proofs_conn(conn: sqlite3.Connection, *, now: str) -> int:

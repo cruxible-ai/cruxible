@@ -4956,10 +4956,20 @@ HTTP: `POST f'/api/v1/{instance_id}/runtime/credentials/{credential_id}/revoke'`
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-rotate_runtime_credential(instance_id: str, credential_id: str) -> contracts.RuntimeCredentialResult
+rotate_runtime_credential(
+    instance_id: str,
+    credential_id: str,
+    *,
+    principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
+) -> contracts.RuntimeCredentialResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate'`.
+
+A credential bound to a principal is replaced only with that principal's
+authority, exactly as minting one: the request acts as the principal, or
+`principal_proof` is its signed consent to the credential's current mode and
+label. An unbound operator credential rotates on the admin tier alone.
 
 <a id="api-cruxibleclient-init-playbill"></a>
 

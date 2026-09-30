@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-29:identity-batch",
-    "surface_digest": "sha256:ba4d4425c66b420190b6deb33c9fa082e5c2846b834a7702899fecc91c2bdad4"
+    "surface_digest": "sha256:3f530af6b3f977b9ac7e5f675223206584437e3c0d6cf69a841f533d0dd2ec6a"
   },
   "surface": {
     "cli_leaves": [
@@ -64,6 +64,7 @@
       },
       {
         "client_operations": [
+          "list_runtime_credentials",
           "rotate_runtime_credential"
         ],
         "command": "credential rotate",

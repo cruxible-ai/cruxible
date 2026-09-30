@@ -454,13 +454,52 @@ def revoke_cmd(credential_id: str) -> None:
 
 @credential_group.command("rotate")
 @click.argument("credential_id")
+@click.option(
+    "--key-dir",
+    default=None,
+    type=click.Path(file_okay=False),
+    help=(
+        "The bound principal's key directory. Signs its consent to the replacement; "
+        "needed unless this request already acts as that principal."
+    ),
+)
 @handle_errors
-def rotate_cmd(credential_id: str) -> None:
-    """Rotate a runtime bearer credential and print the replacement token once."""
+def rotate_cmd(credential_id: str, key_dir: str | None) -> None:
+    """Rotate a runtime bearer credential and print the replacement token once.
+
+    A credential bound to a principal is replaced only with that principal's
+    authority, exactly as minting one: this request acts as the principal, or
+    `--key-dir` signs its consent. An admin may revoke it but never receives it.
+    """
     client, instance_id = _require_server_client("credential rotate")
-    result = client.rotate_runtime_credential(instance_id, credential_id)
+    proof = None
+    if key_dir is not None:
+        listed = client.list_runtime_credentials(instance_id)
+        target = next(
+            (item for item in listed.credentials if item.credential_id == credential_id), None
+        )
+        if target is None or target.principal_id is None:
+            raise click.UsageError(
+                f"credential {credential_id} is not an active principal-bound credential of "
+                "this instance; --key-dir signs only for a bound one"
+            )
+        proof = sign_principal_mint(
+            instance_id=instance_id,
+            principal_id=target.principal_id,
+            permission_mode=target.permission_mode,
+            label=target.label,
+            key_dir=Path(key_dir),
+        )
+    result = client.rotate_runtime_credential(instance_id, credential_id, principal_proof=proof)
+    settings = (
+        None
+        if key_dir is None or not result.token
+        else set_principal_settings_token(Path(key_dir), result.token)
+    )
 
     click.echo("Credential rotated.")
     _echo_credential_metadata(result.credential)
-    if result.token:
+    if settings is not None:
+        click.echo(f"Token written to {settings} (not printed).")
+    elif result.token:
         _echo_token_once(result.token, label="Token")

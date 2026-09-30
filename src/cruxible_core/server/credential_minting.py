@@ -26,7 +26,7 @@ from cruxible_client.contracts.runtime_credentials import (
     verify_runtime_credential_proof,
 )
 from cruxible_client.contracts.temporal import parse_datetime, utc_now
-from cruxible_core.errors import PrincipalRefusedError
+from cruxible_core.errors import PrincipalRefusedError, RuntimeCredentialNotFoundError
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.auth import ResolvedAuthContext
@@ -106,18 +106,7 @@ def _proof_digest(proof: RuntimeCredentialPrincipalProofV1) -> str:
     return "sha256:" + hashlib.sha256(canonical_bytes(proof.model_dump(mode="json"))).hexdigest()
 
 
-def mint_principal_credential(
-    *,
-    instance_id: str,
-    principal_id: str,
-    permission_mode: PermissionMode,
-    label: str | None,
-    principal_proof: RuntimeCredentialPrincipalProofV1 | None,
-    auth_context: ResolvedAuthContext | None,
-) -> CreatedRuntimeCredential:
-    """Mint one credential acting as ``principal_id``, or refuse with the repair."""
-
-    mode_name = permission_mode.name.lower()
+def _require_auth_on() -> None:
     if not is_server_auth_enabled():
         # A bearer credential authenticates nothing here, and storing one would
         # silently latch this state root into requiring auth on its next start.
@@ -127,6 +116,24 @@ def mint_principal_credential(
             "nothing; repair: restart the daemon with auth: `cruxible server start --auth`",
             repair=RepairOperationV1(operation="server.start", arguments={"auth": True}),
         )
+
+
+def _principal_authority(
+    *,
+    instance_id: str,
+    principal_id: str,
+    mode_name: str,
+    label: str,
+    principal_proof: RuntimeCredentialPrincipalProofV1 | None,
+    auth_context: ResolvedAuthContext | None,
+) -> str | None:
+    """Require ``principal_id``'s authority for a credential in its name.
+
+    Returns the digest of the consent this spends, or None when the request
+    already acts as the principal. Refuses unless the principal is an active,
+    ordinary principal and one of the two holds.
+    """
+
     instance = get_playbill_manager().get(instance_id)
     refusal = principal_refusal(instance, principal_id, configured=True)
     if refusal is not None:
@@ -146,20 +153,41 @@ def mint_principal_credential(
             "(`cruxible playbill principal list`)",
             repair=RepairOperationV1(operation="playbill.principal.list"),
         )
-    description = label or principal_id
-    proof_digest: str | None = None
-    acts_as_principal = auth_context is not None and auth_context.principal_id == principal_id
     if principal_proof is not None:
-        proof_digest = _verified_proof_digest(
+        return _verified_proof_digest(
             principal_proof,
             instance_id=instance_id,
             principal_id=principal_id,
             public_key=registered.public_key,
             permission_mode=mode_name,
-            label=description,
+            label=label,
         )
-    elif not acts_as_principal:
-        raise _authority_required(principal_id, mode_name)
+    if auth_context is not None and auth_context.principal_id == principal_id:
+        return None
+    raise _authority_required(principal_id, mode_name)
+
+
+def mint_principal_credential(
+    *,
+    instance_id: str,
+    principal_id: str,
+    permission_mode: PermissionMode,
+    label: str | None,
+    principal_proof: RuntimeCredentialPrincipalProofV1 | None,
+    auth_context: ResolvedAuthContext | None,
+) -> CreatedRuntimeCredential:
+    """Mint one credential acting as ``principal_id``, or refuse with the repair."""
+
+    _require_auth_on()
+    description = label or principal_id
+    proof_digest = _principal_authority(
+        instance_id=instance_id,
+        principal_id=principal_id,
+        mode_name=permission_mode.name.lower(),
+        label=description,
+        principal_proof=principal_proof,
+        auth_context=auth_context,
+    )
     return get_runtime_credential_store().create_credential(
         instance_id=instance_id,
         label=description,
@@ -170,4 +198,49 @@ def mint_principal_credential(
     )
 
 
-__all__ = ["mint_principal_credential"]
+def rotate_principal_credential(
+    *,
+    instance_id: str,
+    credential_id: str,
+    principal_proof: RuntimeCredentialPrincipalProofV1 | None,
+    auth_context: ResolvedAuthContext | None,
+) -> CreatedRuntimeCredential:
+    """Replace one credential's token, never handing another principal's to the caller.
+
+    The replacement acts as the same principal with the same tier and label,
+    so rotating it needs exactly the authority minting it would: the request
+    acts as that principal, or carries its signed consent to those terms. Any
+    admin may revoke a credential; only its principal may receive a new one.
+    An unbound operator credential names no principal, so the admin tier alone
+    rotates it.
+    """
+
+    _require_auth_on()
+    store = get_runtime_credential_store()
+    existing = store.get(credential_id)
+    if existing is None or existing.instance_id != instance_id or existing.revoked_at:
+        raise RuntimeCredentialNotFoundError(credential_id)
+    proof_digest: str | None = None
+    if existing.principal_id is not None:
+        proof_digest = _principal_authority(
+            instance_id=instance_id,
+            principal_id=existing.principal_id,
+            mode_name=existing.permission_mode.name.lower(),
+            label=existing.label,
+            principal_proof=principal_proof,
+            auth_context=auth_context,
+        )
+    created = store.prepare_rotated_credential(
+        instance_id=instance_id,
+        credential_id=credential_id,
+        rotated_by=None if auth_context is None else auth_context.credential_id,
+    )
+    return store.commit_prepared_rotation(
+        created,
+        instance_id=instance_id,
+        credential_id=credential_id,
+        proof_digest=proof_digest,
+    )
+
+
+__all__ = ["mint_principal_credential", "rotate_principal_credential"]

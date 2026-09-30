@@ -41,3 +41,9 @@ class RuntimeCredentialCreateRequest(_StrictHostRequest):
     # A description only (default: the principal ID); it never decides who acts.
     label: str | None = Field(default=None, min_length=1, max_length=256)
     principal_proof: RuntimeCredentialPrincipalProofV1 | None = None
+
+
+class RuntimeCredentialRotateRequest(_StrictHostRequest):
+    # The bound principal's signed consent to the replacement's exact terms;
+    # needed unless the request already acts as that principal.
+    principal_proof: RuntimeCredentialPrincipalProofV1 | None = None

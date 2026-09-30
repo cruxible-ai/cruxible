@@ -75,8 +75,8 @@ Manage runtime bearer credentials:
 cruxible credential claim-bootstrap [--secret-file PATH] [--json]
 cruxible credential mint --principal-id ID --mode TIER [--key-dir DIR] [--label TEXT] [--json]
 cruxible credential list [--json]
-cruxible credential rotate
-cruxible credential revoke
+cruxible credential rotate CREDENTIAL_ID [--key-dir DIR]
+cruxible credential revoke CREDENTIAL_ID
 cruxible credential recover-admin [--state-root DIR] [--instance-id ID] [--json]
 ~~~
 
@@ -103,7 +103,10 @@ nothing is stored, so the state root is never silently latched into requiring
 auth. Revoking a principal
 revokes every credential that acts as it: the next request with one is refused
 with `playbill.identity.principal_revoked` and the rows are marked revoked.
-Rotation keeps the principal.
+Rotation keeps the principal, tier and label, so rotating a bound credential
+needs the same authority minting it would: the request acts as that principal,
+or `credential rotate --key-dir DIR` signs its consent. Any admin may revoke a
+credential, but never receives a replacement for someone else's principal.
 
 The bootstrap claim and `recover-admin` mint unbound operator credentials: they
 carry transport authority (host, init, credentials, daemon lifecycle) but act as
