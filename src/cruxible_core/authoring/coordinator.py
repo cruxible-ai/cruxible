@@ -18,6 +18,7 @@ from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
     AUTHORING_SDK_VERSION,
     AcceptanceConditionV1,
+    AuthoringExpectationV1,
     AuthoringIntentListV1,
     AuthoringIntentV1,
     AuthoringIntentV2,
@@ -203,7 +204,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         canonical_timestamp: str,
         base_coordinate: AcceptedCoordinate | None = None,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+        reference_expectations: tuple[AuthoringExpectationV1, ...] | None = None,
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> AuthoringIntentViewV1:
         """Open one authoring draft against the accepted coordinate.
@@ -295,7 +296,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         canonical_timestamp: str,
         at: AcceptedCoordinate,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None,
+        reference_expectations: tuple[AuthoringExpectationV1, ...] | None,
         intent_id: str,
     ) -> AuthoringIntentV1:
         """Build one draft intent in memory, minting its identities; nothing is stored."""
@@ -538,7 +539,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         canonical_timestamp: str,
         intent_id: str | None = None,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+        reference_expectations: tuple[AuthoringExpectationV1, ...] | None = None,
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> PreflightResultV1:
         self.instance.require_writable()
@@ -559,7 +560,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         canonical_timestamp: str,
         intent_id: str | None = None,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+        reference_expectations: tuple[AuthoringExpectationV1, ...] | None = None,
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> AuthoringSubmitResultV1:
         """Create or replace the intent and submit it in one call.
@@ -587,7 +588,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         canonical_timestamp: str,
         intent_id: str | None,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None,
+        reference_expectations: tuple[AuthoringExpectationV1, ...] | None,
         program_stamp: AuthoringProgramStampV1 | None,
     ) -> AuthoringIntentViewV1:
         if intent_id is None:
@@ -646,7 +647,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         *,
         coordinate: AcceptedProjectionCoordinate,
-    ) -> tuple[AuthoringReferenceExpectationV1, ...] | None:
+    ) -> tuple[AuthoringExpectationV1, ...] | None:
         """Assert the exact accepted contract behind a decision-input Capture ref."""
 
         if not isinstance(payload, ClaimAuthoringPayloadV1) or not isinstance(
@@ -1070,7 +1071,7 @@ class AuthoringIntentCoordinator:
         *,
         actor: AuthenticatedActor,
         payload: AuthoringPayloadV1,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+        reference_expectations: tuple[AuthoringExpectationV1, ...] | None = None,
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> AuthoringIntentViewV1:
         self.instance.require_writable()
@@ -1214,7 +1215,7 @@ class AuthoringIntentCoordinator:
         current: AuthoringIntentV1,
         *,
         actor: AuthenticatedActor,
-        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...],
+        reference_expectations: tuple[AuthoringExpectationV1, ...],
     ) -> AuthoringIntentV1:
         if current.candidate_status.state not in {
             "draft",

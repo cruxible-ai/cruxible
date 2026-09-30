@@ -599,6 +599,11 @@ def service_readmit_playbill_proposal(
         and any(member.artifact_kind == "claim-type" for member in source.candidate.members)
     ):
         raise ProposalReadmitRequiresResubmission()
+    if _pins_slots(instance, target_ref=source.admission.target_ref, actor_id=actor_id):
+        raise ProposalReadmitRequiresResubmission(
+            "this stale proposal was admitted against pinned slot membership, which a "
+            "byte rebase would not check; run the write again at the current head"
+        )
     coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
     operation_digest = readmission_operation_digest(proposal_id, coordinate)
     matching = tuple(
@@ -635,6 +640,32 @@ def service_readmit_playbill_proposal(
             workspace_advertisement=result.workspace_advertisement,
             accepted_coordinate=coordinate,
         ),
+    )
+
+
+def _pins_slots(instance: PlaybillInstance, *, target_ref: str, actor_id: str) -> bool:
+    """Whether the proposal's authoring intent pinned any slot's live membership.
+
+    Slot pins are checked by authoring preflight at the evaluated head. A
+    readmission rebases the stored tree without that preflight, so it would
+    admit the change over a slot it never saw.
+    """
+
+    from cruxible_client.contracts.authoring.models import (
+        AuthoringIntentV2,
+        AuthoringSlotExpectationV1,
+    )
+    from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
+    from cruxible_core.authoring.preflight import authoring_intent_id_for_proposal_ref
+
+    intent_id = authoring_intent_id_for_proposal_ref(target_ref, actor_id=actor_id)
+    if intent_id is None:
+        return False
+    intent = AuthoringIntentCoordinator.for_instance(instance).store.get(
+        intent_id, actor_id=actor_id
+    )
+    return isinstance(intent, AuthoringIntentV2) and any(
+        isinstance(item, AuthoringSlotExpectationV1) for item in intent.reference_expectations
     )
 
 

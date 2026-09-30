@@ -466,6 +466,10 @@ def test_a_set_refuses_when_its_slot_moved_since_the_read_coordinate(
     assert len(contested.candidates) == 2
 
 
+def _no_proposal_to_activate(instance: PlaybillInstance) -> None:
+    assert service_list_playbill_proposals(instance, status="open").entries == ()
+
+
 @pytest.mark.parametrize("slot", ["replaced", "filled"])
 @pytest.mark.parametrize("pinned", [False, True], ids=["unpinned", "pinned"])
 def test_a_competing_set_between_planning_and_submit_refuses_leaving_nothing_to_activate(
@@ -495,38 +499,118 @@ def test_a_competing_set_between_planning_and_submit_refuses_leaving_nothing_to_
     refusal = _refusal(outcome)
     assert refusal.code == "playbill.write.slot_changed", refusal
     assert "'blocked'" in refusal.message
+    assert outcome.proposal is None
     assert _values(instance, subject, "status") == ["blocked"]
-    # Nothing this write proposed is left for anyone to activate.
-    assert service_list_playbill_proposals(instance, status="open").entries == ()
+    _no_proposal_to_activate(instance)
 
 
+def _contend(target: PlaybillInstance) -> None:
+    contender = _write(target, _set(WI1, "status", "blocked", contend=True))
+    assert contender.status == "accepted", contender
+
+
+_RETIRE_BY_SLOT = {"op": "retire", "target": {"subject": WI1, "field": "status"}}
+
+
+@pytest.mark.parametrize("stage", ["before_create", "before_submit"])
 @pytest.mark.parametrize("pinned", [False, True], ids=["unpinned", "pinned"])
-def test_a_retire_by_slot_whose_slot_gained_a_contender_before_admission_is_withdrawn(
-    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch, pinned: bool
+def test_a_contender_joining_the_slot_before_admission_refuses_the_retire_unproposed(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch, pinned: bool, stage: str
 ) -> None:
-    """Admission passes (the retired Claim did not move), so the proposal is withdrawn."""
+    """Admission checks the slot's live membership, so nothing is left to activate."""
 
-    _write(instance, _set(WI1, "status", "ready"))
+    ready = _write(instance, _set(WI1, "status", "ready")).changes[0].claim
     read_at = instance.accepted_coordinate().git_oid
-    real = write_verbs._coordinator
-    interleaved: list[bool] = []
+    landed: list[bool] = []
+    if stage == "before_create":
+        real = write_verbs._coordinator
 
-    def coordinator(target: PlaybillInstance, claim_ids: Any) -> Any:
-        if not interleaved:
-            interleaved.append(True)
-            contender = _write(target, _set(WI1, "status", "blocked", contend=True))
-            assert contender.status == "accepted", contender
-        return real(target, claim_ids)
+        def coordinator(target: PlaybillInstance, claim_ids: Any) -> Any:
+            if not landed:
+                landed.append(True)
+                _contend(target)
+            return real(target, claim_ids)
 
-    monkeypatch.setattr(write_verbs, "_coordinator", coordinator)
+        monkeypatch.setattr(write_verbs, "_coordinator", coordinator)
+    else:
+        submit = AuthoringIntentCoordinator.submit
+
+        def submitting(self: AuthoringIntentCoordinator, *args: Any, **kwargs: Any) -> Any:
+            if not landed:
+                landed.append(True)
+                _contend(self.instance)
+            return submit(self, *args, **kwargs)
+
+        monkeypatch.setattr(AuthoringIntentCoordinator, "submit", submitting)
     options = {"at": read_at} if pinned else {}
-    outcome = _write(
-        instance, {"op": "retire", "target": {"subject": WI1, "field": "status"}}, **options
-    )
-    assert _refusal(outcome).code == "playbill.write.slot_changed"
-    assert outcome.proposal is not None and outcome.proposal.state == "withdrawn"
+    outcome = _write(instance, _RETIRE_BY_SLOT, **options)
+    assert landed
+    assert _refusal(outcome).code == "playbill.write.slot_changed", outcome
+    assert outcome.proposal is None
     assert _values(instance, WI1, "status") == ["blocked", "ready"]
-    assert service_list_playbill_proposals(instance, status="open").entries == ()
+    assert ready in _live_status_claims(instance)
+    _no_proposal_to_activate(instance)
+
+
+def _live_status_claims(instance: PlaybillInstance) -> set[str]:
+    return {
+        item.identity.removeprefix("Claim:")
+        for item in read_live_values(
+            instance,
+            instance.accepted_coordinate(),
+            subject_paths=(subject_path(KIND, "wi-1"),),
+            predicates=(f"{KIND}.status",),
+        )
+    }
+
+
+def test_a_contender_after_admission_makes_the_writes_own_activation_refuse(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.authoring import documents
+
+    ready = _write(instance, _set(WI1, "status", "ready")).changes[0].claim
+    activate = documents.service_activate_playbill_proposal
+    landed: list[bool] = []
+
+    def activating(target: PlaybillInstance, **kwargs: Any) -> Any:
+        if not landed:
+            landed.append(True)
+            _contend(target)
+        return activate(target, **kwargs)
+
+    monkeypatch.setattr(documents, "service_activate_playbill_proposal", activating)
+    outcome = _write(instance, _RETIRE_BY_SLOT)
+    assert landed
+    assert _refusal(outcome).code == "playbill.write.slot_changed", outcome
+    assert _values(instance, WI1, "status") == ["blocked", "ready"]
+    assert ready in _live_status_claims(instance)
+
+
+def test_a_contender_after_admission_refuses_activation_and_readmission(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.contracts.errors import (
+        ProposalReadmitRequiresResubmission,
+        SettlementIntegrityError,
+    )
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
+
+    ready = _write(instance, _set(WI1, "status", "ready")).changes[0].claim
+    pending = _write(instance, _RETIRE_BY_SLOT, accept="never")
+    assert pending.status == "awaiting_approval" and pending.proposal is not None
+    _contend(instance)
+    with pytest.raises(SettlementIntegrityError):
+        service_activate_playbill_proposal(
+            instance, proposal_id=pending.proposal.proposal_id, activated_by="owner"
+        )
+    with pytest.raises(ProposalReadmitRequiresResubmission, match="slot membership"):
+        service_readmit_playbill_proposal(
+            instance, proposal_id=pending.proposal.proposal_id, actor_id="owner"
+        )
+    assert _values(instance, WI1, "status") == ["blocked", "ready"]
+    assert ready in _live_status_claims(instance)
 
 
 def test_resetting_at_the_new_head_replaces_the_value(instance: PlaybillInstance) -> None:

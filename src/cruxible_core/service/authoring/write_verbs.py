@@ -45,6 +45,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExistingClaimDispositionV1,
     AuthoringIntentV1,
     AuthoringReferenceExpectationV1,
+    AuthoringSlotExpectationV1,
     ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
@@ -78,6 +79,7 @@ from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
     PlaybillError,
     ReadRefusalError,
+    SettlementIntegrityError,
     WriteRefusalError,
 )
 from cruxible_client.contracts.get_reads import (
@@ -271,6 +273,16 @@ class _SlotClaim:
     value: object
 
 
+@dataclass(frozen=True)
+class _SlotPin:
+    """One slot a change depends on, with its live Claims when it was planned."""
+
+    subject_path: str
+    predicate: str
+    qualifier: str | None
+    live: tuple[str, ...]
+
+
 @dataclass
 class _Planned:
     """One change resolved against accepted state, before its member is built."""
@@ -289,6 +301,8 @@ class _Planned:
     # The CaptureContract the evidence was captured under, by name, when known
     # before submit; a cited Capture's contract is read from its envelope.
     used_contract: str | None = None
+    # The slot this change was planned against, pinned through admission.
+    pin: _SlotPin | None = None
 
 
 @dataclass
@@ -353,6 +367,26 @@ class _Planner:
                 shown = self.exact.value(str(live.value), live.span) if live.exact else live.value
             found.append(_SlotClaim(claim_id=_bare(identity), digest=digest, value=shown))
         return tuple(found)
+
+    def slot_pin(
+        self, subject_path_value: str, predicate: str, qualifier: str | None = None
+    ) -> _SlotPin:
+        """The slot's live Claim IDs at the head, however they are qualified or valued."""
+
+        with self.instance.bind_accepted_projection(self.head) as projection:
+            rows = projection.typed.connection.execute(
+                "SELECT identity FROM claims WHERE subject_path=? AND predicate=? "
+                "AND qualifier IS ? AND lifecycle='live'",
+                (subject_path_value, predicate, qualifier),
+            ).fetchall()
+        return _SlotPin(
+            subject_path=subject_path_value,
+            predicate=predicate,
+            qualifier=qualifier,
+            live=tuple(
+                sorted({_bare(str(row[0])) for row in rows}, key=lambda item: item.encode("ascii"))
+            ),
+        )
 
     def slot_history(self, subject_path_value: str, predicate: str) -> tuple[str, ...]:
         """Every Claim (any lifecycle) the head holds in one slot."""
@@ -838,6 +872,7 @@ class _Planner:
             slot=(path, info.predicate),
             revises=revises,
             existing=tuple(item.claim_id for item in live if item.claim_id != revises),
+            pin=self.slot_pin(path, info.predicate),
         )
 
     def _retiring(self) -> set[str]:
@@ -989,6 +1024,11 @@ class _Planner:
                 retires=claim_id, reason=change.reason, dependents=dependents
             ),
             retires=claim_id,
+            pin=self.slot_pin(
+                claim.statement.subject.artifact_path,
+                claim.statement.predicate,
+                claim.statement.qualifier,
+            ),
         )
 
     def build(self) -> _Plan:
@@ -1040,7 +1080,7 @@ class _Lowered:
     identity_by_change: dict[int, str]
     # Every accepted Claim the write revises, retires or dispositions, pinned to
     # the version planning read: admission refuses when one has moved since.
-    expectations: tuple[AuthoringReferenceExpectationV1, ...] = ()
+    expectations: tuple[AuthoringReferenceExpectationV1 | AuthoringSlotExpectationV1, ...] = ()
 
 
 def _with_dispositions(
@@ -1096,10 +1136,14 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
     siblings: dict[tuple[str, str], list[str]] = {}
     members: list[AuthoringChangeSetMemberV1] = []
     identity_by_change: dict[int, str] = {}
+    pins: dict[int, _SlotPin] = {}
     for identity in ordered:
         index, member = by_identity[identity]
         if index is not None:
             identity_by_change[index] = identity
+            pin = planned_by_index[index].pin
+            if pin is not None:
+                pins[len(members)] = pin
         if isinstance(member, ClaimAuthoringPayloadV1) and index is not None:
             planned = planned_by_index[index]
             assert planned.slot is not None
@@ -1113,7 +1157,9 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
         payload=ChangeSetAuthoringPayloadV1(members=tuple(members), rationale=rationale),
         claim_ids=tuple(claim_ids),
         identity_by_change=identity_by_change,
-        expectations=_pinned_claims(members, minted=set(claim_ids), planned_at=planned_at),
+        expectations=_pinned_claims(
+            members, minted=set(claim_ids), planned_at=planned_at, slots=pins
+        ),
     )
 
 
@@ -1122,13 +1168,16 @@ def _pinned_claims(
     *,
     minted: set[str],
     planned_at: AcceptedProjectionCoordinate,
-) -> tuple[AuthoringReferenceExpectationV1, ...]:
-    """Pin each accepted Claim the members name to the version planning read.
+    slots: Mapping[int, _SlotPin],
+) -> tuple[AuthoringReferenceExpectationV1 | AuthoringSlotExpectationV1, ...]:
+    """Pin what the plan read: each slot's live membership, and each Claim's version.
 
-    The plan chose what to revise, retire and disposition from the slot as it
-    stood at ``planned_at``. Admission checks each pin against the head it
-    evaluates at, so a write whose slot moved in between is refused before it
-    becomes a proposal anyone could activate.
+    The plan chose what to revise, retire and disposition from each slot as it
+    stood at ``planned_at``. Preflight checks every slot's exact live
+    membership at the head the candidate is evaluated at, and settlement
+    refuses any other head, so a Claim that joined or left a slot refuses the
+    write before it becomes a proposal anyone could activate. The Claim pins
+    add that each named Claim is still the version the plan read.
     """
 
     coordinate = AcceptedCoordinate.from_internal(planned_at)
@@ -1145,17 +1194,29 @@ def _pinned_claims(
                     pins.append(
                         (f"{prefix}.existing_claim_dispositions[{ordinal}].claim_id", item.claim_id)
                     )
+    expectations: list[AuthoringReferenceExpectationV1 | AuthoringSlotExpectationV1] = [
+        AuthoringReferenceExpectationV1(
+            payload_path=path,
+            artifact_kind="Claim",
+            address=claim_id,
+            minted_coordinate=coordinate,
+        )
+        for path, claim_id in pins
+    ]
+    expectations.extend(
+        AuthoringSlotExpectationV1(
+            payload_path=f"members[{position}]",
+            subject_path=pin.subject_path,
+            predicate=pin.predicate,
+            qualifier=pin.qualifier,
+            live_claims=pin.live,
+            minted_coordinate=coordinate,
+        )
+        for position, pin in slots.items()
+    )
     return tuple(
         sorted(
-            (
-                AuthoringReferenceExpectationV1(
-                    payload_path=path,
-                    artifact_kind="Claim",
-                    address=claim_id,
-                    minted_coordinate=coordinate,
-                )
-                for path, claim_id in pins
-            ),
+            expectations,
             key=lambda item: (
                 item.payload_path.encode("utf-8"),
                 item.artifact_kind.encode("ascii"),
@@ -1627,33 +1688,6 @@ def _service_write(
     assert status.proposal_id is not None
     proposal_id = status.proposal_id
     evaluated_at = _evaluated_head(instance, intent, head)
-    moved = _slot_moved(
-        instance, planned_at=head, read_at=read_at, request=request, at=evaluated_at
-    )
-    if moved is not None:
-        # Admission held every Claim the plan names to its planned version; a
-        # Claim that joined a slot in between is caught here. The proposal is
-        # withdrawn before anything reports, so a refused write leaves nothing
-        # anyone could activate.
-        from cruxible_core.service.proposals.proposals import (
-            service_withdraw_playbill_proposal,
-        )
-
-        service_withdraw_playbill_proposal(
-            instance,
-            proposal_id=proposal_id,
-            actor_id=caller.actor.actor_id,
-            reason=f"{moved.code}: {moved.message}",
-            withdrawn_at=canonical_candidate_timestamp(utc_now()),
-        )
-        return WriteOutcome(
-            status="refused",
-            changes=changes,
-            subjects_added=subjects_added,
-            proposal=WriteProposalRef(proposal_id=proposal_id, state="withdrawn"),
-            coordinate=_compact(instance, evaluated_at),
-            refusal=moved,
-        )
     reason = _approval_reason(
         requires_approval=status.state == "awaiting_external_approval",
         caller=caller,
@@ -1662,10 +1696,21 @@ def _service_write(
     if reason is None and status.state == "ready_to_activate":
         from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 
-        receipt = service_activate_playbill_proposal(
-            instance, proposal_id=proposal_id, activated_by=caller.actor.actor_id
-        )
-        if receipt.status == "accepted" and receipt.accepted_coordinate is not None:
+        try:
+            receipt = service_activate_playbill_proposal(
+                instance, proposal_id=proposal_id, activated_by=caller.actor.actor_id
+            )
+        except SettlementIntegrityError:
+            # Settlement refuses a candidate evaluated at any head but the
+            # current one; a write the head moved past is refused, not settled.
+            if instance.accepted_coordinate().git_oid == evaluated_at.git_oid:
+                raise
+            receipt = None
+        if (
+            receipt is not None
+            and receipt.status == "accepted"
+            and receipt.accepted_coordinate is not None
+        ):
             return _accepted(
                 instance,
                 plan=plan,
@@ -1684,7 +1729,8 @@ def _service_write(
             subjects_added=subjects_added,
             proposal=WriteProposalRef(proposal_id=proposal_id, state="conflicted_after_rebase"),
             coordinate=_compact(instance, instance.accepted_coordinate()),
-            refusal=WriteRefusal(
+            refusal=_slot_moved(instance, planned_at=head, read_at=read_at, request=request)
+            or WriteRefusal(
                 code="playbill.write.head_moved",
                 message="Another change was accepted first, so this one was not activated.",
                 repair="Run the same write again; it is checked against the new head",
@@ -1768,6 +1814,8 @@ def _slot_moved(
     at: AcceptedProjectionCoordinate | None = None,
 ) -> WriteRefusal | None:
     """Why the plan no longer holds at ``at`` (the head by default), if it moved.
+
+    Only for reporting: admission and settlement are what refuse the write.
 
     The write was planned at ``planned_at`` against the read coordinate
     ``read_at`` (the planned head itself when the caller named none). Planning

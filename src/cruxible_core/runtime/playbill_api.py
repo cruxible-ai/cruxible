@@ -20,9 +20,9 @@ from cruxible_client import contracts
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
 from cruxible_client.contracts.authoring.models import (
+    AuthoringExpectationV1,
     AuthoringPayloadV1,
     AuthoringProgramStampV1,
-    AuthoringReferenceExpectationV1,
     ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
     ClaimAuthoringPayloadV3,
@@ -1406,7 +1406,7 @@ def playbill_authoring_create(
     instance_id: str,
     *,
     payload: AuthoringPayloadV1,
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+    reference_expectations: tuple[AuthoringExpectationV1, ...] | None = None,
     program_stamp: AuthoringProgramStampV1 | None = None,
 ) -> contracts.PlaybillAuthoringIntentView:
     check_permission("cruxible_playbill_authoring_create", instance_id=instance_id)
@@ -1575,7 +1575,7 @@ def playbill_authoring_compile(
     *,
     payload: AuthoringPayloadV1,
     intent_id: str | None = None,
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+    reference_expectations: tuple[AuthoringExpectationV1, ...] | None = None,
     program_stamp: AuthoringProgramStampV1 | None = None,
 ) -> contracts.PlaybillAuthoringPreflightResult:
     check_permission("cruxible_playbill_authoring_compile", instance_id=instance_id)
@@ -1595,7 +1595,7 @@ def playbill_authoring_compile_and_submit(
     instance_id: str,
     *,
     payload: AuthoringPayloadV1,
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...],
+    reference_expectations: tuple[AuthoringExpectationV1, ...],
     program_stamp: AuthoringProgramStampV1,
     intent_id: str | None = None,
 ) -> contracts.PlaybillAuthoringSubmitResult:
