@@ -137,8 +137,10 @@ _MAX_CANDIDATES = 8
 # How many of a contract's Captures about the Subject, newest first, are tried
 # for the newest one that verifies.
 _MAX_CONTRACT_CAPTURES = 32
-# How many digests sharing a handle's prefix are verified before giving up.
+# How many Captures sharing a handle's prefix are verified before giving up.
 _MAX_HANDLE_SCAN = 64
+# How many stored objects one handle lookup examines in its shard.
+_CAPTURE_SCAN_BUDGET = 65_536
 # How many of a contract's newest Captures no Claim on the Subject cites are
 # read to find the ones whose own source names the Subject.
 _MAX_CONTRACT_SCAN = 256
@@ -902,40 +904,16 @@ class _Planner:
                 self._verified[digest] = not isinstance(verified, str)
         return self._verified[digest]
 
-    def _verified_captures_with_prefix(self, hex_prefix: str) -> list[str]:
-        """The verified Captures whose digest starts with ``hex_prefix``, at most a few."""
+    def _nearest_captures(self, near: Sequence[str], hex_prefix: str) -> list[str]:
+        """Verified Captures near an unknown handle, at most a few.
 
-        found: list[str] = []
-        matching = (
-            digest
-            for digest in self.instance.body_store().shard_digests(hex_prefix)
-            if digest.removeprefix("sha256:").startswith(hex_prefix)
-        )
-        for position, digest in enumerate(matching):
-            if position >= _MAX_HANDLE_SCAN or len(found) > _MAX_CANDIDATES:
-                break
-            if self._verified_capture(digest):
-                found.append(digest)
-        return found
+        ``near`` is what the bounded scan kept as sharing the longest prefix;
+        with none of those verifying, the accepted Captures on either side of
+        the handle in digest order, which the index answers without a scan.
+        """
 
-    def _nearest_captures(self, hex_prefix: str) -> list[str]:
-        """Verified Captures sharing the longest digest prefix with ``hex_prefix``."""
-
-        def shared(digest: str) -> int:
-            value = digest.removeprefix("sha256:")
-            length = 0
-            while length < len(hex_prefix) and value[length] == hex_prefix[length]:
-                length += 1
-            return length
-
-        ranked = sorted(
-            self.instance.body_store().shard_digests(hex_prefix),
-            key=lambda digest: (-shared(digest), digest),
-        )
-        found = [digest for digest in ranked[:_MAX_HANDLE_SCAN] if self._verified_capture(digest)]
+        found = [digest for digest in near if self._verified_capture(digest)]
         if not found:
-            # Nothing near it in its shard: the accepted Captures on either side
-            # of it in digest order, which the index answers without a scan.
             key = "sha256:" + hex_prefix
             half = _MAX_CANDIDATES // 2
             with self.instance.bind_accepted_projection(self.head) as projection:
@@ -958,11 +936,34 @@ class _Planner:
 
         Every Capture the instance holds counts, cited or not -- citing one for the
         first time is the common case -- as long as it verifies against its
-        contract accepted at the head.
+        contract accepted at the head. The lookup is bounded: when the store
+        holds more under the prefix than one lookup examines, it refuses rather
+        than call a partial answer unique.
         """
 
+        from cruxible_core.service.evidence.capture_reads import retained_captures
+
         hex_prefix = handle.removeprefix("CAP-")
-        found = self._verified_captures_with_prefix(hex_prefix)
+        inventory = retained_captures(
+            self.instance,
+            budget=_CAPTURE_SCAN_BUDGET,
+            hex_prefix=hex_prefix,
+            nearest=_MAX_CANDIDATES,
+        )
+        if not inventory.complete:
+            raise _refuse(
+                "playbill.write.capture_scan_exhausted",
+                f"{handle} was not resolved: the body store holds more objects under it "
+                "than one lookup examines",
+                change=index,
+                repair="Pass a longer handle, or the full sha256 digest",
+                field_path=path,
+            )
+        found = [
+            item.digest
+            for item in inventory.captures[:_MAX_HANDLE_SCAN]
+            if self._verified_capture(item.digest)
+        ]
         if len(found) == 1:
             return found[0]
         if found:
@@ -978,7 +979,9 @@ class _Planner:
             "playbill.write.capture_not_found",
             f"no verified Capture this instance holds has the handle {handle}",
             change=index,
-            candidates=_distinct_handles(self._nearest_captures(hex_prefix), at_least=12),
+            candidates=_distinct_handles(
+                self._nearest_captures(inventory.nearest, hex_prefix), at_least=12
+            ),
             repair=(
                 "Name a Capture by the CAP- handle a run, a capture or get with "
                 "detail=evidence printed, or by its full sha256 digest"

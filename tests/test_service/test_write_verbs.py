@@ -471,13 +471,14 @@ def _held_captures(instance: PlaybillInstance) -> set[str]:
     store = instance.body_store()
     access = BodyAccessContext(principal_id="test", can_read_body=True)
     found: set[str] = set()
-    for shard in (store.root / "sha256").iterdir():
-        for digest in store.shard_digests(shard.name):
-            try:
-                parse_capture_envelope(store.read(digest, access=access))
-            except Exception:  # noqa: BLE001 - bodies of every other kind
-                continue
-            found.add(digest)
+    scan = store.scan("", budget=1_000_000)
+    assert scan.complete
+    for digest in scan.digests:
+        try:
+            parse_capture_envelope(store.read(digest, access=access))
+        except Exception:  # noqa: BLE001 - bodies of every other kind
+            continue
+        found.add(digest)
     return found
 
 
@@ -541,14 +542,46 @@ def _contract_of(instance: PlaybillInstance, digest: str) -> str:
     )
 
 
+def test_a_handle_in_a_crowded_shard_stops_at_the_work_limit(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Almost nothing in the shard matches the full prefix, and the scan still stops."""
+
+    shard = instance.body_store().root / "sha256" / "ab"
+    shard.mkdir(exist_ok=True)
+    for index in range(3000):
+        (shard / f"ab{index:062x}").touch()
+    monkeypatch.setattr(write_verbs, "_CAPTURE_SCAN_BUDGET", 500)
+    refusal = _refusal(
+        _write(
+            instance,
+            _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "CAP-abffffffffff"}),
+        )
+    )
+    assert refusal.code == "playbill.write.capture_scan_exhausted"
+    scan = instance.body_store().scan("abffffffffff", budget=500, nearest=8)
+    assert not scan.complete and scan.examined <= 500 and len(scan.nearest) <= 8
+
+
 def test_an_ambiguous_capture_handle_refuses_with_the_longer_handles(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     prefix = "sha256:" + "a" * 12
     found = [prefix + "0" * 52, prefix + "1" * 52]
+    from cruxible_core.service.evidence import capture_reads
+
     monkeypatch.setattr(
-        write_verbs._Planner, "_verified_captures_with_prefix", lambda _self, _prefix: found
+        capture_reads,
+        "retained_captures",
+        lambda _instance, **_kw: capture_reads.RetainedCaptureInventory(
+            captures=tuple(
+                capture_reads.RetainedCapture(digest=item, envelope=None)  # type: ignore[arg-type]
+                for item in found
+            ),
+            complete=True,
+        ),
     )
+    monkeypatch.setattr(write_verbs._Planner, "_verified_capture", lambda _self, _digest: True)
     refusal = _refusal(
         _write(
             instance,

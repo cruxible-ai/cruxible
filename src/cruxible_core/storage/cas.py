@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import heapq
 import os
 import re
 import stat
@@ -12,6 +13,7 @@ from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -77,8 +79,32 @@ def _read_descriptor(
     return before, b"".join(chunks), after
 
 
-_SHARD_PREFIX = re.compile(r"[0-9a-f]{2,64}")
+_HEX_PREFIX = re.compile(r"[0-9a-f]{0,64}")
+_SHARD_NAME = re.compile(r"[0-9a-f]{2}")
 _OBJECT_NAME = re.compile(r"[0-9a-f]{64}")
+
+
+@dataclass(frozen=True)
+class CasScan:
+    """One bounded scan of stored digests: what matched, and whether it finished."""
+
+    digests: tuple[str, ...]
+    complete: bool
+    examined: int
+    nearest: tuple[str, ...] = ()
+
+
+def _shared_length(name: str, prefix: str) -> int:
+    length = 0
+    while length < min(len(name), len(prefix)) and name[length] == prefix[length]:
+        length += 1
+    return length
+
+
+def _ranked(closest: list[tuple[int, str]]) -> tuple[str, ...]:
+    return tuple(
+        digest for _shared, digest in sorted(closest, key=lambda item: (-item[0], item[1]))
+    )
 
 
 class ContentAddressedBodyStore:
@@ -165,26 +191,94 @@ class ContentAddressedBodyStore:
         finally:
             os.close(descriptor)
 
-    def shard_digests(self, hex_prefix: str) -> tuple[str, ...]:
-        """Every stored digest in the shard ``hex_prefix`` falls in, in byte order.
+    def peek(self, digest: str, length: int) -> bytes:
+        """The first ``length`` bytes of one object, UNVERIFIED: for classifying only.
 
-        Objects are sharded by their first two hex digits, so a prefix of two or
-        more names exactly one shard; only well-formed object names are listed.
+        Nothing read here is trusted; a caller that keeps an object reads it
+        again through ``read``, which verifies every byte against the address.
         """
 
-        if not _SHARD_PREFIX.fullmatch(hex_prefix):
-            raise PlaybillCasError("a shard is named by two or more lowercase hex digits")
-        descriptor = self._shard(hex_prefix[:2])
-        if descriptor is None:
-            return ()
+        shard, name = self._names(digest)
+        directory = self._shard(shard)
+        if directory is None:
+            return b""
         try:
-            names = os.listdir(descriptor)
+            try:
+                descriptor = os.open(
+                    name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+                )
+            except OSError:
+                return b""
+        finally:
+            os.close(directory)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return b""
+            return os.read(descriptor, length)
+        except OSError:
+            return b""
         finally:
             os.close(descriptor)
-        return tuple(
-            "sha256:" + name
-            for name in sorted(names)
-            if _OBJECT_NAME.fullmatch(name) and name.startswith(hex_prefix[:2])
+
+    def scan(self, hex_prefix: str = "", *, budget: int, nearest: int = 0) -> CasScan:
+        """Stored digests starting with ``hex_prefix``, examining at most ``budget`` names.
+
+        Objects are sharded by their first two hex digits, so a prefix of two or
+        more names one shard and a shorter one the shards it opens. Entries are
+        streamed, never listed whole: the scan stops after ``budget`` entries and
+        says so (``complete`` is False), so a caller never mistakes a partial
+        scan for the whole store. ``nearest`` keeps that many of the examined
+        digests sharing the longest prefix with ``hex_prefix``, in the same pass.
+        """
+
+        if not _HEX_PREFIX.fullmatch(hex_prefix):
+            raise PlaybillCasError("a digest prefix is lowercase hex")
+        found: list[str] = []
+        closest: list[tuple[int, str]] = []
+        examined = 0
+        shards = (
+            [hex_prefix[:2]]
+            if len(hex_prefix) >= 2
+            else sorted(
+                name
+                for name in os.listdir(self._root_fd)
+                if _SHARD_NAME.fullmatch(name) and name.startswith(hex_prefix)
+            )
+        )
+        for shard in shards:
+            descriptor = self._shard(shard)
+            if descriptor is None:
+                continue
+            try:
+                with os.scandir(descriptor) as entries:
+                    for entry in entries:
+                        if examined >= budget:
+                            return CasScan(
+                                digests=tuple(sorted(found)),
+                                complete=False,
+                                examined=examined,
+                                nearest=_ranked(closest),
+                            )
+                        examined += 1
+                        name = entry.name
+                        if not _OBJECT_NAME.fullmatch(name) or not name.startswith(shard):
+                            continue
+                        if name.startswith(hex_prefix):
+                            found.append("sha256:" + name)
+                        elif nearest:
+                            shared = _shared_length(name, hex_prefix)
+                            item = (shared, "sha256:" + name)
+                            if len(closest) < nearest:
+                                heapq.heappush(closest, item)
+                            elif item > closest[0]:
+                                heapq.heapreplace(closest, item)
+            finally:
+                os.close(descriptor)
+        return CasScan(
+            digests=tuple(sorted(found)),
+            complete=True,
+            examined=examined,
+            nearest=_ranked(closest),
         )
 
     def file_identity(self, digest: str) -> tuple[int, int, int, int, int] | None:
@@ -456,13 +550,21 @@ class DryRunBodyStore:
             redacted=not access.can_read_body,
         )
 
-    def shard_digests(self, hex_prefix: str) -> tuple[str, ...]:
-        held = {
-            digest
-            for digest in self._held
-            if digest.removeprefix("sha256:").startswith(hex_prefix[:2])
-        }
-        return tuple(sorted({*self._base.shard_digests(hex_prefix), *held}))
+    def peek(self, digest: str, length: int) -> bytes:
+        held = self._held.get(digest)
+        return self._base.peek(digest, length) if held is None else held[:length]
+
+    def scan(self, hex_prefix: str = "", *, budget: int, nearest: int = 0) -> CasScan:
+        base = self._base.scan(hex_prefix, budget=budget, nearest=nearest)
+        held = [
+            digest for digest in self._held if digest.removeprefix("sha256:").startswith(hex_prefix)
+        ]
+        return CasScan(
+            digests=tuple(sorted({*base.digests, *held})),
+            complete=base.complete,
+            examined=base.examined,
+            nearest=base.nearest,
+        )
 
     def erase(self, digest: str) -> bool:
         raise PlaybillCasError("a dry run erases nothing")
@@ -473,6 +575,7 @@ class DryRunBodyStore:
 
 __all__ = [
     "BodyAccessContext",
+    "CasScan",
     "BodyProjectionProtocol",
     "CasObjectMetadata",
     "ContentAddressedBodyStore",

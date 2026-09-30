@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Literal
 
@@ -198,6 +199,73 @@ def verify_accepted_capture(
     except (PlaybillError, ValueError) as exc:
         raise CaptureReadInvalid(f"Capture verification failed: {exc}") from exc
     return VerifiedCapture(envelope=envelope, contract=contract, contract_address=path)
+
+
+@dataclass(frozen=True)
+class RetainedCapture:
+    """One Capture envelope the instance's body store holds, cited or not."""
+
+    digest: str
+    envelope: CaptureEnvelopeAny
+
+
+@dataclass(frozen=True)
+class RetainedCaptureInventory:
+    """A bounded inventory of retained Captures; ``complete`` says it saw them all."""
+
+    captures: tuple[RetainedCapture, ...]
+    complete: bool
+    nearest: tuple[str, ...] = ()
+
+
+# Canonical envelopes sort their keys, and this one sorts first.
+_ENVELOPE_HEAD = b'{"capture_contract_digest":"'
+_HEAD_LENGTH = len(_ENVELOPE_HEAD) + len("sha256:") + 64
+
+
+def retained_captures(
+    instance: PlaybillInstance,
+    *,
+    budget: int,
+    hex_prefix: str = "",
+    contract_digests: Collection[str] | None = None,
+    nearest: int = 0,
+) -> RetainedCaptureInventory:
+    """The Captures the instance holds whose digest starts with ``hex_prefix``.
+
+    Cited or not: a Capture is retained as soon as it is stored. At most
+    ``budget`` stored objects are examined; when the store holds more under the
+    prefix the inventory is incomplete and says so, and callers refuse rather
+    than treat a partial inventory as the whole. ``contract_digests`` keeps only
+    Captures under those contract versions, judged from each object's leading
+    bytes before it is read in full. ``nearest`` passes on that many digests
+    sharing the longest prefix with ``hex_prefix``. Nothing here is verified;
+    ``verify_accepted_capture`` verifies what a caller keeps.
+    """
+
+    store = instance.body_store()
+    scan = store.scan(hex_prefix, budget=budget, nearest=nearest)
+    wanted = (
+        None if contract_digests is None else {item.encode("ascii") for item in contract_digests}
+    )
+    found: list[RetainedCapture] = []
+    for digest in scan.digests:
+        head = store.peek(digest, _HEAD_LENGTH)
+        if not head.startswith(_ENVELOPE_HEAD):
+            continue
+        if wanted is not None and head[len(_ENVELOPE_HEAD) :] not in wanted:
+            continue
+        try:
+            envelope = parse_capture_envelope(store.read(digest, access=_INVENTORY_ACCESS))
+        except (PlaybillError, ValueError):
+            continue
+        found.append(RetainedCapture(digest=digest, envelope=envelope))
+    return RetainedCaptureInventory(
+        captures=tuple(found), complete=scan.complete, nearest=scan.nearest
+    )
+
+
+_INVENTORY_ACCESS = BodyAccessContext(principal_id="playbill-capture-inventory", can_read_body=True)
 
 
 def service_read_playbill_capture(
