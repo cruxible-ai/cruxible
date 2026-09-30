@@ -78,7 +78,14 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
     }
     assert schema.get("required", []) == []
     section = schema["properties"]["section"]["anyOf"][0]
-    assert section["enum"] == ["documents", "procedures", "claim_types", "queries", "interfaces"]
+    assert section["enum"] == [
+        "documents",
+        "procedures",
+        "claim_types",
+        "queries",
+        "interfaces",
+        "runs",
+    ]
     # `at` is a Git OID string or a declared coordinate object, never a free-form dict.
     coordinate = schema["$defs"]["PlaybillAcceptedCoordinate"]
     assert coordinate["additionalProperties"] is False

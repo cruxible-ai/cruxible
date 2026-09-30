@@ -21,10 +21,11 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from cruxible_client.contracts.operational_reads import PlaybillRunRowV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 PlaybillOrientSection: TypeAlias = Literal[
-    "documents", "procedures", "claim_types", "queries", "interfaces"
+    "documents", "procedures", "claim_types", "queries", "interfaces", "runs"
 ]
 #: The surface a caller renders ``next`` for: tool calls, commands, or SDK calls.
 PlaybillOrientSurface: TypeAlias = Literal["mcp", "cli", "sdk"]
@@ -181,7 +182,7 @@ class PlaybillOrientResultV1(_StrictOrientModel):
       ``artifacts``, ``queries`` and ``attention``;
     - ``kind``: ``kind_detail``;
     - ``section``: that section's rows (``documents``, ``procedures``,
-      ``claim_types``, ``queries`` or ``interfaces``), paged.
+      ``claim_types``, ``queries``, ``interfaces`` or ``runs``), paged.
 
     ``next`` is rendered for the requesting surface.
     """
@@ -212,6 +213,9 @@ class PlaybillOrientResultV1(_StrictOrientModel):
     interfaces: tuple[PlaybillOrientInterfaceV1, ...] | None = Field(
         default=None, exclude_if=_is_none
     )
+    # Procedure runs: running first, then newest admission first. Runs are
+    # operational state, listed as of now whatever coordinate is read.
+    runs: tuple[PlaybillRunRowV1, ...] | None = Field(default=None, exclude_if=_is_none)
     truncated: bool = False
     next_cursor: str | None = Field(default=None, exclude_if=_is_none)
     next: tuple[str, ...] = ()

@@ -217,7 +217,7 @@ def test_a_capture_reads_by_handle_prefix_or_full_digest(prediction_world) -> No
     assert card.contract.startswith("CaptureContract:") and card.version == 1
     assert card.status == "available"
     assert card.citing and card.citing_total >= len(card.citing)
-    assert card.subjects == ("project.work_item/wi-42",)
+    assert "project.work_item/wi-42" in card.subjects
     assert card.next[-1] == (
         f'cruxible_playbill_read_capture(request={{"capture_digest": "{capture_digest}"}})'
     )

@@ -1817,7 +1817,7 @@ or raise the budget.
 ## playbill orient
 
 ~~~text
-cruxible playbill orient [--kind KIND | --section documents|procedures|claim_types|queries]
+cruxible playbill orient [--kind KIND | --section SECTION]
   [--limit N] [--cursor C] [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
 
@@ -1836,7 +1836,17 @@ horizon and live Claim count, the predicates of other kinds that point at it
 PREDICATE:alias`), plus up to five sample Subject IDs. A kind that
 does not exist is refused as `playbill.orient.kind_not_found` with the nearest
 kinds. `--section` pages one artifact family as compact rows; follow
-`next_cursor` with `--cursor` while `truncated` is true. Kinds page the same way
+`next_cursor` with `--cursor` while `truncated` is true. `--section runs` lists
+Procedure runs, running runs first and then the newest admissions, each with its
+Procedure, status, admission time, Line and finished-node count; it pages by
+key, so runs admitted after the first page never shift a later one. Read one
+with `cruxible playbill get ProcedureRun:RUN-...` (or a `RUN-` prefix of 12+
+hex): nodes done over the graph's nodes, the node a running run is on,
+elapsed time (against the read's evaluation time while it runs, the measured
+wall clock once it finished), the last finished nodes, the Line, occurrence and
+arm that admitted it, and the receipt digest once it is terminal. Per-node
+durations are not shown: every journal record of a run carries the run's
+evaluation instant. Kinds page the same way
 when there are more than `--limit`. `--at` reads an earlier accepted generation.
 `--json` returns the whole structured answer, including the coordinate and
 generation.

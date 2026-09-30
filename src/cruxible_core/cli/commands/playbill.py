@@ -5816,7 +5816,7 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     section = result.get("section")
     if section is not None and not result[section]:
         lines.append(f"(no {section.replace('_', ' ')})")
-    if section in {"documents", "procedures"}:
+    if section in {"documents", "procedures", "runs"}:
         for row in result[section]:
             lines.append("  ".join(str(value) for value in row.values()))
     if section == "interfaces":

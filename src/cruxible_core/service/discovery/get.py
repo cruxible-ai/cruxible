@@ -104,6 +104,7 @@ from cruxible_core.service.discovery.read_flags import (
     unsure_holds,
     verdict_flags,
 )
+from cruxible_core.service.discovery.runs import procedure_run_card, run_ids_with_prefix
 from cruxible_core.service.list_pages import (
     ListContinuation,
     PlaybillListCursorMismatch,
@@ -145,6 +146,7 @@ _TYPED_PREFIXES: Mapping[str, PlaybillGetRefKind] = {
     "ResolutionContract": "resolution_contract",
     "Mandate": "mandate",
     "ProcedureMandate": "mandate",
+    "ProcedureRun": "procedure_run",
 }
 # The projection's artifact kind for each reference kind, and back.
 _PROJECTION_KIND: Mapping[PlaybillGetRefKind, str] = {
@@ -192,6 +194,7 @@ _DISPLAY_PREFIX: Mapping[PlaybillGetRefKind, str] = {
     "resolution_contract": "ResolutionContract",
     "mandate": "Mandate",
     "capture": "Capture",
+    "procedure_run": "ProcedureRun",
 }
 # The orient section that lists each operational kind, named by a refusal
 # that has no nearer candidate to offer.
@@ -201,6 +204,7 @@ _ORIENT_SECTION: Mapping[PlaybillGetRefKind, str] = {
     "resolution_contract": "predictions",
     "mandate": "mandates",
     "capture_contract": "capture_contracts",
+    "procedure_run": "runs",
 }
 
 
@@ -224,6 +228,8 @@ def _name(identity: str) -> str:
 def _display(kind: PlaybillGetRefKind, identity: str) -> str:
     if kind == "capture":
         return f"Capture:{identity}"
+    if kind == "procedure_run":
+        return f"ProcedureRun:{identity}"
     name = _name(identity) if kind != "proposal" else identity
     if kind in {"claim", "subject"}:
         return name
@@ -328,6 +334,8 @@ def resolve_get_ref(
         return _resolve_proposal(instance, value)
     if value.startswith("CAP-"):
         return _resolve_capture(instance, coordinate, value, ref=value, surface=surface)
+    if value.startswith("RUN-"):
+        return _resolve_run(instance, value, ref=value, surface=surface)
     head, separator, rest = value.partition(":")
     if separator and head in _TYPED_PREFIXES:
         kind = _TYPED_PREFIXES[head]
@@ -335,6 +343,8 @@ def resolve_get_ref(
             return _resolve_proposal(instance, rest)
         if kind == "capture":
             return _resolve_capture(instance, coordinate, rest, ref=value, surface=surface)
+        if kind == "procedure_run":
+            return _resolve_run(instance, rest, ref=value, surface=surface)
         with instance.bind_accepted_projection(coordinate) as projection:
             return _resolve_typed(projection, kind, rest, ref=value, surface=surface)
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -388,6 +398,31 @@ def _resolve_proposal(instance: PlaybillInstance, selector: str) -> ResolvedRef:
 
 def _envelope(projection: Any, identity: str) -> Any | None:
     return projection.typed.envelope(identity)
+
+
+_RUN_PREFIX = re.compile(r"^RUN-[0-9a-f]{12,64}$")
+
+
+def _resolve_run(
+    instance: PlaybillInstance, value: str, *, ref: str, surface: PlaybillReadSurface
+) -> ResolvedRef:
+    """A Procedure run id, or a unique prefix of at least 12 hex after ``RUN-``."""
+
+    if not _RUN_PREFIX.fullmatch(value):
+        raise ReadRefusalError(
+            "playbill.get.ref_malformed",
+            f"{ref!r} is not a Procedure run id",
+            candidates=(),
+            repair=RepairOperationV1(operation="playbill.orient", arguments={"section": "runs"}),
+            repair_line="Pass RUN- plus at least 12 lowercase hex of the run id",
+            context={"ref": ref},
+        )
+    matches = run_ids_with_prefix(instance, value, limit=_MAX_CANDIDATES + 1)
+    if len(matches) > 1:
+        raise _ambiguous(ref, [_display("procedure_run", item) for item in matches])
+    if not matches:
+        raise _not_found("Procedure run", ref, (), surface=surface, section="runs")
+    return ResolvedRef("procedure_run", matches[0], _display("procedure_run", matches[0]))
 
 
 def _resolve_capture(
@@ -1614,6 +1649,14 @@ def _proof(
             "artifact_digest": row.artifact_digest if row else None,
             "envelope": None if source is None else source.model_dump(mode="json"),
         }
+    if resolved.kind == "procedure_run":
+        from cruxible_core.service.procedures.procedure_runs import (
+            service_get_playbill_procedure_run,
+        )
+
+        return service_get_playbill_procedure_run(instance, run_id=resolved.identity).model_dump(
+            mode="json"
+        )
     if resolved.kind == "capture":
         envelope = parse_capture_envelope(
             instance.body_store().read(resolved.identity, access=_SERVICE_ACCESS)
@@ -1677,9 +1720,9 @@ def service_playbill_get(
     coordinate = resolve_read_coordinate(instance, at)
     evaluation_time = request.evaluation_time or utc_now()
     resolved = resolve_get_ref(instance, coordinate, request.ref, surface=request.surface)
-    if resolved.kind == "proposal":
-        # Proposals are operational state, read only as of the current head;
-        # one response never mixes an older requested generation with it.
+    if resolved.kind in {"proposal", "procedure_run"}:
+        # Proposals and runs are operational state, read only as of the current
+        # head; one response never mixes an older requested generation with it.
         head = instance.accepted_coordinate()
         if request.at is not None and coordinate.git_oid != head.git_oid:
             raise ReadRefusalError(
@@ -1689,7 +1732,8 @@ def service_playbill_get(
                 repair=RepairOperationV1(
                     operation="playbill.get", arguments={"ref": resolved.display}
                 ),
-                repair_line="Omit at to read the proposal as of the current head",
+                repair_line=f"Omit at to read the {resolved.kind.replace('_', ' ')} as of the "
+                "current head",
                 context={"ref": resolved.display, "kind": resolved.kind},
             )
         coordinate = head
@@ -1766,6 +1810,10 @@ def service_playbill_get(
         elif resolved.kind == "resolution_contract":
             card = resolution_contract_card(
                 instance, coordinate, resolved.identity, at_head=at_head, render=render
+            )
+        elif resolved.kind == "procedure_run":
+            card = procedure_run_card(
+                instance, resolved.identity, evaluation_time=evaluation_time, render=render
             )
         elif resolved.kind == "mandate":
             card = mandate_card(

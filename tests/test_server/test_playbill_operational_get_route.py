@@ -57,3 +57,18 @@ def test_http_get_reads_a_capture_by_handle_and_refuses_unknown_operational_refs
     malformed = client.post(url, json={"ref": "Capture:xyz"})
     assert malformed.status_code == 400, malformed.text
     assert malformed.json()["error_code"] == "playbill.get.ref_malformed"
+
+
+def test_http_serves_the_runs_section_and_refuses_an_unknown_run(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _key = playbill_http
+
+    listed = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"section": "runs"})
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["runs"] == [] and listed.json()["section"] == "runs"
+
+    missing = client.post(f"/api/v1/{instance_id}/playbill/get", json={"ref": "RUN-" + "a" * 12})
+    assert missing.status_code == 404, missing.text
+    assert missing.json()["error_code"] == "playbill.get.ref_not_found"
+    assert missing.json()["repair"]["arguments"] == {"section": "runs"}

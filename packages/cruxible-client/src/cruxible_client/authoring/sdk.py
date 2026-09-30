@@ -374,6 +374,7 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "capture": RefKind.CAPTURE,
     "resolution_contract": RefKind.RESOLUTION_CONTRACT,
     "mandate": RefKind.MANDATE,
+    "procedure_run": RefKind.PROCEDURE_RUN,
 }
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {
@@ -3401,10 +3402,11 @@ class Playbill:
         ``Procedure:``/``query:``/``CaptureContract:<name>``, an artifact path,
         a proposal id, or an operational reference: ``Line:<name>`` (or the
         Line identity digest ``next`` names), ``CAP-<12+ hex>`` /
-        ``Capture:<digest>``, ``ResolutionContract:<name>`` and
-        ``Mandate:<name>``. A wrong or ambiguous name refuses with the nearest
-        names. A Claim summary is a ``ClaimView``; other summaries are the
-        values-first card; other details carry that detail's payload.
+        ``Capture:<digest>``, ``ResolutionContract:<name>``, ``Mandate:<name>``
+        and ``ProcedureRun:<run_id>`` (or ``RUN-<12+ hex>``). A wrong or
+        ambiguous name refuses with the nearest names. A Claim summary is a
+        ``ClaimView``; other summaries are the values-first card; other
+        details carry that detail's payload.
         """
 
         if isinstance(ref, SourceRef):

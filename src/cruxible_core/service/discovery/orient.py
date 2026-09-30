@@ -64,6 +64,7 @@ from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV2,
     summarize_playbill_next,
 )
+from cruxible_core.service.discovery.runs import run_rows
 from cruxible_core.service.list_pages import (
     ListContinuation,
     PlaybillListCursorMismatch,
@@ -758,6 +759,10 @@ def service_playbill_orient(
             next=tuple(render_orient_call(call, surface) for call in calls),
         )
 
+    if section == "runs":
+        return _runs_section(
+            instance, base, served=served, continuation=continuation, limit=limit, surface=surface
+        )
     if section is not None:
         rows, keys, first_ref = _section_rows(state, section)
         page, next_cursor = _page(
@@ -837,6 +842,75 @@ def service_playbill_orient(
         ),
         queries=state.queries[:PLAYBILL_ORIENT_DEFAULT_QUERIES],
         attention=attention,
+        truncated=next_cursor is not None,
+        next_cursor=next_cursor,
+        next=tuple(render_orient_call(call, surface) for call in calls),
+    )
+
+
+_KEYSET = "keyset"
+
+
+def _keyset_cursor(*, view: str, served: AcceptedCoordinate, last_key: Sequence[str]) -> str:
+    """A cursor that continues a keyset listing after its last row.
+
+    An operational listing (runs land continuously) is paged by key rather
+    than by snapshot, so a run admitted after the first page never makes a
+    later page stale or shifts it.
+    """
+
+    return encode_list_cursor(
+        list_name=_LIST,
+        coordinate=served.model_dump(mode="json"),
+        selection={"view": view},
+        snapshot=_KEYSET,
+        last_key=last_key,
+    )
+
+
+def _keyset_after(continuation: ListContinuation | None) -> tuple[str, ...] | None:
+    if continuation is None:
+        return None
+    if continuation.snapshot != _KEYSET:
+        raise PlaybillListCursorMismatch(
+            f"{PlaybillListCursorMismatch.error_code}: the cursor does not continue this "
+            "listing; orient again without a cursor"
+        )
+    return continuation.last_key
+
+
+def _runs_section(
+    instance: PlaybillInstance,
+    base: dict[str, Any],
+    *,
+    served: AcceptedCoordinate,
+    continuation: ListContinuation | None,
+    limit: int,
+    surface: PlaybillOrientSurface,
+) -> PlaybillOrientResultV1:
+    after = _keyset_after(continuation)
+    if after is not None and (len(after) != 3 or after[0] not in {"0", "1"}):
+        raise PlaybillListCursorMismatch(
+            f"{PlaybillListCursorMismatch.error_code}: the cursor is malformed; "
+            "orient again without a cursor"
+        )
+    rows, stop = run_rows(
+        instance,
+        limit=limit,
+        after=None if after is None else (int(after[0]), after[1], after[2]),
+    )
+    next_cursor = (
+        None
+        if stop is None
+        else _keyset_cursor(view="runs", served=served, last_key=[str(stop[0]), stop[1], stop[2]])
+    )
+    calls = [_Call("get", (("ref", f"ProcedureRun:{rows[0].run}"),))] if rows else []
+    if next_cursor is not None:
+        calls.append(_Call("orient", (("section", "runs"), ("cursor", next_cursor))))
+    return PlaybillOrientResultV1(
+        **base,
+        section="runs",
+        runs=rows,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
         next=tuple(render_orient_call(call, surface) for call in calls),

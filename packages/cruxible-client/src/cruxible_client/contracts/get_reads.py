@@ -19,6 +19,7 @@ from cruxible_client.contracts.operational_reads import (
     PlaybillGetCaptureCardV1,
     PlaybillGetLineCardV1,
     PlaybillGetMandateCardV1,
+    PlaybillGetProcedureRunCardV1,
     PlaybillGetResolutionContractCardV1,
 )
 
@@ -36,6 +37,7 @@ PlaybillGetRefKind = Literal[
     "capture",
     "resolution_contract",
     "mandate",
+    "procedure_run",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
 # never re-adjudicated here.
@@ -70,6 +72,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "capture": ("summary", "proof"),
     "resolution_contract": ("summary", "history", "proof"),
     "mandate": ("summary", "history", "proof"),
+    "procedure_run": ("summary", "proof"),
 }
 
 
@@ -336,6 +339,7 @@ PlaybillGetCardV1 = (
     | PlaybillGetCaptureCardV1
     | PlaybillGetResolutionContractCardV1
     | PlaybillGetMandateCardV1
+    | PlaybillGetProcedureRunCardV1
 )
 
 

@@ -147,7 +147,8 @@
         "procedures",
         "claim_types",
         "queries",
-        "interfaces"
+        "interfaces",
+        "runs"
       ]
     },
     "PlaybillOrientSurface": {
@@ -27518,6 +27519,29 @@
             "title": "Queries"
           }
         },
+        "runs": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "runs",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillRunRowV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runs"
+          }
+        },
         "section": {
           "default": null,
           "default_json_serializable": true,
@@ -27533,7 +27557,8 @@
                   "procedures",
                   "claim_types",
                   "queries",
-                  "interfaces"
+                  "interfaces",
+                  "runs"
                 ],
                 "type": "string"
               },
@@ -28151,10 +28176,68 @@
             ],
             "title": "PlaybillOrientYouV1",
             "type": "object"
+          },
+          "PlaybillRunRowV1": {
+            "additionalProperties": false,
+            "description": "One Procedure run as a list row: running runs first, then newest first.",
+            "properties": {
+              "line": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Line"
+              },
+              "nodes_done": {
+                "minimum": 0,
+                "title": "Nodes Done",
+                "type": "integer"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "run": {
+                "title": "Run",
+                "type": "string"
+              },
+              "started_at": {
+                "format": "date-time",
+                "title": "Started At",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "running",
+                  "succeeded",
+                  "admission_refused",
+                  "node_refused",
+                  "operational_failed",
+                  "internal_failed",
+                  "halted"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run",
+              "procedure",
+              "status",
+              "started_at",
+              "nodes_done"
+            ],
+            "title": "PlaybillRunRowV1",
+            "type": "object"
           }
         },
         "additionalProperties": false,
-        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``queries`` or ``interfaces``), paged.\n\n``next`` is rendered for the requesting surface.",
+        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``queries``, ``interfaces`` or ``runs``), paged.\n\n``next`` is rendered for the requesting surface.",
         "properties": {
           "accepted_at": {
             "format": "date-time",
@@ -28333,6 +28416,21 @@
             "default": null,
             "title": "Queries"
           },
+          "runs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillRunRowV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runs"
+          },
           "section": {
             "anyOf": [
               {
@@ -28341,7 +28439,8 @@
                   "procedures",
                   "claim_types",
                   "queries",
-                  "interfaces"
+                  "interfaces",
+                  "runs"
                 ],
                 "type": "string"
               },

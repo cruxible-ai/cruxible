@@ -334,6 +334,7 @@ class JournalIndex:
         *,
         limit: int,
         partition_id: str | None = None,
+        run_id: str | None = None,
         after: RunLocatorKey | None = None,
     ) -> tuple[tuple[RunLocator, ...], bool]:
         """Admitted runs, running first, then newest admission first: a locator read.
@@ -349,6 +350,9 @@ class JournalIndex:
         if partition_id is not None:
             where.append("partition_id=?")
             args.append(partition_id)
+        if run_id is not None:
+            where.append("run_id=?")
+            args.append(run_id)
         keyset = ""
         if after is not None:
             done, admitted_at, run_id = after
@@ -391,6 +395,22 @@ class JournalIndex:
             ),
             len(rows) > limit,
         )
+
+    def run_ids_with_prefix(
+        self, stream: JournalStreamIdentityV1, prefix: str, *, limit: int
+    ) -> tuple[str, ...]:
+        """Admitted run ids starting with ``prefix``, in id order: a locator read."""
+
+        with self.connection() as conn:
+            return tuple(
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT run_id FROM records WHERE stream=? "
+                    "AND event_kind='admission_bound' AND run_id>=? AND run_id<? "
+                    "ORDER BY run_id LIMIT ?",
+                    (_key(stream), prefix, prefix + "\uffff", limit),
+                )
+            )
 
     def run_counts(
         self, stream: JournalStreamIdentityV1, *, partition_id: str | None = None
