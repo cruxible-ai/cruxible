@@ -83,8 +83,13 @@ from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1, Pro
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
+from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
 from cruxible_core.claims.claim_slots import classify_claim_slot
-from cruxible_core.compiler.compiler import COMPILER_REVISION_LABELS, current_compiler_coordinate
+from cruxible_core.compiler.compiler import (
+    COMPILER_REVISION_LABELS,
+    artifact_kinds_for_compiler,
+    current_compiler_coordinate,
+)
 from cruxible_core.compiler.upgrades import upgrade_law
 from cruxible_core.consumers.protocol import ConsumerHealth
 from cruxible_core.coverage.contracts import (
@@ -626,6 +631,7 @@ _HEALTH_STATES: dict[str, frozenset[str]] = {
     "compiler": frozenset({"current", "upgrade_available", "no_upgrade_path"}),
     "line_dispatch": frozenset({"not_observed", "idle", "waiting", "due"}),
     "consumers": frozenset({"not_observed", "not_running", "current", "lagging", "stalled"}),
+    "triggers": frozenset({"not_observed", "scheduled", "unscheduled"}),
 }
 
 
@@ -660,8 +666,8 @@ class PlaybillNextStatusV1(_StrictNextModel):
     instance, an unexported floor, a lagging ledger mirror, an unavailable
     provider lane, an incomplete Procedure catalog, a compiler behind the
     running one, Line occurrences waiting on dispatch, built-in workers behind
-    on what they report -- not work items about accepted state. `blocking` is
-    set only when no write can succeed.
+    on what they report, an internal action no Trigger schedules -- not work
+    items about accepted state. `blocking` is set only when no write can succeed.
     """
 
     tag: Literal["playbill-next-status-v1"] = "playbill-next-status-v1"
@@ -674,6 +680,7 @@ class PlaybillNextStatusV1(_StrictNextModel):
     compiler: PlaybillNextHealthV1
     line_dispatch: PlaybillNextHealthV1
     consumers: PlaybillNextHealthV1
+    triggers: PlaybillNextHealthV1
     #: Rows parked by a current ``unsure`` attestation whose basis is unchanged.
     held: int = Field(default=0, ge=0)
     #: Rows and nested findings whose repair this caller's surface, tool
@@ -3659,6 +3666,60 @@ def _line_dispatch_health(
     )
 
 
+def _triggers_health(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    access_profile: CoverageAccessProfileV1,
+) -> PlaybillNextHealthV1:
+    """Which internal actions a live Trigger schedules, read at the coordinate.
+
+    Informational, never blocking: an unscheduled action simply never fires,
+    so the worker that follows it (evidence sweeps, anchor retries) stops
+    advancing. The repair is authoring a Trigger aimed at it.
+    """
+
+    if not access_profile.permits("instance"):
+        return PlaybillNextHealthV1(state="not_observed")
+    with instance.bind_accepted_projection(coordinate) as projection:
+        rows = projection.typed.connection.execute(
+            "SELECT target,identity FROM triggers WHERE target_kind='action' "
+            "AND schedule_kind='cadence' AND lifecycle='live' ORDER BY target,identity"
+        ).fetchall()
+    scheduled: dict[str, list[str]] = {}
+    for action, identity in rows:
+        scheduled.setdefault(action, []).append(identity)
+    unscheduled = [action for action in INTERNAL_ACTIONS if action not in scheduled]
+    detail: dict[str, object] = {"scheduled": scheduled}
+    if not unscheduled:
+        return PlaybillNextHealthV1(state="scheduled", detail=detail)
+    admits = any(
+        entry.kind == "trigger"
+        for entry in artifact_kinds_for_compiler(coordinate.compiler).entries()
+    )
+    detail.update(
+        unscheduled=unscheduled,
+        message="; ".join(f"no trigger schedules {action}" for action in unscheduled),
+    )
+    author = PlaybillNextRepairV1(
+        operation="playbill.authoring.create",
+        target=unscheduled[0],
+        required_change=(
+            "author_a_trigger_aimed_at_the_unscheduled_action"
+            if admits
+            else "upgrade_the_compiler_then_author_a_trigger_aimed_at_the_unscheduled_action"
+        ),
+        arguments={"example": "trigger"},
+    )
+    return PlaybillNextHealthV1(
+        state="unscheduled",
+        detail=detail,
+        repair=author.model_copy(
+            update={"command": _repair_command(author.operation, arguments=author.arguments)}
+        ),
+    )
+
+
 def _consumers_health(
     instance: PlaybillInstance,
     healths: tuple[ConsumerHealth, ...],
@@ -4916,6 +4977,9 @@ def service_playbill_next(
                 access_profile=request.access_profile,
                 running=consumers_running,
             )
+        ),
+        triggers=caller.health(
+            _triggers_health(instance, coordinate=coordinate, access_profile=request.access_profile)
         ),
     )
     values = {

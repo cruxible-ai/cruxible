@@ -26572,6 +26572,9 @@
                 "default": "playbill-next-status-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "triggers": {
+                "$ref": "#/$defs/PlaybillNextHealth"
               }
             },
             "required": [
@@ -26583,7 +26586,8 @@
               "procedure_catalog",
               "compiler",
               "line_dispatch",
-              "consumers"
+              "consumers",
+              "triggers"
             ],
             "title": "PlaybillNextStatus",
             "type": "object"
@@ -26845,6 +26849,15 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "triggers": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "triggers",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
+          }
         }
       },
       "json_schema": {
@@ -26994,6 +27007,9 @@
             "default": "playbill-next-status-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "triggers": {
+            "$ref": "#/$defs/PlaybillNextHealth"
           }
         },
         "required": [
@@ -27005,7 +27021,8 @@
           "procedure_catalog",
           "compiler",
           "line_dispatch",
-          "consumers"
+          "consumers",
+          "triggers"
         ],
         "title": "PlaybillNextStatus",
         "type": "object"
@@ -27019,7 +27036,8 @@
         "ledger_mirror",
         "line_dispatch",
         "procedure_catalog",
-        "provider_lane"
+        "provider_lane",
+        "triggers"
       ]
     },
     "PlaybillOrientResultV1": {

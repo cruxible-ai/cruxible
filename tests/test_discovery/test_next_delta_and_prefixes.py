@@ -131,6 +131,7 @@ def _result(item_ids: tuple[str, ...], *, digest_hex: str = "9"):  # type: ignor
             compiler=PlaybillNextHealthV1(state="current"),
             line_dispatch=PlaybillNextHealthV1(state="idle"),
             consumers=PlaybillNextHealthV1(state="current"),
+            triggers=PlaybillNextHealthV1(state="scheduled"),
         ),
         items=tuple(items),
         total_items=len(items),

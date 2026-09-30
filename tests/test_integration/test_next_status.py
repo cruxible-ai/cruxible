@@ -275,7 +275,14 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
         f"cruxible playbill compiler upgrade --to {GOVERNED_TRIGGERS_COMPILER.rule_digest} "
         "--name upgrade-to-governed-triggers-v1"
     )
-    assert _attention(behind) == (("compiler", behind.compiler),)
+    # A compiler before Trigger artifacts schedules no internal action at all.
+    assert behind.triggers.state == "unscheduled"
+    assert behind.triggers.repair is not None
+    assert behind.triggers.repair.required_change.startswith("upgrade_the_compiler")
+    assert _attention(behind) == (
+        ("compiler", behind.compiler),
+        ("triggers", behind.triggers),
+    )
 
     proposal = propose(instance, GOVERNED_TRIGGERS_COMPILER)
     approve(instance, proposal, reviewer)
@@ -286,7 +293,13 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
         == "accepted"
     )
     upgraded = _status(instance, _request(instance))
-    assert upgraded.compiler.state == "current" and _attention(upgraded) == ()
+    # The upgrade seeds nothing: its internal actions wait for authored Triggers.
+    assert upgraded.compiler.state == "current"
+    assert _attention(upgraded) == (("triggers", upgraded.triggers),)
+    assert upgraded.triggers.repair is not None
+    assert upgraded.triggers.repair.required_change == (
+        "author_a_trigger_aimed_at_the_unscheduled_action"
+    )
 
 
 def test_a_status_repair_the_caller_cannot_perform_keeps_the_facet_but_not_the_repair(
@@ -518,3 +531,66 @@ def test_one_next_request_reads_each_workers_health_once(
     _status(instance, _request(instance, evaluation_time=swept), consumers_running=True)
 
     assert calls == [swept]
+
+
+def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_repair(
+    tmp_path: Path,
+) -> None:
+    from datetime import timedelta
+
+    from cruxible_client.contracts.triggers import CadenceScheduleV1
+    from cruxible_core.triggers.journal import internal_trigger_cadences
+    from tests.support.lines import action_trigger, successor, trigger_members
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, owner = initialize_local(tmp_path)
+    seeded = _status(instance, _request(instance))
+    assert seeded.triggers.state == "scheduled" and _attention(seeded) == ()
+    assert seeded.triggers.detail["scheduled"] == {
+        "evidence.sweep": ["Trigger:evidence-sweep"],
+        "prediction.anchor_retry": ["Trigger:prediction-anchor-retry"],
+    }
+
+    sweep = action_trigger("evidence-sweep", action="evidence.sweep", interval_seconds=86400)
+    retry = action_trigger(
+        "prediction-anchor-retry", action="prediction.anchor_retry", interval_seconds=3600
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree.update(
+        trigger_members(
+            successor(sweep, schedule=CadenceScheduleV1(interval_seconds=600)),
+            successor(retry, state="retired"),
+        )
+    )
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-09-30T12:00:00.000000Z", proposal_name="retime"
+    )
+    # The daemon's cadences are whatever the accepted Triggers say, per generation.
+    assert [(item.action, item.interval) for item in internal_trigger_cadences(instance)] == [
+        ("evidence.sweep", timedelta(minutes=10))
+    ]
+    unscheduled = _status(instance, _request(instance))
+    facet = unscheduled.triggers
+    assert facet.state == "unscheduled" and not unscheduled.blocking
+    assert facet.detail["unscheduled"] == ["prediction.anchor_retry"]
+    assert facet.detail["message"] == "no trigger schedules prediction.anchor_retry"
+    assert facet.repair is not None
+    assert (facet.repair.operation, facet.repair.arguments) == (
+        "playbill.authoring.create",
+        {"example": "trigger"},
+    )
+    assert _attention(unscheduled) == (("triggers", facet),)
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree.update(
+        trigger_members(
+            action_trigger(
+                "anchor-retry-often", action="prediction.anchor_retry", interval_seconds=900
+            )
+        )
+    )
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-09-30T12:01:00.000000Z", proposal_name="restore"
+    )
+    restored = _status(instance, _request(instance))
+    assert restored.triggers.state == "scheduled" and _attention(restored) == ()
