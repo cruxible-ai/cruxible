@@ -43,7 +43,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import yaml
 
@@ -66,6 +66,9 @@ from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.read_flags import answer_flags, verdict_flags
+
+if TYPE_CHECKING:
+    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
 CURRENT_PREFIX = "current/"
 SUBJECT_PREFIX = "subjects/"
@@ -587,6 +590,7 @@ def claim_verdicts(
     claims: tuple[ClaimArtifactAny, ...],
     *,
     evaluation_time: datetime,
+    read_context: ClaimVerdictReadContext | None = None,
 ) -> dict[str, ClaimVerdict]:
     """Each live Claim's verdict, slot status and hold, from the shared machinery.
 
@@ -597,7 +601,7 @@ def claim_verdicts(
 
     from cruxible_core.service.discovery.read_flags import unsure_holds
     from cruxible_core.service.discovery.search import claim_resolution_statuses
-    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext as Context
 
     if not claims:
         return {}
@@ -608,7 +612,7 @@ def claim_verdicts(
         at=PlaybillAcceptedCoordinate.from_internal(coordinate),
         evaluation_time=evaluation_time,
         verdicts_by_identity=verdicts,  # type: ignore[arg-type]
-        read_context=ClaimVerdictReadContext(instance, coordinate),
+        read_context=read_context or Context(instance, coordinate),
     )
     held = unsure_holds(
         instance, coordinate, claims, statuses=statuses, evaluation_time=evaluation_time

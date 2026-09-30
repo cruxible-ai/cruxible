@@ -201,6 +201,10 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ExternalSourceReadRequestV1", "observed_at"): "EVALUATION INSTANT",
     ("FloorGenerationPairV1", "current_generation"): "SETTLEMENT ORDER",
     ("FloorGenerationPairV1", "floor_generation"): "SETTLEMENT ORDER",
+    ("FloorStamp", "generation"): "SETTLEMENT ORDER",
+    # The floor's verdict flags are evaluated at the coordinate's acceptance instant.
+    ("FloorStamp", "accepted_at"): "EVALUATION INSTANT",
+    ("_CurrentState", "sequence"): "SETTLEMENT ORDER",
     ("GovernedActorContext", "timestamp"): "ASSERTION TIME",
     ("InputAcquisitionRuleV1", "max_age"): "VALIDITY WINDOW",
     ("InsertionExpectationV2", "expires_at"): "VALIDITY WINDOW",

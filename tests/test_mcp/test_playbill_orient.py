@@ -108,3 +108,25 @@ def test_mcp_orient_forwards_the_advertised_tools(
     handlers.handle_playbill_orient("inst")
     assert seen["caller_tools"] == tuple(sorted(tools))
     assert seen["surface"] == "mcp"
+
+
+def test_mcp_orient_reports_the_mcp_workspace_floor(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import json
+
+    floor = tmp_path / ".playbill/floor"
+    (floor / "provenance").mkdir(parents=True)
+    (floor / "manifest.json").write_text(
+        json.dumps({"coordinate": {"git_oid": "9" * 64}}), encoding="utf-8"
+    )
+    (floor / "provenance/snapshot.json").write_text(
+        json.dumps({"accepted_git_oid": "9" * 64, "accepted_generation": 1}), encoding="utf-8"
+    )
+    monkeypatch.setattr(handlers, "_get_client", lambda: None)
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_orient", lambda *_a, **_k: _answer()
+    )
+    monkeypatch.setattr(handlers, "optional_mcp_git_workspace_root", lambda: tmp_path)
+
+    result = handlers.handle_playbill_orient("inst")
+
+    assert result.floor == contracts.PlaybillOrientFloorV1(at="9" * 64, generations_behind=3)

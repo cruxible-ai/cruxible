@@ -62,6 +62,7 @@ from cruxible_client.authoring.workspace import (
     observe_playbill_projection_coverage,
     record_playbill_floor_output,
     validate_playbill_workspace_config_write,
+    workspace_floor_freshness,
     write_playbill_workspace_config,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for
@@ -5758,6 +5759,20 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         f"Playbill {result['instance']} generation={result['generation']} "
         f"at {result['coordinate']['git_oid'][:12]} accepted {result['accepted_at']}"
     ]
+    floor = result.get("floor")
+    if floor is not None:
+        behind = floor["generations_behind"]
+        lines.append(
+            f"Floor: .playbill/floor at {floor['at'][:12]}, "
+            + (
+                "current"
+                if behind == 0
+                else "generations behind unknown"
+                if behind is None
+                else f"{behind} generation(s) behind"
+            )
+            + ("" if behind == 0 else "; refresh: cruxible playbill floor export --force")
+        )
     you = result.get("you")
     if you is not None:
         verdict = "can author" if you["can_author"] else f"cannot author: {you['reason']}"
@@ -5879,6 +5894,9 @@ def orient(
         ),
         command_name="playbill orient",
     )
+    workspace_root = containing_git_workspace_root(Path.cwd())
+    if workspace_root is not None:
+        result = workspace_floor_freshness(workspace_root, result)
     rendered = result.model_dump(mode="json")
     if output_json:
         _emit_json(rendered)

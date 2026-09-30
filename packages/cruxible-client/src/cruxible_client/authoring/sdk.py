@@ -87,6 +87,7 @@ from cruxible_client.authoring.workspace import (
     observe_playbill_next_workspace,
     observe_playbill_next_workspace_with_coverage,
     refresh_workspace_floor,
+    workspace_floor_freshness,
 )
 from cruxible_client.authoring.write_evidence import observe_changes
 from cruxible_client.contracts.acquisition_policies import (
@@ -3551,7 +3552,9 @@ class Playbill:
         ``query(kind, follow=[(predicate, alias, "reverse")])``); ``section``
         pages documents, procedures, claim_types, queries or interfaces (the
         provider interfaces a Procedure can call). Follow
-        ``next_cursor`` while ``truncated``.
+        ``next_cursor`` while ``truncated``. When this workspace holds an
+        exported floor, ``floor`` says the coordinate it is at and how many
+        generations it is behind this answer.
         """
 
         requested = self._read_at()
@@ -3569,7 +3572,7 @@ class Playbill:
             result.coordinate,
             expected=requested if cursor is None else None,
         )
-        return result
+        return workspace_floor_freshness(self._workspace, result)
 
     def _search(
         self,

@@ -51,6 +51,14 @@ def test_orient_maps_kinds_and_suggests_cli_commands(
     assert mapped["artifacts"]["interfaces"] == 0
     assert cruxible.json("playbill", "orient", "--section", "interfaces")["interfaces"] == []
     assert "(no interfaces)" in cruxible.run("playbill", "orient", "--section", "interfaces").stdout
+    assert "floor" not in mapped
+
+    # With a floor exported into this workspace, orient says where it is.
+    cruxible.json("playbill", "floor", "export")
+    floored = cruxible.json("playbill", "orient")
+    assert floored["floor"] == {"at": mapped["coordinate"]["git_oid"], "generations_behind": 0}
+    text = cruxible.run("playbill", "orient").stdout
+    assert f"Floor: .playbill/floor at {mapped['coordinate']['git_oid'][:12]}, current" in text
 
 
 def test_an_interfaces_page_prints_each_contract_and_who_implements_it() -> None:
@@ -124,3 +132,23 @@ def test_both_kind_views_print_shared_evidence_once_and_empty_exceptions() -> No
         assert text.count("evidence=feed-a,feed-b") == 1
         assert "owner  one  string  evidence=(none)" in text
         assert "note  one  string  evidence=other" in text
+
+
+def test_a_stale_floor_prints_how_far_behind_it_is_and_how_to_refresh() -> None:
+    from cruxible_core.cli.commands.playbill import _render_orient
+
+    text = _render_orient(
+        {
+            "instance": "inst",
+            "generation": 9,
+            "coordinate": {"git_oid": "a" * 64},
+            "accepted_at": "2026-09-30T00:00:00Z",
+            "floor": {"at": "b" * 64, "generations_behind": 2},
+            "next": [],
+        }
+    )
+
+    assert (
+        f"Floor: .playbill/floor at {'b' * 12}, 2 generation(s) behind; "
+        "refresh: cruxible playbill floor export --force"
+    ) in text

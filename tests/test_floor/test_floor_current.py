@@ -404,3 +404,105 @@ def test_the_index_title_prefers_title_and_keeps_one_line() -> None:
     assert _index_title({"task_title": ("T",), "status": ("s",)}) == "T"
     assert _index_title({"labels": ("a", "b")}) == ""
     assert len(_index_title({"title": ("x" * 500,)})) == 120
+
+
+def test_a_later_export_renders_only_what_the_change_records_touched(tmp_path: Any) -> None:
+    from cruxible_core.service.floor.floor_content import _CurrentState
+
+    instance, _owner = seed_write_surface(tmp_path)
+    _write(instance, _set(WI1, "status", "ready"), _set(WI2, "status", "done"))
+    before = service_export_playbill_floor(instance)
+    (full,) = instance.floor_current_memo.values()
+    assert isinstance(full, _CurrentState) and not full.incremental
+
+    _write(instance, _set(WI3, "title", "Only this one moved"))
+    after = service_export_playbill_floor(instance)
+    (state,) = instance.floor_current_memo.values()
+    assert isinstance(state, _CurrentState) and state.incremental
+    assert state.rendered == (f"subjects/{WI3}.json",)
+    head = instance.accepted_coordinate().git_oid
+    assert (
+        after[f"current/{WI1}.yaml"]
+        .decode()
+        .splitlines()[0]
+        .endswith(f"at {head} gen {state.sequence}")
+    )
+    assert (
+        after[f"current/{WI1}.yaml"].split(b"\n", 1)[1]
+        == before[f"current/{WI1}.yaml"].split(b"\n", 1)[1]
+    )
+    assert "title: Only this one moved  # CLM-" in after[f"current/{WI3}.yaml"].decode()
+
+    # However the floor got here, identical accepted state gives identical bytes.
+    instance.floor_export_memo.clear()
+    instance.floor_structure_memo.clear()
+    instance.floor_current_memo.clear()
+    assert service_export_playbill_floor(instance) == after
+
+
+def test_only_an_ancestor_export_without_claim_type_changes_is_reused() -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.service.floor.floor_content import _changed_since
+
+    def history(paths: frozenset[str], oid: str = "a") -> Any:
+        return SimpleNamespace(
+            generation=lambda _sequence: SimpleNamespace(git_oid=oid),
+            member_paths_after=lambda _sequence: paths,
+        )
+
+    previous: Any = SimpleNamespace(sequence=3, git_oid="a")
+    claims = frozenset({"claims/ab/CLM-x.json"})
+    assert _changed_since(history(claims), previous, 5) == claims
+    assert _changed_since(history(claims), None, 5) is None
+    assert _changed_since(history(claims), previous, 2) is None
+    assert _changed_since(history(claims, oid="b"), previous, 5) is None
+    assert _changed_since(history(frozenset({"claim-types/p/q.json"})), previous, 5) is None
+
+
+def test_orient_reports_the_workspace_floor_and_how_far_behind_it_is(tmp_path: Any) -> None:
+    from cruxible_client.authoring.workspace import (
+        materialize_playbill_floor,
+        workspace_floor_freshness,
+    )
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    (tmp_path / "instance").mkdir()
+    instance, _owner = seed_write_surface(tmp_path / "instance")
+    workspace = tmp_path / "floor-workspace"
+    workspace.mkdir()
+    assert workspace_floor_freshness(workspace, service_playbill_orient(instance)).floor is None
+
+    _write(instance, _set(WI1, "status", "ready"))
+    exported_at = instance.accepted_coordinate().git_oid
+    materialize_playbill_floor(
+        workspace, export=_export_envelope(service_export_playbill_floor(instance))
+    )
+    current = workspace_floor_freshness(workspace, service_playbill_orient(instance))
+    assert current.floor is not None
+    assert (current.floor.at, current.floor.generations_behind) == (exported_at, 0)
+
+    _write(instance, _set(WI2, "status", "done"))
+    _write(instance, _set(WI3, "status", "blocked"))
+    stale = workspace_floor_freshness(workspace, service_playbill_orient(instance))
+    assert stale.floor is not None
+    assert (stale.floor.at, stale.floor.generations_behind) == (exported_at, 2)
+    assert stale.model_dump(mode="json")["floor"] == {"at": exported_at, "generations_behind": 2}
+
+    snapshot = workspace / ".playbill/floor/provenance/snapshot.json"
+    snapshot.write_text(json.dumps({"accepted_git_oid": exported_at}), encoding="utf-8")
+    unknown = workspace_floor_freshness(workspace, service_playbill_orient(instance))
+    assert unknown.floor is not None and unknown.floor.generations_behind is None
+
+    config = workspace / ".playbill/coverage.json"
+    config.write_text(
+        json.dumps(
+            {
+                "tag": "playbill-coverage-workspace-config-v2",
+                "instance_id": "inst_another",
+                "server_socket": "/tmp/floor.sock",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert workspace_floor_freshness(workspace, service_playbill_orient(instance)).floor is None

@@ -32,7 +32,10 @@ from cruxible_client.authoring.sources import (
     load_source_catalog,
     mapped_root_aliases,
 )
-from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
+from cruxible_client.authoring.workspace import (
+    observe_playbill_next_workspace_with_coverage,
+    workspace_floor_freshness,
+)
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
@@ -823,7 +826,7 @@ def handle_playbill_orient(
     from cruxible_core.mcp.curation import session_tool_names
 
     tools = tuple(sorted(session_tool_names()))
-    return _dispatch_remote_or_local(
+    result = _dispatch_remote_or_local(
         lambda client: client.orient_playbill(
             instance_id,
             kind=kind,
@@ -850,6 +853,11 @@ def handle_playbill_orient(
         ),
         operation_name="cruxible_playbill_orient",
     )
+    try:
+        workspace = optional_mcp_git_workspace_root()
+    except ConfigError:
+        workspace = None
+    return result if workspace is None else workspace_floor_freshness(workspace, result)
 
 
 def handle_playbill_list_proposals(

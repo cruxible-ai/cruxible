@@ -88,8 +88,10 @@ def test_floor_provenance_reads_only_selected_latest_records(tmp_path: Path, mon
     claims = tuple(_claim_from_view(view) for view in service_list_playbill_claims(instance).claims)
     coordinate = instance.accepted_coordinate()
     expected = current_content(instance, coordinate=coordinate, claims=claims[:1], notes_oid=None)
-    # Verified records are retained on the instance; measure a cold read.
+    # Verified records and the last current/ layer are retained on the
+    # instance; measure a cold read.
     instance.verified_change_set_records.clear()
+    instance.floor_current_memo.clear()
     reads = []
     original = instance.blob_at
 
@@ -111,6 +113,7 @@ def test_floor_provenance_reads_only_selected_latest_records(tmp_path: Path, mon
     )
     assert len(reads) == 1
     instance.verified_change_set_records.clear()
+    instance.floor_current_memo.clear()
     monkeypatch.setattr(instance, "blob_at", lambda _oid, _path: None)
     with pytest.raises(ProjectionIntegrityError, match="source record is unavailable"):
         current_content(instance, coordinate=coordinate, claims=claims[:1], notes_oid=None)

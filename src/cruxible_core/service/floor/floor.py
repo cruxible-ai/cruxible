@@ -87,6 +87,7 @@ from cruxible_core.service.discovery.discovery import (
     build_accepted_discovery_vocabulary,
 )
 from cruxible_core.service.discovery.query import _AcceptedQueryFactsRead
+from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from cruxible_core.service.floor.floor_content import current_content, review_snapshot_oid
 from cruxible_core.storage.cas import BodyAccessContext
 
@@ -496,6 +497,9 @@ def service_export_playbill_floor(
     structure_key = (coordinate.git_oid, body_access.principal_id, body_access.can_read_body)
     structure = None if external_readers else memo_get(instance.floor_structure_memo, structure_key)
     files: dict[str, bytes]
+    # The facts read's own verdict read context, reused for the current/ flags
+    # within this one request so its Claims and records are read once.
+    verdict_context: ClaimVerdictReadContext | None = None
     if isinstance(structure, tuple):
         base_files, claims = structure
         files = base_files.copy()
@@ -514,6 +518,7 @@ def service_export_playbill_floor(
             external_readers=external_readers,
         )
         facts = read.build()
+        verdict_context = read.verdict_context
         vocabulary = build_accepted_discovery_vocabulary(
             instance,
             coordinate=coordinate,
@@ -558,6 +563,7 @@ def service_export_playbill_floor(
                 claims=claims,
                 notes_oid=notes_oid,
                 access=body_access,
+                verdict_context=verdict_context,
             )
         )
     else:

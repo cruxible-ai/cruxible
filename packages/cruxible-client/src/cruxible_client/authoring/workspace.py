@@ -814,6 +814,48 @@ def inspect_workspace_floor(
     )
 
 
+def workspace_floor_freshness(
+    workspace: str | Path,
+    orientation: contracts.PlaybillOrientResultV1,
+) -> contracts.PlaybillOrientResultV1:
+    """``orientation`` with ``floor`` set when the workspace holds this instance's floor.
+
+    Cheap by construction: it reads the floor's manifest (its coordinate) and
+    ``provenance/snapshot.json`` (its generation), never re-exports, and
+    leaves ``orientation`` as it is when there is no readable floor, or when the
+    workspace's coverage config names another instance.
+    """
+
+    root = _workspace_root(workspace)
+    floor = root / PLAYBILL_FLOOR_PATH
+    try:
+        manifest = json.loads((floor / "manifest.json").read_text(encoding="utf-8"))
+        at = manifest["coordinate"]["git_oid"]
+        if not isinstance(at, str):
+            return orientation
+        config = _read_workspace_config(root / _CONFIG_PATH)
+    except (OSError, KeyError, TypeError, ValueError):
+        return orientation
+    if config is not None and config.get("instance_id") not in (None, orientation.instance):
+        return orientation
+    behind: int | None = None
+    if at == orientation.coordinate.git_oid:
+        behind = 0
+    else:
+        try:
+            snapshot = json.loads(
+                (floor / "provenance" / "snapshot.json").read_text(encoding="utf-8")
+            )
+            generation = snapshot["accepted_generation"]
+            if snapshot.get("accepted_git_oid") == at and isinstance(generation, int):
+                behind = max(0, orientation.generation - generation)
+        except (OSError, KeyError, TypeError, ValueError):
+            behind = None
+    return orientation.model_copy(
+        update={"floor": contracts.PlaybillOrientFloorV1(at=at, generations_behind=behind)}
+    )
+
+
 def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
     """Observe the configured floor and every resolvable installed catalog source.
 

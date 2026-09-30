@@ -347,6 +347,9 @@ class PlaybillInstance:
         # review-context snapshot and access profile. Bounded by the floor service.
         self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self.floor_export_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
+        # The last export's per-Subject current/ renders, so the next export at a
+        # later coordinate re-renders only what the change records touched.
+        self.floor_current_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self._body_store_cache: (
             tuple[tuple[Path, Path, tuple[int, int, int] | None], ContentAddressedBodyStore] | None
         ) = None

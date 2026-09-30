@@ -9,20 +9,24 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Mapping
+from dataclasses import dataclass
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.claims import ClaimArtifactAny
+from cruxible_client.contracts.claims import ClaimArtifactAny, claim_path
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.primitives import pretty_json
 from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRecord,
     ProposalEvaluationRecord,
 )
-from cruxible_core.indexes.history.history_index import AcceptedGenerationLocation
+from cruxible_core.derived.memo import memo_get, memo_put
+from cruxible_core.indexes.history.history_index import AcceptedGenerationLocation, HistoryReader
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposal_notes import admission_bytes, evaluation_bytes
 from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from cruxible_core.service.floor.floor_current import (
     PROVENANCE_SUBJECTS_PREFIX,
     SubjectPart,
@@ -36,7 +40,11 @@ from cruxible_core.service.floor.floor_current import (
     render_subject,
     stamped,
 )
-from cruxible_core.service.floor.floor_documents import document_files, document_parts
+from cruxible_core.service.floor.floor_documents import (
+    DocumentPart,
+    document_files,
+    document_parts,
+)
 from cruxible_core.storage.cas import BodyAccessContext
 
 MAX_REVIEW_SNAPSHOT_BYTES = 64 * 1024 * 1024
@@ -92,6 +100,41 @@ may read bodies; otherwise the file says how to read one.
 
 def _render(value: object) -> bytes:
     return pretty_json(json.loads(canonical_bytes(value))).encode("utf-8") + b"\n"
+
+
+def _change_file(
+    sequence: int,
+    generation: AcceptedGenerationLocation,
+    record: ChangeSetRecordAnyVersion,
+    *,
+    context: Mapping[str, tuple[dict[str, object], ...]],
+    context_status: str,
+) -> bytes:
+    review_entries = tuple(
+        row
+        for row in context.get(record.candidate_digest, ())
+        if row["reported_actor"] == record.actor_binding.actor_id
+    )
+    return _render(
+        {
+            "kind": "accepted-change-with-associated-review-context",
+            "sequence": sequence,
+            "accepted_git_oid": generation.git_oid,
+            "candidate_digest": record.candidate_digest,
+            "actor": record.actor_binding.actor_id,
+            "timestamp": record.candidate.timestamp,
+            "affected_paths": sorted(member.path for member in record.members),
+            "review_context_status": context_status if review_entries else "unavailable",
+            "review_context": list(review_entries),
+            "interpretation": (
+                "Review rationale is attributed context, not accepted Claim content or adoption."
+            ),
+            "claim_authoring_rationale": (
+                "Not inferred from change rationale; "
+                "unavailable unless represented in accepted content."
+            ),
+        }
+    )
 
 
 def review_snapshot_oid(instance: PlaybillInstance) -> str | None:
@@ -154,6 +197,44 @@ def review_context(
     )
 
 
+@dataclass(frozen=True)
+class _CurrentState:
+    """One export's current/ layer, kept so the next export renders only what changed."""
+
+    sequence: int
+    git_oid: str
+    parts: dict[str, SubjectPart]
+    claim_ids: dict[str, tuple[str, ...]]
+    verdicts: dict[str, tuple[tuple[str, str | None, str, bool], ...]]
+    documents: tuple[DocumentPart, ...]
+    notes_oid: str | None
+    context_status: str
+    changes: dict[int, bytes]
+    # Whether this export started from the previous one, and what it rendered afresh.
+    incremental: bool
+    rendered: tuple[str, ...]
+
+
+def _changed_since(
+    history: HistoryReader, previous: _CurrentState | None, sequence: int
+) -> frozenset[str] | None:
+    """Member paths changed since the previous export, or None to render everything.
+
+    The previous export must be an ancestor in this accepted history. A changed
+    ClaimType can rename a short field or its cardinality everywhere, so it
+    renders everything.
+    """
+
+    if previous is None or previous.sequence > sequence:
+        return None
+    if history.generation(previous.sequence).git_oid != previous.git_oid:
+        return None
+    changed = history.member_paths_after(previous.sequence)
+    if any(path.startswith("claim-types/") for path in changed):
+        return None
+    return changed
+
+
 def current_content(
     instance: PlaybillInstance,
     *,
@@ -161,26 +242,80 @@ def current_content(
     claims: tuple[ClaimArtifactAny, ...],
     notes_oid: str | None,
     access: BodyAccessContext | None = None,
+    verdict_context: ClaimVerdictReadContext | None = None,
 ) -> dict[str, bytes]:
-    context, context_status = review_context(instance, notes_oid)
+    """The grep-first layer: current/, INDEX, documents/ and their provenance.
+
+    Incremental: the last export's per-Subject renders are kept on the
+    instance. A later export in the same accepted history reads the member
+    paths the change records touched since then and re-renders only the
+    Subjects those changes, or a moved verdict, reach. Every file is then
+    re-stamped with the new coordinate, so identical accepted state still gives
+    identical bytes however the floor got there.
+    """
+
+    body_access = access or BodyAccessContext(principal_id="playbill-floor")
+    key = (body_access.principal_id, body_access.can_read_body)
+    remembered = memo_get(instance.floor_current_memo, key)
+    previous = remembered if isinstance(remembered, _CurrentState) else None
     live = tuple(claim for claim in claims if claim.lifecycle.state == "live")
     grouped = claims_by_subject(live)
-    shells = accepted_subjects(instance, coordinate)
     claim_types = accepted_claim_types(instance, coordinate)
     values = ValueRenderer(instance)
-    files: dict[str, bytes] = {}
-    relevant_changes: dict[int, tuple[AcceptedGenerationLocation, ChangeSetRecordAnyVersion]] = {}
+    with instance.bind_accepted_projection(coordinate) as projection:
+        subject_paths = tuple(
+            sorted(
+                (row.path for row in projection.typed.envelopes(kind="subject")),
+                key=lambda item: item.encode(),
+            )
+        )
+    parts: dict[str, SubjectPart] = {}
+    claim_ids: dict[str, tuple[str, ...]] = {}
+    verdict_keys: dict[str, tuple[tuple[str, str | None, str, bool], ...]] = {}
     records = instance.retained_record_reader()
-    parts: list[SubjectPart] = []
     with instance.accepted_history_reader(
         at=AcceptedCoordinate.from_internal(coordinate)
     ) as history:
         stamp = floor_stamp(instance, coordinate, history)
-        verdicts = claim_verdicts(instance, coordinate, live, evaluation_time=stamp.accepted_at)
-        for path, shell in shells.items():
-            part = render_subject(
+        changed = _changed_since(history, previous, stamp.generation)
+        verdicts = claim_verdicts(
+            instance,
+            coordinate,
+            live,
+            evaluation_time=stamp.accepted_at,
+            read_context=verdict_context,
+        )
+        for path in subject_paths:
+            ids = tuple(sorted(claim.identity.name for claim in grouped.get(path, ())))
+            claim_ids[path] = ids
+            verdict_keys[path] = tuple(
+                (item, known.verdict, known.status, known.held)
+                for item in ids
+                if (known := verdicts.get(item)) is not None
+            )
+        reusable = (
+            set()
+            if changed is None or previous is None
+            else {
+                path
+                for path in subject_paths
+                if path in previous.parts
+                and path not in changed
+                and previous.claim_ids.get(path) == claim_ids[path]
+                and previous.verdicts.get(path) == verdict_keys[path]
+                and not any(claim_path(item) in changed for item in claim_ids[path])
+            }
+        )
+        fresh = tuple(path for path in subject_paths if path not in reusable)
+        shells = accepted_subjects(instance, coordinate, fresh)
+        for path in subject_paths:
+            if path in reusable:
+                assert previous is not None
+                parts[path] = previous.parts[path]
+                continue
+            parts[path] = render_subject(
                 path=path,
-                shell=shell,
+                shell=shells[path],
                 claims=grouped.get(path, ()),
                 claim_types=claim_types,
                 accepted_predicates=frozenset(claim_types),
@@ -188,53 +323,70 @@ def current_content(
                 values=values,
                 history=history,
             )
-            files.update(stamped(part, stamp))
-            parts.append(part)
-            files[f"{PROVENANCE_SUBJECTS_PREFIX}{part.ref}.json"] = part.provenance
-            for sequence in part.sequences:
-                if sequence not in relevant_changes:
-                    generation = history.generation(sequence)
-                    relevant_changes[sequence] = (
-                        generation,
-                        history.read_generation_record(sequence, records),
-                    )
-    files.update(index_files(parts, stamp))
-    for document in document_parts(
-        instance,
-        coordinate=coordinate,
-        access=access or BodyAccessContext(principal_id="playbill-floor"),
-    ):
+        wanted = sorted({sequence for part in parts.values() for sequence in part.sequences})
+        same_notes = previous is not None and previous.notes_oid == notes_oid
+        changes: dict[int, bytes] = {}
+        missing = [
+            sequence
+            for sequence in wanted
+            if not (same_notes and previous is not None and sequence in previous.changes)
+        ]
+        if missing or not same_notes:
+            context, context_status = review_context(instance, notes_oid)
+        else:
+            assert previous is not None
+            context, context_status = {}, previous.context_status
+        for sequence in wanted:
+            if sequence not in missing:
+                assert previous is not None
+                changes[sequence] = previous.changes[sequence]
+                continue
+            record = history.read_generation_record(sequence, records)
+            changes[sequence] = _change_file(
+                sequence,
+                history.generation(sequence),
+                record,
+                context=context,
+                context_status=context_status,
+            )
+    documents = (
+        previous.documents
+        if changed is not None
+        and previous is not None
+        and not any(path.startswith("documents/") for path in changed)
+        else document_parts(instance, coordinate=coordinate, access=body_access)
+    )
+    memo_put(
+        instance.floor_current_memo,
+        key,
+        _CurrentState(
+            sequence=stamp.generation,
+            git_oid=coordinate.git_oid,
+            parts=parts,
+            claim_ids=claim_ids,
+            verdicts=verdict_keys,
+            documents=documents,
+            notes_oid=notes_oid,
+            context_status=context_status,
+            changes=changes,
+            incremental=changed is not None,
+            rendered=fresh,
+        ),
+        capacity=2,
+    )
+    files: dict[str, bytes] = {}
+    for part in parts.values():
+        files.update(stamped(part, stamp))
+        files[f"{PROVENANCE_SUBJECTS_PREFIX}{part.ref}.json"] = part.provenance
+    files.update(index_files(parts.values(), stamp))
+    for document in documents:
         files.update(document_files(document, stamp))
-    for sequence, (generation, record) in sorted(relevant_changes.items()):
-        review_entries = tuple(
-            row
-            for row in context.get(record.candidate_digest, ())
-            if row["reported_actor"] == record.actor_binding.actor_id
-        )
-        files[f"provenance/changes/{sequence:020d}.json"] = _render(
-            {
-                "kind": "accepted-change-with-associated-review-context",
-                "sequence": sequence,
-                "accepted_git_oid": generation.git_oid,
-                "candidate_digest": record.candidate_digest,
-                "actor": record.actor_binding.actor_id,
-                "timestamp": record.candidate.timestamp,
-                "affected_paths": sorted(member.path for member in record.members),
-                "review_context_status": context_status if review_entries else "unavailable",
-                "review_context": list(review_entries),
-                "interpretation": (
-                    "Review rationale is attributed context, "
-                    "not accepted Claim content or adoption."
-                ),
-                "claim_authoring_rationale": (
-                    "Not inferred from change rationale; "
-                    "unavailable unless represented in accepted content."
-                ),
-            }
-        )
+    for sequence, content in changes.items():
+        files[f"provenance/changes/{sequence:020d}.json"] = content
     files["provenance/snapshot.json"] = _render(
         {
             "accepted_git_oid": coordinate.git_oid,
+            "accepted_generation": stamp.generation,
             "evaluation_notes_oid": notes_oid,
             "status": context_status,
             "rebuild_inputs": "accepted ledger plus this immutable Git notes snapshot",

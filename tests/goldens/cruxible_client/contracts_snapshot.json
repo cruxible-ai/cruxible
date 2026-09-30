@@ -26416,6 +26416,70 @@
         "provider_lane"
       ]
     },
+    "PlaybillOrientFloorV1": {
+      "fields": {
+        "at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": true,
+          "schema": {
+            "title": "At",
+            "type": "string"
+          }
+        },
+        "generations_behind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generations_behind",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generations Behind"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "The workspace's greppable floor: the coordinate it is at, and how stale.\n\nOnly a client that sees the workspace (CLI, MCP, SDK) fills this in, from\nthe floor's own manifest; a daemon answer never carries it.\n``generations_behind`` counts accepted generations from the floor to this\nanswer's coordinate; ``None`` when the floor predates generation stamps.",
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "generations_behind": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generations Behind"
+          }
+        },
+        "required": [
+          "at",
+          "generations_behind"
+        ],
+        "title": "PlaybillOrientFloorV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "at",
+        "generations_behind"
+      ]
+    },
     "PlaybillOrientResultV1": {
       "fields": {
         "accepted_at": {
@@ -26531,6 +26595,25 @@
             "format": "date-time",
             "title": "Evaluation Time",
             "type": "string"
+          }
+        },
+        "floor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "floor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillOrientFloorV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "generation": {
@@ -26937,6 +27020,34 @@
               "media_type"
             ],
             "title": "PlaybillOrientDocumentV1",
+            "type": "object"
+          },
+          "PlaybillOrientFloorV1": {
+            "additionalProperties": false,
+            "description": "The workspace's greppable floor: the coordinate it is at, and how stale.\n\nOnly a client that sees the workspace (CLI, MCP, SDK) fills this in, from\nthe floor's own manifest; a daemon answer never carries it.\n``generations_behind`` counts accepted generations from the floor to this\nanswer's coordinate; ``None`` when the floor predates generation stamps.",
+            "properties": {
+              "at": {
+                "title": "At",
+                "type": "string"
+              },
+              "generations_behind": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Generations Behind"
+              }
+            },
+            "required": [
+              "at",
+              "generations_behind"
+            ],
+            "title": "PlaybillOrientFloorV1",
             "type": "object"
           },
           "PlaybillOrientInterfaceV1": {
@@ -27423,6 +27534,17 @@
             "format": "date-time",
             "title": "Evaluation Time",
             "type": "string"
+          },
+          "floor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillOrientFloorV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "generation": {
             "minimum": 0,
