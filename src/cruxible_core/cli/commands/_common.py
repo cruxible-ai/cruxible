@@ -214,7 +214,8 @@ def _local_bootstrap_secret(*, server_url: str | None, server_socket: str | None
 
     Lifecycle commands (`server status`, `restart`, `stop`) fall back to it when
     no bearer token is configured, so a local restart needs no credential typed
-    in. It is read only when the state root's lock records this exact transport.
+    in. It is sent only to the live daemon holding the state-root lock on this
+    exact transport, once that daemon proves it already holds the secret.
     """
 
     from cruxible_core.errors import CoreError
@@ -225,9 +226,19 @@ def _local_bootstrap_secret(*, server_url: str | None, server_socket: str | None
         state_root = get_server_state_root()
     except CoreError:
         return None
-    return read_local_bootstrap_secret(
-        state_root, server_url=server_url, server_socket=server_socket
-    )
+    # The daemon on this transport must prove it already holds the secret
+    # before this process sends it: an unauthenticated probe answers a fresh
+    # challenge with an HMAC under the secret, revealing nothing.
+    prober = DaemonLifecycleClient(base_url=server_url, socket_path=server_socket)
+    try:
+        return read_local_bootstrap_secret(
+            state_root,
+            server_url=server_url,
+            server_socket=server_socket,
+            prove=prober.operator_proof,
+        )
+    finally:
+        prober.close()
 
 
 def _current_cli_context() -> CliContextState:

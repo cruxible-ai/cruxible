@@ -20,6 +20,7 @@ from cruxible_core.server import app as server_app
 from cruxible_core.server import restart as restart_module
 from cruxible_core.server.bootstrap_secret import (
     bootstrap_secret_path,
+    operator_proof,
     read_local_bootstrap_secret,
 )
 from cruxible_core.server.credentials import reset_runtime_credential_store
@@ -93,71 +94,116 @@ def test_an_auth_off_start_removes_a_stale_secret(
     assert not stale.exists()
 
 
-def _held_secret(tmp_path: Path, transport: str, *, mode: int = 0o600) -> Path:
+def _held_secret(
+    tmp_path: Path, transport: str, *, live: bool = True
+) -> tuple[Path, StateRootLock | None]:
+    """A state root whose lock records ``transport``; held by this process when live."""
+
     state_root = tmp_path / "state"
     lock = StateRootLock(state_root, transport=transport).acquire()
-    lock.release()
+    if not live:
+        lock.release()
     path = bootstrap_secret_path(state_root)
     path.write_text("the-secret\n")
-    path.chmod(mode)
-    return state_root
+    path.chmod(0o600)
+    return state_root, lock if live else None
 
 
-def test_the_local_secret_goes_only_to_the_daemon_that_owns_the_state_root(
+def _genuine(challenge: str) -> str:
+    return operator_proof("the-secret", challenge)
+
+
+def _impostor(challenge: str) -> str:
+    return operator_proof("some-other-secret", challenge)
+
+
+def test_a_stale_lock_never_releases_the_secret(tmp_path: Path) -> None:
+    socket = tmp_path / "run" / "d.sock"
+    # The daemon stopped or crashed: its record remains, nobody holds the lock,
+    # and whatever now answers on that socket must not receive the secret.
+    state_root, _lock = _held_secret(tmp_path, f"unix socket {socket}", live=False)
+
+    assert (
+        read_local_bootstrap_secret(
+            state_root, server_url=None, server_socket=str(socket), prove=_genuine
+        )
+        is None
+    )
+
+
+def test_the_secret_goes_only_to_the_live_daemon_that_proves_it_holds_it(
     tmp_path: Path,
 ) -> None:
     socket = tmp_path / "run" / "d.sock"
-    by_socket = _held_secret(tmp_path, f"unix socket {socket}")
-
-    assert (
-        read_local_bootstrap_secret(by_socket, server_url=None, server_socket=str(socket))
-        == "the-secret"
-    )
-    assert (
-        read_local_bootstrap_secret(
-            by_socket, server_url=None, server_socket=str(tmp_path / "other.sock")
+    state_root, lock = _held_secret(tmp_path, f"unix socket {socket}")
+    try:
+        genuine = read_local_bootstrap_secret(
+            state_root, server_url=None, server_socket=str(socket), prove=_genuine
         )
-        is None
-    )
-    assert (
-        read_local_bootstrap_secret(
-            by_socket, server_url="http://127.0.0.1:8100", server_socket=None
+        impostor = read_local_bootstrap_secret(
+            state_root, server_url=None, server_socket=str(socket), prove=_impostor
         )
-        is None
-    )
+        silent = read_local_bootstrap_secret(
+            state_root, server_url=None, server_socket=str(socket), prove=lambda _c: None
+        )
+        elsewhere = read_local_bootstrap_secret(
+            state_root,
+            server_url=None,
+            server_socket=str(tmp_path / "other.sock"),
+            prove=_genuine,
+        )
+    finally:
+        assert lock is not None
+        lock.release()
+
+    assert genuine == "the-secret"
+    assert impostor is None and silent is None and elsewhere is None
 
 
-def test_a_tcp_local_secret_matches_loopback_spellings_and_needs_mode_0600(
-    tmp_path: Path,
-) -> None:
-    state_root = _held_secret(tmp_path, "127.0.0.1:8100")
-
-    assert (
-        read_local_bootstrap_secret(
-            state_root, server_url="http://localhost:8100", server_socket=None
-        )
-        == "the-secret"
-    )
-    assert (
-        read_local_bootstrap_secret(
-            state_root, server_url="http://example.com:8100", server_socket=None
-        )
-        is None
-    )
+def test_the_secret_needs_an_owner_only_file(tmp_path: Path) -> None:
+    state_root, lock = _held_secret(tmp_path, "127.0.0.1:8100")
     bootstrap_secret_path(state_root).chmod(0o644)
-    assert (
-        read_local_bootstrap_secret(
-            state_root, server_url="http://127.0.0.1:8100", server_socket=None
+    try:
+        assert (
+            read_local_bootstrap_secret(
+                state_root, server_url="http://127.0.0.1:8100", server_socket=None, prove=_genuine
+            )
+            is None
         )
-        is None
-    )
+    finally:
+        assert lock is not None
+        lock.release()
+
+
+def test_the_daemon_proves_the_secret_without_revealing_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "the-secret")
+    reset_registry()
+    reset_runtime_credential_store()
+    try:
+        client = TestClient(server_app.create_app())
+        challenge = "ab" * 32
+        answered = client.post("/operator-proof", json={"challenge": challenge})
+        monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "false")
+        off = client.post("/operator-proof", json={"challenge": challenge})
+    finally:
+        reset_registry()
+        reset_runtime_credential_store()
+
+    assert answered.status_code == 200, answered.text
+    assert answered.json()["proof"] == operator_proof("the-secret", challenge)
+    assert "the-secret" not in answered.text
+    assert off.status_code == 404
 
 
 def test_restart_and_status_use_the_local_secret_with_no_env_credential(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     socket = tmp_path / "run" / "d.sock"
-    state_root = _held_secret(tmp_path, f"unix socket {socket}")
+    state_root, lock = _held_secret(tmp_path, f"unix socket {socket}")
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_root))
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
@@ -189,6 +235,8 @@ def test_restart_and_status_use_the_local_secret_with_no_env_credential(
         )
         status = CliRunner().invoke(cli, ["--server-socket", str(socket), "server", "status"])
     finally:
+        assert lock is not None
+        lock.release()
         get_playbill_manager().clear()
         reset_runtime_credential_store()
         reset_registry()

@@ -156,9 +156,13 @@ daemon holds the state-root lock it writes the secret owner-only (0600) to
 `<state-root>/daemon/bootstrap-secret`, and prints only that path. An in-place
 restart keeps the same secret. `server status`, `server restart` and
 `server stop` use that file by default when no `CRUXIBLE_SERVER_BEARER_TOKEN` is
-set and the state root's lock records exactly the transport they are about to
-use, so a local restart needs no credential typed in; the secret is never sent
-to any other daemon. `--bootstrap-secret-file PATH` also writes a 0600 copy to
+set, so a local restart needs no credential typed in. The secret is never sent
+to any other process: a live daemon must hold the state-root lock right now, the
+lock must record exactly the transport the command is about to use, and the
+daemon answering there must first prove it already holds the secret (it answers
+a fresh random challenge on the credential-free `POST /operator-proof` with an
+HMAC under the secret, which reveals nothing). A stale lock left by a stopped or
+crashed daemon releases nothing, whoever now listens on its endpoint. `--bootstrap-secret-file PATH` also writes a 0600 copy to
 PATH; it needs auth and is refused on an auth-off start, which removes any stale
 state-root copy. With `--socket`, the socket is bound with mode 0600;
 a missing socket directory is created 0700; a socket directory that is not

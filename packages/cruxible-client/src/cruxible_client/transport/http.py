@@ -238,6 +238,20 @@ class CruxibleClient:
         boot_id = payload.get("boot_id")
         return version, boot_id if isinstance(boot_id, str) else None
 
+    def operator_proof(self, challenge: str) -> str | None:
+        """The daemon's HMAC proof that it holds its bootstrap secret, or None.
+
+        Credential-free. Local lifecycle commands verify it before they send a
+        locally stored secret, so the secret never reaches a daemon that does
+        not already hold it.
+        """
+
+        response = self._client.post("/operator-proof", json={"challenge": challenge})
+        if response.status_code != 200:
+            return None
+        proof = response.json().get("proof")
+        return proof if isinstance(proof, str) else None
+
     def _version_info(self) -> tuple[str, str | None]:
         """Return package and served authoring-contract versions from the public probe."""
 

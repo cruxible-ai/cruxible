@@ -11,10 +11,13 @@ manually supplied credential.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import secrets
 import stat
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -22,7 +25,7 @@ from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
     is_server_auth_enabled,
 )
-from cruxible_core.server.state_lock import read_state_lock
+from cruxible_core.server.state_lock import read_state_lock, state_lock_holder_is_alive
 
 BOOTSTRAP_SECRET_FILE = "bootstrap-secret"
 _BOOTSTRAP_SECRET_ENV = "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET"
@@ -105,16 +108,45 @@ def _same_transport(recorded: str, *, server_url: str | None, server_socket: str
     )
 
 
-def read_local_bootstrap_secret(
-    state_root: Path, *, server_url: str | None, server_socket: str | None
-) -> str | None:
-    """The bootstrap secret of the local daemon this client targets, if it is that one.
+_PROOF_DOMAIN = b"cruxible-operator-proof-v1:"
+OPERATOR_CHALLENGE_PATTERN = r"^[0-9a-f]{64}$"
 
-    Returned only when the state root's lock records exactly the transport the
-    client is about to use, so the secret is never sent to some other daemon,
-    and only when the file is a regular file this user owns with mode 0600.
+
+def operator_proof(secret: str, challenge: str) -> str:
+    """The daemon's answer to one challenge: an HMAC keyed by its bootstrap secret.
+
+    Proves the answering daemon holds the secret without revealing it. The
+    domain prefix keeps these values useless for anything else; the secret is
+    only ever compared as a bearer token, never used as a key elsewhere.
     """
 
+    return hmac.new(
+        secret.encode("utf-8"), _PROOF_DOMAIN + challenge.encode("ascii"), hashlib.sha256
+    ).hexdigest()
+
+
+def read_local_bootstrap_secret(
+    state_root: Path,
+    *,
+    server_url: str | None,
+    server_socket: str | None,
+    prove: Callable[[str], str | None],
+) -> str | None:
+    """The bootstrap secret of the live local daemon this client targets, else None.
+
+    Released only when all of these hold, so it never reaches another process:
+
+    * a live daemon holds the state-root lock right now (a stale record left by a
+      stopped or crashed daemon releases nothing);
+    * the lock records exactly the transport the client is about to use;
+    * the file is a regular file this user owns with mode 0600;
+    * the daemon answering on that transport proves it already holds the secret:
+      ``prove`` sends a fresh random challenge and must return
+      ``operator_proof(secret, challenge)``.
+    """
+
+    if not state_lock_holder_is_alive(state_root):
+        return None
     lock = read_state_lock(state_root)
     if lock is None or not _same_transport(
         lock.transport, server_url=server_url, server_socket=server_socket
@@ -132,12 +164,23 @@ def read_local_bootstrap_secret(
     ):
         return None
     secret = path.read_text(encoding="utf-8").strip()
-    return secret or None
+    if not secret:
+        return None
+    challenge = secrets.token_hex(32)
+    try:
+        answered = prove(challenge)
+    except Exception:
+        return None
+    if answered is None or not hmac.compare_digest(answered, operator_proof(secret, challenge)):
+        return None
+    return secret
 
 
 __all__ = [
     "BOOTSTRAP_SECRET_FILE",
+    "OPERATOR_CHALLENGE_PATTERN",
     "bootstrap_secret_path",
+    "operator_proof",
     "prepare_bootstrap_secret",
     "read_local_bootstrap_secret",
     "write_owner_only_secret",

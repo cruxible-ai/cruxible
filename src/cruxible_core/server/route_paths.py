@@ -5,6 +5,8 @@ from __future__ import annotations
 API_V1_PREFIX = "/api/v1"
 HEALTH_PATH = "/health"
 VERSION_PATH = "/version"
+#: Credential-free: a daemon proves it holds its bootstrap secret, revealing nothing.
+OPERATOR_PROOF_PATH = "/operator-proof"
 
 RUNTIME_BOOTSTRAP_CLAIM_PATH = "/{instance_id}/runtime/bootstrap/claim"
 PLAYBILL_HOST_CREATE_PATH = "/runtime/instances"

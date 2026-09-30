@@ -30,6 +30,9 @@ class DaemonLifecycleClient:
     def daemon_identity(self) -> tuple[str, str | None]:
         return self._transport.daemon_identity()
 
+    def operator_proof(self, challenge: str) -> str | None:
+        return self._transport.operator_proof(challenge)
+
     def server_info(self) -> contracts.ServerInfoResult:
         return self._transport.server_info()
 

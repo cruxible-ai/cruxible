@@ -337,6 +337,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "close",
         "version",
         "daemon_identity",
+        "operator_proof",
         "playbill_proposal_status",
         "playbill_get",
         "server_info",

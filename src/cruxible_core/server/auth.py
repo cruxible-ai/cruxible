@@ -40,6 +40,7 @@ from cruxible_core.server.errors import ErrorResponse, error_to_response
 from cruxible_core.server.request_logging import log_runtime_request
 from cruxible_core.server.route_paths import (
     HEALTH_PATH,
+    OPERATOR_PROOF_PATH,
     PLAYBILL_HOST_CREATE_PATH,
     PLAYBILL_HOST_SHOW_PATH,
     PLAYBILL_WORKSPACE_DETACH_PATH,
@@ -362,7 +363,7 @@ async def token_auth_middleware(
     # They skip auth resolution but NOT the Origin allowlist above — a hostile
     # page must not be able to fingerprint the loopback daemon by probing
     # /health or /version from the browser.
-    if request.url.path in {HEALTH_PATH, VERSION_PATH}:
+    if request.url.path in {HEALTH_PATH, VERSION_PATH, OPERATOR_PROOF_PATH}:
         return await call_next(request)
     if _is_bootstrap_claim_request(request):
         return await _call_next_with_request_log(request, call_next, auth_context=None)
