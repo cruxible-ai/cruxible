@@ -152,12 +152,16 @@ class LineDispatchStore:
                 (data["status"], data["line_id"], data["epoch"], data["occurrence_id"]),
             )
         elif kind == "reconciled":
+            # A retry keeps the payload's own session and Trigger; a rebind to a
+            # current Trigger carries the evaluation that derived it again.
             conn.execute(
-                "UPDATE pending SET disposition='pending',payload=? WHERE "
-                "line_id=? AND epoch=? AND occurrence_id=? AND "
+                "UPDATE pending SET disposition='pending',payload=?,session_id=?,trigger_id=? "
+                "WHERE line_id=? AND epoch=? AND occurrence_id=? AND "
                 "disposition!='admitted'",
                 (
                     json.dumps(data),
+                    data.get("session_id"),
+                    data.get("trigger"),
                     data["line_identity_digest"],
                     data["occurrence_epoch"],
                     data["occurrence"]["occurrence_id"],

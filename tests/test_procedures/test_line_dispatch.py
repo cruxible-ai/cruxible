@@ -741,6 +741,73 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
         assert row["occurrence"]["binding"] == occurrence.binding.model_dump(mode="json")
 
 
+def test_restoring_a_schedule_rebinds_an_occurrence_its_change_superseded(tmp_path):
+    from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, line, procedure, owner = line_world(
+        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+    )
+    capture(instance, procedure)
+    now = READ_TIME + timedelta(seconds=2)
+    actor = _actor(instance)
+
+    def evaluate(at):  # type: ignore[no-untyped-def]
+        return service_evaluate_line(
+            instance,
+            line.identity.name,
+            LineEvaluateRequestV1(since=READ_TIME, until=at),
+            actor=actor,
+            now=at,
+        )
+
+    def dispatch(at):  # type: ignore[no-untyped-def]
+        return service_dispatch_line(
+            instance,
+            line.identity.name,
+            LineDispatchRequestV1(),
+            actor=actor,
+            now=at,
+            caller_rung=3,
+        )
+
+    def accept(trigger, name, at):  # type: ignore[no-untyped-def]
+        tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+        tree.update(trigger_members(trigger))
+        _accept_tree(instance, owner, tree, timestamp=at, proposal_name=name)
+
+    (occurrence,) = evaluate(now).occurrences
+    landing = line_trigger(
+        TRIGGER, line=line.identity.name, schedule=CaptureLandingScheduleV1(event=SELECTOR)
+    )
+    windowed = successor(
+        landing,
+        schedule=WindowCloseScheduleV1(
+            window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=1)
+        ),
+    )
+    accept(windowed, "to-window", "2026-08-28T15:02:00.000000Z")
+    superseded = dispatch(now)
+    assert [item.status for item in superseded.items] == ["superseded"]
+
+    # The schedule comes back through another accepted successor: the same event
+    # derives the same occurrence, which was closed but never admitted.
+    accept(successor(windowed, schedule=landing.schedule), "back", "2026-08-28T15:03:00.000000Z")
+    later = now + timedelta(seconds=2)
+    (again,) = evaluate(later).occurrences
+    assert again.occurrence_id == occurrence.occurrence_id
+    assert (again.pending, again.dispatch_status) == (True, "pending")
+    admitted = dispatch(later)
+    assert [item.status for item in admitted.items] == ["admitted"], admitted
+
+    # Once admitted it is final: re-evaluating never queues it a second time.
+    (final,) = evaluate(later + timedelta(seconds=1)).occurrences
+    assert final.admitted_run_id == admitted.items[0].run_id and not final.pending
+    assert dispatch(later + timedelta(seconds=1)).items == ()
+    journal, _ = _journal(instance)
+    assert len(journal.select_records(_stream(instance), event_kind="admission_bound")) == 1
+
+
 def test_retry_requires_one_explicit_occurrence():
     with pytest.raises(ValueError, match="retry requires"):
         LineDispatchRequestV1(retry=True)

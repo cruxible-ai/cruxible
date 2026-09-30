@@ -112,13 +112,33 @@ def _enqueue(
         disposition = "admitted"
         if occurrence.admitted_run_id is None:
             exists = conn.execute(
-                "SELECT disposition FROM pending WHERE line_id=? AND epoch=? AND occurrence_id=?",
+                "SELECT disposition,payload FROM pending "
+                "WHERE line_id=? AND epoch=? AND occurrence_id=?",
                 (result.line_identity_digest, result.occurrence_epoch, occurrence.occurrence_id),
             ).fetchone()
+            trigger = None if occurrence.binding is None else occurrence.binding.trigger.qualified
+            trigger_digest = trigger_digests.get(trigger or "")
+            if exists is not None and exists[0] == "superseded" and trigger is not None:
+                stored = json.loads(exists[1])
+                if stored.get("trigger_artifact_digest") != trigger_digest:
+                    # The occurrence was closed, never admitted, because its Trigger
+                    # changed. A current Trigger that derives it again rebinds it;
+                    # only an admission is final.
+                    store.append(
+                        conn,
+                        "reconciled",
+                        dict(
+                            stored,
+                            trigger=trigger,
+                            trigger_artifact_digest=trigger_digest,
+                            occurrence=occurrence.model_dump(mode="json"),
+                            session_id=session_id,
+                        ),
+                        actor=actor,
+                        now=now,
+                    )
+                    exists = ("pending", exists[1])
             if exists is None:
-                trigger = (
-                    None if occurrence.binding is None else occurrence.binding.trigger.qualified
-                )
                 store.append(
                     conn,
                     "pending",
@@ -128,7 +148,7 @@ def _enqueue(
                         "line_artifact_digest": result.line_artifact_digest,
                         "occurrence_epoch": result.occurrence_epoch,
                         "trigger": trigger,
-                        "trigger_artifact_digest": trigger_digests.get(trigger or ""),
+                        "trigger_artifact_digest": trigger_digest,
                         "coordinate": result.coordinate.model_dump(mode="json"),
                         "occurrence": occurrence.model_dump(mode="json"),
                         "session_id": session_id,
