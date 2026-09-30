@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -14,9 +15,11 @@ from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
+from tests.core_support._support import restamp_state_root
+from tests.core_support._world_templates import TEMPLATES, copy_template
 
 
-def _playbill_http(
+def _fresh_playbill_http(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -58,6 +61,66 @@ def _playbill_http(
         )
         assert initialized.status_code == 200, initialized.text
         yield client, instance_id, reviewer.private_key_path
+    get_playbill_manager().clear()
+    reset_runtime_credential_store()
+    reset_registry()
+    reset_permissions()
+
+
+@dataclass(frozen=True)
+class _HttpWorld:
+    instance_id: str
+    reviewer_key: Path
+
+
+def _build_http_world(root: Path, require_independent_approval: bool) -> _HttpWorld:
+    """Initialize one host under ``root`` exactly as the fixture does, then stop it."""
+
+    with pytest.MonkeyPatch.context() as build:
+        opened = _fresh_playbill_http(
+            root, build, require_independent_approval=require_independent_approval
+        )
+        _client, instance_id, reviewer_key = next(opened)
+        for _ in opened:
+            pass
+    return _HttpWorld(instance_id=instance_id, reviewer_key=reviewer_key.relative_to(root))
+
+
+def _playbill_http(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    require_independent_approval: bool = False,
+) -> Iterator[tuple[TestClient, str, Path]]:
+    """An initialized host; a copy of this process's template host when one applies.
+
+    The copy carries the registry, trust roots, credentials and signed genesis a
+    fresh `playbill/init` writes (see `tests/core_support/_world_templates.py`),
+    and the app below opens it the way a restarted daemon opens its state root.
+    """
+
+    template = TEMPLATES.template(
+        ("playbill_http", require_independent_approval),
+        lambda root: _build_http_world(root, require_independent_approval),
+    )
+    copied = None if template is None else copy_template(template, tmp_path)
+    if template is None or copied is None:
+        yield from _fresh_playbill_http(
+            tmp_path, monkeypatch, require_independent_approval=require_independent_approval
+        )
+        return
+    TEMPLATES.copies += 1
+    state = tmp_path / "server-state"
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state))
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
+    reset_permissions()
+    reset_registry()
+    reset_runtime_credential_store()
+    get_playbill_manager().clear()
+    restamp_state_root(state)
+    with TestClient(create_app()) as client:
+        yield client, template.value.instance_id, tmp_path / template.value.reviewer_key
     get_playbill_manager().clear()
     reset_runtime_credential_store()
     reset_registry()
