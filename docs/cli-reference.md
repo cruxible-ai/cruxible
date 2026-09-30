@@ -1751,7 +1751,11 @@ unique among the verified Captures the instance holds, cited or not; ambiguous
 or unknown handles refuse with the nearest handles). `--evidence-contract NAME` cites the newest verified Capture of
 that CaptureContract about SUBJECT, cited or not: one an accepted Claim on
 SUBJECT cites, or whose own source names SUBJECT; with none it refuses
-`playbill.write.contract_capture_not_found`. Either resolves to the digest
+`playbill.write.contract_capture_not_found`. Only a Capture committed as exact
+bytes can back a Claim: when the newest is a canonical value (as the external
+record reader commits records) it refuses `contract_capture_not_citable`
+naming it, or cites an older exact-bytes Capture with a
+`newer_capture_not_citable` warning. Either resolves to the digest
 before the write is lowered, and the change prints the Capture as
 `evidence CAP-<12 hex>`. The write accepts in the same call when the approval policy and your
 tier allow it; otherwise it prints the eligible approvers and the approve

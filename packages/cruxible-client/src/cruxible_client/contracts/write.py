@@ -440,12 +440,21 @@ class WriteWarning(_StrictWriteModel):
     ``playbill.write.verdict_not_supported``: the written Claim's verdict is not
     ``supported`` -- for example ``uncovered`` because the ClaimType's evidence
     policy does not admit the evidence given. The write still lands.
+
+    ``playbill.write.newer_capture_not_citable``: contract evidence cited an
+    older Capture because the newest one (``capture``) is not committed as
+    exact bytes, so no Claim can cite it.
     """
 
     code: str
     change: int
     claim: str | None = Field(default=None, exclude_if=_omit_none)
-    verdict: str
+    verdict: str | None = Field(default=None, exclude_if=_omit_none)
+    capture: str | None = Field(
+        default=None,
+        exclude_if=_omit_none,
+        description="The Capture the warning is about, as its handle CAP-<12 hex>.",
+    )
     message: str
     admitted_contracts: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
     used_contract: str | None = Field(default=None, exclude_if=_omit_none)

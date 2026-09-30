@@ -606,11 +606,19 @@ def _seed_record_source(instance: PlaybillInstance) -> tuple[Any, Any]:
 
 
 def _record_capture(
-    instance: PlaybillInstance, contract: Any, provider_artifact: Any, subject: str
+    instance: PlaybillInstance,
+    contract: Any,
+    provider_artifact: Any,
+    subject: str,
+    *,
+    exact: bool = True,
+    observed_at: Any = None,
 ) -> str:
     """Store (and cite nowhere) external record Captures whose selector names ``subject``.
 
-    Answers the one committed as exact bytes, which a Claim can cite.
+    The reader stores the record as a canonical value; with ``exact`` the same
+    record is also stored as exact bytes, which a Claim can cite, and that one
+    is answered.
     """
 
     from cruxible_core.evidence.source_readers import (
@@ -652,11 +660,13 @@ def _record_capture(
             selector=selector,
             materialization="cas",
             run_coordinate=provider_run(provider_artifact),
-            observed_at=NOW,
+            observed_at=NOW if observed_at is None else observed_at,
             resource_budget=contract.selection_budget,
         ),
         store=instance.body_store(),
     )
+    if not exact:
+        return str(acquired.capture_digest)
     # The reader commits the record as a canonical value, which a Claim cannot
     # map a byte span onto; the same record committed as exact bytes can be cited.
     from cruxible_client.contracts.captures import render_capture_envelope
@@ -694,6 +704,50 @@ def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subje
         _write(instance, _set(WI2, "recorded_status", "ready") | {"evidence": by_contract})
     )
     assert other.code == "playbill.write.contract_capture_not_found"
+
+
+def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
+    instance: PlaybillInstance,
+) -> None:
+    """Only a canonical-value record: a refusal naming it, never 'capture it first'."""
+
+    from datetime import timedelta
+
+    from cruxible_client.contracts.write import capture_handle
+    from tests.core_support._pc_c_support import NOW
+
+    contract, provider_artifact = _seed_record_source(instance)
+    canonical = _record_capture(instance, contract, provider_artifact, WI1, exact=False)
+    by_contract = {"kind": "contract", "contract": contract.identity.name}
+    only = _refusal(
+        _write(instance, _set(WI1, "recorded_status", "ready") | {"evidence": by_contract})
+    )
+    assert only.code == "playbill.write.contract_capture_not_citable"
+    assert only.candidates == (capture_handle(canonical),)
+    assert capture_handle(canonical) in only.message and "canonical value" in only.message
+    assert only.repair is not None and "exact bytes" in only.repair
+    assert "first" not in only.repair
+
+    # An older exact-bytes record is cited, with a note naming the newer one.
+    older = _record_capture(
+        instance, contract, provider_artifact, WI1, observed_at=NOW - timedelta(hours=1)
+    )
+    outcome = _write(instance, _set(WI1, "recorded_status", "ready") | {"evidence": by_contract})
+    assert outcome.status == "accepted", outcome
+    assert outcome.changes[0].capture == capture_handle(older)
+    (note,) = [
+        item for item in outcome.warnings if item.code != "playbill.write.verdict_not_supported"
+    ]
+    assert note.code == "playbill.write.newer_capture_not_citable"
+    assert (note.change, note.capture, note.verdict) == (0, capture_handle(canonical), None)
+    assert capture_handle(older) in note.message and "canonical value" in note.message
+    assert outcome.next != note.repair
+    # A dry run says the same.
+    preview = _write(
+        instance, _set(WI1, "recorded_status", "done") | {"evidence": by_contract}, dry_run=True
+    )
+    assert preview.status == "would_accept", preview
+    assert "playbill.write.newer_capture_not_citable" in {item.code for item in preview.warnings}
 
 
 def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(

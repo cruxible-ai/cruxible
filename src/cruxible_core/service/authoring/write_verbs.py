@@ -323,6 +323,22 @@ def _default_subject(request: PlaybillWriteRequestV1, *, index: int, path: str) 
     return request.subject
 
 
+_EXACT_BYTES_REPAIR = (
+    "Cite evidence committed as exact bytes: a span of the record's source as file "
+    "evidence (--evidence-file PATH#ANCHOR), or a Capture a Procedure or Line stored "
+    "with an exact-bytes commitment. The external record reader commits records as "
+    "canonical values, so reading the same record again does not help"
+)
+
+
+def _commitment_kind(item: Any) -> str:
+    return (
+        "a canonical value"
+        if item.envelope.commitment.digest_kind == "canonical_value"
+        else (f"{item.envelope.commitment.digest_kind.replace('_', ' ')}")
+    )
+
+
 def _distinct_handles(digests: Sequence[str], *, at_least: int) -> tuple[str, ...]:
     """Each digest's shortest handle, at least ``at_least`` hex, that tells them apart."""
 
@@ -389,6 +405,8 @@ class _Plan:
     changes: list[_Planned] = field(default_factory=list)
     subjects: dict[str, SubjectShell] = field(default_factory=dict)
     retire_notes: list[str] = field(default_factory=list)
+    # What planning chose for the writer and says so: see WriteWarning.
+    notes: list[WriteWarning] = field(default_factory=list)
 
 
 class _Planner:
@@ -1003,6 +1021,7 @@ class _Planner:
 
         from cruxible_core.service.evidence.capture_reads import (
             CaptureReadInvalid,
+            RetainedCapture,
             retained_captures,
             verify_accepted_capture,
         )
@@ -1060,15 +1079,16 @@ class _Planner:
             (
                 item
                 for item in inventory.captures
-                # A Claim maps a byte span onto what it cites: only an exact-bytes
-                # commitment can back one.
-                if item.envelope.commitment.digest_kind == "exact_bytes"
-                and (item.digest in cited or about_subject(item.envelope))
+                if item.digest in cited or about_subject(item.envelope)
             ),
             key=lambda item: (item.envelope.observed_at, item.digest),
             reverse=True,
         )
         store = self.instance.body_store()
+        # A Claim maps a byte span onto what it cites, so only an exact-bytes
+        # commitment can back one. A newer Capture committed any other way is
+        # never skipped silently: it is named, as a refusal or as a warning.
+        uncitable: RetainedCapture | None = None
         for item in bound[:_MAX_CONTRACT_CAPTURES]:
             try:
                 verified = verify_accepted_capture(
@@ -1081,8 +1101,39 @@ class _Planner:
             reuse = classify_capture_reuse(
                 verified.envelope, contract=verified.contract, store=store, claim_id=""
             )
-            if reuse == "shareable":
-                return item.digest
+            if reuse != "shareable":
+                continue
+            if item.envelope.commitment.digest_kind != "exact_bytes":
+                uncitable = uncitable or item
+                continue
+            if uncitable is not None and uncitable.envelope.observed_at > item.envelope.observed_at:
+                self.plan.notes.append(
+                    WriteWarning(
+                        code="playbill.write.newer_capture_not_citable",
+                        change=index,
+                        capture=capture_handle(uncitable.digest),
+                        message=(
+                            f"{subject}: the newest Capture of {bare}, "
+                            f"{capture_handle(uncitable.digest)}, is committed as "
+                            f"{_commitment_kind(uncitable)}, which no Claim can cite; the "
+                            f"write cites the older {capture_handle(item.digest)} instead"
+                        ),
+                        repair=_EXACT_BYTES_REPAIR,
+                    )
+                )
+            return item.digest
+        if uncitable is not None:
+            raise _refuse(
+                "playbill.write.contract_capture_not_citable",
+                f"the newest Capture of {bare} about {subject}, "
+                f"{capture_handle(uncitable.digest)}, is committed as "
+                f"{_commitment_kind(uncitable)}, which no Claim can cite: a Claim maps a "
+                "byte span onto its evidence, and only an exact-bytes commitment has bytes",
+                change=index,
+                candidates=(capture_handle(uncitable.digest),),
+                repair=_EXACT_BYTES_REPAIR,
+                field_path=path,
+            )
         raise _refuse(
             "playbill.write.contract_capture_not_found",
             f"no verified Capture of {bare} is about {subject}",
@@ -1843,7 +1894,7 @@ def _with_verdicts(
 
     planned_by_index = {item.index: item for item in plan.changes}
     updated: list[ChangeOutcome] = []
-    warnings: list[WriteWarning] = []
+    warnings: list[WriteWarning] = list(plan.notes)
     names: CaptureContractNames | None = None
     for position, outcome in enumerate(changes):
         planned = plan.changes[position]
@@ -1897,7 +1948,14 @@ def _with_verdicts(
 
 
 def _first_repair(warnings: Sequence[WriteWarning]) -> str | None:
-    return next((item.repair for item in warnings if item.repair is not None), None)
+    return next(
+        (
+            item.repair
+            for item in warnings
+            if item.repair is not None and item.code == "playbill.write.verdict_not_supported"
+        ),
+        None,
+    )
 
 
 # -- refusals as outcomes -------------------------------------------------------------
