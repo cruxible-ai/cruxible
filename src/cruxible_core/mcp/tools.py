@@ -1676,6 +1676,16 @@ def register_tools(
         force: Annotated[
             bool, Field(description="write only: replace a non-empty floor directory.")
         ] = False,
+        include: Annotated[
+            list[contracts.PlaybillFloorExportPart] | None,
+            Field(
+                description=(
+                    "bytes/write: opt-in floor parts. 'discovery' adds the discovery cards "
+                    "(subjects/, claim-types/, procedures/, coverage-manifest.json) to the "
+                    "grep-first current/, documents/ and provenance/."
+                )
+            ),
+        ] = None,
     ) -> (
         contracts.PlaybillFloorExport
         | contracts.PlaybillWorkspaceFloorWriteResult
@@ -1686,6 +1696,7 @@ def register_tools(
             require_instance_id(instance_id),
             mode=mode,
             force=force,
+            include=tuple(include or ()),
         )
 
     return registered

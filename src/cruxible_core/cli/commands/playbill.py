@@ -5978,16 +5978,29 @@ def floor_group() -> None:
 
 @floor_group.command("export")
 @click.option("--force", is_flag=True, help="Replace a non-empty .playbill/floor cache.")
+@click.option(
+    "--with-discovery",
+    is_flag=True,
+    help=(
+        "Also write the discovery cards (subjects/, claim-types/, procedures/, "
+        "coverage-manifest.json); refresh after activation keeps them."
+    ),
+)
 @json_option
 @handle_errors
 def export_floor(
     force: bool,
+    with_discovery: bool,
     output_json: bool,
 ) -> None:
-    """Write the accepted floor to a deterministic local tree."""
+    """Write the accepted greppable floor to a deterministic local tree."""
 
+    include: tuple[contracts.PlaybillFloorExportPart, ...] = (
+        ("discovery",) if with_discovery else ()
+    )
+    parts: dict[str, Any] = {"include": include} if include else {}
     result = _server_call(
-        lambda client, instance_id: client.export_playbill_floor(instance_id),
+        lambda client, instance_id: client.export_playbill_floor(instance_id, **parts),
         command_name="playbill floor export",
     )
     workspace_resolution = _local_git_workspace_root()
@@ -6000,6 +6013,7 @@ def export_floor(
     record_playbill_floor_output(
         workspace_root,
         instance_id=_require_instance_id(),
+        include=include,
         **_workspace_config_transport(),
     )
     if output_json:

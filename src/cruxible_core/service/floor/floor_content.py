@@ -86,10 +86,10 @@ An agent without a shell asks `query --contains "some text"` instead.
   (`subjects/`), Document envelopes (`documents/`), the latest accepted changes
   behind current Claims with separately attributed review rationale where the
   pinned Git notes snapshot retains it (`changes/`), and `snapshot.json`.
-- `manifest.json` binds every file by digest into the floor digest;
-  `coverage-manifest.json` is the export's coverage boundary.
-- `subjects/`, `claim-types/` and `procedures/`: the discovery cards other
-  tools read; they carry digests and addresses.
+- `manifest.json` binds every file by digest into the floor digest.
+- Only with `floor export --with-discovery`: `subjects/`, `claim-types/` and
+  `procedures/`, the discovery cards other tools read (they carry digests and
+  addresses), and `coverage-manifest.json`, the export's coverage boundary.
 
 History, rejected proposals, full evaluation transcripts, source and evidence
 bodies, and authoring-intent exhaust are not exported, so no match here does

@@ -265,9 +265,11 @@ class FloorOutputV1(_StrictMiddlewareModel):
     """A client-owned floor destination; the daemon never sees this path."""
 
     tag: Literal["playbill-floor-output-v1"] = "playbill-floor-output-v1"
-    format: Literal["playbill-floor-export-v2", "playbill-floor-export-v3"] = (
+    format: Literal["playbill-floor-export-v2", "playbill-floor-export-v4"] = (
         "playbill-floor-export-v2"
     )
+    # Opt-in parts a refresh exports; "discovery" adds the discovery cards.
+    include: tuple[Literal["discovery"], ...] = ()
 
 
 class CoverageWorkspaceConfigV2(_StrictMiddlewareModel):
@@ -358,10 +360,10 @@ class FloorManifestFileV1(_StrictMiddlewareModel):
 class FloorFreshnessManifestV2(_StrictMiddlewareModel):
     """The exact v2 manifest shape needed by the presentation-only freshness check."""
 
-    tag: Literal["playbill-floor-manifest-v2", "playbill-floor-manifest-v3"] = (
+    tag: Literal["playbill-floor-manifest-v2", "playbill-floor-manifest-v4"] = (
         "playbill-floor-manifest-v2"
     )
-    format: Literal["playbill-floor-export-v2", "playbill-floor-export-v3"] = (
+    format: Literal["playbill-floor-export-v2", "playbill-floor-export-v4"] = (
         "playbill-floor-export-v2"
     )
     coordinate: AcceptedCoordinate

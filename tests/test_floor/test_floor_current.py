@@ -369,7 +369,7 @@ def test_every_floor_reader_still_verifies_the_export(
     written = materialize_playbill_floor(workspace, export=export)
     assert written.file_count == len(files)
     record_playbill_floor_output(
-        workspace, instance_id="inst_floor", server_socket="/tmp/floor.sock"
+        workspace, instance_id="inst_floor", server_socket="daemon.sock"
     )
     status = inspect_workspace_floor(
         workspace,
@@ -500,9 +500,86 @@ def test_orient_reports_the_workspace_floor_and_how_far_behind_it_is(tmp_path: A
             {
                 "tag": "playbill-coverage-workspace-config-v2",
                 "instance_id": "inst_another",
-                "server_socket": "/tmp/floor.sock",
+                "server_socket": "daemon.sock",
             }
         ),
         encoding="utf-8",
     )
     assert workspace_floor_freshness(workspace, service_playbill_orient(instance)).floor is None
+
+
+def test_the_default_floor_leaves_the_discovery_cards_out(world: dict[str, Any]) -> None:
+    instance: PlaybillInstance = world["instance"]
+    default = set(world["files"])
+    assert not any(
+        path.startswith(("subjects/", "claim-types/", "procedures/")) for path in default
+    )
+    assert "coverage-manifest.json" not in default
+    assert json.loads(world["files"]["manifest.json"])["format"] == "playbill-floor-export-v4"
+
+    full = service_export_playbill_floor(instance, include=("discovery",))
+    assert f"subjects/{KIND}/wi-1.profile.json" in full
+    assert f"claim-types/{KIND}/status.card.json" in full
+    assert "coverage-manifest.json" in full
+    # The grep-first layer is the same bytes either way.
+    assert {path: full[path] for path in default if path != "manifest.json"} == {
+        path: content for path, content in world["files"].items() if path != "manifest.json"
+    }
+    with pytest.raises(ValueError, match="unsupported floor export part"):
+        service_export_playbill_floor(instance, include=("everything",))  # type: ignore[arg-type]
+
+
+def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
+    tmp_path: Any,
+) -> None:
+    from cruxible_client.authoring.workspace import (
+        PlaybillWorkspaceError,
+        configured_floor_output,
+        record_playbill_floor_output,
+        refresh_workspace_floor,
+    )
+
+    config = tmp_path / ".playbill/coverage.json"
+    config.parent.mkdir()
+    config.write_text(
+        json.dumps(
+            {
+                "tag": "playbill-coverage-workspace-config-v2",
+                "instance_id": "inst_floor",
+                "server_socket": "daemon.sock",
+                "floor_output": {
+                    "tag": "playbill-floor-output-v1",
+                    "format": "playbill-floor-export-v3",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(PlaybillWorkspaceError, match="floor export --force"):
+        configured_floor_output(tmp_path)
+
+    record_playbill_floor_output(tmp_path, instance_id="inst_floor", include=("discovery",))
+    written = json.loads(config.read_text(encoding="utf-8"))
+    assert written["floor_output"] == {
+        "tag": "playbill-floor-output-v1",
+        "format": "playbill-floor-export-v4",
+        "include": ["discovery"],
+    }
+    assert written["server_socket"] == "daemon.sock"
+    assert configured_floor_output(tmp_path) == (".playbill/floor", ("discovery",))
+
+    seen: list[dict[str, Any]] = []
+
+    class _Client:
+        def export_playbill_floor(self, _instance_id: str, **kwargs: Any) -> Any:
+            seen.append(kwargs)
+            raise LookupError("stop after the request")
+
+    result = refresh_workspace_floor(_Client(), "inst_floor", workspace=tmp_path)  # type: ignore[arg-type]
+    assert result.status == "failed"
+    assert seen == [{"at": None, "include": ("discovery",)}]
+
+    record_playbill_floor_output(tmp_path, instance_id="inst_floor")
+    assert "include" not in json.loads(config.read_text(encoding="utf-8"))["floor_output"]
+    refresh_workspace_floor(_Client(), "inst_floor", workspace=tmp_path)  # type: ignore[arg-type]
+    assert seen[-1] == {"at": None}

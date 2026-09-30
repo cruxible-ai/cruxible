@@ -2147,6 +2147,14 @@ class PlaybillFloorFile(BaseModel):
     content_base64: str
 
 
+PlaybillFloorExportPart = Literal["discovery"]
+"""An opt-in part of a v4 floor export.
+
+``discovery`` adds the discovery cards (``subjects/``, ``claim-types/``,
+``procedures/`` and ``coverage-manifest.json``) to the grep-first floor.
+"""
+
+
 class PlaybillFloorExport(BaseModel):
     """The deterministic greppable floor as base64 bytes keyed by floor path.
 
@@ -2158,7 +2166,7 @@ class PlaybillFloorExport(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal[
-        "playbill-floor-export-v1", "playbill-floor-export-v2", "playbill-floor-export-v3"
+        "playbill-floor-export-v1", "playbill-floor-export-v2", "playbill-floor-export-v4"
     ] = "playbill-floor-export-v2"
     coordinate: PlaybillAcceptedCoordinate
     manifest: dict[str, Any]

@@ -126,7 +126,7 @@ def test_workspace_config_writer_refuses_differences_and_never_carries_secrets(
     payload = json.loads(written.read_text(encoding="utf-8"))
     assert payload == {
         "floor_output": {
-            "format": "playbill-floor-export-v3",
+            "format": "playbill-floor-export-v4",
             "tag": "playbill-floor-output-v1",
         },
         "instance_id": "inst_two",
@@ -204,7 +204,7 @@ def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(
     assert payload["rules"] == []
     assert payload["floor_output"] == {
         "tag": "playbill-floor-output-v1",
-        "format": "playbill-floor-export-v3",
+        "format": "playbill-floor-export-v4",
     }
 
 

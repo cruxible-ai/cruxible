@@ -185,7 +185,7 @@ def literal_scalar(value: object) -> str:
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
-    rendered = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(", ", ": "))
+    rendered = json.dumps(value, ensure_ascii=False, sort_keys=True)
     return _UNPRINTABLE.sub(lambda match: f"\\u{ord(match.group()):04x}", rendered)
 
 
@@ -595,6 +595,26 @@ def accepted_claim_types(
     return {item.predicate: item for item in parsed}, live
 
 
+def live_claims(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+) -> tuple[tuple[ClaimArtifactAny, ...], ClaimVerdictReadContext]:
+    """Every live accepted Claim, read through the verdict context the flags reuse."""
+
+    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext as Context
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        identities = tuple(
+            str(row[0])
+            for row in projection.typed.connection.execute(
+                "SELECT identity FROM claims WHERE lifecycle='live' ORDER BY identity"
+            )
+        )
+    context = Context(instance, coordinate)
+    context.prefetch(tuple(claim_path(item.removeprefix("Claim:")) for item in identities))
+    claims = tuple(context.claim(item) for item in identities)
+    return tuple(sorted(claims, key=lambda item: claim_path(item.identity.name))), context
+
+
 def claim_verdicts(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -667,6 +687,7 @@ __all__ = [
     "index_files",
     "render_index",
     "floor_stamp",
+    "live_claims",
     "literal_scalar",
     "render_subject",
     "stamped",

@@ -428,7 +428,7 @@ def test_subject_input_accepts_cve_package_relation_and_populates_floor_profiles
     accept_cve_affects_package_relation(instance, owner)
     predicate = AFFECTS_PACKAGE
 
-    floor = service_export_playbill_floor(instance)
+    floor = service_export_playbill_floor(instance, include=("discovery",))
     outbound = json.loads(floor["subjects/sec.vulnerability/cve-2026-0001.profile.json"])[
         "relations"
     ]

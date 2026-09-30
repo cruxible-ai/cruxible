@@ -11,7 +11,10 @@
   `documents/<name>.<ext>` files (bodies only for a caller who may read them);
   `current/<kind>/INDEX` lists every Subject with a title and its states.
   Digests, addresses and full statements move to `provenance/` and the
-  manifest. A daemon re-renders only what the change records touched since its
+  manifest. The discovery cards (`subjects/`, `claim-types/`, `procedures/`)
+  and `coverage-manifest.json` are now opt-in (`floor export --with-discovery`,
+  `include=["discovery"]`), and the format is `playbill-floor-export-v4`; the
+  unreleased v3 layout is gone. A daemon re-renders only what the change records touched since its
   last export, and `orient` reports `floor: {at, generations_behind}` for the
   workspace's floor. The loop: grep, read the header, `get` the ref for live
   verdicts, write with the verbs.

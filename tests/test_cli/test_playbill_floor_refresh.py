@@ -161,7 +161,7 @@ def test_floor_export_records_missing_config_and_clears_floor_missing(
 
     assert result.exit_code == 0, result.output
     config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
-    assert config["floor_output"]["format"] == "playbill-floor-export-v3"
+    assert config["floor_output"]["format"] == "playbill-floor-export-v4"
     observation = observe_playbill_next_workspace(workspace)
     assert observation["floor_status"] != "missing"
     assert observation["floor_status"] != "not_configured"

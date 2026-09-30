@@ -740,6 +740,16 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
         "manifest.json"
     }
     assert written == {item["path"] for item in manifest["files"]}
+    # The grep-first floor: values, their provenance, no discovery cards.
+    assert f"current/{SUBJECT_KIND}/wi-42.yaml" in written
+    assert "status: ready  # CLM-" in (floor / f"current/{SUBJECT_KIND}/wi-42.yaml").read_text()
+    assert not any(path.startswith(("subjects/", "claim-types/")) for path in written)
+
+    # The discovery cards are opt-in, and the refresh profile remembers them.
+    cruxible.json("playbill", "floor", "export", "--force", "--with-discovery")
+    written = {str(path.relative_to(floor)) for path in floor.rglob("*") if path.is_file()}
+    config = json.loads((tmp_path / ".playbill/coverage.json").read_text(encoding="utf-8"))
+    assert config["floor_output"]["include"] == ["discovery"]
     assert f"subjects/{SUBJECT_KIND}/wi-42.profile.json" in written
     assert f"subjects/{SUBJECT_KIND}/wi-43.profile.json" in written
     assert "claim-types/project.work_item/status.card.json" in written

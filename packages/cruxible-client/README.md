@@ -6528,7 +6528,8 @@ export_playbill_floor(
     instance_id: str,
     *,
     at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    format_version: Literal[2, 3] = 3,
+    format_version: Literal[2, 4] = 4,
+    include: Sequence[contracts.PlaybillFloorExportPart] = (),
     review_notes_oid: str | None = None,
 ) -> contracts.PlaybillFloorExport
 ```

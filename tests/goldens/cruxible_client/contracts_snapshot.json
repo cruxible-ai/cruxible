@@ -51,6 +51,11 @@
         "claim-type-succession"
       ]
     },
+    "PlaybillFloorExportPart": {
+      "values": [
+        "discovery"
+      ]
+    },
     "PlaybillHostCompatibilityReasonCodeV1": {
       "values": [
         "legacy_layout_requires_reseed",
@@ -22181,7 +22186,7 @@
             "enum": [
               "playbill-floor-export-v1",
               "playbill-floor-export-v2",
-              "playbill-floor-export-v3"
+              "playbill-floor-export-v4"
             ],
             "title": "Tag",
             "type": "string"
@@ -22272,7 +22277,7 @@
             "enum": [
               "playbill-floor-export-v1",
               "playbill-floor-export-v2",
-              "playbill-floor-export-v3"
+              "playbill-floor-export-v4"
             ],
             "title": "Tag",
             "type": "string"

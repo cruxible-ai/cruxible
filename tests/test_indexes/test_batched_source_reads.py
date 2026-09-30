@@ -110,7 +110,7 @@ def test_floor_reuses_query_claims_instead_of_materializing_another_list(instanc
         raise AssertionError("floor already parsed these Claims for its query facts")
 
     monkeypatch.setattr(ProjectionHandle, "list_claims", forbidden)
-    files = service_export_playbill_floor(instance)
+    files = service_export_playbill_floor(instance, include=("discovery",))
     assert "manifest.json" in files
     assert any(path.endswith(".profile.json") for path in files)
 

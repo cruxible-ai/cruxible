@@ -172,10 +172,11 @@ class _LocalFloorClient:
         instance_id: str,
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        include: Sequence[contracts.PlaybillFloorExportPart] = (),
     ) -> contracts.PlaybillFloorExport:
         if at is not None:  # pragma: no cover - shared refresh always asks for current
             raise DataValidationError("local floor adapter accepts only the current coordinate")
-        return playbill_api.playbill_export_floor(instance_id)
+        return playbill_api.playbill_export_floor(instance_id, include=tuple(include))
 
     def check_playbill_projection_blocks(
         self, instance_id: str, *, request: contracts.PlaybillProjectionCheckRequestV1
@@ -2704,6 +2705,7 @@ def handle_playbill_floor_export(
     *,
     mode: FloorExportMode,
     force: bool = False,
+    include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
 ) -> (
     contracts.PlaybillFloorExport
     | contracts.PlaybillWorkspaceFloorWriteResult
@@ -2713,6 +2715,8 @@ def handle_playbill_floor_export(
 
     if force and mode != "write":
         raise DataValidationError("force applies only to floor export mode 'write'")
+    if include and mode == "status":
+        raise DataValidationError("include applies only to floor export modes 'bytes' and 'write'")
     if mode == "status":
         search = _dispatch_remote_or_local(
             lambda client: client.search_playbill(instance_id, mode="orient"),
@@ -2724,9 +2728,10 @@ def handle_playbill_floor_export(
             current_coordinate=search.coordinate,
         )
     workspace = mcp_git_workspace_root() if mode == "write" else None
+    parts: dict[str, Any] = {"include": include} if include else {}
     export = _dispatch_remote_or_local(
-        lambda client: client.export_playbill_floor(instance_id),
-        lambda: playbill_api.playbill_export_floor(instance_id),
+        lambda client: client.export_playbill_floor(instance_id, **parts),
+        lambda: playbill_api.playbill_export_floor(instance_id, **parts),
         operation_name="cruxible_playbill_floor_export",
     )
     if workspace is None:

@@ -1890,7 +1890,7 @@ narrow what the capsule carries.
 ## playbill floor
 
 ~~~text
-cruxible playbill floor export [--force]
+cruxible playbill floor export [--force] [--with-discovery]
 ~~~
 
 Writes the deterministic greppable floor of accepted state to the fixed derived
@@ -1925,8 +1925,8 @@ with `contains` on MCP) instead.
 | `current/<kind>/INDEX` | One tab-separated line per Subject of the kind: ref, a title-like value, `field=value` for each state-like field. |
 | `documents/<name>.<ext>` | Each Document: a one-line header (`Document:<name>`, title, kind, media type, coordinate) and its body. |
 | `provenance/` | Not for grep: the digests and full statements behind every value (`subjects/`), Document envelopes (`documents/`), the latest changes behind current Claims with separately attributed review rationale (`changes/`), and `snapshot.json` (the coordinate, its generation and the review-notes snapshot). |
-| `manifest.json`, `coverage-manifest.json` | Every file's digest and the floor digest; the export's coverage boundary. |
-| `subjects/`, `claim-types/`, `procedures/` | The discovery cards other tools read; they carry digests and addresses. |
+| `manifest.json` | Every file's digest and the floor digest. |
+| `subjects/`, `claim-types/`, `procedures/`, `coverage-manifest.json` | Only with `--with-discovery`: the discovery cards other tools read (they carry digests and addresses) and the export's coverage boundary. They need the whole accepted facts read, so they cost most of an export. |
 | `README.md` | This loop, for an agent that lands in the floor cold. |
 
 A `current/` file is a strict subset of YAML, so it both greps line by line and
@@ -1979,26 +1979,31 @@ daemon, or a ClaimType change, renders everything.
 The daemon returns bytes keyed by floor path and never writes a client path;
 export refuses a non-empty floor unless `--force` is given, except that a floor
 already holding exactly this export (as it does right after an activation) is
-a no-op success reported as `unchanged`. The export carries its own coverage
-boundary in `coverage-manifest.json`, enumerated in the root manifest like every
-other floor file. `floor_output.path` is obsolete and refused; a v2 coverage
-config enables refresh with only the fixed profile. `floor export` records that
-profile when the config lacks it, so the following `next` observation no longer
-reports the floor as `missing` after a successful export:
+a no-op success reported as `unchanged`. With `--with-discovery` the export
+also carries its coverage boundary in `coverage-manifest.json`, enumerated in
+the root manifest like every other floor file. `floor_output.path` is obsolete
+and refused; a v2 coverage config enables refresh with only the fixed profile.
+`floor export` records that profile, and its opt-in parts, so a refresh after
+an activation exports the same parts and the following `next` observation no
+longer reports the floor as `missing` after a successful export:
 
 ~~~json
 {
   "tag": "playbill-coverage-workspace-config-v2",
   "floor_output": {
     "tag": "playbill-floor-output-v1",
-    "format": "playbill-floor-export-v3"
+    "format": "playbill-floor-export-v4",
+    "include": ["discovery"]
   }
 }
 ~~~
 
-`manifest.json` inventories and digests the exact rendered bytes, so repeated
-exports at one accepted coordinate remain byte-identical. Historical v1 and v2
-manifests remain readable without reinterpretation.
+`include` is present only for a floor exported `--with-discovery`. A profile an
+earlier build recorded with the `playbill-floor-export-v3` format is refused
+until `floor export --force` rewrites it. `manifest.json` inventories and
+digests the exact rendered bytes, so repeated exports at one accepted coordinate
+remain byte-identical. Historical v1 and v2 manifests remain readable without
+reinterpretation.
 
 ## playbill coverage
 

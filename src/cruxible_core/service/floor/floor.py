@@ -29,10 +29,11 @@ import json
 import re
 from collections import defaultdict
 from collections.abc import Mapping
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from cruxible_client.contracts import PlaybillFloorExportPart
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -89,6 +90,7 @@ from cruxible_core.service.discovery.discovery import (
 from cruxible_core.service.discovery.query import _AcceptedQueryFactsRead
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from cruxible_core.service.floor.floor_content import current_content, review_snapshot_oid
+from cruxible_core.service.floor.floor_current import live_claims
 from cruxible_core.storage.cas import BodyAccessContext
 
 MANIFEST_PATH = "manifest.json"
@@ -192,9 +194,11 @@ class PlaybillProcedureFloorCardV1(_StrictFloorModel):
     track_record: tuple[PlaybillProcedureTrackRecordEntryV1, ...]
 
 
-class PlaybillFloorManifestV3(_StrictFloorModel):
-    tag: Literal["playbill-floor-manifest-v3"] = "playbill-floor-manifest-v3"
-    format: Literal["playbill-floor-export-v3"] = "playbill-floor-export-v3"
+class PlaybillFloorManifestV4(_StrictFloorModel):
+    """The grep-first floor manifest; every inventory digest binds rendered bytes."""
+
+    tag: Literal["playbill-floor-manifest-v4"] = "playbill-floor-manifest-v4"
+    format: Literal["playbill-floor-export-v4"] = "playbill-floor-export-v4"
     coordinate: PlaybillAcceptedCoordinate
     files: tuple[PlaybillFloorFileV1, ...]
     floor_digest: str
@@ -443,11 +447,62 @@ def _procedure_cards(
     return files
 
 
+def _discovery_layer(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    accepted: PlaybillAcceptedCoordinate,
+    external_readers: Mapping[str, ExternalSourceReaderProtocol] | None,
+) -> tuple[dict[str, bytes], tuple[ClaimArtifactAny, ...], ClaimVerdictReadContext | None]:
+    """The discovery cards: ClaimType cards, Subject profiles, Procedure cards, coverage.
+
+    These carry the F5 projection shapes other tools read, digests and
+    addresses included, and they need the whole accepted facts read. They are
+    the frozen v2 layout, and an opt-in part of v4.
+    """
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        paths = tuple(
+            row.path
+            for kind in ("claim-type", "subject")
+            for row in projection.typed.envelopes(kind=kind)
+        )
+        projection.typed.prefetch_members(paths)
+        tree = {path: projection.typed.member_bytes(path) for path in paths}
+    read = _AcceptedQueryFactsRead(
+        instance,
+        coordinate=coordinate,
+        external_readers=external_readers,
+    )
+    facts = read.build()
+    vocabulary = build_accepted_discovery_vocabulary(
+        instance,
+        coordinate=coordinate,
+        facts=facts,
+    )
+    entries = _entry_index(vocabulary.entries)
+    claims = read.live_claims()
+    relations = descriptor_relations(claims)
+    files: dict[str, bytes] = {}
+    files.update(
+        _claim_type_cards(tree, entries=entries, at=accepted, claims=claims, relations=relations)
+    )
+    files.update(
+        _subject_profiles(tree, entries=entries, at=accepted, claims=claims, relations=relations)
+    )
+    files.update(_procedure_cards(instance, coordinate=coordinate, at=accepted))
+    files[COVERAGE_MANIFEST_PATH] = _render(
+        _coverage_manifest(instance, at=accepted).model_dump(mode="json")
+    )
+    return files, claims, read.verdict_context
+
+
 def service_export_playbill_floor(
     instance: PlaybillInstance,
     *,
     at: PlaybillAcceptedCoordinate | None = None,
-    format_version: Literal[2, 3] = 3,
+    format_version: Literal[2, 4] = 4,
+    include: tuple[PlaybillFloorExportPart, ...] = (),
     review_notes_oid: str | None = None,
     access: BodyAccessContext | None = None,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
@@ -456,8 +511,12 @@ def service_export_playbill_floor(
 
     The map is keyed by byte-sorted floor path, and its root ``manifest.json``
     names the accepted coordinate together with every file's content digest.
-    Cards and profiles are taken without an evaluation time: the floor is
-    coordinate-pure accepted structure, never a verdict-relative read.
+
+    v4 is the grep-first floor: ``current/``, ``documents/``, ``provenance/``
+    and the README. ``include=("discovery",)`` adds the discovery cards
+    (``subjects/``, ``claim-types/``, ``procedures/`` and
+    ``coverage-manifest.json``). v2 is the frozen card layout, discovery only.
+    Cards and profiles are taken without an evaluation time.
     """
 
     if at is not None and not isinstance(at, PlaybillAcceptedCoordinate):
@@ -466,8 +525,13 @@ def service_export_playbill_floor(
     accepted = PlaybillAcceptedCoordinate.from_internal(coordinate)
     body_access = access or BodyAccessContext(principal_id=DEFAULT_FLOOR_PRINCIPAL)
 
-    if format_version not in (2, 3):
+    if format_version not in (2, 4):
         raise ValueError("unsupported floor format version")
+    unknown = sorted(set(include) - set(get_args(PlaybillFloorExportPart)))
+    if unknown:
+        raise ValueError(f"unsupported floor export part(s): {', '.join(unknown)}")
+    parts = tuple(sorted(set(include)))
+    with_discovery = format_version == 2 or "discovery" in parts
     if (
         review_notes_oid is not None
         and review_notes_oid != "absent"
@@ -475,7 +539,7 @@ def service_export_playbill_floor(
     ):
         raise ProposalIntegrityError("review_notes_oid must be an immutable Git OID or 'absent'")
     notes_oid = None
-    if format_version == 3:
+    if format_version == 4:
         notes_oid = (
             review_snapshot_oid(instance)
             if review_notes_oid is None
@@ -486,6 +550,7 @@ def service_export_playbill_floor(
     key = (
         coordinate.git_oid,
         format_version,
+        parts,
         notes_oid,
         body_access.principal_id,
         body_access.can_read_body,
@@ -494,68 +559,44 @@ def service_export_playbill_floor(
         cached = memo_get(instance.floor_export_memo, key)
         if isinstance(cached, dict):
             return cached.copy()
-    structure_key = (coordinate.git_oid, body_access.principal_id, body_access.can_read_body)
-    structure = None if external_readers else memo_get(instance.floor_structure_memo, structure_key)
-    files: dict[str, bytes]
+    files: dict[str, bytes] = {}
     # The facts read's own verdict read context, reused for the current/ flags
     # within this one request so its Claims and records are read once.
     verdict_context: ClaimVerdictReadContext | None = None
-    if isinstance(structure, tuple):
-        base_files, claims = structure
-        files = base_files.copy()
+    claims: tuple[ClaimArtifactAny, ...]
+    if with_discovery:
+        structure_key = (coordinate.git_oid, body_access.principal_id, body_access.can_read_body)
+        structure = (
+            None if external_readers else memo_get(instance.floor_structure_memo, structure_key)
+        )
+        if isinstance(structure, tuple):
+            base_files, claims = structure
+            files = base_files.copy()
+        else:
+            files, claims, verdict_context = _discovery_layer(
+                instance,
+                coordinate=coordinate,
+                accepted=accepted,
+                external_readers=external_readers,
+            )
+            if (
+                not external_readers
+                and (
+                    sum(map(len, files.values()))
+                    + sum(len(canonical_bytes(claim.model_dump(mode="json"))) for claim in claims)
+                )
+                <= 32 * 1024 * 1024
+            ):
+                memo_put(
+                    instance.floor_structure_memo,
+                    structure_key,
+                    (files.copy(), claims),
+                    capacity=2,
+                )
     else:
-        with instance.bind_accepted_projection(coordinate) as projection:
-            paths = tuple(
-                row.path
-                for kind in ("claim-type", "subject")
-                for row in projection.typed.envelopes(kind=kind)
-            )
-            projection.typed.prefetch_members(paths)
-            tree = {path: projection.typed.member_bytes(path) for path in paths}
-        read = _AcceptedQueryFactsRead(
-            instance,
-            coordinate=coordinate,
-            external_readers=external_readers,
-        )
-        facts = read.build()
-        verdict_context = read.verdict_context
-        vocabulary = build_accepted_discovery_vocabulary(
-            instance,
-            coordinate=coordinate,
-            facts=facts,
-        )
-        entries = _entry_index(vocabulary.entries)
-        claims = read.live_claims()
-        relations = descriptor_relations(claims)
+        claims, verdict_context = live_claims(instance, coordinate)
 
-        files = {}
-        files.update(
-            _claim_type_cards(
-                tree, entries=entries, at=accepted, claims=claims, relations=relations
-            )
-        )
-        files.update(
-            _subject_profiles(
-                tree, entries=entries, at=accepted, claims=claims, relations=relations
-            )
-        )
-        files.update(_procedure_cards(instance, coordinate=coordinate, at=accepted))
-        files[COVERAGE_MANIFEST_PATH] = _render(
-            _coverage_manifest(instance, at=accepted).model_dump(mode="json")
-        )
-        if (
-            not external_readers
-            and (
-                sum(map(len, files.values()))
-                + sum(len(canonical_bytes(claim.model_dump(mode="json"))) for claim in claims)
-            )
-            <= 32 * 1024 * 1024
-        ):
-            memo_put(
-                instance.floor_structure_memo, structure_key, (files.copy(), claims), capacity=2
-            )
-
-    if format_version == 3:
+    if format_version == 4:
         files.update(
             current_content(
                 instance,
@@ -577,7 +618,7 @@ def service_export_playbill_floor(
         )
         for path, content in ordered.items()
     )
-    manifest_type = PlaybillFloorManifestV2 if format_version == 2 else PlaybillFloorManifestV3
+    manifest_type = PlaybillFloorManifestV2 if format_version == 2 else PlaybillFloorManifestV4
     manifest = manifest_type(
         coordinate=accepted,
         files=inventory,
@@ -600,7 +641,7 @@ __all__ = [
     "PlaybillFloorFileV1",
     "PlaybillFloorManifestV1",
     "PlaybillFloorManifestV2",
-    "PlaybillFloorManifestV3",
+    "PlaybillFloorManifestV4",
     "PlaybillProcedureCapabilitiesV1",
     "PlaybillProcedureFloorCardV1",
     "PlaybillProcedureGovernanceV1",

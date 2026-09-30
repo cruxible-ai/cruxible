@@ -20,11 +20,11 @@ from cruxible_core.service.floor.floor_content import (
 from tests.core_support._knowledge_loop_support import seed_claims
 
 
-def test_floor_v3_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> None:
+def test_floor_v4_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> None:
     instance, _ = seed_claims(tmp_path)
     files = service_export_playbill_floor(instance)
     manifest = json.loads(files["manifest.json"])
-    assert manifest["format"] == "playbill-floor-export-v3"
+    assert manifest["format"] == "playbill-floor-export-v4"
     assert b"\nstatus: ready  # CLM-" in files["current/project.work_item/wi-42.yaml"]
     provenance = json.loads(files["provenance/subjects/project.work_item/wi-42.json"])
     assert provenance["claims"][0]["statement"]["object"]["value"] == "ready"
@@ -68,7 +68,7 @@ def test_floor_v3_rebuild_scopes_and_warm_reuse(tmp_path: Path, monkeypatch) -> 
     assert "README.md" in service_export_playbill_floor(instance, review_notes_oid=pinned)
 
 
-def test_floor_v3_absent_review_snapshot_is_replayable(tmp_path: Path) -> None:
+def test_floor_v4_absent_review_snapshot_is_replayable(tmp_path: Path) -> None:
     instance, _ = seed_claims(tmp_path)
     files = service_export_playbill_floor(instance, review_notes_oid="absent")
     snapshot = json.loads(files["provenance/snapshot.json"])
