@@ -156,6 +156,10 @@ from cruxible_client.contracts.claim_attestations import (
     PreparedClaimAttestationRequestV1,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole as ClaimRoleValue
+from cruxible_client.contracts.claim_type_upgrade import (
+    ClaimTypeUpgradeRequestV1,
+    ClaimTypeUpgradeResultV1,
+)
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimEvidenceFreshnessV1,
@@ -2337,6 +2341,30 @@ class Playbill:
         if result.status == "accepted" and result.accepted_coordinate is not None:
             self._observe_read(_coordinate(result.accepted_coordinate), expected=None)
         return result
+
+    def upgrade_claim_types(
+        self,
+        *claim_types: str | ClaimTypeRef,
+        revision_evidence: Literal["replace", "accumulate"] = "replace",
+        dry_run: bool = False,
+    ) -> ClaimTypeUpgradeResultV1:
+        """Propose moving live ClaimTypes to v7 as one reviewed change set.
+
+        Names no ClaimType to move every live one before v7. v7 states what a
+        statement-changing revision keeps (``revision_evidence``, default
+        ``replace``); every Claim is carried with its backing intact. ``dry_run``
+        evaluates the change set and proposes nothing. Approve as usual.
+        """
+
+        for item in claim_types:
+            if isinstance(item, ClaimTypeRef):
+                self._assert_coordinate(item.coordinate)
+        request = ClaimTypeUpgradeRequestV1(
+            claim_types=tuple(_address(item, RefKind.CLAIM_TYPE) for item in claim_types),
+            revision_evidence=revision_evidence,
+            dry_run=dry_run,
+        )
+        return self._client.upgrade_playbill_claim_types(self._instance_id, request)
 
     def refresh(self) -> SearchPage:
         page = self._search(

@@ -16,6 +16,7 @@ CLAIM_TYPE_LAW_V3_IDENTIFIER = "playbill.claim-type.v3"
 CLAIM_TYPE_LAW_V4_IDENTIFIER = "playbill.claim-type.v4"
 CLAIM_TYPE_LAW_V5_IDENTIFIER = "playbill.claim-type.v5"
 CLAIM_TYPE_LAW_V6_IDENTIFIER = "playbill.claim-type.v6"
+CLAIM_TYPE_LAW_V7_IDENTIFIER = "playbill.claim-type.v7"
 CLAIM_LAW_V2_IDENTIFIER = "playbill.claim.v2"
 CLAIM_LAW_V3_IDENTIFIER = "playbill.claim.v3"
 CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
@@ -197,7 +198,18 @@ CLAIM_LAW_V2_REVISION_7 = _artifact_law_coordinate(
     "playbill-claim-v2",
     semantic_revision=7,
 )
-CLAIM_LAW_V2 = CLAIM_LAW_V2_REVISION_7
+# Revision 8: a v7 ClaimType's revision-evidence rule and evidence requirement
+# apply. A revision that changes its statement under `replace` carries exactly
+# the evidence it cites; `captured` refuses a new, non-carry Claim with no
+# Capture under a declared contract; `none` records the origin as support. A
+# carry (byte-identical backing) keeps every check it had. For every ClaimType
+# before v7 it judges exactly as revision 7 did.
+CLAIM_LAW_V2_REVISION_8 = _artifact_law_coordinate(
+    CLAIM_LAW_V2_IDENTIFIER,
+    "playbill-claim-v2",
+    semantic_revision=8,
+)
+CLAIM_LAW_V2 = CLAIM_LAW_V2_REVISION_8
 CLAIM_LAW_V3_REVISION_7 = _artifact_law_coordinate(
     CLAIM_LAW_V3_IDENTIFIER,
     "playbill-claim-v3",
@@ -216,9 +228,15 @@ CLAIM_LAW_V3_REVISION_9 = _artifact_law_coordinate(
     "playbill-claim-v3",
     semantic_revision=9,
 )
+# Revision 10: the ClaimType v7 semantics of Claim law v2 revision 8.
+CLAIM_LAW_V3_REVISION_10 = _artifact_law_coordinate(
+    CLAIM_LAW_V3_IDENTIFIER,
+    "playbill-claim-v3",
+    semantic_revision=10,
+)
 # Current is an operational alias only. Historical replay and shape-law
 # selection must name the exact revision directly.
-CLAIM_LAW_V3 = CLAIM_LAW_V3_REVISION_9
+CLAIM_LAW_V3 = CLAIM_LAW_V3_REVISION_10
 # Current revisions drop the vocabulary reuse law (see CLAIM_TYPE_LAW above).
 CLAIM_TYPE_LAW_V3_REVISION_4 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V3_IDENTIFIER,
@@ -264,6 +282,14 @@ CLAIM_TYPE_LAW_V6_REVISION_2 = _artifact_law_coordinate(
     semantic_revision=2,
 )
 CLAIM_TYPE_LAW_V6 = CLAIM_TYPE_LAW_V6_REVISION_2
+# ClaimType v7: descriptions, a default role, an evidence requirement and a
+# revision-evidence rule, under compiler revision 31.
+CLAIM_TYPE_LAW_V7_REVISION_1 = _artifact_law_coordinate(
+    CLAIM_TYPE_LAW_V7_IDENTIFIER,
+    "playbill-claim-type-v7",
+    semantic_revision=1,
+)
+CLAIM_TYPE_LAW_V7 = CLAIM_TYPE_LAW_V7_REVISION_1
 PROVIDER_LAW = _artifact_law_coordinate(
     PROVIDER_LAW_IDENTIFIER,
     "playbill-provider-v1",
@@ -471,6 +497,11 @@ CLAIM_TYPE_V6_REVISION_1_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-claim-type-v6",
     current=False,
 )
+CLAIM_TYPE_V7_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_TYPE_LAW_V7_REVISION_1,
+    artifact_kind="claim-type",
+    artifact_tag="playbill-claim-type-v7",
+)
 CAPTURE_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CAPTURE_CONTRACT_LAW_REVISION_4,
     artifact_kind="capture-contract",
@@ -483,9 +514,15 @@ CAPTURE_CONTRACT_REVISION_3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     current=False,
 )
 CLAIM_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_LAW_V2_REVISION_8,
+    artifact_kind="claim",
+    artifact_tag="playbill-claim-v2",
+)
+CLAIM_V2_REVISION_7_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V2_REVISION_7,
     artifact_kind="claim",
     artifact_tag="playbill-claim-v2",
+    current=False,
 )
 CLAIM_V2_REVISION_6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V2_REVISION_6,
@@ -494,9 +531,15 @@ CLAIM_V2_REVISION_6_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     current=False,
 )
 CLAIM_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_LAW_V3_REVISION_10,
+    artifact_kind="claim",
+    artifact_tag="playbill-claim-v3",
+)
+CLAIM_V3_REVISION_9_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V3_REVISION_9,
     artifact_kind="claim",
     artifact_tag="playbill-claim-v3",
+    current=False,
 )
 CLAIM_V3_REVISION_8_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V3_REVISION_8,
@@ -784,8 +827,10 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         ATTESTATION_ACCEPTANCE_LAW,
         RESOLUTION_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_V2_ACCEPTANCE_LAW,
+        CLAIM_V2_REVISION_7_ACCEPTANCE_LAW,
         CLAIM_V2_REVISION_6_ACCEPTANCE_LAW,
         CLAIM_V3_ACCEPTANCE_LAW,
+        CLAIM_V3_REVISION_9_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_8_ACCEPTANCE_LAW,
         CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,
@@ -798,6 +843,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW,
         CLAIM_TYPE_V6_ACCEPTANCE_LAW,
         CLAIM_TYPE_V6_REVISION_1_ACCEPTANCE_LAW,
+        CLAIM_TYPE_V7_ACCEPTANCE_LAW,
         DOCUMENT_ACCEPTANCE_LAW,
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
@@ -850,6 +896,10 @@ __all__ = [
     "CLAIM_TYPE_LAW_V6_REVISION_2",
     "CLAIM_TYPE_LAW_V6",
     "CLAIM_TYPE_LAW_V6_IDENTIFIER",
+    "CLAIM_TYPE_V7_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_LAW_V7_REVISION_1",
+    "CLAIM_TYPE_LAW_V7",
+    "CLAIM_TYPE_LAW_V7_IDENTIFIER",
     "QUERY_DEFINITION_LAW_REVISION_4",
     "QUERY_DEFINITION_REVISION_4_ACCEPTANCE_LAW",
     "CLAIM_TYPE_LAW",
@@ -882,8 +932,12 @@ __all__ = [
     "CLAIM_LAW_V3_REVISION_7",
     "CLAIM_LAW_V3_REVISION_8",
     "CLAIM_LAW_V3_REVISION_9",
+    "CLAIM_LAW_V3_REVISION_10",
     "CLAIM_LAW_V2_REVISION_6",
     "CLAIM_LAW_V2_REVISION_7",
+    "CLAIM_LAW_V2_REVISION_8",
+    "CLAIM_V2_REVISION_7_ACCEPTANCE_LAW",
+    "CLAIM_V3_REVISION_9_ACCEPTANCE_LAW",
     "CLAIM_V2_REVISION_6_ACCEPTANCE_LAW",
     "CLAIM_V3_REVISION_8_ACCEPTANCE_LAW",
     "CLAIM_LAW_V3_IDENTIFIER",

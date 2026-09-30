@@ -44,6 +44,10 @@ from cruxible_client.contracts.claim_attestations import (
     PreparedClaimAttestationRequestV1,
 )
 from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1, ClaimValuesResultV1
+from cruxible_client.contracts.claim_type_upgrade import (
+    ClaimTypeUpgradeRequestV1,
+    ClaimTypeUpgradeResultV1,
+)
 from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
@@ -350,6 +354,7 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_kit_add": TypeAdapter(PlaybillKitAddRequestV1),
     "cruxible_playbill_kit_remove": TypeAdapter(PlaybillKitRemoveRequestV1),
     "cruxible_playbill_evidence_rules_upgrade": None,  # path only
+    "cruxible_playbill_claim_type_upgrade": TypeAdapter(ClaimTypeUpgradeRequestV1),
     "cruxible_playbill_activate": None,  # path only
     "cruxible_playbill_authoring_abandon_insertion": TypeAdapter(PlaybillInsertionAbandonRequest),
     "cruxible_playbill_authoring_bind": TypeAdapter(PlaybillAuthoringInputCompileRequest),
@@ -574,6 +579,17 @@ def handle_playbill_kit_add(
         lambda client: client.add_playbill_kit(instance_id, request),
         lambda: playbill_api.playbill_kit_add(instance_id, request),
         operation_name="cruxible_playbill_kit_add",
+        local_payload=request.model_dump(mode="json"),
+    )
+
+
+def handle_playbill_claim_type_upgrade(
+    instance_id: str, request: ClaimTypeUpgradeRequestV1
+) -> ClaimTypeUpgradeResultV1:
+    return _dispatch_remote_or_local(
+        lambda client: client.upgrade_playbill_claim_types(instance_id, request),
+        lambda: playbill_api.playbill_claim_type_upgrade(instance_id, request),
+        operation_name="cruxible_playbill_claim_type_upgrade",
         local_payload=request.model_dump(mode="json"),
     )
 

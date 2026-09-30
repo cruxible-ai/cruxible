@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections.abc import Mapping
 from typing import Any, Callable, Final, Literal, cast
 
@@ -32,10 +33,11 @@ from cruxible_client.contracts.canonical import (
     artifact_bytes_for_path,
     artifact_path_for_codec,
     artifact_path_matches,
+    canonical_bytes,
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
+from cruxible_client.contracts.claim_type_structure import ClaimRole, ClaimTypeStructure
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
@@ -111,8 +113,71 @@ class ClaimAttestationConsequencePolicyV1(_StrictClaimTypeModel):
         return value
 
 
-CURRENT_CLAIM_TYPE_FORMAT: Final = "playbill-claim-type-v6"
-_CURRENT_POLICY_FORMATS: Final = frozenset({"playbill-claim-type-v5", "playbill-claim-type-v6"})
+CURRENT_CLAIM_TYPE_FORMAT: Final = "playbill-claim-type-v7"
+_CURRENT_POLICY_FORMATS: Final = frozenset(
+    {"playbill-claim-type-v5", "playbill-claim-type-v6", "playbill-claim-type-v7"}
+)
+_IDENTITY_RULE_FORMATS: Final = frozenset({"playbill-claim-type-v6", "playbill-claim-type-v7"})
+CLAIM_TYPE_FORMATS: Final = (
+    "playbill-claim-type-v1",
+    "playbill-claim-type-v3",
+    "playbill-claim-type-v4",
+    "playbill-claim-type-v5",
+    "playbill-claim-type-v6",
+    "playbill-claim-type-v7",
+)
+
+#: What a Claim of this type must be backed by. ``none``: the Claim's own origin
+#: supports it; ``self``: the evidence rules decide (the meaning every ClaimType
+#: before v7 has); ``captured``: at least one Capture under a declared contract.
+EvidenceRequirement = Literal["none", "self", "captured"]
+#: What a revision that changes its statement keeps. ``replace``: exactly the
+#: evidence it cites; ``accumulate``: everything its predecessors cited too (the
+#: meaning every ClaimType before v7 has).
+RevisionEvidence = Literal["replace", "accumulate"]
+V7_FIELDS: Final = (
+    "description",
+    "member_descriptions",
+    "default_role",
+    "evidence_requirement",
+    "revision_evidence",
+)
+_DESCRIPTION_MAX: Final = 1024
+_MEMBER_DESCRIPTION_MAX: Final = 256
+
+
+def _canonical_text(value: str, *, label: str, maximum: int) -> str:
+    """Refuse text that is not already NFC, trimmed and within bounds."""
+
+    if unicodedata.normalize("NFC", value) != value:
+        raise ValueError(f"{label} must be NFC-normalized")
+    if value.strip() != value:
+        raise ValueError(f"{label} must not start or end with whitespace")
+    if not 1 <= len(value) <= maximum:
+        raise ValueError(f"{label} must be 1..{maximum} characters")
+    return value
+
+
+def canonical_description_text(value: str) -> str:
+    """Normalize authored text to the one spelling a ClaimType v7 accepts."""
+
+    return unicodedata.normalize("NFC", value).strip()
+
+
+class ClaimTypeMemberDescriptionV1(_StrictClaimTypeModel):
+    """What one literal enum member means, beside the ClaimType that admits it."""
+
+    member: str | int | bool | None
+    description: str
+
+    @field_validator("description")
+    @classmethod
+    def _description(cls, value: str) -> str:
+        return _canonical_text(value, label="member description", maximum=_MEMBER_DESCRIPTION_MAX)
+
+
+def _member_key(member: object) -> bytes:
+    return canonical_bytes(member)
 
 
 class ClaimType(_StrictClaimTypeModel):
@@ -138,6 +203,7 @@ class ClaimType(_StrictClaimTypeModel):
         "playbill-claim-type-v4",
         "playbill-claim-type-v5",
         "playbill-claim-type-v6",
+        "playbill-claim-type-v7",
     ] = "playbill-claim-type-v1"
     identity: ArtifactIdentity
     predicate: str
@@ -169,10 +235,25 @@ class ClaimType(_StrictClaimTypeModel):
     #: (stale or uncovered evidence) when it names no ``valid_until``. Absent,
     #: the engine default applies.
     unsure_hold_for: ClaimFreshnessDurationV1 | None = None
+    # ClaimType v7. Every earlier format holds these at null or empty and never
+    # writes them, so its bytes and digests are exactly what they were.
+    #: What the predicate means, for the people and agents who read and write it.
+    description: str | None = None
+    #: What each literal enum member means, sorted by the member's canonical bytes.
+    member_descriptions: tuple[ClaimTypeMemberDescriptionV1, ...] = ()
+    #: The role a write takes when it names none. Never ``derivation``.
+    default_role: ClaimRole | None = None
+    #: Read through ``effective_evidence_requirement``; null before v7.
+    evidence_requirement: EvidenceRequirement | None = None
+    #: Read through ``effective_revision_evidence``; null before v7.
+    revision_evidence: RevisionEvidence | None = None
 
     @model_serializer(mode="wrap")
     def _versioned_wire(self, handler: Any) -> dict[str, object]:
         payload = cast(dict[str, object], handler(self))
+        if self.artifact_format != "playbill-claim-type-v7":
+            for field in V7_FIELDS:
+                payload.pop(field, None)
         if self.unsure_hold_for is None:
             payload.pop("unsure_hold_for", None)
         if self.artifact_format in {
@@ -206,6 +287,61 @@ class ClaimType(_StrictClaimTypeModel):
             raise ValueError("ClaimType pins must be unique by role and target")
         return value
 
+    @field_validator("description")
+    @classmethod
+    def _description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _canonical_text(value, label="ClaimType description", maximum=_DESCRIPTION_MAX)
+
+    @field_validator("member_descriptions")
+    @classmethod
+    def _member_descriptions(
+        cls, value: tuple[ClaimTypeMemberDescriptionV1, ...]
+    ) -> tuple[ClaimTypeMemberDescriptionV1, ...]:
+        keys = tuple(_member_key(item.member) for item in value)
+        if keys != tuple(sorted(set(keys))):
+            raise ValueError(
+                "member descriptions must be sorted and unique by the member's canonical bytes"
+            )
+        return value
+
+    def _validate_v7_fields(self) -> None:
+        if self.artifact_format != "playbill-claim-type-v7":
+            if (
+                self.description is not None
+                or self.member_descriptions
+                or self.default_role is not None
+                or self.evidence_requirement is not None
+                or self.revision_evidence is not None
+            ):
+                raise ValueError(
+                    "only ClaimType v7 can carry descriptions, a default role, an evidence "
+                    "requirement or a revision-evidence rule"
+                )
+            return
+        if self.evidence_requirement is None or self.revision_evidence is None:
+            raise ValueError(
+                "ClaimType v7 states its evidence_requirement and revision_evidence explicitly"
+            )
+        if self.default_role is not None:
+            if self.default_role == "derivation":
+                raise ValueError(
+                    "default_role cannot be derivation: derivation Claims come only from Procedures"
+                )
+            if self.default_role not in self.permitted_roles:
+                raise ValueError("default_role must be one of the ClaimType's permitted_roles")
+        if self.member_descriptions:
+            members = None if self.literal_schema is None else self.literal_schema.get("enum")
+            if not isinstance(members, list):
+                raise ValueError("member descriptions need a literal_schema with a top-level enum")
+            admitted = {_member_key(item) for item in members}
+            for item in self.member_descriptions:
+                if _member_key(item.member) not in admitted:
+                    raise ValueError(
+                        f"member description names {item.member!r}, which is not an enum member"
+                    )
+
     @model_validator(mode="after")
     def _complete_contract(self) -> "ClaimType":
         expected = ArtifactIdentity(kind="ClaimType", name=self.predicate)
@@ -230,20 +366,23 @@ class ClaimType(_StrictClaimTypeModel):
             raise ValueError("ClaimType v4 requires an attestation consequence policy")
         if self.unsure_hold_for is not None:
             if self.artifact_format not in _CURRENT_POLICY_FORMATS:
-                raise ValueError("only ClaimType v5 and v6 can declare unsure_hold_for")
+                raise ValueError("only ClaimType v5 and later can declare unsure_hold_for")
             if self.unsure_hold_for.microseconds <= 0:
                 raise ValueError("ClaimType unsure_hold_for must be positive")
-        if self.artifact_format == "playbill-claim-type-v6":
+        self._validate_v7_fields()
+        if self.artifact_format in _IDENTITY_RULE_FORMATS:
+            version = self.artifact_format.removeprefix("playbill-claim-type-")
             if not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV3):
                 raise ValueError(
-                    "ClaimType v6 requires evidence policy v3 naming CaptureContracts by identity"
+                    f"ClaimType {version} requires evidence policy v3 naming CaptureContracts "
+                    "by identity"
                 )
             if any(pin.target.kind == "Procedure" for pin in self.pins):
                 raise ValueError("ClaimTypes cannot depend on producing Procedures")
             if any(pin.target.kind == "CaptureContract" for pin in self.pins):
                 raise ValueError(
-                    "ClaimType v6 names CaptureContracts by identity in its evidence rules, "
-                    "never by an exact pin"
+                    f"ClaimType {version} names CaptureContracts by identity in its evidence "
+                    "rules, never by an exact pin"
                 )
         elif self.artifact_format == "playbill-claim-type-v5":
             if not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV2):
@@ -328,13 +467,7 @@ def parse_claim_type(
         payload = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
         raise ClaimTypeFormatError("ClaimType is not strict JSON") from exc
-    if not isinstance(payload, dict) or payload.get("artifact_format") not in {
-        "playbill-claim-type-v1",
-        "playbill-claim-type-v3",
-        "playbill-claim-type-v4",
-        "playbill-claim-type-v5",
-        "playbill-claim-type-v6",
-    }:
+    if not isinstance(payload, dict) or payload.get("artifact_format") not in CLAIM_TYPE_FORMATS:
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise ClaimTypeFormatError(f"unsupported ClaimType artifact format: {declared!r}")
     try:
@@ -396,17 +529,38 @@ def _claim_type_digest_v6(claim_type: ClaimType) -> ArtifactDigest:
     )
 
 
+def _claim_type_digest_v7(claim_type: ClaimType) -> ArtifactDigest:
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-envelope-v1",
+        claim_type.model_dump(mode="json"),
+    )
+
+
 CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = {
     "playbill-claim-type-v1": _claim_type_digest_v1,
     "playbill-claim-type-v3": _claim_type_digest_v3,
     "playbill-claim-type-v4": _claim_type_digest_v4,
     "playbill-claim-type-v5": _claim_type_digest_v5,
     "playbill-claim-type-v6": _claim_type_digest_v6,
+    "playbill-claim-type-v7": _claim_type_digest_v7,
 }
 
 
 def claim_type_digest(claim_type: ClaimType) -> ArtifactDigest:
     return CLAIM_TYPE_DIGEST_FUNCTIONS[claim_type.artifact_format](claim_type)
+
+
+def effective_revision_evidence(claim_type: ClaimType) -> RevisionEvidence:
+    """What a statement-changing revision keeps; every format before v7 accumulates."""
+
+    return claim_type.revision_evidence or "accumulate"
+
+
+def effective_evidence_requirement(claim_type: ClaimType) -> EvidenceRequirement:
+    """What backs a Claim of this type; every format before v7 means ``self``."""
+
+    return claim_type.evidence_requirement or "self"
 
 
 def claim_type_accepts_subject(claim_type: ClaimType, subject_kind: str) -> bool:
@@ -462,6 +616,49 @@ def _diagnostic(code: str, message: str, *, path: str) -> CompilerDiagnostic:
     )
 
 
+def _v7_law_refusal(claim_type: ClaimType, *, path: str) -> CompilerDiagnostic | None:
+    """The ClaimType v7 law: a declared requirement must be satisfiable by its rules."""
+
+    from cruxible_client.contracts.captures import (
+        COORDINATOR_SELF_SOURCE_CONTRACT_ID,
+        DIRECT_SELF_ASSERTED_CONTRACT_ID,
+    )
+
+    role = claim_type.default_role
+    if role is not None and (role == "derivation" or role not in claim_type.permitted_roles):
+        return _diagnostic(
+            "playbill.claim_type.default_role_not_permitted",
+            f"default_role {role!r} must be one of the permitted roles "
+            f"({', '.join(claim_type.permitted_roles)}) and cannot be derivation.",
+            path=path,
+        )
+    requirement = effective_evidence_requirement(claim_type)
+    if requirement == "captured":
+        own = {DIRECT_SELF_ASSERTED_CONTRACT_ID, COORDINATOR_SELF_SOURCE_CONTRACT_ID}
+        declared = any(
+            item.target.name not in own
+            for rule in claim_type.evidence_admission_policy.rules
+            for item in getattr(rule, "capture_contracts", ())
+        )
+        if not declared:
+            return _diagnostic(
+                "playbill.claim_type.evidence_requirement_unsatisfiable",
+                "evidence_requirement 'captured' needs an evidence rule naming a declared "
+                "CaptureContract; every rule names only the Claim's own words.",
+                path=path,
+            )
+    if requirement == "none" and not set(
+        claim_type.resolution_policy.required_basis_kinds
+    ).issubset({"origin_only"}):
+        return _diagnostic(
+            "playbill.claim_type.evidence_requirement_unsatisfiable",
+            "evidence_requirement 'none' supports a Claim on its origin alone, so "
+            "resolution_policy.required_basis_kinds may name only origin_only.",
+            path=path,
+        )
+    return None
+
+
 def evaluate_claim_type_law(
     claim_type: ClaimType,
     *,
@@ -478,6 +675,10 @@ def evaluate_claim_type_law(
             verdict="refused",
             diagnostics=(_diagnostic("playbill.claim_type.path_mismatch", str(exc), path=path),),
         )
+    if claim_type.artifact_format == "playbill-claim-type-v7":
+        refusal = _v7_law_refusal(claim_type, path=path)
+        if refusal is not None:
+            return ClaimTypeLawResult(verdict="refused", diagnostics=(refusal,))
     if accepted_artifacts is not None:
         for pin in claim_type.pins:
             accepted = accepted_artifacts.get(pin.target.qualified)
@@ -562,9 +763,17 @@ def evaluate_claim_type_law(
 __all__ = [
     "AcceptedClaimType",
     "CLAIM_TYPE_DIGEST_FUNCTIONS",
+    "CLAIM_TYPE_FORMATS",
     "ClaimAttestationConsequencePolicyV1",
     "ClaimAttestationConsequenceRuleV1",
     "ClaimType",
+    "ClaimTypeMemberDescriptionV1",
+    "EvidenceRequirement",
+    "RevisionEvidence",
+    "V7_FIELDS",
+    "canonical_description_text",
+    "effective_evidence_requirement",
+    "effective_revision_evidence",
     "ClaimEvidenceFreshnessV1",
     "ClaimFreshnessDurationV1",
     "ClaimTypeFreshnessHorizonInvalid",

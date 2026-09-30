@@ -495,6 +495,8 @@ _UNGUARDED_WRITES = (
     ("/playbill/ledger/mirror", {"url": "https://mirror.example.test/ledger.git"}),
     ("/playbill/ledger/publish", {"timeout": 0}),
     ("/playbill/claim-attestations/recover", {}),
+    ("/playbill/claim-types/upgrade", {}),
+    ("/playbill/claim-types/upgrade", {"dry_run": True}),
 )
 
 

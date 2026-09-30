@@ -60,6 +60,11 @@ from cruxible_client.contracts.claim_type_structure import (
     ClaimTypeStructure,
     check_claim_type_structure,
 )
+from cruxible_client.contracts.claim_types import (
+    ClaimTypeMemberDescriptionV1,
+    EvidenceRequirement,
+    RevisionEvidence,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.records import RecordConstructor
 
@@ -115,13 +120,18 @@ CLAIM_TYPE_MEMBERS = frozenset(
         "as_kind",
         "cardinality",
         "coordinate",
+        "default_role",
+        "description",
+        "evidence_requirement",
         "kind",
         "literal_schema",
+        "member_descriptions",
         "members",
         "object_kind",
         "permitted_roles",
         "predicate",
         "referent_sensitivity",
+        "revision_evidence",
         "value",
     }
 )
@@ -245,6 +255,22 @@ class _Node:
     children: dict[str, _Node] = field(default_factory=dict)
     subject_kind: bool = False
     structure: ClaimTypeStructure | None = None
+    meaning: _Meaning | None = None
+
+
+@dataclass(frozen=True)
+class _Meaning:
+    """What a predicate means and how its Claims are backed (ClaimType v7).
+
+    A ClaimType before v7 has no description, no default role, requirement
+    ``self`` and revision evidence ``accumulate``: the meaning it always had.
+    """
+
+    description: str | None = None
+    member_descriptions: tuple[ClaimTypeMemberDescriptionV1, ...] = ()
+    default_role: ClaimRole | None = None
+    evidence_requirement: EvidenceRequirement = "self"
+    revision_evidence: RevisionEvidence = "accumulate"
 
 
 @dataclass(frozen=True)
@@ -265,6 +291,15 @@ class WorldClaimType(ClaimTypeRef):
     permitted_roles: tuple[ClaimRole, ...]
     referent_sensitivity: ReferentSensitivity
     literal_schema: dict[str, object] | None
+    #: What the predicate means (ClaimType v7), and what each enum member means.
+    description: str | None
+    member_descriptions: tuple[ClaimTypeMemberDescriptionV1, ...]
+    #: The role a write takes when it names none.
+    default_role: ClaimRole | None
+    #: What backs a Claim: ``none``, ``self`` (before v7) or ``captured``.
+    evidence_requirement: EvidenceRequirement
+    #: What a statement-changing revision keeps: ``replace`` or ``accumulate`` (before v7).
+    revision_evidence: RevisionEvidence
     _world: World = field(repr=False, compare=False)
     _node: _Node = field(repr=False, compare=False)
 
@@ -793,6 +828,7 @@ class World:
         structure = node.structure
         if structure is None:
             return KindNamespace(self, node)
+        meaning = node.meaning or _Meaning()
         return WorldClaimType(
             address=structure.predicate,
             coordinate=self._coordinate,
@@ -805,6 +841,11 @@ class World:
             literal_schema=(
                 None if structure.literal_schema is None else dict(structure.literal_schema)
             ),
+            description=meaning.description,
+            member_descriptions=meaning.member_descriptions,
+            default_role=meaning.default_role,
+            evidence_requirement=meaning.evidence_requirement,
+            revision_evidence=meaning.revision_evidence,
             _world=self,
             _node=node,
         )
@@ -1202,6 +1243,38 @@ def _replace(root: _Node, path: str, **updates: object) -> None:
         children=existing.children,
         subject_kind=cast(bool, updates.get("subject_kind", existing.subject_kind)),
         structure=cast("ClaimTypeStructure | None", updates.get("structure", existing.structure)),
+        meaning=cast("_Meaning | None", updates.get("meaning", existing.meaning)),
+    )
+
+
+def _meaning(envelope: Mapping[str, object]) -> _Meaning:
+    """Read a ClaimType's v7 meaning; anything unreadable keeps the pre-v7 meaning."""
+
+    description = envelope.get("description")
+    members: list[ClaimTypeMemberDescriptionV1] = []
+    raw_members = envelope.get("member_descriptions")
+    for item in raw_members if isinstance(raw_members, list) else ():
+        try:
+            members.append(ClaimTypeMemberDescriptionV1.model_validate(item))
+        except ValueError:
+            continue
+    role = envelope.get("default_role")
+    requirement = envelope.get("evidence_requirement")
+    revision = envelope.get("revision_evidence")
+    return _Meaning(
+        description=description if isinstance(description, str) else None,
+        member_descriptions=tuple(members),
+        default_role=ClaimRole(role) if role in {item.value for item in ClaimRole} else None,
+        evidence_requirement=(
+            cast(EvidenceRequirement, requirement)
+            if requirement in {"none", "self", "captured"}
+            else "self"
+        ),
+        revision_evidence=(
+            cast(RevisionEvidence, revision)
+            if revision in {"replace", "accumulate"}
+            else "accumulate"
+        ),
     )
 
 
@@ -1248,7 +1321,7 @@ def build_world(
             continue
         structure = check.structure
         _insert(root, structure.predicate)
-        _replace(root, structure.predicate, structure=structure)
+        _replace(root, structure.predicate, structure=structure, meaning=_meaning(envelope))
         subject_kinds.update(structure.allowed_subject_kinds)
         subject_kinds.update(structure.allowed_object_subject_kinds)
     for subject_kind in sorted(subject_kinds):

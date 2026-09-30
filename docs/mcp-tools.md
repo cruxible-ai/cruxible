@@ -133,6 +133,7 @@ approval stay the ordinary steps.
 | `cruxible_playbill_kit_add` | Propose installing or upgrading a kit as one change set | `GOVERNED_WRITE` |
 | `cruxible_playbill_kit_remove` | Propose retiring every artifact a kit installed | `GOVERNED_WRITE` |
 | `cruxible_playbill_evidence_rules_upgrade` | Propose moving ClaimTypes to identity evidence rules | `GOVERNED_WRITE` |
+| `cruxible_playbill_claim_type_upgrade` | Propose moving ClaimTypes to v7, stating their revision evidence | `GOVERNED_WRITE` |
 
 ## Documents and proposals
 

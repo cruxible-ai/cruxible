@@ -8634,7 +8634,8 @@
                   "playbill-claim-type-v3",
                   "playbill-claim-type-v4",
                   "playbill-claim-type-v5",
-                  "playbill-claim-type-v6"
+                  "playbill-claim-type-v6",
+                  "playbill-claim-type-v7"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -8657,6 +8658,36 @@
                 ],
                 "title": "Cardinality",
                 "type": "string"
+              },
+              "default_role": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "normative",
+                      "observation",
+                      "environment_binding",
+                      "derivation"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Default Role"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
               },
               "evidence_admission_policy": {
                 "anyOf": [
@@ -8683,6 +8714,23 @@
                 ],
                 "default": null
               },
+              "evidence_requirement": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "none",
+                      "self",
+                      "captured"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Evidence Requirement"
+              },
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
@@ -8705,6 +8753,14 @@
                 ],
                 "default": null,
                 "title": "Literal Schema"
+              },
+              "member_descriptions": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimTypeMemberDescriptionV1"
+                },
+                "title": "Member Descriptions",
+                "type": "array"
               },
               "object_kind": {
                 "enum": [
@@ -8751,6 +8807,22 @@
               },
               "resolution_policy": {
                 "$ref": "#/$defs/ClaimResolutionPolicyV1"
+              },
+              "revision_evidence": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "replace",
+                      "accumulate"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Revision Evidence"
               },
               "slot_policy": {
                 "default": null,
@@ -8805,6 +8877,39 @@
               "claim_type"
             ],
             "title": "ClaimTypeInput",
+            "type": "object"
+          },
+          "ClaimTypeMemberDescriptionV1": {
+            "additionalProperties": false,
+            "description": "What one literal enum member means, beside the ClaimType that admits it.",
+            "properties": {
+              "description": {
+                "title": "Description",
+                "type": "string"
+              },
+              "member": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Member"
+              }
+            },
+            "required": [
+              "member",
+              "description"
+            ],
+            "title": "ClaimTypeMemberDescriptionV1",
             "type": "object"
           },
           "ClaimTypeSuccessionDependentV1": {
@@ -28653,6 +28758,39 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ClaimTypeMemberDescriptionV1": {
+            "additionalProperties": false,
+            "description": "What one literal enum member means, beside the ClaimType that admits it.",
+            "properties": {
+              "description": {
+                "title": "Description",
+                "type": "string"
+              },
+              "member": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Member"
+              }
+            },
+            "required": [
+              "member",
+              "description"
+            ],
+            "title": "ClaimTypeMemberDescriptionV1",
+            "type": "object"
+          },
           "HandEditInstructionV1": {
             "additionalProperties": false,
             "properties": {
@@ -29311,7 +29449,7 @@
           },
           "PlaybillOrientPredicateV1": {
             "additionalProperties": false,
-            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.",
+            "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.\n\n``description`` is the ClaimType's (v7) description: its first sentence, at\nmost 160 characters, in a compact descriptor; all of it in full.\n``evidence_requirement`` appears only when it is not ``self`` (``none``: the\nClaim's own origin supports it; ``captured``: a Capture under a declared\ncontract is required). A full descriptor also carries each described enum\nmember, the role a write defaults to, and ``revision_evidence``: what a\nstatement-changing revision keeps (``accumulate`` before v7).",
             "properties": {
               "cardinality": {
                 "enum": [
@@ -29320,6 +29458,24 @@
                 ],
                 "title": "Cardinality",
                 "type": "string"
+              },
+              "default_role": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "normative",
+                      "observation",
+                      "environment_binding",
+                      "derivation"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Default Role"
               },
               "description": {
                 "anyOf": [
@@ -29348,6 +29504,23 @@
                 "default": null,
                 "title": "Evidence"
               },
+              "evidence_requirement": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "none",
+                      "self",
+                      "captured"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Evidence Requirement"
+              },
               "live_claims": {
                 "anyOf": [
                   {
@@ -29360,6 +29533,14 @@
                 ],
                 "default": null,
                 "title": "Live Claims"
+              },
+              "member_descriptions": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimTypeMemberDescriptionV1"
+                },
+                "title": "Member Descriptions",
+                "type": "array"
               },
               "members": {
                 "anyOf": [
@@ -29399,6 +29580,22 @@
               "predicate": {
                 "title": "Predicate",
                 "type": "string"
+              },
+              "revision_evidence": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "replace",
+                      "accumulate"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Revision Evidence"
               },
               "roles": {
                 "anyOf": [
@@ -59773,7 +59970,8 @@
                   "playbill-claim-type-v3",
                   "playbill-claim-type-v4",
                   "playbill-claim-type-v5",
-                  "playbill-claim-type-v6"
+                  "playbill-claim-type-v6",
+                  "playbill-claim-type-v7"
                 ],
                 "title": "Artifact Format",
                 "type": "string"
@@ -59796,6 +59994,36 @@
                 ],
                 "title": "Cardinality",
                 "type": "string"
+              },
+              "default_role": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "normative",
+                      "observation",
+                      "environment_binding",
+                      "derivation"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Default Role"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
               },
               "evidence_admission_policy": {
                 "anyOf": [
@@ -59822,6 +60050,23 @@
                 ],
                 "default": null
               },
+              "evidence_requirement": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "none",
+                      "self",
+                      "captured"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Evidence Requirement"
+              },
               "identity": {
                 "$ref": "#/$defs/ArtifactIdentity"
               },
@@ -59844,6 +60089,14 @@
                 ],
                 "default": null,
                 "title": "Literal Schema"
+              },
+              "member_descriptions": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimTypeMemberDescriptionV1"
+                },
+                "title": "Member Descriptions",
+                "type": "array"
               },
               "object_kind": {
                 "enum": [
@@ -59891,6 +60144,22 @@
               "resolution_policy": {
                 "$ref": "#/$defs/ClaimResolutionPolicyV1"
               },
+              "revision_evidence": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "replace",
+                      "accumulate"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Revision Evidence"
+              },
               "slot_policy": {
                 "default": null,
                 "title": "Slot Policy",
@@ -59925,6 +60194,39 @@
               "resolution_policy"
             ],
             "title": "ClaimType",
+            "type": "object"
+          },
+          "ClaimTypeMemberDescriptionV1": {
+            "additionalProperties": false,
+            "description": "What one literal enum member means, beside the ClaimType that admits it.",
+            "properties": {
+              "description": {
+                "title": "Description",
+                "type": "string"
+              },
+              "member": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Member"
+              }
+            },
+            "required": [
+              "member",
+              "description"
+            ],
+            "title": "ClaimTypeMemberDescriptionV1",
             "type": "object"
           },
           "ClaimTypeStructure": {

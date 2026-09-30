@@ -30,7 +30,11 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1, ClaimValueV1
-from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    effective_evidence_requirement,
+    effective_revision_evidence,
+)
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ExactContentClaimObject,
@@ -59,6 +63,7 @@ from cruxible_client.contracts.get_reads import (
     PlaybillGetContenderV1,
     PlaybillGetCoordinateV1,
     PlaybillGetDocumentCardV1,
+    PlaybillGetEvidenceRuleV1,
     PlaybillGetEvidenceV1,
     PlaybillGetHistoryV1,
     PlaybillGetProcedureCardV1,
@@ -78,6 +83,7 @@ from cruxible_client.contracts.get_reads import (
     summary_value,
 )
 from cruxible_client.contracts.operational_reads import capture_handle
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRuleV3
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -990,7 +996,23 @@ def _claim_type_card(
                 (claim_type.predicate,),
             ).fetchone()[0]
         )
-    evidence = CaptureContractNames(instance, coordinate).admitted(claim_type, qualified=True)
+    names = CaptureContractNames(instance, coordinate)
+    evidence = names.admitted(claim_type, qualified=True)
+    rules = tuple(
+        PlaybillGetEvidenceRuleV1(
+            rule_id=rule.rule_id,
+            roles=rule.claim_roles,
+            contracts=(
+                tuple(item.target.qualified for item in rule.capture_contracts)
+                if isinstance(rule, ClaimEvidenceAdmissionRuleV3)
+                else tuple(
+                    names.name(digest, qualified=True) for digest in rule.capture_contract_digests
+                )
+            ),
+            admission=rule.admission,
+        )
+        for rule in claim_type.evidence_admission_policy.rules
+    )
     object_type, members = _object_description(claim_type)
     next_steps = [_render_get(surface, resolved.display, "proof")]
     next_steps.extend(
@@ -1002,8 +1024,14 @@ def _claim_type_card(
         object=object_type,
         cardinality=claim_type.cardinality,
         members=members,
-        description=cast(str | None, getattr(claim_type, "description", None)),
+        description=claim_type.description,
+        member_descriptions=claim_type.member_descriptions,
+        roles=claim_type.permitted_roles,
+        default_role=claim_type.default_role,
+        evidence_requirement=effective_evidence_requirement(claim_type),
+        revision_evidence=effective_revision_evidence(claim_type),
         evidence=evidence,
+        evidence_rules=rules,
         live_claims=live,
         next=tuple(next_steps),
     )

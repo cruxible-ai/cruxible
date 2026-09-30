@@ -404,21 +404,123 @@ def test_every_sdk_evidence_repair_runs_against_the_real_builders(
         assert change.evidence == CaptureEvidence(capture=digest)
 
 
-def test_evidence_required_waits_for_a_claim_type_flag(
-    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
+def _move_to_v7(instance: PlaybillInstance, field: str, **fields: object) -> None:
+    """Accept a ClaimType v7 successor of one write-vocabulary field."""
+
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactRef
+    from cruxible_client.contracts.captures import capture_contract_digest
+    from cruxible_client.contracts.claim_types import (
+        ClaimType,
+        claim_type_digest,
+        claim_type_path,
+        render_claim_type,
+    )
+    from cruxible_client.contracts.policies import (
+        CAPTURE_CONTRACT_REF_ROLE,
+        ClaimEvidenceAdmissionPolicyV3,
+        ClaimEvidenceAdmissionRuleV3,
+    )
+    from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+
+    base = next(item for item in CLAIM_TYPES if item.predicate == f"{KIND}.{field}")
+    (rule,) = base.evidence_admission_policy.rules
+    contract = (
+        REPORTS
+        if rule.capture_contract_digests == (capture_contract_digest(REPORTS).tagged,)  # type: ignore[union-attr]
+        else COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    )
+    successor = ClaimType.model_validate(
+        {
+            **base.model_dump(mode="python"),
+            "artifact_format": "playbill-claim-type-v7",
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV3(
+                rules=(
+                    ClaimEvidenceAdmissionRuleV3(
+                        rule_id=rule.rule_id,
+                        claim_roles=rule.claim_roles,
+                        capture_contracts=(
+                            ArtifactRef(role=CAPTURE_CONTRACT_REF_ROLE, target=contract.identity),
+                        ),
+                        evidence_kinds=rule.evidence_kinds,
+                        admission=rule.admission,
+                        subject_binding=rule.subject_binding,
+                    ),
+                )
+            ),
+            "evidence_requirement": "self",
+            "revision_evidence": "replace",
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(base).tagged),
+            **fields,
+        }
+    )
+    coordinate = instance.accepted_coordinate()
+    tree = instance.tree_at(coordinate.git_oid)
+    tree[claim_type_path(successor.predicate)] = render_claim_type(successor)
+    proposed = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/v7-{field}", proposed_base_oid=coordinate.git_oid
+        ),
+        candidate_tree=tree,
+        timestamp="2026-09-29T11:59:45.000000Z",
+    )
+    assert proposed.candidate is not None, proposed.evaluation
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+
+
+def test_a_captured_claim_type_refuses_own_words_naming_its_contracts(
+    instance: PlaybillInstance,
 ) -> None:
-    """Unreachable until F19 adds the flag; the refusal it guards names the contracts."""
+    """ClaimType v7 ``captured`` makes the evidence_required refusal reachable."""
 
     assert write_verbs.requires_captured_evidence(CLAIM_TYPES[-1]) is False
-    monkeypatch.setattr(write_verbs, "requires_captured_evidence", lambda _claim_type: True)
+    _move_to_v7(instance, "measured", evidence_requirement="captured")
     refusal = _refusal(_write(instance, _set(WI1, "measured", 3)))
     assert refusal.code == "playbill.write.evidence_required"
-    assert REPORTS.identity.name in refusal.candidates
+    assert refusal.candidates == (REPORTS.identity.name,)
+    assert "evidence_requirement 'captured'" in refusal.message
     captured = _write(
         instance,
         _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "sha256:" + "a" * 64}),
     )
     assert _refusal(captured).code != "playbill.write.evidence_required"
+
+
+def test_a_none_claim_type_is_supported_by_the_writers_words_without_a_warning(
+    instance: PlaybillInstance,
+) -> None:
+    _move_to_v7(instance, "measured", evidence_requirement="none")
+    outcome = _write(instance, _set(WI1, "measured", 3))
+    assert outcome.status == "accepted", outcome
+    assert outcome.changes[0].verdict == "supported"
+    assert outcome.warnings == ()
+
+
+def test_default_role_implies_the_role_and_an_explicit_role_overrides_it(
+    instance: PlaybillInstance,
+) -> None:
+    refused = _refusal(_write(instance, _set(WI1, "priority", "high")))
+    assert refused.code == "playbill.write.role_required"
+    assert refused.repair is not None and "default_role" in refused.repair
+    _move_to_v7(instance, "priority", default_role="observation")
+    implied = _write(instance, _set(WI1, "priority", "high"))
+    assert implied.status == "accepted", implied
+    explicit = _write(instance, _set(WI2, "priority", "low", role="normative"))
+    assert explicit.status == "accepted", explicit
+    from cruxible_client.contracts.claims import claim_path, parse_claim
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    roles = {}
+    for outcome in (implied, explicit):
+        claim_id = outcome.changes[0].claim
+        assert claim_id is not None
+        path = claim_path(claim_id.removeprefix("Claim:"))
+        roles[outcome.changes[0].subject] = parse_claim(tree[path], path=path).statement.role
+    assert roles == {WI1: "observation", WI2: "normative"}
 
 
 def test_a_capture_handle_resolves_to_its_digest_before_lowering(

@@ -75,6 +75,7 @@ from cruxible_client.contracts.claim_attestations import (
     PreparedClaimAttestationRequestV1,
 )
 from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1
+from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequestV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
@@ -2815,6 +2816,71 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
     else:
         for warning in result.lint.warnings:
             click.echo(f"  {warning.get('field_path', '$')}: {warning.get('code', 'warning')}")
+
+
+@claim_type_group.command("upgrade")
+@click.option(
+    "--claim-type",
+    "claim_types",
+    multiple=True,
+    help="Predicate to upgrade; repeat for more. Default: every live ClaimType before v7.",
+)
+@click.option(
+    "--revision-evidence",
+    type=click.Choice(["replace", "accumulate"]),
+    default="replace",
+    show_default=True,
+    help=(
+        "What a revision that changes its statement keeps: only the evidence it cites "
+        "(replace) or everything its predecessors cited too (accumulate, the meaning "
+        "before v7)."
+    ),
+)
+@click.option("--dry-run", is_flag=True, help="Evaluate the change set; propose nothing.")
+@json_option
+@handle_errors
+def upgrade_claim_types(
+    claim_types: tuple[str, ...], revision_evidence: str, dry_run: bool, output_json: bool
+) -> None:
+    """Propose moving live ClaimTypes to v7, one reviewed change set.
+
+    v7 states what a ClaimType's Claims need (evidence_requirement, kept at
+    self) and what a statement-changing revision keeps (revision_evidence).
+    Every Claim is carried with its backing intact. Approve the proposal as usual.
+    """
+
+    request = ClaimTypeUpgradeRequestV1.model_validate(
+        {
+            "claim_types": claim_types,
+            "revision_evidence": revision_evidence,
+            "dry_run": dry_run,
+        }
+    )
+    result = _server_call(
+        lambda client, instance_id: client.upgrade_playbill_claim_types(instance_id, request),
+        command_name="playbill claim-type upgrade",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"ClaimType upgrade: {result.status}")
+    for item in result.upgraded:
+        click.echo(
+            f"  upgraded {item.claim_type} ({item.from_format}): revision evidence "
+            f"{item.revision_evidence_before} -> {item.revision_evidence_after}"
+        )
+        for version in item.widened_versions:
+            click.echo(f"    now also admits {version}")
+    for name in result.unchanged:
+        click.echo(f"  already v7 {name}")
+    for refusal in result.refused:
+        click.echo(f"  left as is {refusal.claim_type}: {refusal.reason}")
+    if result.carried_claims:
+        click.echo(f"Claims carried: {result.carried_claims}")
+    if result.detail:
+        click.echo(result.detail)
+    if result.proposal_id:
+        click.echo(f"Next: cruxible playbill proposal approve {result.proposal_id}")
 
 
 @claim_type_group.command("upgrade-evidence-rules")

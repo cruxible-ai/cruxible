@@ -42,7 +42,7 @@ from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvid
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidenceV1,
-    ClaimAdjudicationRuleV1,
+    ClaimAdjudicationRuleAny,
     claim_verdict_v1_compat,
     evaluate_claim_verdict,
 )
@@ -72,7 +72,7 @@ class ClaimFactRowV1(_StrictQueryBackendModel):
 
     tag: Literal["playbill-query-claim-fact-v1"] = "playbill-query-claim-fact-v1"
     accepted: AcceptedClaim
-    rule: ClaimAdjudicationRuleV1
+    rule: ClaimAdjudicationRuleAny
     captures: tuple[CaptureVerdictEvidenceV1, ...] = ()
     attestations: tuple[ClaimAttestationEvidence, ...] = ()
     referent_current: bool = True

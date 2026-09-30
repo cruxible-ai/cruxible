@@ -30,6 +30,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "by exact digest to identity rules. It only proposes; rules whose meaning would "
         "change are left as they are and reported."
     ),
+    "cruxible_playbill_claim_type_upgrade": (
+        "Use to move ClaimTypes before v7 to v7, which states revision_evidence "
+        "(default replace: a statement-changing revision keeps only the evidence it cites) "
+        "and evidence_requirement (kept at self). It only proposes; dry_run proposes nothing."
+    ),
     "cruxible_playbill_kit_remove": (
         "Use when you want to retire what a kit installed. It only proposes; live Claims "
         "that depend on those definitions block it."

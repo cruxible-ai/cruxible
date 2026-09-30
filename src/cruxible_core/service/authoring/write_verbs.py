@@ -61,12 +61,14 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    COORDINATOR_SELF_SOURCE_CONTRACT_ID,
+    DIRECT_SELF_ASSERTED_CONTRACT_ID,
     classify_capture_reuse,
     foreign_source_capture_contract,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
-from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.claim_types import ClaimType, effective_evidence_requirement
 from cruxible_client.contracts.claims import (
     ClaimRetireDependentV1,
     LiteralClaimObject,
@@ -136,6 +138,10 @@ from cruxible_core.service.read_refusals import nearest, resolve_read_coordinate
 from cruxible_core.storage.cas import BodyAccessContext
 
 _AUTHORABLE_ROLES = ("normative", "observation", "environment_binding")
+# The contracts a Claim's own authoring produces; they never satisfy `captured`.
+_OWN_WORDS_CONTRACTS = frozenset(
+    {DIRECT_SELF_ASSERTED_CONTRACT_ID, COORDINATOR_SELF_SOURCE_CONTRACT_ID}
+)
 _MAX_CANDIDATES = 8
 # How many of a contract's Captures about the Subject, newest first, are tried
 # for the newest one that verifies.
@@ -249,15 +255,14 @@ def _render_commit(surface: PlaybillReadSurface, git_oid: str) -> str:
 def requires_captured_evidence(claim_type: ClaimType) -> bool:
     """Whether a ClaimType refuses a write backed only by the writer's own words.
 
-    Decision b refuses such a write with ``playbill.write.evidence_required``.
-    No accepted ClaimType field says "captured evidence required" yet: a policy
-    that merely does not admit self evidence lets the write land ``uncovered``,
-    with a warning (R05). The flag arrives with the compiler revision (F19);
-    until then this answers False and the refusal is unreachable.
+    Decision b refuses such a write with ``playbill.write.evidence_required``: a
+    v7 ClaimType whose ``evidence_requirement`` is ``captured``. Under ``self``
+    (every earlier ClaimType) a policy that merely does not admit self evidence
+    lets the write land ``uncovered``, with a warning (R05); under ``none`` the
+    writer's words are the origin and support the Claim.
     """
 
-    del claim_type
-    return False
+    return effective_evidence_requirement(claim_type) == "captured"
 
 
 _INTEGER_TEXT = re.compile(r"-?(?:0|[1-9][0-9]*)")
@@ -699,14 +704,20 @@ class _Planner:
                     field_path=f"changes[{index}].role",
                 )
             return cast(ClaimRole, requested)
+        if claim_type.default_role is not None and claim_type.default_role in permitted:
+            return claim_type.default_role
         if len(permitted) == 1:
             return permitted[0]
         raise _refuse(
             "playbill.write.role_required",
-            f"{field_name} permits {len(permitted)} roles, so the role is not implied",
+            f"{field_name} permits {len(permitted)} roles and declares no default_role, "
+            "so the role is not implied",
             change=index,
             candidates=permitted,
-            repair=f"Pass role as one of: {', '.join(permitted)}",
+            repair=(
+                f"Pass role as one of: {', '.join(permitted)}; or declare default_role on "
+                "the ClaimType"
+            ),
             field_path=f"changes[{index}].role",
         )
 
@@ -865,13 +876,17 @@ class _Planner:
             body = text.encode("utf-8")
         if requires_captured_evidence(info.claim_type):
             with self.instance.bind_accepted_projection(self.head) as projection:
-                admitted = CaptureContractNames(
-                    self.instance, self.head, connection=projection.typed.connection
-                ).admitted(info.claim_type)
+                admitted = tuple(
+                    name
+                    for name in CaptureContractNames(
+                        self.instance, self.head, connection=projection.typed.connection
+                    ).admitted(info.claim_type)
+                    if name not in _OWN_WORDS_CONTRACTS
+                )
             raise _refuse(
                 "playbill.write.evidence_required",
-                f"{field_name} requires captured evidence ({', '.join(admitted)}); "
-                "your own words cannot back it",
+                f"{field_name} declares evidence_requirement 'captured' "
+                f"({', '.join(admitted)}); your own words cannot back it",
                 change=index,
                 candidates=admitted,
                 repair=(

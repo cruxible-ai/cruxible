@@ -80,6 +80,7 @@ from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
+    effective_revision_evidence,
     parse_claim_type,
     render_claim_type,
 )
@@ -1275,15 +1276,28 @@ def _lower_claim(
         role=citation_role,
         origin=citation_origin,
     )
+    # Under `replace` a revision that changes what it states carries exactly
+    # the evidence it cites now; one that states the same thing again, and every
+    # revision under `accumulate`, keeps everything its predecessors cited.
+    inherited = predecessor
+    if (
+        predecessor is not None
+        and effective_revision_evidence(claim_type) == "replace"
+        and statement
+        != predecessor.statement.model_copy(
+            update={"claim_type_digest": statement.claim_type_digest}
+        )
+    ):
+        inherited = None
     predecessor_citations = (
-        predecessor.backing.citations
-        if predecessor is not None and isinstance(predecessor.backing, ClaimBackingV2)
+        inherited.backing.citations
+        if inherited is not None and isinstance(inherited.backing, ClaimBackingV2)
         else ()
     )
     capture_digests = tuple(
         sorted(
             {
-                *(() if predecessor is None else predecessor.backing.capture_digests),
+                *(() if inherited is None else inherited.backing.capture_digests),
                 capture_digest_value,
             },
             key=lambda item: item.encode("ascii"),
@@ -1388,11 +1402,11 @@ def _lower_claim(
                 derivation.procedure.artifact_digest if derivation is not None else None
             ),
             source_mappings=_merge_mappings(
-                () if predecessor is None else predecessor.backing.source_mappings,
+                () if inherited is None else inherited.backing.source_mappings,
                 (source_mapping,),
             ),
         ),
-        pins=_merge_pins(() if predecessor is None else predecessor.pins, tuple(pins)),
+        pins=_merge_pins(() if inherited is None else inherited.pins, tuple(pins)),
         lifecycle=ArtifactLifecycle(
             predecessor_digest=(
                 None if predecessor is None else claim_artifact_digest(predecessor).tagged

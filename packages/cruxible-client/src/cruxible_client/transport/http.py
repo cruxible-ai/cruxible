@@ -31,6 +31,10 @@ from cruxible_client.contracts.claim_reads import (
     ClaimValuesRequestV1,
     ClaimValuesResultV1,
 )
+from cruxible_client.contracts.claim_type_upgrade import (
+    ClaimTypeUpgradeRequestV1,
+    ClaimTypeUpgradeResultV1,
+)
 from cruxible_client.contracts.errors import (
     PlaybillSinceRequestInvalid,
 )
@@ -526,6 +530,15 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/playbill/kits", json=request.model_dump(mode="json")
         )
         return self._parse_model(response, PlaybillKitChangeResultV1)
+
+    def upgrade_playbill_claim_types(
+        self, instance_id: str, request: ClaimTypeUpgradeRequestV1
+    ) -> ClaimTypeUpgradeResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claim-types/upgrade",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, ClaimTypeUpgradeResultV1)
 
     def upgrade_playbill_evidence_rules(self, instance_id: str) -> EvidenceRuleUpgradeResultV1:
         response = self._client.post(
