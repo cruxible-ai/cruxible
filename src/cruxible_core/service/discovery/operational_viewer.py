@@ -15,7 +15,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from cruxible_client.contracts.line_dispatch import LineArmPrincipalV1
+from cruxible_client.contracts.line_dispatch import (
+    LineArmPrincipalV1,
+    is_current_arm_principal_record,
+)
+from cruxible_client.contracts.operational_reads import PlaybillArmPrincipalKind
 
 
 @dataclass(frozen=True)
@@ -40,8 +44,10 @@ class OperationalViewer:
     )
 
     def may_see(self, principal: LineArmPrincipalV1) -> bool:
-        if principal.kind == "local_operator":
-            # The local operator is one fixed identity with no credential.
+        if principal.kind != "runtime_credential":
+            # The local operator is one fixed identity with no credential, and
+            # a claimed principal's label is its principal ID, which principal
+            # lists already show; only a credential's id and label are withheld.
             return True
         if self.admin:
             return True
@@ -58,9 +64,20 @@ class OperationalViewer:
 def may_see_arming(viewer: OperationalViewer | None, principal: LineArmPrincipalV1) -> bool:
     """Whether this reader may see who armed a Line: its runtime credential id and label."""
 
-    if principal.kind == "local_operator":
+    if principal.kind != "runtime_credential":
         return True
     return viewer is not None and viewer.may_see(principal)
 
 
-__all__ = ["OperationalViewer", "may_see_arming"]
+def arm_principal_kind(record: object, principal: LineArmPrincipalV1) -> PlaybillArmPrincipalKind:
+    """The kind a card shows for a persisted ``armed_by``.
+
+    A record persisted before arms named their provenance parses under the
+    current model with a defaulted tag, so it would read as the implicit local
+    operator; it is shown as ``unverified`` instead, as dispatch treats it.
+    """
+
+    return principal.kind if is_current_arm_principal_record(record) else "unverified"
+
+
+__all__ = ["OperationalViewer", "arm_principal_kind", "may_see_arming"]

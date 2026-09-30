@@ -97,14 +97,23 @@ class PlaybillRunRowV1(_StrictOperationalModel):
     nodes_done: int = Field(ge=0)
 
 
+#: Who armed a Line, as a card shows it. ``unverified`` is an arm persisted
+#: before arms recorded their provenance: it is never resolved as any
+#: principal, and stops with ``arm_requires_rearm`` until it is rearmed.
+PlaybillArmPrincipalKind: TypeAlias = Literal[
+    "runtime_credential", "principal_claim", "local_operator", "unverified"
+]
+
+
 class PlaybillGetLineArmV1(_StrictOperationalModel):
     """One arm of a Line: who armed it, and what its automation is doing."""
 
     arm: str
     state: PlaybillLineArmState
-    principal_kind: Literal["runtime_credential", "principal_claim", "local_operator"]
-    # Who armed it: the local operator, or a runtime credential's label and id.
-    # A runtime credential's are shown only to that credential or an admin;
+    principal_kind: PlaybillArmPrincipalKind
+    # Who armed it: the local operator, a claimed principal, or a runtime
+    # credential's label and id. A runtime credential's are shown only to an
+    # admin, that credential, or another credential bound to its principal;
     # anyone else reads ``armed_by_withheld``.
     armed_by: str | None = Field(default=None, exclude_if=_omit_none)
     credential: str | None = Field(default=None, exclude_if=_omit_none)
@@ -230,9 +239,7 @@ class PlaybillGetRunTriggerV1(_StrictOperationalModel):
     line: str
     occurrence: str | None = Field(default=None, exclude_if=_omit_none)
     arm: str | None = Field(default=None, exclude_if=_omit_none)
-    principal_kind: Literal["runtime_credential", "principal_claim", "local_operator"] | None = (
-        Field(default=None, exclude_if=_omit_none)
-    )
+    principal_kind: PlaybillArmPrincipalKind | None = Field(default=None, exclude_if=_omit_none)
     # Withheld, as on a Line card, unless the reader is the arming credential or an admin.
     armed_by: str | None = Field(default=None, exclude_if=_omit_none)
     armed_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
@@ -317,6 +324,7 @@ __all__ = [
     "LINE_CARD_ARMS",
     "LINE_CARD_RUNS",
     "OPERATIONAL_CARD_LIST_LIMIT",
+    "PlaybillArmPrincipalKind",
     "PlaybillGetCaptureCardV1",
     "PlaybillGetLineArmV1",
     "PlaybillGetLineCardV1",

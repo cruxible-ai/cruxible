@@ -78,6 +78,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.operational_viewer import (
     OperationalViewer,
+    arm_principal_kind,
     may_see_arming,
 )
 from cruxible_core.service.discovery.runs import run_counts, run_rows
@@ -290,7 +291,7 @@ def _arm(
     return PlaybillGetLineArmV1(
         arm=view.arm_id,
         state=state,
-        principal_kind=view.armed_by.kind,
+        principal_kind=arm_principal_kind(data["armed_by"], view.armed_by),
         armed_by=view.armed_by.label if visible else None,
         credential=view.armed_by.credential_id if visible else None,
         armed_by_withheld=not visible,

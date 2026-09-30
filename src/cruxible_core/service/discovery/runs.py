@@ -33,7 +33,11 @@ from cruxible_core.exhaust.journal_index import RunLocator, RunLocatorKey
 from cruxible_core.exhaust.records import JournalStreamIdentityV1, parse_journal_payload
 from cruxible_core.procedures.execution import parse_admission_payload, procedure_line_partition
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.discovery.operational_viewer import OperationalViewer, may_see_arming
+from cruxible_core.service.discovery.operational_viewer import (
+    OperationalViewer,
+    arm_principal_kind,
+    may_see_arming,
+)
 from cruxible_core.storage.cas import BodyAccessContext
 
 _ACCESS = BodyAccessContext(principal_id="playbill-run-reads", can_read_body=True)
@@ -221,7 +225,7 @@ def _run_trigger(
             by = data.get("armed_by")
             if isinstance(by, Mapping):
                 principal = LineArmPrincipalV1.model_validate(by)
-                fields["principal_kind"] = principal.kind
+                fields["principal_kind"] = arm_principal_kind(by, principal)
                 if may_see_arming(viewer, principal):
                     fields["armed_by"] = principal.label
                 else:
