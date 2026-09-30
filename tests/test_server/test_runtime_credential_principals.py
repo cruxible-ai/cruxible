@@ -534,3 +534,90 @@ def test_an_unregistered_claim_is_refused_on_every_instance_write(
         )
         assert refused.status_code == 403, (path, refused.text)
         assert refused.json()["error_code"] == "playbill.identity.principal_absent", path
+
+
+#: Doors that take the request's actor through ``_write_actor_context`` (runs,
+#: Line arming and dispatch). A read-tier Line dispatch included: every one must
+#: give an unbound credential the typed refusal, not a generic 401.
+_ACTOR_DOORS = (
+    ("/playbill/lines/missing/dispatch", {}, PermissionMode.READ_ONLY),
+    ("/playbill/lines/missing/dispatch", {}, PermissionMode.ADMIN),
+    ("/playbill/lines/missing/arm", None, PermissionMode.ADMIN),
+    ("/playbill/lines/missing/disarm", None, PermissionMode.ADMIN),
+)
+
+
+@pytest.mark.parametrize(("path", "body", "mode"), _ACTOR_DOORS)
+def test_an_unbound_credential_gets_the_typed_refusal_at_every_actor_door(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    body: dict[str, object] | None,
+    mode: PermissionMode,
+) -> None:
+    """Regression (review P2): a read-tier dispatch raised a plain AuthenticationError."""
+
+    client, instance_id, _reviewer_key = playbill_http
+    unbound = get_runtime_credential_store().create_credential(
+        instance_id=instance_id, label="manager", permission_mode=mode, principal_id=None
+    )
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+
+    refused = client.post(
+        f"/api/v1/{instance_id}{path}",
+        json=body,
+        headers={"Authorization": f"Bearer {unbound.token}"},
+    )
+
+    assert refused.status_code == 403, (path, refused.text)
+    answer = refused.json()
+    assert answer["error_code"] == "playbill.identity.credential_unbound", path
+    assert answer["repair"] == {
+        "operation": "credential.mint",
+        "arguments": {"unbound_credential_id": unbound.record.credential_id},
+    }
+    # MCP tool errors carry the message: the code and the runnable repair.
+    assert "cruxible credential mint --principal-id ID --key-dir DIR" in answer["message"]
+    # The SDK reads the same envelope back as a coded error, not an auth failure.
+    from cruxible_client.errors import AuthenticationError as ClientAuthenticationError
+    from cruxible_client.errors import ErrorResponse, response_to_error
+
+    sdk_error = response_to_error(403, ErrorResponse.model_validate(answer))
+    assert not isinstance(sdk_error, ClientAuthenticationError)
+    assert getattr(sdk_error, "error_code", None) == "playbill.identity.credential_unbound"
+    assert getattr(sdk_error, "repair").operation == "credential.mint"
+
+
+def test_every_actor_boundary_refuses_an_unbound_credential_typed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared boundary every run, Line, prediction and curation door calls."""
+
+    from cruxible_core.errors import PrincipalRefusedError
+    from cruxible_core.runtime import playbill_api
+    from cruxible_core.server.auth import ResolvedAuthContext
+
+    monkeypatch.setattr(playbill_api, "is_server_auth_enabled", lambda: True)
+    monkeypatch.setattr(
+        playbill_api,
+        "get_current_auth_context",
+        lambda: ResolvedAuthContext(
+            credential_id="cred-unbound",
+            credential_label="manager",
+            credential_type="runtime_credential",
+            instance_scope="inst",
+            role=None,
+            effective_permission_mode=PermissionMode.ADMIN,
+            principal_id=None,
+        ),
+    )
+    for boundary in (
+        playbill_api._write_actor_context,
+        playbill_api._curation_actor,
+        playbill_api._actor_id,
+    ):
+        with pytest.raises(PrincipalRefusedError) as refused:
+            boundary("inst")
+        assert refused.value.error_code == "playbill.identity.credential_unbound"
+        assert refused.value.repair is not None
+        assert refused.value.repair.arguments == {"unbound_credential_id": "cred-unbound"}  # type: ignore[union-attr]

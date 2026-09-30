@@ -408,10 +408,19 @@ def _write_actor_context(instance_id: str) -> GovernedActorContext | None:
     A configured principal ID (an auth-off daemon's claim) must name a registered,
     active principal before it writes; reads stay open, so an agent can read
     while its registration awaits activation. A bearer credential's principal is
-    checked when the credential authenticates.
+    checked when the credential authenticates. A bearer credential bound to no
+    principal is refused here with ``credential_unbound`` and its mint repair, so
+    every write door gives the same typed refusal rather than a generic
+    authentication error.
     """
 
     actor = _actor_context()
+    if actor is None:
+        unbound = _unbound_credential()
+        if unbound is not None:
+            raise credential_unbound_refusal(
+                credential_id=unbound.credential_id, credential_label=unbound.credential_label
+            )
     auth_context = get_current_auth_context()
     if (
         actor is not None
@@ -434,11 +443,6 @@ def _actor_id(instance_id: str) -> str:
 
     actor = _write_actor_context(instance_id)
     if actor is None:
-        unbound = _unbound_credential()
-        if unbound is not None:
-            raise credential_unbound_refusal(
-                credential_id=unbound.credential_id, credential_label=unbound.credential_label
-            )
         raise AuthenticationError("Playbill writes require an authenticated actor identity")
     return actor.actor_id
 
