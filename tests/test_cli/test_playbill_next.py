@@ -493,3 +493,51 @@ def test_cli_next_defaults_to_the_shared_page_size_and_bounds_it(
     assert (calls[0]["limit"], calls[0]["cursor"]) == (contracts.PLAYBILL_NEXT_DEFAULT_LIMIT, None)
     assert refused.exit_code != 0
     assert "--limit" in refused.output
+
+
+def test_cli_next_keeps_a_row_whose_repair_is_withheld_and_names_what_it_needs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    withheld = {
+        "item_id": "sha256:" + "c" * 64,
+        "severity": "repair",
+        "reason": "consumer_stalled",
+        "subject_identity": "Line:hourly",
+        "detail": {"state": "stopped"},
+        "repair": None,
+        "repair_requires": {
+            "operation": "playbill.line.arm",
+            "tool": "cruxible_playbill_line_arm",
+            "tier": "governed_write",
+            "because": ["tier"],
+        },
+    }
+
+    class StubClient:
+        def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
+            return contracts.PlaybillNextResult(
+                coordinate=COORDINATE,
+                evaluation_time="2026-08-24T18:00:00Z",
+                observed_domains=["accepted_state"],
+                unobserved_domains=[
+                    "workspace_floor",
+                    "workspace_sources",
+                    "workspace_projections",
+                ],
+                status=HEALTHY_STATUS,
+                items=[withheld],
+                total_items=1,
+                result_digest="sha256:" + "5" * 64,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace",
+        lambda _root: {},
+    )
+
+    assert _invoke_next().splitlines()[0] == (
+        "repair  consumer_stalled  Line:hourly  repair withheld: "
+        "cruxible_playbill_line_arm needs the governed_write tier"
+    )
+    assert _invoke_next("--brief").splitlines() == ["repair  consumer_stalled  Line:hourly"]

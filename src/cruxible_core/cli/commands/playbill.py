@@ -3723,7 +3723,7 @@ def write_changes(
     "--at",
     "at_oid",
     default=None,
-    help="Accepted git oid, or a unique 12+ hex prefix, to read at; default head.",
+    help="Accepted git oid, a unique 12+ hex prefix, or a generation number; default head.",
 )
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @click.option(
@@ -3749,7 +3749,9 @@ def get_by_ref(
 
     REF is any reference form: CLM-... (or a unique prefix), kind/id, a predicate,
     ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, an artifact
-    path, or a proposal id or prefix.
+    path, a proposal id or prefix, or an operational reference: Line:<name> (or
+    the Line identity digest next names), CAP-<12+ hex> or Capture:<digest>,
+    ResolutionContract:<name>, Mandate:<name>.
     """
 
     from cruxible_client.contracts.get_reads import PlaybillByteRangeV1, PlaybillGetRequestV1
@@ -3878,8 +3880,8 @@ def _emit_get_text(result: Any) -> None:
                 else f"  = {_get_value_text(revision.value, width=GET_CLI_HISTORY_VALUE_WIDTH)}"
             )
             click.echo(
-                f"rev {revision.revision}  seq {revision.sequence}  {revision.accepted}  "
-                f"by {revision.actor or '-'}{value}"
+                f"rev {revision.revision}  seq {revision.sequence} at {revision.git_oid}  "
+                f"{revision.accepted}  by {revision.actor or '-'}{value}"
             )
             for step in revision.next:
                 click.echo(f"next: {step}")
@@ -4318,7 +4320,7 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     "--at",
     "at_oid",
     default=None,
-    help="Read at this accepted git oid (or a unique 12+ hex prefix).",
+    help="Read at this accepted git oid (or a unique 12+ hex prefix), or a generation number.",
 )
 @click.option("--evaluation-time", default=None, help="ISO-8601 instant; default now.")
 @json_option
@@ -5178,6 +5180,15 @@ def next_work(
             else ""
         )
         row = f"{change}{item.severity}  {item.reason}  {item.subject_identity}"
+        if item.repair is None:
+            needs = _next_requirement_hint(item.repair_requires)
+            click.echo(row + ("" if output_brief else f"  repair withheld: {needs}"))
+            if not output_brief:
+                for finding in item.findings:
+                    click.echo(
+                        f"  also: {finding.severity}  {finding.reason}  {finding.subject_identity}"
+                    )
+            continue
         if output_brief:
             click.echo(row + (f"  next={item.repair.command}" if item.repair.command else ""))
             continue
@@ -5192,6 +5203,19 @@ def next_work(
             f"Showing {len(result.items)} of {result.total_items} rows. "
             f"Next: --cursor {result.next_cursor}"
         )
+
+
+def _next_requirement_hint(requires: contracts.PlaybillNextRepairRequirement | None) -> str:
+    """What running a withheld repair needs, in one phrase."""
+
+    if requires is None:
+        return "this caller cannot run it"
+    needs = []
+    if "tier" in requires.because:
+        needs.append(f"the {requires.tier} tier")
+    if "profile" in requires.because:
+        needs.append(f"the {requires.profile} MCP tool profile")
+    return f"{requires.tool} needs " + " and ".join(needs)
 
 
 def _next_repair_hint(repair: contracts.PlaybillNextRepair) -> str:
@@ -5228,11 +5252,21 @@ def _echo_next_status(status: contracts.PlaybillNextStatus) -> None:
         repair = health.repair
         hint = None if repair is None else repair.command or repair.required_change
         if health.repair_hidden:
-            hint = "(repair needs a higher permission tier)"
+            hint = f"(repair withheld: {_next_requirement_hint(health.repair_requires)})"
         label = facet.replace("_", " ")
         click.echo(f"Status: {label} {health.state}" + (f"  next={hint}" if hint else ""))
+    arms = (
+        status.consumers.detail.get("line_arms")
+        if isinstance(status.consumers.detail, dict)
+        else None
+    )
+    if isinstance(arms, dict) and (arms.get("stalled") or arms.get("stopped")):
+        click.echo(
+            f"Status: line arms stalled={arms.get('stalled', 0)} stopped={arms.get('stopped', 0)}"
+            "  next=cruxible playbill orient --section lines"
+        )
     if status.hidden:
-        click.echo(f"Hidden: {status.hidden} rows whose repair needs a higher permission tier")
+        click.echo(f"Hidden: {status.hidden} rows")
 
 
 @playbill_group.group("curation")
@@ -5792,7 +5826,16 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     section = result.get("section")
     if section is not None and not result[section]:
         lines.append(f"(no {section.replace('_', ' ')})")
-    if section in {"documents", "procedures"}:
+    if section in {
+        "documents",
+        "procedures",
+        "runs",
+        "lines",
+        "captures",
+        "capture_contracts",
+        "predictions",
+        "mandates",
+    }:
         for row in result[section]:
             lines.append("  ".join(str(value) for value in row.values()))
     if section == "interfaces":
@@ -5825,6 +5868,13 @@ def _render_orient(result: Mapping[str, Any]) -> str:
         )
         lines.extend(f"  {line}" for line in attention["top"])
         lines.extend(f"  note: {line}" for line in attention.get("notes", ()))
+        arms = attention.get("arms")
+        if arms is not None:
+            lines.append(
+                f"  Line arms: running={arms['running']} stalled={arms['stalled']} "
+                f"stopped={arms['stopped']}"
+            )
+            lines.extend(f"    {line}" for line in arms.get("needs_attention", ()))
     if result.get("next"):
         lines.append("Next:")
         lines.extend(f"  {line}" for line in result["next"])
@@ -5850,7 +5900,7 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     "--at",
     "at_oid",
     default=None,
-    help="An accepted generation's Git OID or a unique 12+ hex prefix.",
+    help="An accepted generation's Git OID, a unique 12+ hex prefix, or its number.",
 )
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @json_option

@@ -95,6 +95,52 @@ def _not_a_capture(
     )
 
 
+_MAX_PREFIX_CANDIDATES = 10
+
+
+def _full_capture_digest(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, value: str
+) -> str:
+    """A full Capture digest; a ``CAP-`` handle or digest prefix resolves among accepted Captures.
+
+    A prefix must name exactly one Capture accepted Claims cite at the read
+    coordinate; an ambiguous or unknown one refuses with the candidates and the
+    orient section that lists Captures.
+    """
+
+    from cruxible_core.service.discovery.operational import capture_hex, captures_with_prefix
+
+    hex_digits = capture_hex(value)
+    if hex_digits is None or len(hex_digits) == 64:
+        return value if hex_digits is None else "sha256:" + hex_digits
+    with instance.bind_accepted_projection(coordinate) as projection:
+        matches = captures_with_prefix(
+            projection.typed.connection, hex_digits, limit=_MAX_PREFIX_CANDIDATES + 1
+        )
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        raise ReadRefusalError(
+            "playbill.capture.ref_ambiguous",
+            f"{value!r} is a prefix of {len(matches)} accepted Captures",
+            http_status=409,
+            candidates=matches[:_MAX_PREFIX_CANDIDATES],
+            repair=RepairOperationV1(
+                operation="playbill.capture.read", arguments={"capture_digest": matches[0]}
+            ),
+            repair_line="Pass one of them in full",
+            context={"capture_digest": value},
+        )
+    raise ReadRefusalError(
+        "playbill.capture.not_found",
+        f"no accepted Capture has a digest starting with {hex_digits}",
+        http_status=404,
+        repair=RepairOperationV1(operation="playbill.orient", arguments={"section": "captures"}),
+        repair_line='Run orient(section="captures") to list them, or pass a full digest',
+        context={"capture_digest": value},
+    )
+
+
 class _LedgerResolver:
     def __init__(self, instance: PlaybillInstance) -> None:
         self.instance = instance
@@ -127,6 +173,11 @@ def service_read_playbill_capture(
         )
     )
     public = AcceptedCoordinate.from_internal(coordinate)
+    request = request.model_copy(
+        update={
+            "capture_digest": _full_capture_digest(instance, coordinate, request.capture_digest)
+        }
+    )
     store = instance.body_store()
     if not store.metadata(request.capture_digest, access=access).present:
         return CaptureReadV1(

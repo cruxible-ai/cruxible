@@ -147,7 +147,14 @@
         "procedures",
         "claim_types",
         "queries",
-        "interfaces"
+        "interfaces",
+        "runs",
+        "running",
+        "lines",
+        "captures",
+        "capture_contracts",
+        "predictions",
+        "mandates"
       ]
     },
     "PlaybillOrientSurface": {
@@ -8839,6 +8846,12 @@
             "additionalProperties": false,
             "description": "Succeed one accepted ClaimType, and disposition its closure, in this set.",
             "properties": {
+              "carry_all": {
+                "default": false,
+                "description": "Carry every closure member dependents does not name to the successor, computed by the daemon (retired Claims included); dependents then names only exceptions.",
+                "title": "Carry All",
+                "type": "boolean"
+              },
               "dependents": {
                 "default": [],
                 "items": {
@@ -24554,7 +24567,33 @@
           "json_name": "repair",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/PlaybillNextRepair"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "repair_requires": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "repair_requires",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepairRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "severity": {
@@ -24656,6 +24695,87 @@
             ],
             "title": "PlaybillNextRepair",
             "type": "object"
+          },
+          "PlaybillNextRepairRequirement": {
+            "additionalProperties": false,
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "properties": {
+              "because": {
+                "items": {
+                  "enum": [
+                    "tier",
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "title": "Because",
+                "type": "array"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.set",
+                  "playbill.write",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.proposal.approve",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "playbill.settle",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "profile": {
+                "anyOf": [
+                  {
+                    "const": "full",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Profile"
+              },
+              "tag": {
+                "const": "playbill-next-repair-requirement-v1",
+                "default": "playbill-next-repair-requirement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write",
+                  "admin"
+                ],
+                "title": "Tier",
+                "type": "string"
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "tool",
+              "tier",
+              "because"
+            ],
+            "title": "PlaybillNextRepairRequirement",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -24702,7 +24822,25 @@
             "type": "array"
           },
           "repair": {
-            "$ref": "#/$defs/PlaybillNextRepair"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repair_requires": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepairRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "severity": {
             "enum": [
@@ -24781,6 +24919,25 @@
             "default": false,
             "title": "Repair Hidden",
             "type": "boolean"
+          }
+        },
+        "repair_requires": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "repair_requires",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepairRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "state": {
@@ -24867,6 +25024,87 @@
             ],
             "title": "PlaybillNextRepair",
             "type": "object"
+          },
+          "PlaybillNextRepairRequirement": {
+            "additionalProperties": false,
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "properties": {
+              "because": {
+                "items": {
+                  "enum": [
+                    "tier",
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "title": "Because",
+                "type": "array"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.set",
+                  "playbill.write",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.proposal.approve",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "playbill.settle",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "profile": {
+                "anyOf": [
+                  {
+                    "const": "full",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Profile"
+              },
+              "tag": {
+                "const": "playbill-next-repair-requirement-v1",
+                "default": "playbill-next-repair-requirement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write",
+                  "admin"
+                ],
+                "title": "Tier",
+                "type": "string"
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "tool",
+              "tier",
+              "because"
+            ],
+            "title": "PlaybillNextRepairRequirement",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -24890,6 +25128,17 @@
             "default": false,
             "title": "Repair Hidden",
             "type": "boolean"
+          },
+          "repair_requires": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepairRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "state": {
             "title": "State",
@@ -25001,7 +25250,33 @@
           "json_name": "repair",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/PlaybillNextRepair"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "repair_requires": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "repair_requires",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepairRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "severity": {
@@ -25091,7 +25366,25 @@
                 "type": "array"
               },
               "repair": {
-                "$ref": "#/$defs/PlaybillNextRepair"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepair"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "repair_requires": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepairRequirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "severity": {
                 "enum": [
@@ -25179,6 +25472,87 @@
             ],
             "title": "PlaybillNextRepair",
             "type": "object"
+          },
+          "PlaybillNextRepairRequirement": {
+            "additionalProperties": false,
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "properties": {
+              "because": {
+                "items": {
+                  "enum": [
+                    "tier",
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "title": "Because",
+                "type": "array"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.set",
+                  "playbill.write",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.proposal.approve",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "playbill.settle",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "profile": {
+                "anyOf": [
+                  {
+                    "const": "full",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Profile"
+              },
+              "tag": {
+                "const": "playbill-next-repair-requirement-v1",
+                "default": "playbill-next-repair-requirement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write",
+                  "admin"
+                ],
+                "title": "Tier",
+                "type": "string"
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "tool",
+              "tier",
+              "because"
+            ],
+            "title": "PlaybillNextRepairRequirement",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -25235,7 +25609,25 @@
             "type": "array"
           },
           "repair": {
-            "$ref": "#/$defs/PlaybillNextRepair"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepair"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repair_requires": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillNextRepairRequirement"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "severity": {
             "enum": [
@@ -25418,6 +25810,204 @@
         "operation",
         "required_change",
         "target"
+      ]
+    },
+    "PlaybillNextRepairRequirement": {
+      "fields": {
+        "because": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "because",
+          "required": true,
+          "schema": {
+            "items": {
+              "enum": [
+                "tier",
+                "profile"
+              ],
+              "type": "string"
+            },
+            "title": "Because",
+            "type": "array"
+          }
+        },
+        "operation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operation",
+          "required": true,
+          "schema": {
+            "enum": [
+              "playbill.authoring.create",
+              "playbill.authoring.bind",
+              "playbill.claim.retire",
+              "playbill.set",
+              "playbill.write",
+              "playbill.floor.export",
+              "playbill.block.depublish",
+              "playbill.block.repin",
+              "playbill.block.sync",
+              "playbill.document.propose",
+              "playbill.proposal.readmit",
+              "playbill.proposal.approve",
+              "playbill.compiler.upgrade",
+              "playbill.line.arm",
+              "playbill.line.dispatch",
+              "playbill.settle",
+              "hand_edit"
+            ],
+            "title": "Operation",
+            "type": "string"
+          }
+        },
+        "profile": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "profile",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "const": "full",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          }
+        },
+        "tag": {
+          "default": "playbill-next-repair-requirement-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-next-repair-requirement-v1",
+            "default": "playbill-next-repair-requirement-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "tier": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tier",
+          "required": true,
+          "schema": {
+            "enum": [
+              "read_only",
+              "governed_write",
+              "graph_write",
+              "admin"
+            ],
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "tool": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tool",
+          "required": true,
+          "schema": {
+            "title": "Tool",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+        "properties": {
+          "because": {
+            "items": {
+              "enum": [
+                "tier",
+                "profile"
+              ],
+              "type": "string"
+            },
+            "title": "Because",
+            "type": "array"
+          },
+          "operation": {
+            "enum": [
+              "playbill.authoring.create",
+              "playbill.authoring.bind",
+              "playbill.claim.retire",
+              "playbill.set",
+              "playbill.write",
+              "playbill.floor.export",
+              "playbill.block.depublish",
+              "playbill.block.repin",
+              "playbill.block.sync",
+              "playbill.document.propose",
+              "playbill.proposal.readmit",
+              "playbill.proposal.approve",
+              "playbill.compiler.upgrade",
+              "playbill.line.arm",
+              "playbill.line.dispatch",
+              "playbill.settle",
+              "hand_edit"
+            ],
+            "title": "Operation",
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "const": "full",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "tag": {
+            "const": "playbill-next-repair-requirement-v1",
+            "default": "playbill-next-repair-requirement-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "tier": {
+            "enum": [
+              "read_only",
+              "governed_write",
+              "graph_write",
+              "admin"
+            ],
+            "title": "Tier",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation",
+          "tool",
+          "tier",
+          "because"
+        ],
+        "title": "PlaybillNextRepairRequirement",
+        "type": "object"
+      },
+      "required_fields": [
+        "because",
+        "operation",
+        "tier",
+        "tool"
       ]
     },
     "PlaybillNextResult": {
@@ -25699,7 +26289,25 @@
                 "type": "array"
               },
               "repair": {
-                "$ref": "#/$defs/PlaybillNextRepair"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepair"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "repair_requires": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepairRequirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "severity": {
                 "enum": [
@@ -25752,6 +26360,17 @@
                 "default": false,
                 "title": "Repair Hidden",
                 "type": "boolean"
+              },
+              "repair_requires": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepairRequirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "state": {
                 "title": "State",
@@ -25825,7 +26444,25 @@
                 "type": "array"
               },
               "repair": {
-                "$ref": "#/$defs/PlaybillNextRepair"
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepair"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "repair_requires": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepairRequirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "severity": {
                 "enum": [
@@ -25913,6 +26550,87 @@
               "required_change"
             ],
             "title": "PlaybillNextRepair",
+            "type": "object"
+          },
+          "PlaybillNextRepairRequirement": {
+            "additionalProperties": false,
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "properties": {
+              "because": {
+                "items": {
+                  "enum": [
+                    "tier",
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "title": "Because",
+                "type": "array"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.set",
+                  "playbill.write",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.proposal.approve",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "playbill.settle",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "profile": {
+                "anyOf": [
+                  {
+                    "const": "full",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Profile"
+              },
+              "tag": {
+                "const": "playbill-next-repair-requirement-v1",
+                "default": "playbill-next-repair-requirement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write",
+                  "admin"
+                ],
+                "title": "Tier",
+                "type": "string"
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "tool",
+              "tier",
+              "because"
+            ],
+            "title": "PlaybillNextRepairRequirement",
             "type": "object"
           },
           "PlaybillNextStatus": {
@@ -26264,6 +26982,17 @@
                 "title": "Repair Hidden",
                 "type": "boolean"
               },
+              "repair_requires": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillNextRepairRequirement"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "state": {
                 "title": "State",
                 "type": "string"
@@ -26337,6 +27066,87 @@
               "required_change"
             ],
             "title": "PlaybillNextRepair",
+            "type": "object"
+          },
+          "PlaybillNextRepairRequirement": {
+            "additionalProperties": false,
+            "description": "What running a withheld repair needs that this caller does not have.\n\nThe row stays in the queue; only its repair is withheld. ``because`` names\nthe gate: the permission ``tier`` the ``tool`` runs at, and/or the MCP tool\n``profile`` that advertises it.",
+            "properties": {
+              "because": {
+                "items": {
+                  "enum": [
+                    "tier",
+                    "profile"
+                  ],
+                  "type": "string"
+                },
+                "title": "Because",
+                "type": "array"
+              },
+              "operation": {
+                "enum": [
+                  "playbill.authoring.create",
+                  "playbill.authoring.bind",
+                  "playbill.claim.retire",
+                  "playbill.set",
+                  "playbill.write",
+                  "playbill.floor.export",
+                  "playbill.block.depublish",
+                  "playbill.block.repin",
+                  "playbill.block.sync",
+                  "playbill.document.propose",
+                  "playbill.proposal.readmit",
+                  "playbill.proposal.approve",
+                  "playbill.compiler.upgrade",
+                  "playbill.line.arm",
+                  "playbill.line.dispatch",
+                  "playbill.settle",
+                  "hand_edit"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "profile": {
+                "anyOf": [
+                  {
+                    "const": "full",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Profile"
+              },
+              "tag": {
+                "const": "playbill-next-repair-requirement-v1",
+                "default": "playbill-next-repair-requirement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "read_only",
+                  "governed_write",
+                  "graph_write",
+                  "admin"
+                ],
+                "title": "Tier",
+                "type": "string"
+              },
+              "tool": {
+                "title": "Tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "tool",
+              "tier",
+              "because"
+            ],
+            "title": "PlaybillNextRepairRequirement",
             "type": "object"
           }
         },
@@ -26465,6 +27275,52 @@
               }
             ],
             "default": null
+          }
+        },
+        "capture_contracts": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "capture_contracts",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientCaptureContractV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capture Contracts"
+          }
+        },
+        "captures": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "captures",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientCaptureV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Captures"
           }
         },
         "claim_types": {
@@ -26619,6 +27475,71 @@
             "title": "Kinds"
           }
         },
+        "lines": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lines",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientLineV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lines"
+          }
+        },
+        "live": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "live",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillLiveViewV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "mandates": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "mandates",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientMandateV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mandates"
+          }
+        },
         "mirror_url": {
           "default": null,
           "default_json_serializable": true,
@@ -26675,6 +27596,29 @@
             "title": "Next Cursor"
           }
         },
+        "predictions": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "predictions",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientPredictionV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Predictions"
+          }
+        },
         "procedures": {
           "default": null,
           "default_json_serializable": true,
@@ -26721,6 +27665,29 @@
             "title": "Queries"
           }
         },
+        "runs": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "runs",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillRunRowV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runs"
+          }
+        },
         "section": {
           "default": null,
           "default_json_serializable": true,
@@ -26736,7 +27703,14 @@
                   "procedures",
                   "claim_types",
                   "queries",
-                  "interfaces"
+                  "interfaces",
+                  "runs",
+                  "running",
+                  "lines",
+                  "captures",
+                  "capture_contracts",
+                  "predictions",
+                  "mandates"
                 ],
                 "type": "string"
               },
@@ -26833,9 +27807,106 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "PlaybillLiveHeadV1": {
+            "additionalProperties": false,
+            "description": "The accepted head a live read was taken at: its git oid's 12-hex prefix and sequence.",
+            "properties": {
+              "generation": {
+                "minimum": 0,
+                "title": "Generation",
+                "type": "integer"
+              },
+              "git_oid": {
+                "pattern": "^[0-9a-f]{12}$",
+                "title": "Git Oid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "generation"
+            ],
+            "title": "PlaybillLiveHeadV1",
+            "type": "object"
+          },
+          "PlaybillLiveViewV1": {
+            "additionalProperties": false,
+            "description": "Marks the parts of an answer read live: operational state has no history.\n\n``as_of`` is the current head those parts were read at, which differs from\nthe answer's own coordinate when the read named an older ``at``; ``fields``\nnames what was read live (``card`` when the whole card is).",
+            "properties": {
+              "as_of": {
+                "$ref": "#/$defs/PlaybillLiveHeadV1"
+              },
+              "fields": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Fields",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-live-view-v1",
+                "default": "playbill-live-view-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "as_of",
+              "fields"
+            ],
+            "title": "PlaybillLiveViewV1",
+            "type": "object"
+          },
+          "PlaybillOrientArmsV1": {
+            "additionalProperties": false,
+            "description": "The instance's armed Lines as its Line consumer reports them, no daemon scope needed.\n\n``running`` arms are admitting their own due work; ``stalled`` ones have\ndue work older than the stall horizon; ``stopped`` ones stopped for any\nreason but a deliberate disarm. ``needs_attention`` names up to three\nstalled or stopped Lines (``Line:<name> stopped (<reason>)``), each a\n``get`` reference.",
+            "properties": {
+              "needs_attention": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Needs Attention",
+                "type": "array"
+              },
+              "running": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Running",
+                "type": "integer"
+              },
+              "stalled": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Stalled",
+                "type": "integer"
+              },
+              "stopped": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Stopped",
+                "type": "integer"
+              }
+            },
+            "title": "PlaybillOrientArmsV1",
+            "type": "object"
+          },
           "PlaybillOrientArtifactCountsV1": {
             "additionalProperties": false,
+            "description": "How many of each family exist; each operational family is its own section.\n\n``lines``, ``capture_contracts``, ``resolution_contracts`` and ``mandates``\ncount accepted artifacts, ``captures`` the Captures accepted Claims cite,\nand ``runs`` / ``running`` the Procedure runs admitted and still running.",
             "properties": {
+              "capture_contracts": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Capture Contracts",
+                "type": "integer"
+              },
+              "captures": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Captures",
+                "type": "integer"
+              },
               "claim_types": {
                 "minimum": 0,
                 "title": "Claim Types",
@@ -26851,6 +27922,18 @@
                 "title": "Interfaces",
                 "type": "integer"
               },
+              "lines": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Lines",
+                "type": "integer"
+              },
+              "mandates": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Mandates",
+                "type": "integer"
+              },
               "procedures": {
                 "minimum": 0,
                 "title": "Procedures",
@@ -26859,6 +27942,24 @@
               "queries": {
                 "minimum": 0,
                 "title": "Queries",
+                "type": "integer"
+              },
+              "resolution_contracts": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Resolution Contracts",
+                "type": "integer"
+              },
+              "running": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Running",
+                "type": "integer"
+              },
+              "runs": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Runs",
                 "type": "integer"
               }
             },
@@ -26876,6 +27977,17 @@
             "additionalProperties": false,
             "description": "What the ``next`` queue holds, and anything else the instance needs.",
             "properties": {
+              "arms": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillOrientArmsV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "next_items": {
                 "minimum": 0,
                 "title": "Next Items",
@@ -26908,6 +28020,73 @@
               "open_proposals"
             ],
             "title": "PlaybillOrientAttentionV1",
+            "type": "object"
+          },
+          "PlaybillOrientCaptureContractV1": {
+            "additionalProperties": false,
+            "properties": {
+              "admitted_by": {
+                "minimum": 0,
+                "title": "Admitted By",
+                "type": "integer"
+              },
+              "contract": {
+                "title": "Contract",
+                "type": "string"
+              },
+              "grade": {
+                "title": "Grade",
+                "type": "string"
+              },
+              "lifecycle": {
+                "title": "Lifecycle",
+                "type": "string"
+              },
+              "version": {
+                "minimum": 1,
+                "title": "Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "contract",
+              "version",
+              "lifecycle",
+              "grade",
+              "admitted_by"
+            ],
+            "title": "PlaybillOrientCaptureContractV1",
+            "type": "object"
+          },
+          "PlaybillOrientCaptureV1": {
+            "additionalProperties": false,
+            "properties": {
+              "capture": {
+                "title": "Capture",
+                "type": "string"
+              },
+              "citing": {
+                "minimum": 0,
+                "title": "Citing",
+                "type": "integer"
+              },
+              "contract": {
+                "title": "Contract",
+                "type": "string"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "capture",
+              "contract",
+              "observed_at",
+              "citing"
+            ],
+            "title": "PlaybillOrientCaptureV1",
             "type": "object"
           },
           "PlaybillOrientDocumentV1": {
@@ -27090,6 +28269,126 @@
             "title": "PlaybillOrientKindV1",
             "type": "object"
           },
+          "PlaybillOrientLineV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arm": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "running",
+                      "stalled",
+                      "stopped",
+                      "disarmed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Arm"
+              },
+              "authority": {
+                "enum": [
+                  "observe",
+                  "propose",
+                  "settle"
+                ],
+                "title": "Authority",
+                "type": "string"
+              },
+              "due": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Due",
+                "type": "integer"
+              },
+              "lifecycle": {
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "Lifecycle",
+                "type": "string"
+              },
+              "line": {
+                "title": "Line",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "trigger": {
+                "title": "Trigger",
+                "type": "string"
+              },
+              "waiting": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Waiting",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "line",
+              "lifecycle",
+              "procedure",
+              "authority",
+              "trigger"
+            ],
+            "title": "PlaybillOrientLineV1",
+            "type": "object"
+          },
+          "PlaybillOrientMandateV1": {
+            "additionalProperties": false,
+            "properties": {
+              "expires_at": {
+                "format": "date-time",
+                "title": "Expires At",
+                "type": "string"
+              },
+              "grants": {
+                "enum": [
+                  "propose",
+                  "settle"
+                ],
+                "title": "Grants",
+                "type": "string"
+              },
+              "mandate": {
+                "title": "Mandate",
+                "type": "string"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "active",
+                  "expiring",
+                  "expired",
+                  "not_yet_valid",
+                  "suspended",
+                  "retired"
+                ],
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "required": [
+              "mandate",
+              "procedure",
+              "grants",
+              "state",
+              "expires_at"
+            ],
+            "title": "PlaybillOrientMandateV1",
+            "type": "object"
+          },
           "PlaybillOrientPredicateV1": {
             "additionalProperties": false,
             "description": "One predicate of a kind: compact by default, in full under ``orient(kind=...)``.\n\n``name`` is the short name a query field uses against this kind; ``predicate``\nis the full ClaimType predicate. ``type`` is the value type: a JSON type,\n``date``/``datetime``, ``enum`` (with ``members``), ``subject`` or\n``subject:<kinds>`` for a Subject-valued predicate, or ``exact_content``.\n``evidence`` names the CaptureContracts the ClaimType admits; a digest that\nnames no accepted contract shows as ``unresolved:<short digest>``.\n``None`` (omitted on the wire) inherits the kind's evidence set; an empty\ntuple (``[]`` on the wire) explicitly admits no contracts. Standalone\ndescriptors always carry an explicit set.",
@@ -27237,6 +28536,61 @@
             "title": "PlaybillOrientPredicateV1",
             "type": "object"
           },
+          "PlaybillOrientPredictionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "title": "Contract",
+                "type": "string"
+              },
+              "hypothesis": {
+                "title": "Hypothesis",
+                "type": "string"
+              },
+              "next_close": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Next Close"
+              },
+              "open": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Open",
+                "type": "integer"
+              },
+              "resolved": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Resolved",
+                "type": "integer"
+              },
+              "settleable": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Settleable",
+                "type": "integer"
+              },
+              "window": {
+                "title": "Window",
+                "type": "string"
+              }
+            },
+            "required": [
+              "contract",
+              "hypothesis",
+              "window"
+            ],
+            "title": "PlaybillOrientPredictionV1",
+            "type": "object"
+          },
           "PlaybillOrientProcedureV1": {
             "additionalProperties": false,
             "properties": {
@@ -27354,10 +28708,68 @@
             ],
             "title": "PlaybillOrientYouV1",
             "type": "object"
+          },
+          "PlaybillRunRowV1": {
+            "additionalProperties": false,
+            "description": "One Procedure run as a list row, newest admission first; ``status`` never orders.",
+            "properties": {
+              "line": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Line"
+              },
+              "nodes_done": {
+                "minimum": 0,
+                "title": "Nodes Done",
+                "type": "integer"
+              },
+              "procedure": {
+                "title": "Procedure",
+                "type": "string"
+              },
+              "run": {
+                "title": "Run",
+                "type": "string"
+              },
+              "started_at": {
+                "format": "date-time",
+                "title": "Started At",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "running",
+                  "succeeded",
+                  "admission_refused",
+                  "node_refused",
+                  "operational_failed",
+                  "internal_failed",
+                  "halted"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run",
+              "procedure",
+              "status",
+              "started_at",
+              "nodes_done"
+            ],
+            "title": "PlaybillRunRowV1",
+            "type": "object"
           }
         },
         "additionalProperties": false,
-        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``queries`` or ``interfaces``), paged.\n\n``next`` is rendered for the requesting surface.",
+        "description": "One orient answer; which parts are present depends on the request.\n\n- no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),\n  ``artifacts``, ``queries`` and ``attention``;\n- ``kind``: ``kind_detail``;\n- ``section``: that section's rows (``documents``, ``procedures``,\n  ``claim_types``, ``queries``, ``interfaces``, or an operational family:\n  ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,\n  ``predictions``, ``mandates``), paged. The default map counts the\n  operational families under ``artifacts`` and never inlines their rows.\n\n``next`` is rendered for the requesting surface.",
         "properties": {
           "accepted_at": {
             "format": "date-time",
@@ -27385,6 +28797,36 @@
               }
             ],
             "default": null
+          },
+          "capture_contracts": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientCaptureContractV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capture Contracts"
+          },
+          "captures": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientCaptureV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Captures"
           },
           "claim_types": {
             "anyOf": [
@@ -27474,6 +28916,47 @@
             "default": null,
             "title": "Kinds"
           },
+          "lines": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientLineV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lines"
+          },
+          "live": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillLiveViewV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "mandates": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientMandateV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mandates"
+          },
           "mirror_url": {
             "anyOf": [
               {
@@ -27506,6 +28989,21 @@
             "default": null,
             "title": "Next Cursor"
           },
+          "predictions": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillOrientPredictionV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Predictions"
+          },
           "procedures": {
             "anyOf": [
               {
@@ -27536,6 +29034,21 @@
             "default": null,
             "title": "Queries"
           },
+          "runs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlaybillRunRowV1"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runs"
+          },
           "section": {
             "anyOf": [
               {
@@ -27544,7 +29057,14 @@
                   "procedures",
                   "claim_types",
                   "queries",
-                  "interfaces"
+                  "interfaces",
+                  "runs",
+                  "running",
+                  "lines",
+                  "captures",
+                  "capture_contracts",
+                  "predictions",
+                  "mandates"
                 ],
                 "type": "string"
               },
@@ -53295,7 +54815,7 @@
               }
             ],
             "default": null,
-            "description": "An accepted coordinate or a git oid (a unique prefix of 12+ hex characters is enough); the default is the current head.",
+            "description": "An accepted coordinate, a git oid (a unique prefix of 12+ hex characters is enough), or a generation number; the default is the current head.",
             "title": "At"
           }
         },
@@ -55414,7 +56934,7 @@
               }
             ],
             "default": null,
-            "description": "An accepted coordinate or a git oid (a unique prefix of 12+ hex characters is enough); the default is the current head.",
+            "description": "An accepted coordinate, a git oid (a unique prefix of 12+ hex characters is enough), or a generation number; the default is the current head.",
             "title": "At"
           },
           "contains": {

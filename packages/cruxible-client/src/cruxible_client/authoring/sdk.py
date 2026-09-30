@@ -370,6 +370,11 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "document": RefKind.DOCUMENT,
     "capture_contract": RefKind.CAPTURE_CONTRACT,
     "proposal": RefKind.PROPOSAL,
+    "line": RefKind.LINE,
+    "capture": RefKind.CAPTURE,
+    "resolution_contract": RefKind.RESOLUTION_CONTRACT,
+    "mandate": RefKind.MANDATE,
+    "procedure_run": RefKind.PROCEDURE_RUN,
 }
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {
@@ -542,14 +547,15 @@ class NextPage:
     result_digest: str
     observed_domains: tuple[str, ...]
     unobserved_domains: tuple[str, ...]
-    # The environment the queue was read in, including how many rows and
-    # findings were left out because this caller cannot perform their repair.
+    # The environment the queue was read in. A row whose repair this caller
+    # cannot perform stays in `items` with `repair_requires` set.
     status: api.PlaybillNextStatus
     attestation_head_digest: str | None = None
 
     @property
     def hidden(self) -> int:
-        """Rows and findings withheld because this caller cannot perform their repair."""
+        """Rows left out for this caller: none, since a row whose repair it cannot
+        run stays with ``repair_requires`` (kept for compatibility; always 0)."""
         return self.status.hidden
 
     def __iter__(self):  # type: ignore[no-untyped-def]
@@ -3394,9 +3400,13 @@ class Playbill:
         ``ref`` is a typed ref or any string form an agent sees: ``CLM-…`` or a
         unique prefix, ``kind/id``, a predicate, ``ClaimType:``/``Document:``/
         ``Procedure:``/``query:``/``CaptureContract:<name>``, an artifact path,
-        or a proposal id. A wrong or ambiguous name refuses with the nearest
-        names. A Claim summary is a ``ClaimView``; other summaries are the
-        values-first card; other details carry that detail's payload.
+        a proposal id, or an operational reference: ``Line:<name>`` (or the
+        Line identity digest ``next`` names), ``CAP-<12+ hex>`` /
+        ``Capture:<digest>``, ``ResolutionContract:<name>``, ``Mandate:<name>``
+        and ``ProcedureRun:<run_id>`` (or ``RUN-<12+ hex>``). A wrong or
+        ambiguous name refuses with the nearest names. A Claim summary is a
+        ``ClaimView``; other summaries are the values-first card; other
+        details carry that detail's payload.
         """
 
         if isinstance(ref, SourceRef):
@@ -3550,7 +3560,8 @@ class Playbill:
         predicates that point at it (``incoming``: follow one with
         ``query(kind, follow=[(predicate, alias, "reverse")])``); ``section``
         pages documents, procedures, claim_types, queries or interfaces (the
-        provider interfaces a Procedure can call). Follow
+        provider interfaces a Procedure can call), or an operational family:
+        runs, lines, captures, capture_contracts, predictions or mandates. Follow
         ``next_cursor`` while ``truncated``.
         """
 

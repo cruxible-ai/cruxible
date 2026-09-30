@@ -2678,14 +2678,25 @@ def playbill_get(instance_id: str, *, request: PlaybillGetRequestV1) -> Playbill
     from cruxible_client.contracts.claim_types import claim_type_path
     from cruxible_client.contracts.query.definitions import query_definition_path
     from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.service.discovery.operational_viewer import OperationalViewer
 
     check_permission("cruxible_playbill_get", instance_id=instance_id)
     # Consumption is recorded at the full coordinate, which a summary answer
     # leaves out unless the caller asked for it.
+    auth = get_current_auth_context()
     result = service_playbill_get(
         get_playbill_manager().get(instance_id),
         request=request.model_copy(update={"full_coordinate": True}),
         access=_access(instance_id, include_body=request.detail == "body"),
+        # Arming credentials are shown only to themselves or an admin.
+        viewer=OperationalViewer(
+            credential_id=(
+                auth.principal_id
+                if auth is not None and auth.credential_type == "runtime_credential"
+                else None
+            ),
+            admin=get_current_mode() >= PermissionMode.ADMIN,
+        ),
     )
     read_at = result.accepted_coordinate
     assert read_at is not None

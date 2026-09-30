@@ -27,6 +27,14 @@ def test_http_orient_answers_the_map_rendered_for_the_requested_surface(
         "documents",
         "queries",
         "interfaces",
+        # Operational families: counted in the map, paged by their own section.
+        "lines",
+        "captures",
+        "capture_contracts",
+        "resolution_contracts",
+        "mandates",
+        "runs",
+        "running",
     }
     assert body["you"]["actor"] is not None
     # Optional parts that do not apply are absent, never null.
@@ -151,9 +159,15 @@ def _assert_attention_parity(
     assert queue.status_code == 200, queue.text
     attention = orient.json()["attention"]
     result = queue.json()
-    assert attention["next_items"] == result["total_items"] == expected
+    # Option (b): both rows stay for every caller; only the repairs the
+    # effective caller cannot run are withheld, each naming what it requires.
+    assert attention["next_items"] == result["total_items"] == 2
     assert attention["top"] == [
         f"{item['severity']} {item['reason']}: {item['subject_identity']}"
         for item in result["items"][:3]
     ]
-    assert result["status"].get("hidden", 0) == 2 - expected
+    runnable = [item for item in result["items"] if item.get("repair") is not None]
+    withheld = [item for item in result["items"] if item.get("repair") is None]
+    assert len(runnable) == expected
+    assert all(item["repair_requires"]["tool"] for item in withheld)
+    assert result["status"].get("hidden", 0) == 0

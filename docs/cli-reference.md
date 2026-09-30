@@ -395,6 +395,11 @@ cruxible playbill capture read CAPTURE_DIGEST [--max-bytes BYTES]
 ```
 
 Verify a retained Capture and return its evidence metadata and bounded material as JSON.
+CAPTURE_DIGEST is the full digest, the `CAP-<12 hex>` handle `get --detail
+evidence` and Capture cards print, or a `sha256:` prefix of 12+ hex; a handle
+or prefix must name one Capture accepted Claims cite
+(`playbill.capture.ref_ambiguous` lists the candidates,
+`playbill.capture.not_found` points at `orient --section captures`).
 Uses body-read permission and never refetches the external source. The SDK equivalent
 is `pb.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
 
@@ -1589,8 +1594,10 @@ generations or overdue on its sweep; this is the facet that asks for
 attention), `stalled` (already a `consumer_stalled` row), or `not_running` when
 no consumer loop is running, as in a library read. There, worker rows stand as
 of each worker's last pass. `detail.workers` lists each built-in worker's state
-and cursor, including disabled ones. Worker-derived rows carry when they were
-observed in their own detail.
+and cursor, including disabled ones, and `detail.line_arms` counts the
+instance's armed Lines as `running`, `stalled` or `stopped` (the text header
+prints `Status: line arms ...` when any is stalled or stopped). Worker-derived
+rows carry when they were observed in their own detail.
 
 A current `unsure` examined attestation holds a row, and `status.held` counts
 the rows held. A hold lasts only while its basis is unchanged:
@@ -1605,14 +1612,18 @@ the rows held. A hold lasts only while its basis is unchanged:
 A revised Claim, a later support or contradict from the same principal, or a
 lapsed validity window ends the hold, and the row returns.
 
-A row appears only when the caller can perform its repair: each repair needs
-the permission tier of the tool that performs it (approval needs graph write;
-settle, arm and authoring need governed write; a Line dispatch needs what the
-Line's runs need). A read-only credential sees only the rows it can repair.
-`status.hidden` counts the rows and nested findings left out, and the text
-output says so. A status facet (the compiler, floor, ledger mirror and so on)
-always reports its state; when its repair is one the caller cannot perform,
-the repair is dropped and the facet carries `repair_hidden: true` instead. Each repair's `command`
+Every caller sees every row. Each repair needs the permission tier of the tool
+that performs it (approval needs graph write; settle, arm and authoring need
+governed write; a Line dispatch needs what the Line's runs need). When the
+caller cannot perform a row's repair, or a nested finding's, the row stays: its
+`repair` is withheld (`null`) and `repair_requires` names the `tool`, the `tier`
+it runs at, and `because` (`tier`, or `profile` when an MCP session's tool
+profile does not advertise it; `profile: "full"` does). The text output prints
+`repair withheld: <tool> needs the <tier> tier`. Nothing is left out, so
+`status.hidden` stays 0. A status facet (the compiler, floor, ledger mirror and
+so on) always reports its state; when its repair is one the caller cannot
+perform, the repair is dropped and the facet carries `repair_hidden: true` and
+`repair_requires` instead. Each repair's `command`
 renders for the caller's surface: a CLI command here, an MCP tool call on
 `cruxible_playbill_next`.
 Empty `items` means only that no work exists in the explicitly observed domains.
@@ -1770,7 +1781,23 @@ Reads one thing by any reference form you have seen: `CLM-...` (or a unique
 prefix of at least four hex digits), `kind/id` or `Subject:kind/id`, a
 predicate (full, or a leaf unique across kinds) or `ClaimType:<predicate>`,
 `Document:<name>`, `Procedure:<name>`, `query:<name>`, `CaptureContract:<name>`,
-an artifact path, or a proposal id or prefix. `--detail` picks the depth:
+an artifact path, or a proposal id or prefix. Operational things resolve too:
+`Line:<name>` (or the Line identity digest `next` names a due Line by, in full
+or as a 12+ hex prefix) answers the Line's Procedure, trigger, authority, its
+arms (the principal kind, state and stop reason, and who armed each: a runtime
+credential's id and label only to that credential or an admin, otherwise
+`armed_by_withheld`), due and
+waiting occurrences and recent runs; `CAP-<12+ hex>` or `Capture:<digest>`
+answers a Capture's contract and version, observation time, size, availability
+and the Claims (and their Subjects) that cite it; `ResolutionContract:<name>`
+answers the hypothesis Claim, window, rule and bound-window state; and
+`Mandate:<name>` (or `ProcedureMandate:<name>`) answers the grant, validity and
+state. Arms, occurrences, runs, windows and capture availability are
+operational state with no history: they are always read as of now at the
+current head, whatever `--at` names, and the answer says so with `live`
+(`as_of`: that head's 12-hex git oid and generation; `fields`: what was read
+live). `orient` marks its runs, lines and predictions sections, and its map's
+arm attention and run counts, the same way. `--detail` picks the depth:
 `summary` (default) prints a values-first card -- a Subject's Claims as an
 aligned table, a Claim's value, verdict and flags (`stale`, `contested`,
 `contradicted`, `unsure_hold`) -- `evidence` lists a Claim's captures by
@@ -1782,7 +1809,11 @@ a Document's bytes. A body over 64 KiB needs `--range`. A summary cuts a string
 value over 500 characters and says how long it is; `--detail evidence` or
 `proof` shows it whole. Subject rows carry the Claim id behind each value. A
 summary's coordinate is the git oid's 12-hex prefix and the generation; the
-full accepted coordinate is under `--detail proof`. A wrong or ambiguous REF
+full accepted coordinate is under `--detail proof`. `--at` takes a git oid, a
+unique 12+ hex prefix of one, or a generation number, so either half of a
+printed coordinate reads back; each history row prints both (`seq N at
+<12 hex>`). Evidence names each Capture by its `CAP-<12 hex>` handle, which
+`get` and `capture read` both accept. A wrong or ambiguous REF
 refuses with a code and the nearest names. `--json` prints the whole structured
 result.
 
@@ -1803,7 +1834,7 @@ or raise the budget.
 ## playbill orient
 
 ~~~text
-cruxible playbill orient [--kind KIND | --section documents|procedures|claim_types|queries]
+cruxible playbill orient [--kind KIND | --section SECTION]
   [--limit N] [--cursor C] [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
 
@@ -1812,7 +1843,12 @@ kind with its live Subject count and its predicates (short name, cardinality,
 type or enum members, and the CaptureContracts whose evidence the ClaimType
 admits, by name), the artifact counts, the named queries with their parameters,
 who you are and whether you can author (and why not), what the `next` queue
-holds, and the next commands to run. When any live ClaimType still names
+holds, and the next commands to run. When any Line was ever armed, attention
+counts the arms as the instance's Line consumer reports them (running,
+stalled, stopped) and names up to three stalled or stopped Lines with the stop
+reason, for any caller of the instance, without daemon scope; it also notes
+when armed Lines have no consumer loop running here and when the provider lane
+is unavailable. When any live ClaimType still names
 CaptureContracts by digest, attention says so and suggests
 `cruxible playbill claim-type upgrade-evidence-rules`.
 
@@ -1822,7 +1858,27 @@ horizon and live Claim count, the predicates of other kinds that point at it
 PREDICATE:alias`), plus up to five sample Subject IDs. A kind that
 does not exist is refused as `playbill.orient.kind_not_found` with the nearest
 kinds. `--section` pages one artifact family as compact rows; follow
-`next_cursor` with `--cursor` while `truncated` is true. Kinds page the same way
+`next_cursor` with `--cursor` while `truncated` is true. `--section runs` lists
+Procedure runs, newest admission first, each with its Procedure, status,
+admission time, Line and finished-node count, and `--section running` lists
+only the runs still running. Both page by the admission's immutable position,
+so a run admitted or finished after the first page is never repeated or
+skipped; status is shown, never part of the order. Read one
+with `cruxible playbill get ProcedureRun:RUN-...` (or a `RUN-` prefix of 12+
+hex): nodes done over the graph's nodes, the node a running run is on,
+elapsed time (against the read's evaluation time while it runs, the measured
+wall clock once it finished), the last finished nodes, the Line, occurrence and
+arm that admitted it, and the receipt digest once it is terminal. Per-node
+durations are not shown: every journal record of a run carries the run's
+evaluation instant.
+The other operational sections page the same way: `lines` (each Line's
+Procedure, trigger, authority, latest arm state and due/waiting counts),
+`captures` (the Captures accepted Claims cite, newest first, keyset-paged,
+each as its `CAP-` handle), `capture_contracts` (version, grade, how many
+ClaimTypes admit each), `predictions` (each live ResolutionContract with its
+bound windows by status and the next close) and `mandates` (grant, state and
+expiry). The default map counts each family under `Artifacts` and never
+inlines their rows; each section suggests the `get` of its first row. Kinds page the same way
 when there are more than `--limit`. `--at` reads an earlier accepted generation.
 `--json` returns the whole structured answer, including the coordinate and
 generation.
