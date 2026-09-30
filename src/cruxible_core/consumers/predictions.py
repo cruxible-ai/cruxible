@@ -26,7 +26,7 @@ import json
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -277,6 +277,83 @@ def bound_window(instance: Any, bound_contract_id: str) -> SettleableWindow | No
         window=BoundObservationWindowV1.model_validate_json(window),
         checked_at=_instant(checked_at) if checked_at else _instant("1970-01-01T00:00:00Z"),
     )
+
+
+def contract_windows(
+    instance: Any, identity: str, *, limit: int
+) -> tuple[tuple[tuple[str, BoundObservationWindowV1, str], ...], dict[str, int]] | None:
+    """One contract's bound windows (soonest to close first, bounded) and counts by status.
+
+    ``None`` when the worker never ran on this instance, so an empty answer is
+    never mistaken for "no windows".
+    """
+
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return None
+        counts = {status: 0 for status in ("open", "settleable", "resolved")}
+        for status, count in connection.execute(
+            "SELECT status, count(*) FROM windows INDEXED BY windows_by_identity "
+            "WHERE identity=? GROUP BY status",
+            (identity,),
+        ):
+            counts[str(status)] = int(count)
+        rows = connection.execute(
+            "SELECT contract_id, window, status FROM windows INDEXED BY windows_by_identity "
+            "WHERE identity=? ORDER BY status='resolved', ends_at_us, contract_id LIMIT ?",
+            (identity, limit),
+        ).fetchall()
+    return (
+        tuple(
+            (str(contract_id), BoundObservationWindowV1.model_validate_json(window), str(status))
+            for contract_id, window, status in rows
+        ),
+        counts,
+    )
+
+
+@dataclass(frozen=True)
+class WindowTally:
+    open: int
+    settleable: int
+    resolved: int
+    #: When the soonest still-open window closes.
+    next_close: datetime | None
+
+
+def window_tallies(instance: Any, identities: Iterable[str]) -> dict[str, WindowTally]:
+    """Bound windows by status for each named contract; empty before the worker ran."""
+
+    wanted = tuple(identities)
+    if not wanted:
+        return {}
+    with _STATE.open(instance, create=False) as connection:
+        if connection is None:
+            return {}
+        found: dict[str, dict[str, int]] = {}
+        closes: dict[str, int] = {}
+        for identity in wanted:
+            for status, count, soonest in connection.execute(
+                "SELECT status, count(*), min(ends_at_us) FROM windows "
+                "INDEXED BY windows_by_identity WHERE identity=? GROUP BY status",
+                (identity,),
+            ):
+                found.setdefault(identity, {})[str(status)] = int(count)
+                if status == "open" and soonest is not None:
+                    closes[identity] = int(soonest)
+    return {
+        identity: WindowTally(
+            open=counts.get("open", 0),
+            settleable=counts.get("settleable", 0),
+            resolved=counts.get("resolved", 0),
+            next_close=(
+                None
+                if identity not in closes
+                else datetime(1970, 1, 1, tzinfo=UTC) + timedelta(microseconds=closes[identity])
+            ),
+        )
+        for identity, counts in found.items()
+    }
 
 
 def unbindable_anchors(instance: Any) -> tuple[UnbindableAnchor, ...]:

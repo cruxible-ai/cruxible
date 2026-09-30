@@ -834,7 +834,9 @@ def register_tools(
                 description=(
                     "Any reference you have seen: CLM-… (or a unique prefix), kind/id, "
                     "a predicate, ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, "
-                    "an artifact path, or a proposal id or prefix."
+                    "an artifact path, a proposal id or prefix, or an operational reference: "
+                    "Line:<name> (or the Line identity digest next names), CAP-<12+ hex> or "
+                    "Capture:<digest>, ResolutionContract:<name>, Mandate:<name>."
                 )
             ),
         ],

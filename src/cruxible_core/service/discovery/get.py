@@ -87,6 +87,17 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import short_field_name
+from cruxible_core.service.discovery.operational import (
+    capture_card,
+    capture_hex,
+    captures_with_prefix,
+    is_line_digest,
+    line_card,
+    lines_with_digest,
+    mandate_card,
+    resolution_contract_card,
+    uncited_capture_present,
+)
 from cruxible_core.service.discovery.read_flags import (
     answer_flags,
     ordered_flags,
@@ -129,6 +140,11 @@ _TYPED_PREFIXES: Mapping[str, PlaybillGetRefKind] = {
     "query": "query",
     "CaptureContract": "capture_contract",
     "Proposal": "proposal",
+    "Line": "line",
+    "Capture": "capture",
+    "ResolutionContract": "resolution_contract",
+    "Mandate": "mandate",
+    "ProcedureMandate": "mandate",
 }
 # The projection's artifact kind for each reference kind, and back.
 _PROJECTION_KIND: Mapping[PlaybillGetRefKind, str] = {
@@ -139,6 +155,9 @@ _PROJECTION_KIND: Mapping[PlaybillGetRefKind, str] = {
     "procedure": "procedure",
     "query": "query-definition",
     "capture_contract": "capture-contract",
+    "line": "line",
+    "resolution_contract": "resolution-contract",
+    "mandate": "procedure-mandate",
 }
 _REF_KIND = {value: key for key, value in _PROJECTION_KIND.items()}
 _QUALIFIER: Mapping[PlaybillGetRefKind, str] = {
@@ -149,12 +168,18 @@ _QUALIFIER: Mapping[PlaybillGetRefKind, str] = {
     "procedure": "Procedure",
     "query": "QueryDefinition",
     "capture_contract": "CaptureContract",
+    "line": "Line",
+    "resolution_contract": "ResolutionContract",
+    "mandate": "ProcedureMandate",
 }
 _NAMED_KINDS: tuple[PlaybillGetRefKind, ...] = (
     "document",
     "procedure",
     "query",
     "capture_contract",
+    "line",
+    "resolution_contract",
+    "mandate",
 )
 _DISPLAY_PREFIX: Mapping[PlaybillGetRefKind, str] = {
     "claim_type": "ClaimType",
@@ -163,6 +188,19 @@ _DISPLAY_PREFIX: Mapping[PlaybillGetRefKind, str] = {
     "query": "query",
     "capture_contract": "CaptureContract",
     "proposal": "Proposal",
+    "line": "Line",
+    "resolution_contract": "ResolutionContract",
+    "mandate": "Mandate",
+    "capture": "Capture",
+}
+# The orient section that lists each operational kind, named by a refusal
+# that has no nearer candidate to offer.
+_ORIENT_SECTION: Mapping[PlaybillGetRefKind, str] = {
+    "line": "lines",
+    "capture": "captures",
+    "resolution_contract": "predictions",
+    "mandate": "mandates",
+    "capture_contract": "capture_contracts",
 }
 
 
@@ -184,6 +222,8 @@ def _name(identity: str) -> str:
 
 
 def _display(kind: PlaybillGetRefKind, identity: str) -> str:
+    if kind == "capture":
+        return f"Capture:{identity}"
     name = _name(identity) if kind != "proposal" else identity
     if kind in {"claim", "subject"}:
         return name
@@ -223,10 +263,14 @@ def _not_found(
     candidates: Sequence[str],
     *,
     surface: PlaybillReadSurface,
+    section: str | None = None,
 ) -> ReadRefusalError:
     if candidates:
         repair = RepairOperationV1(operation="playbill.get", arguments={"ref": candidates[0]})
         line = f"Run {_render_get(surface, candidates[0])}"
+    elif section is not None:
+        repair = RepairOperationV1(operation="playbill.orient", arguments={"section": section})
+        line = f'Run orient(section="{section}") to list them, then get one of its rows'
     else:
         repair = RepairOperationV1(operation="playbill.orient")
         line = "Run orient to see what exists, then get one of its names"
@@ -265,13 +309,32 @@ def resolve_get_ref(
     value = ref.strip()
     if not value:
         raise _not_found("artifact", ref, (), surface=surface)
-    if value.startswith("sha256:") or value.startswith("refs/"):
+    if value.startswith("sha256:"):
+        # The identity digest next names a due Line by, else a proposal id.
+        if is_line_digest(value):
+            with instance.bind_accepted_projection(coordinate) as projection:
+                lines = lines_with_digest(
+                    projection.typed.connection, value, limit=_MAX_CANDIDATES + 1
+                )
+                if len(lines) > 1:
+                    raise _ambiguous(value, [_display("line", item) for item in lines])
+                if lines:
+                    row = _envelope(projection, lines[0])
+                    return ResolvedRef(
+                        "line", lines[0], _display("line", lines[0]), row.path if row else None
+                    )
         return _resolve_proposal(instance, value)
+    if value.startswith("refs/"):
+        return _resolve_proposal(instance, value)
+    if value.startswith("CAP-"):
+        return _resolve_capture(instance, coordinate, value, ref=value, surface=surface)
     head, separator, rest = value.partition(":")
     if separator and head in _TYPED_PREFIXES:
         kind = _TYPED_PREFIXES[head]
         if kind == "proposal":
             return _resolve_proposal(instance, rest)
+        if kind == "capture":
+            return _resolve_capture(instance, coordinate, rest, ref=value, surface=surface)
         with instance.bind_accepted_projection(coordinate) as projection:
             return _resolve_typed(projection, kind, rest, ref=value, surface=surface)
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -327,6 +390,48 @@ def _envelope(projection: Any, identity: str) -> Any | None:
     return projection.typed.envelope(identity)
 
 
+def _resolve_capture(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    value: str,
+    *,
+    ref: str,
+    surface: PlaybillReadSurface,
+) -> ResolvedRef:
+    """``CAP-<12+ hex>``, ``Capture:<digest>`` or a unique digest prefix, to one Capture.
+
+    Cited Captures resolve through the accepted index, by prefix; a Capture no
+    accepted Claim cites resolves by its full digest from the store.
+    """
+
+    hex_digits = capture_hex(value)
+    if hex_digits is None:
+        raise ReadRefusalError(
+            "playbill.get.ref_malformed",
+            f"{ref!r} is not a Capture reference",
+            candidates=(),
+            repair=RepairOperationV1(
+                operation="playbill.orient", arguments={"section": "captures"}
+            ),
+            repair_line=(
+                "Pass CAP- plus at least 12 lowercase hex of the digest, or Capture:sha256:<64 hex>"
+            ),
+            context={"ref": ref},
+        )
+    with instance.bind_accepted_projection(coordinate) as projection:
+        matches = captures_with_prefix(
+            projection.typed.connection, hex_digits, limit=_MAX_CANDIDATES + 1
+        )
+    if len(matches) > 1:
+        raise _ambiguous(ref, [_display("capture", item) for item in matches])
+    if matches:
+        return ResolvedRef("capture", matches[0], _display("capture", matches[0]))
+    digest = "sha256:" + hex_digits
+    if len(hex_digits) == 64 and uncited_capture_present(instance, digest):
+        return ResolvedRef("capture", digest, _display("capture", digest))
+    raise _not_found("Capture", ref, (), surface=surface, section="captures")
+
+
 def _resolve_typed(
     projection: Any,
     kind: PlaybillGetRefKind,
@@ -365,12 +470,15 @@ def _resolve_typed(
         "procedure": "Procedure",
         "query": "QueryDefinition",
         "capture_contract": "CaptureContract",
+        "line": "Line",
+        "resolution_contract": "ResolutionContract",
+        "mandate": "ProcedureMandate",
     }[kind]
     candidates = tuple(
         item if kind == "subject" else f"{_DISPLAY_PREFIX[kind]}:{item}"
         for item in nearest(name, names)
     )
-    raise _not_found(what, ref, candidates, surface=surface)
+    raise _not_found(what, ref, candidates, surface=surface, section=_ORIENT_SECTION.get(kind))
 
 
 def _names_of(projection: Any, kind: PlaybillGetRefKind) -> tuple[str, ...]:
@@ -515,6 +623,19 @@ def _render_get(
         arguments.append(f"at={json.dumps(at.git_oid)}")
     arguments[0] = f"ref={arguments[0]}"
     return f"cruxible_playbill_get({', '.join(arguments)})"
+
+
+def _render_read_capture(surface: PlaybillReadSurface, digest: str) -> str:
+    """The body-permission read of one Capture's material, spelled for the surface."""
+
+    if surface == "cli":
+        return f"cruxible playbill capture read {digest}"
+    if surface == "sdk":
+        return (
+            "client.read_playbill_capture(instance_id, "
+            f"CaptureReadRequestV1(capture_digest={json.dumps(digest)}))"
+        )
+    return f'cruxible_playbill_read_capture(request={{"capture_digest": {json.dumps(digest)}}})'
 
 
 def _value_was_cut(
@@ -1483,15 +1604,24 @@ def _proof(
             name=name,
             request=ProcedureReadinessRequestV1(at=at, evaluation_time=evaluation_time),
         ).model_dump(mode="json")
-    if resolved.kind == "capture_contract":
+    if resolved.kind in {"capture_contract", "line", "resolution_contract", "mandate"}:
         with instance.bind_accepted_projection(coordinate) as projection:
-            contract = cast(CaptureContractV1, projection.typed.source(resolved.identity))
+            source = projection.typed.source(resolved.identity)
             row = projection.typed.envelope(resolved.identity)
         return {
             "coordinate": at.model_dump(mode="json"),
             "path": row.path if row else None,
             "artifact_digest": row.artifact_digest if row else None,
-            "envelope": contract.model_dump(mode="json"),
+            "envelope": None if source is None else source.model_dump(mode="json"),
+        }
+    if resolved.kind == "capture":
+        envelope = parse_capture_envelope(
+            instance.body_store().read(resolved.identity, access=_SERVICE_ACCESS)
+        )
+        return {
+            "coordinate": at.model_dump(mode="json"),
+            "capture_digest": resolved.identity,
+            "envelope": envelope.model_dump(mode="json"),
         }
     # Proposals are operational: the status entry and the retained records.
     return {
@@ -1579,6 +1709,12 @@ def service_playbill_get(
     fields: dict[str, Any] = {}
     surface = request.surface
     content = ExactContentReader(instance)
+    # Operational state (arms, occurrences, runs, windows) is read only at head.
+    at_head = coordinate.git_oid == instance.accepted_coordinate().git_oid
+
+    def render(ref: str, detail: str | None) -> str:
+        return _render_get(surface, ref, detail)
+
     if request.detail == "summary":
         if resolved.kind == "claim":
             card = _claim_card(
@@ -1610,6 +1746,35 @@ def service_playbill_get(
             card = _query_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "capture_contract":
             card = _capture_contract_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "line":
+            card = line_card(
+                instance,
+                coordinate,
+                resolved.identity,
+                at_head=at_head,
+                evaluation_time=evaluation_time,
+                render=render,
+            )
+        elif resolved.kind == "capture":
+            card = capture_card(
+                instance,
+                coordinate,
+                resolved.identity,
+                render=render,
+                read_capture=functools.partial(_render_read_capture, surface),
+            )
+        elif resolved.kind == "resolution_contract":
+            card = resolution_contract_card(
+                instance, coordinate, resolved.identity, at_head=at_head, render=render
+            )
+        elif resolved.kind == "mandate":
+            card = mandate_card(
+                instance,
+                coordinate,
+                resolved.identity,
+                evaluation_time=evaluation_time,
+                render=render,
+            )
         else:
             card = _proposal_card(instance, resolved, surface=surface)
         fields["card"] = card

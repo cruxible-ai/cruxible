@@ -370,6 +370,10 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "document": RefKind.DOCUMENT,
     "capture_contract": RefKind.CAPTURE_CONTRACT,
     "proposal": RefKind.PROPOSAL,
+    "line": RefKind.LINE,
+    "capture": RefKind.CAPTURE,
+    "resolution_contract": RefKind.RESOLUTION_CONTRACT,
+    "mandate": RefKind.MANDATE,
 }
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {
@@ -3395,7 +3399,10 @@ class Playbill:
         ``ref`` is a typed ref or any string form an agent sees: ``CLM-…`` or a
         unique prefix, ``kind/id``, a predicate, ``ClaimType:``/``Document:``/
         ``Procedure:``/``query:``/``CaptureContract:<name>``, an artifact path,
-        or a proposal id. A wrong or ambiguous name refuses with the nearest
+        a proposal id, or an operational reference: ``Line:<name>`` (or the
+        Line identity digest ``next`` names), ``CAP-<12+ hex>`` /
+        ``Capture:<digest>``, ``ResolutionContract:<name>`` and
+        ``Mandate:<name>``. A wrong or ambiguous name refuses with the nearest
         names. A Claim summary is a ``ClaimView``; other summaries are the
         values-first card; other details carry that detail's payload.
         """

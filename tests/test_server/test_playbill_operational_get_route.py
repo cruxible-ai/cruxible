@@ -1,0 +1,59 @@
+"""POST /playbill/get resolves operational references and refuses wrong ones with a repair."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from cruxible_core.governance.keys import GeneratedKeyMaterial
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from tests.core_support._knowledge_loop_support import seed_claims_into
+from tests.test_server.test_playbill_procedure_measurements import (  # noqa: F401
+    owned_playbill_http,
+)
+
+
+def test_http_get_reads_a_capture_by_handle_and_refuses_unknown_operational_refs(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+) -> None:
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
+    seed_claims_into(
+        instance,
+        GeneratedKeyMaterial(
+            principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
+        ),
+    )
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        (digest,) = projection.typed.connection.execute(
+            "SELECT capture_digest FROM captures ORDER BY capture_digest LIMIT 1"
+        ).fetchone()
+    url = f"/api/v1/{instance_id}/playbill/get"
+    handle = "CAP-" + str(digest).removeprefix("sha256:")[:12]
+
+    answered = client.post(url, json={"ref": handle, "surface": "cli"})
+
+    assert answered.status_code == 200, answered.text
+    body = answered.json()
+    assert body["kind"] == "capture" and body["ref"] == f"Capture:{digest}"
+    assert body["card"]["capture"] == handle and body["card"]["status"] == "available"
+    assert body["card"]["next"][-1] == f"cruxible playbill capture read {digest}"
+
+    for ref, section in (
+        ("Line:hourly", "lines"),
+        ("Mandate:nothing", "mandates"),
+        ("ResolutionContract:none", "predictions"),
+        ("CAP-" + "f" * 12, "captures"),
+    ):
+        missing = client.post(url, json={"ref": ref})
+        assert missing.status_code == 404, missing.text
+        assert missing.json()["error_code"] == "playbill.get.ref_not_found"
+        repair = missing.json()["repair"]
+        assert repair["operation"] == "playbill.orient"
+        assert repair["arguments"] == {"section": section}
+
+    malformed = client.post(url, json={"ref": "Capture:xyz"})
+    assert malformed.status_code == 400, malformed.text
+    assert malformed.json()["error_code"] == "playbill.get.ref_malformed"

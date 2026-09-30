@@ -13,6 +13,7 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable, ParamSpec, TypeVar
@@ -74,6 +75,31 @@ def journal_locked(function: Callable[_P, _R]) -> Callable[_P, _R]:
 
 def _key(stream: JournalStreamIdentityV1) -> str:
     return canonical_bytes(stream.model_dump(mode="json")).decode()
+
+
+#: Where a run page stopped: (finished 0/1, admission recorded_at, run id).
+RunLocatorKey = tuple[int, str, str]
+
+
+@dataclass(frozen=True)
+class RunLocator:
+    """One admitted run as the index locates it, without reading any payload."""
+
+    run_id: str
+    admitted_at: str
+    partition_id: str
+    admission_payload_digest: str
+    #: The ``attempt_finalized`` payload; ``None`` while the run is running.
+    final_payload_digest: str | None
+    nodes_done: int
+
+    @property
+    def finished(self) -> bool:
+        return self.final_payload_digest is not None
+
+    @property
+    def key(self) -> RunLocatorKey:
+        return (int(self.finished), self.admitted_at, self.run_id)
 
 
 class JournalIndex:
@@ -301,6 +327,89 @@ class JournalIndex:
                 sql += " LIMIT ?"
                 args.append(limit)
             return tuple(self.read_row(row) for row in conn.execute(sql, args).fetchall())
+
+    def run_locators(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        limit: int,
+        partition_id: str | None = None,
+        after: RunLocatorKey | None = None,
+    ) -> tuple[tuple[RunLocator, ...], bool]:
+        """Admitted runs, running first, then newest admission first: a locator read.
+
+        Index rows only: no payload is read. A run is running until its
+        ``attempt_finalized`` record lands. ``after`` continues a page from the
+        last row it carried (keyset), so runs appended since the first page
+        never shift a later one. Returns the page and whether more follow.
+        """
+
+        where = ["stream=?", "event_kind='admission_bound'", "run_id IS NOT NULL"]
+        args: list[Any] = [_key(stream)]
+        if partition_id is not None:
+            where.append("partition_id=?")
+            args.append(partition_id)
+        keyset = ""
+        if after is not None:
+            done, admitted_at, run_id = after
+            keyset = (
+                " WHERE done>? OR (done=? AND admitted_at<?) "
+                "OR (done=? AND admitted_at=? AND run_id>?)"
+            )
+            args_after: list[Any] = [done, done, admitted_at, done, admitted_at, run_id]
+        else:
+            args_after = []
+        # Node counts are taken for the page only, after it is cut.
+        sql = (
+            "WITH runs AS (SELECT a.run_id AS run_id, a.recorded_at AS admitted_at, "
+            "a.partition_id AS partition_id, a.payload_digest AS payload_digest, "
+            "(SELECT f.payload_digest FROM records f WHERE f.stream=a.stream "
+            "AND f.run_id=a.run_id AND f.event_kind='attempt_finalized' "
+            "ORDER BY f.sequence DESC LIMIT 1) AS final_digest "
+            "FROM records a WHERE " + " AND ".join(where) + "), "
+            "keyed AS (SELECT *, final_digest IS NOT NULL AS done FROM runs), "
+            "page AS (SELECT * FROM keyed"
+            + keyset
+            + " ORDER BY done ASC, admitted_at DESC, run_id ASC LIMIT ?) "
+            "SELECT page.*, (SELECT count(*) FROM records n WHERE n.stream=? "
+            "AND n.run_id=page.run_id AND n.event_kind='node_fired') AS nodes "
+            "FROM page ORDER BY done ASC, admitted_at DESC, run_id ASC"
+        )
+        with self.connection() as conn:
+            rows = conn.execute(sql, (*args, *args_after, limit + 1, _key(stream))).fetchall()
+        return (
+            tuple(
+                RunLocator(
+                    run_id=row["run_id"],
+                    admitted_at=row["admitted_at"],
+                    partition_id=row["partition_id"],
+                    admission_payload_digest=row["payload_digest"],
+                    final_payload_digest=row["final_digest"],
+                    nodes_done=int(row["nodes"]),
+                )
+                for row in rows[:limit]
+            ),
+            len(rows) > limit,
+        )
+
+    def run_counts(
+        self, stream: JournalStreamIdentityV1, *, partition_id: str | None = None
+    ) -> tuple[int, int]:
+        """How many runs were admitted, and how many of them are still running."""
+
+        where = "a.stream=? AND a.event_kind='admission_bound' AND a.run_id IS NOT NULL"
+        args: list[Any] = [_key(stream)]
+        if partition_id is not None:
+            where += " AND a.partition_id=?"
+            args.append(partition_id)
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT count(*), coalesce(sum(NOT EXISTS(SELECT 1 FROM records f "
+                "WHERE f.stream=a.stream AND f.run_id=a.run_id "
+                "AND f.event_kind='attempt_finalized')),0) FROM records a WHERE " + where,
+                args,
+            ).fetchone()
+        return int(row[0]), int(row[1])
 
     def positions(
         self, stream: JournalStreamIdentityV1, *, event_kind: str | None = None

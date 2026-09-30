@@ -3749,7 +3749,9 @@ def get_by_ref(
 
     REF is any reference form: CLM-... (or a unique prefix), kind/id, a predicate,
     ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, an artifact
-    path, or a proposal id or prefix.
+    path, a proposal id or prefix, or an operational reference: Line:<name> (or
+    the Line identity digest next names), CAP-<12+ hex> or Capture:<digest>,
+    ResolutionContract:<name>, Mandate:<name>.
     """
 
     from cruxible_client.contracts.get_reads import PlaybillByteRangeV1, PlaybillGetRequestV1

@@ -15,6 +15,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts import PlaybillAcceptedCoordinate
+from cruxible_client.contracts.operational_reads import (
+    PlaybillGetCaptureCardV1,
+    PlaybillGetLineCardV1,
+    PlaybillGetMandateCardV1,
+    PlaybillGetResolutionContractCardV1,
+)
 
 PlaybillGetDetail = Literal["summary", "evidence", "why", "history", "proof", "body"]
 PlaybillGetRefKind = Literal[
@@ -26,6 +32,10 @@ PlaybillGetRefKind = Literal[
     "query",
     "capture_contract",
     "proposal",
+    "line",
+    "capture",
+    "resolution_contract",
+    "mandate",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
 # never re-adjudicated here.
@@ -56,6 +66,10 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "query": ("summary", "history", "proof"),
     "capture_contract": ("summary", "history", "proof"),
     "proposal": ("summary", "proof"),
+    "line": ("summary", "history", "proof"),
+    "capture": ("summary", "proof"),
+    "resolution_contract": ("summary", "history", "proof"),
+    "mandate": ("summary", "history", "proof"),
 }
 
 
@@ -318,6 +332,10 @@ PlaybillGetCardV1 = (
     | PlaybillGetQueryCardV1
     | PlaybillGetCaptureContractCardV1
     | PlaybillGetProposalCardV1
+    | PlaybillGetLineCardV1
+    | PlaybillGetCaptureCardV1
+    | PlaybillGetResolutionContractCardV1
+    | PlaybillGetMandateCardV1
 )
 
 

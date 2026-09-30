@@ -1774,7 +1774,17 @@ Reads one thing by any reference form you have seen: `CLM-...` (or a unique
 prefix of at least four hex digits), `kind/id` or `Subject:kind/id`, a
 predicate (full, or a leaf unique across kinds) or `ClaimType:<predicate>`,
 `Document:<name>`, `Procedure:<name>`, `query:<name>`, `CaptureContract:<name>`,
-an artifact path, or a proposal id or prefix. `--detail` picks the depth:
+an artifact path, or a proposal id or prefix. Operational things resolve too:
+`Line:<name>` (or the Line identity digest `next` names a due Line by, in full
+or as a 12+ hex prefix) answers the Line's Procedure, trigger, authority, its
+arms (who armed each, the principal kind, state and stop reason), due and
+waiting occurrences and recent runs; `CAP-<12+ hex>` or `Capture:<digest>`
+answers a Capture's contract and version, observation time, size, availability
+and the Claims (and their Subjects) that cite it; `ResolutionContract:<name>`
+answers the hypothesis Claim, window, rule and bound-window state; and
+`Mandate:<name>` (or `ProcedureMandate:<name>`) answers the grant, validity and
+state. Arms, occurrences, runs and windows are operational state, shown only at
+the current head. `--detail` picks the depth:
 `summary` (default) prints a values-first card -- a Subject's Claims as an
 aligned table, a Claim's value, verdict and flags (`stale`, `contested`,
 `contradicted`, `unsure_hold`) -- `evidence` lists a Claim's captures by
