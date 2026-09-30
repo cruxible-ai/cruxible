@@ -141,9 +141,8 @@ _MAX_CONTRACT_CAPTURES = 32
 _MAX_HANDLE_SCAN = 64
 # How many stored objects one handle lookup examines in its shard.
 _CAPTURE_SCAN_BUDGET = 65_536
-# How many of a contract's newest Captures no Claim on the Subject cites are
-# read to find the ones whose own source names the Subject.
-_MAX_CONTRACT_SCAN = 256
+# How many stored objects one contract lookup examines for its Captures.
+_CONTRACT_SCAN_BUDGET = 16_384
 _CONTRACT_QUALIFIER = "CaptureContract:"
 
 
@@ -1004,6 +1003,7 @@ class _Planner:
 
         from cruxible_core.service.evidence.capture_reads import (
             CaptureReadInvalid,
+            retained_captures,
             verify_accepted_capture,
         )
 
@@ -1026,41 +1026,53 @@ class _Planner:
                 )
             versions = CaptureContractNames(self.instance, self.head).lineage(qualified)
             marks = ",".join("?" for _ in versions)
-            cited_here = (
-                "EXISTS (SELECT 1 FROM citation_uses u JOIN claims c ON c.identity = u.owner_key "
-                "WHERE u.owner_kind = 'Claim' AND u.capture_digest = p.capture_digest "
-                "AND c.subject_path = ?)"
+            cited = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT DISTINCT u.capture_digest FROM citation_uses u "
+                    "JOIN claims c ON c.identity = u.owner_key "
+                    "JOIN captures p ON p.capture_digest = u.capture_digest "
+                    f"WHERE u.owner_kind = 'Claim' AND c.subject_path = ? "
+                    f"AND p.contract_digest IN ({marks})",
+                    (subject_path_value, *versions),
+                )
+            }
+        # Every retained Capture of the contract counts, cited or not.
+        inventory = retained_captures(
+            self.instance, budget=_CONTRACT_SCAN_BUDGET, contract_digests=versions
+        )
+        if not inventory.complete:
+            raise _refuse(
+                "playbill.write.capture_scan_exhausted",
+                f"the newest Capture of {bare} about {subject} was not found: the body "
+                "store holds more objects than one lookup examines",
+                change=index,
+                repair="Cite the Capture by its CAP- handle or its full sha256 digest",
+                field_path=path,
             )
-            # Cited by a Claim on the Subject: found by the index.
-            cited = connection.execute(
-                f"SELECT p.observed_at_us, p.capture_digest FROM captures p "
-                f"WHERE p.contract_digest IN ({marks}) AND {cited_here} "
-                "ORDER BY p.observed_at_us DESC, p.capture_digest DESC LIMIT ?",
-                (*versions, subject_path_value, _MAX_CONTRACT_CAPTURES),
-            ).fetchall()
-            # Naming the Subject in its own source: read from the newest envelopes.
-            others = connection.execute(
-                f"SELECT p.observed_at_us, p.capture_digest FROM captures p "
-                f"WHERE p.contract_digest IN ({marks}) AND NOT {cited_here} "
-                "ORDER BY p.observed_at_us DESC, p.capture_digest DESC LIMIT ?",
-                (*versions, subject_path_value, _MAX_CONTRACT_SCAN),
-            ).fetchall()
-        store = self.instance.body_store()
         address = SemanticAddress.whole_artifact(subject_path_value).model_dump(mode="json")
-        bound = [(int(row[0]), str(row[1])) for row in cited]
-        for observed_at, digest in ((int(row[0]), str(row[1])) for row in others):
-            try:
-                envelope = parse_capture_envelope(store.read(digest, access=_VALUE_READ_ACCESS))
-            except (PlaybillError, ValueError):
-                continue
+
+        def about_subject(envelope: Any) -> bool:
             selector = getattr(envelope.source, "selector", None)
-            if isinstance(selector, Mapping) and selector.get("semantic_subject") == address:
-                bound.append((observed_at, digest))
-        bound.sort(reverse=True)
-        for _observed_at, digest in bound[:_MAX_CONTRACT_CAPTURES]:
+            return isinstance(selector, Mapping) and selector.get("semantic_subject") == address
+
+        bound = sorted(
+            (
+                item
+                for item in inventory.captures
+                # A Claim maps a byte span onto what it cites: only an exact-bytes
+                # commitment can back one.
+                if item.envelope.commitment.digest_kind == "exact_bytes"
+                and (item.digest in cited or about_subject(item.envelope))
+            ),
+            key=lambda item: (item.envelope.observed_at, item.digest),
+            reverse=True,
+        )
+        store = self.instance.body_store()
+        for item in bound[:_MAX_CONTRACT_CAPTURES]:
             try:
                 verified = verify_accepted_capture(
-                    self.instance, self.head, digest, access=_VALUE_READ_ACCESS
+                    self.instance, self.head, item.digest, access=_VALUE_READ_ACCESS
                 )
             except (CaptureReadInvalid, ReadRefusalError):
                 continue
@@ -1070,7 +1082,7 @@ class _Planner:
                 verified.envelope, contract=verified.contract, store=store, claim_id=""
             )
             if reuse == "shareable":
-                return digest
+                return item.digest
         raise _refuse(
             "playbill.write.contract_capture_not_found",
             f"no verified Capture of {bare} is about {subject}",

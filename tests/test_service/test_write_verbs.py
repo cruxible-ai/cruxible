@@ -542,6 +542,160 @@ def _contract_of(instance: PlaybillInstance, digest: str) -> str:
     )
 
 
+def _seed_record_source(instance: PlaybillInstance) -> tuple[Any, Any]:
+    """Accept an external record contract and its provider; answer (contract, provider)."""
+
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.captures import (
+        capture_contract_digest,
+        capture_contract_path,
+        render_capture_contract,
+    )
+    from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+    from cruxible_client.contracts.policies import (
+        ClaimEvidenceAdmissionPolicyV1,
+        ClaimEvidenceAdmissionRuleV1,
+    )
+    from cruxible_client.contracts.providers import provider_path, render_provider
+    from cruxible_core.proposals.proposals import ProposalAdmissionRequest
+    from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+    from tests.core_support._pc_c_support import capture_contract, provider
+
+    contract = capture_contract()
+    provider_artifact = provider(contract)
+    # A field whose evidence is the record, bound to its Subject by the source.
+    predicate = f"{KIND}.recorded_status"
+    recorded = CLAIM_TYPES[2].model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
+            "predicate": predicate,
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                rules=(
+                    ClaimEvidenceAdmissionRuleV1(
+                        rule_id="order-record",
+                        claim_roles=("observation",),
+                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
+                        evidence_kinds=("database_record",),
+                        admission="direct",
+                        subject_binding="contract_source_mapping",
+                    ),
+                )
+            ),
+        }
+    )
+    base = instance.accepted_coordinate()
+    proposed = instance.proposal_service().submit(
+        actor=OWNER,
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/record-source", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree={
+            **instance.tree_at(base.git_oid),
+            capture_contract_path(contract.identity.name): render_capture_contract(contract),
+            provider_path(provider_artifact.identity.name): render_provider(provider_artifact),
+            claim_type_path(predicate): render_claim_type(recorded),
+        },
+        timestamp="2026-09-30T11:00:00.000000Z",
+    )
+    assert proposed.candidate is not None, proposed.evaluation
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
+    return contract, provider_artifact
+
+
+def _record_capture(
+    instance: PlaybillInstance, contract: Any, provider_artifact: Any, subject: str
+) -> str:
+    """Store (and cite nowhere) external record Captures whose selector names ``subject``.
+
+    Answers the one committed as exact bytes, which a Claim can cite.
+    """
+
+    from cruxible_core.evidence.source_readers import (
+        ExternalSourceReadRequestV1,
+        FakeVersionedExternalSourceReader,
+        ProducerBindingV1,
+    )
+    from tests.core_support._pc_c_support import NOW, digest, provider_run
+
+    kind, subject_id = subject.split("/", 1)
+    selector = {
+        "relation": "orders",
+        "key": {"order_id": subject_id},
+        "semantic_subject": SemanticAddress.whole_artifact(
+            subject_path(kind, subject_id)
+        ).model_dump(mode="json"),
+    }
+    reader = FakeVersionedExternalSourceReader()
+    reader.seed(
+        source_identity="commerce.production.orders",
+        coordinate_type="postgres-lsn-v1",
+        coordinate="0/16B6C50",
+        selector_type="relation-primary-key-v1",
+        selector=selector,
+        value={"order_id": subject_id, "status": "ready"},
+    )
+    acquired = reader.acquire(
+        ExternalSourceReadRequestV1(
+            contract=contract,
+            provider=provider_artifact,
+            binding=ProducerBindingV1(
+                provider=provider_artifact.identity,
+                logical_source_identity="commerce.production.orders",
+                adapter_digest=digest("test-adapter", "postgres-v1"),
+            ),
+            coordinate_type="postgres-lsn-v1",
+            coordinate="0/16B6C50",
+            selector_type="relation-primary-key-v1",
+            selector=selector,
+            materialization="cas",
+            run_coordinate=provider_run(provider_artifact),
+            observed_at=NOW,
+            resource_budget=contract.selection_budget,
+        ),
+        store=instance.body_store(),
+    )
+    # The reader commits the record as a canonical value, which a Claim cannot
+    # map a byte span onto; the same record committed as exact bytes can be cited.
+    from cruxible_client.contracts.captures import render_capture_envelope
+
+    store = instance.body_store()
+    body = f'{{"order_id":"{subject_id}","status":"ready"}}'.encode()
+    exact = acquired.envelope.model_dump(mode="json")
+    exact["commitment"] = {
+        "tag": "playbill-evidence-commitment-v1",
+        "digest_kind": "exact_bytes",
+        "digest": store.store(body).digest,
+        "byte_length": len(body),
+        "materialization": "cas",
+    }
+    envelope = type(acquired.envelope).model_validate(exact)
+    return store.store(render_capture_envelope(envelope)).digest
+
+
+def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subject(
+    instance: PlaybillInstance,
+) -> None:
+    from cruxible_client.contracts.write import capture_handle
+
+    contract, provider_artifact = _seed_record_source(instance)
+    held = _record_capture(instance, contract, provider_artifact, WI1)
+    assert held not in _accepted_capture_digests(instance)
+    by_contract = {"kind": "contract", "contract": contract.identity.name}
+    outcome = _write(instance, _set(WI1, "recorded_status", "ready") | {"evidence": by_contract})
+    assert outcome.status == "accepted", outcome
+    assert outcome.changes[0].capture == capture_handle(held)
+    assert outcome.changes[0].verdict == "supported"
+    assert cited_captures(instance, outcome.changes[0].claim or "") == {held}
+    # Its selector names wi-1 exactly, so it is nobody else's.
+    other = _refusal(
+        _write(instance, _set(WI2, "recorded_status", "ready") | {"evidence": by_contract})
+    )
+    assert other.code == "playbill.write.contract_capture_not_found"
+
+
 def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(
     instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch
 ) -> None:

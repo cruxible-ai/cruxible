@@ -1749,8 +1749,8 @@ catalogued workspace file, read on this side, and `--capture` an existing
 Capture by its sha256 digest or its handle `CAP-<12+ hex>` (a digest prefix
 unique among the verified Captures the instance holds, cited or not; ambiguous
 or unknown handles refuse with the nearest handles). `--evidence-contract NAME` cites the newest verified Capture of
-that CaptureContract about SUBJECT: one an accepted Claim on SUBJECT cites, or
-whose own source names SUBJECT; with none it refuses
+that CaptureContract about SUBJECT, cited or not: one an accepted Claim on
+SUBJECT cites, or whose own source names SUBJECT; with none it refuses
 `playbill.write.contract_capture_not_found`. Either resolves to the digest
 before the write is lowered, and the change prints the Capture as
 `evidence CAP-<12 hex>`. The write accepts in the same call when the approval policy and your

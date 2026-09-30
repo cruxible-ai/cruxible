@@ -141,9 +141,11 @@ class CaptureEvidence(_StrictWriteModel):
 class ContractEvidence(_StrictWriteModel):
     """The newest verified Capture of one CaptureContract about the change's Subject.
 
-    A Capture is about the Subject when an accepted Claim on that Subject cites
-    it, or when its source names the Subject itself. It is resolved to its
-    digest before the write is lowered, and the outcome names it as ``capture``.
+    Every Capture the instance holds counts, cited or not. One is about the
+    Subject when an accepted Claim on that Subject cites it, or when its source
+    names the Subject itself; only a Capture committed as exact bytes can back a
+    Claim. It is resolved to its digest before the write is lowered, and the
+    outcome names it as ``capture``.
     """
 
     kind: Literal["contract"] = "contract"
