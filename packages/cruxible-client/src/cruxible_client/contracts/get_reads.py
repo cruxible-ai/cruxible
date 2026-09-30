@@ -21,6 +21,7 @@ from cruxible_client.contracts.operational_reads import (
     PlaybillGetMandateCardV1,
     PlaybillGetProcedureRunCardV1,
     PlaybillGetResolutionContractCardV1,
+    PlaybillLiveViewV1,
 )
 
 PlaybillGetDetail = Literal["summary", "evidence", "why", "history", "proof", "body"]
@@ -430,6 +431,9 @@ class PlaybillGetResultV1(_StrictGetModel):
     accepted_coordinate: PlaybillAcceptedCoordinate | None = Field(
         default=None, exclude_if=_omit_none
     )
+    # Present when part of the answer is operational state, read live at the
+    # current head (``live.as_of``) whatever ``coordinate`` the read named.
+    live: PlaybillLiveViewV1 | None = Field(default=None, exclude_if=_omit_none)
     evaluation_time: datetime
 
 

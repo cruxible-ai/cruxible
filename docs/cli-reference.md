@@ -1792,8 +1792,12 @@ answers a Capture's contract and version, observation time, size, availability
 and the Claims (and their Subjects) that cite it; `ResolutionContract:<name>`
 answers the hypothesis Claim, window, rule and bound-window state; and
 `Mandate:<name>` (or `ProcedureMandate:<name>`) answers the grant, validity and
-state. Arms, occurrences, runs and windows are operational state, shown only at
-the current head. `--detail` picks the depth:
+state. Arms, occurrences, runs, windows and capture availability are
+operational state with no history: they are always read as of now at the
+current head, whatever `--at` names, and the answer says so with `live`
+(`as_of`: that head's 12-hex git oid and generation; `fields`: what was read
+live). `orient` marks its runs, lines and predictions sections, and its map's
+arm attention and run counts, the same way. `--detail` picks the depth:
 `summary` (default) prints a values-first card -- a Subject's Claims as an
 aligned table, a Claim's value, verdict and flags (`stale`, `contested`,
 `contradicted`, `unsure_hold`) -- `evidence` lists a Claim's captures by

@@ -320,6 +320,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillGetRunCurrentNodeV1", "started_at"): "EVALUATION INSTANT",
     ("PlaybillGetPendingInputV1", "waiting_since"): "EVALUATION INSTANT",
     ("PlaybillGetRunNodeV1", "sequence"): "SETTLEMENT ORDER",
+    # The accepted head a live operational read was taken at.
+    ("PlaybillLiveHeadV1", "generation"): "SETTLEMENT ORDER",
     ("RunLocator", "admitted_at"): "EVALUATION INSTANT",
     ("PlaybillSearchRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillSearchResult", "evaluation_time"): "EVALUATION INSTANT",

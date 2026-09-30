@@ -7,9 +7,9 @@ instance with thousands of occurrences, captures or runs.
 
 Accepted artifacts are read at the requested coordinate. Operational state
 (arms, pending occurrences, runs, bound prediction windows, capture
-availability) is read as of now, and only when the read is at the current
-head: a card read at an older coordinate carries the definition alone and says
-so in ``note``.
+availability) has no history: it is always read as of now at the current head,
+whatever coordinate the read names, and every answer that carries it says so
+with a ``live`` marker naming that head (``live_view``).
 """
 
 from __future__ import annotations
@@ -43,6 +43,8 @@ from cruxible_client.contracts.operational_reads import (
     PlaybillGetPredictionWindowV1,
     PlaybillGetResolutionContractCardV1,
     PlaybillLineArmState,
+    PlaybillLiveHeadV1,
+    PlaybillLiveViewV1,
     PlaybillMandateState,
     PlaybillOrientCaptureContractV1,
     PlaybillOrientCaptureV1,
@@ -92,10 +94,27 @@ _LINE_DIGEST = re.compile(r"^sha256:[0-9a-f]{12,64}$")
 #: A ``get`` call spelled for the caller's surface: (ref, detail) -> call.
 RenderGet = Callable[[str, str | None], str]
 
-HISTORICAL_NOTE = (
-    "read at an earlier accepted generation: operational state (arms, occurrences, "
-    "runs, windows) is shown only at the current head"
-)
+
+def live_view(instance: PlaybillInstance, fields: tuple[str, ...]) -> PlaybillLiveViewV1:
+    """The marker an answer carries for the parts of it read live, at the current head."""
+
+    head = instance.accepted_coordinate()
+    generation = next(
+        item.sequence for item in reversed(instance.accepted_history()) if item.oid == head.git_oid
+    )
+    return PlaybillLiveViewV1(
+        as_of=PlaybillLiveHeadV1(git_oid=head.git_oid[:12], generation=generation),
+        fields=fields,
+    )
+
+
+#: What each card reads live.
+LIVE_CARD_FIELDS: dict[str, tuple[str, ...]] = {
+    "line": ("arms", "arms_total", "due", "waiting", "occurrences", "recent_runs", "runs_total"),
+    "resolution_contract": ("state", "windows", "windows_total"),
+    "capture": ("status", "status_detail"),
+    "procedure_run": ("card",),
+}
 
 
 def _instant(value: str) -> datetime:
@@ -372,7 +391,6 @@ def line_card(
     coordinate: AcceptedProjectionCoordinate,
     identity: str,
     *,
-    at_head: bool,
     evaluation_time: datetime,
     render: RenderGet,
     viewer: OperationalViewer | None = None,
@@ -382,24 +400,20 @@ def line_card(
     digest = line_identity_digest(line.identity)
     trigger, detail = trigger_summary(line)
     procedure = line.procedure.target.qualified
-    fields: dict[str, Any] = {}
     next_steps = [render(procedure, None)]
-    if at_head:
-        operations = line_operations(instance, digest, now=evaluation_time, viewer=viewer)
-        runs, _more = run_rows(instance, limit=LINE_CARD_RUNS, line=line.identity)
-        total, _running = run_counts(instance, line=line.identity)
-        fields.update(
-            arms=operations.arms,
-            arms_total=operations.arms_total,
-            due=operations.due,
-            waiting=operations.waiting,
-            occurrences=operations.occurrences,
-            recent_runs=runs,
-            runs_total=total,
-        )
-        next_steps.extend(render(f"ProcedureRun:{row.run}", None) for row in runs[:1])
-    else:
-        fields["note"] = HISTORICAL_NOTE
+    operations = line_operations(instance, digest, now=evaluation_time, viewer=viewer)
+    runs, _more = run_rows(instance, limit=LINE_CARD_RUNS, line=line.identity)
+    total, _running = run_counts(instance, line=line.identity)
+    fields: dict[str, Any] = dict(
+        arms=operations.arms,
+        arms_total=operations.arms_total,
+        due=operations.due,
+        waiting=operations.waiting,
+        occurrences=operations.occurrences,
+        recent_runs=runs,
+        runs_total=total,
+    )
+    next_steps.extend(render(f"ProcedureRun:{row.run}", None) for row in runs[:1])
     next_steps.append(render(line.identity.qualified, "history"))
     return PlaybillGetLineCardV1(
         line=line.identity.qualified,
@@ -420,9 +434,8 @@ def line_rows(
     coordinate: AcceptedProjectionCoordinate,
     *,
     evaluation_time: datetime,
-    at_head: bool,
 ) -> tuple[PlaybillOrientLineV1, ...]:
-    """Every accepted Line as a compact row, with its arm and pending counts at head."""
+    """Every accepted Line as a compact row, with its live arm state and pending counts."""
 
     with instance.bind_accepted_projection(coordinate) as projection:
         lines = [
@@ -432,7 +445,7 @@ def line_rows(
             )
         ]
     operations_by_line: dict[str, LineOperations] = {}
-    if at_head and lines and dispatch_root(instance).exists():
+    if lines and dispatch_root(instance).exists():
         # One store session for every Line, not one replay per row.
         store = LineDispatchStore(instance)
         with store.locked() as conn:
@@ -697,7 +710,6 @@ def resolution_contract_card(
     coordinate: AcceptedProjectionCoordinate,
     identity: str,
     *,
-    at_head: bool,
     render: RenderGet,
 ) -> PlaybillGetResolutionContractCardV1:
     from cruxible_core.consumers.predictions import contract_windows
@@ -711,22 +723,19 @@ def resolution_contract_card(
     claim_id = contract.hypothesis.identity.name
     fields: dict[str, Any] = {}
     counts: dict[str, int] | None = None
-    if at_head:
-        found = contract_windows(instance, identity, limit=OPERATIONAL_CARD_LIST_LIMIT)
-        if found is not None:
-            windows, counts = found
-            fields["windows"] = tuple(
-                PlaybillGetPredictionWindowV1(
-                    window=window_id,
-                    starts_at=window.starts_at,
-                    ends_at=window.ends_at,
-                    status=cast(Any, status),
-                )
-                for window_id, window, status in windows
+    found = contract_windows(instance, identity, limit=OPERATIONAL_CARD_LIST_LIMIT)
+    if found is not None:
+        windows, counts = found
+        fields["windows"] = tuple(
+            PlaybillGetPredictionWindowV1(
+                window=window_id,
+                starts_at=window.starts_at,
+                ends_at=window.ends_at,
+                status=cast(Any, status),
             )
-            fields["windows_total"] = sum(counts.values())
-    else:
-        fields["note"] = HISTORICAL_NOTE
+            for window_id, window, status in windows
+        )
+        fields["windows_total"] = sum(counts.values())
     return PlaybillGetResolutionContractCardV1(
         contract=identity,
         lifecycle=contract.lifecycle.state,
@@ -738,7 +747,7 @@ def resolution_contract_card(
         ),
         window=window_summary(contract.window),
         rule=str(rule_kind),
-        state=_prediction_state(counts) if at_head else "not_observed",
+        state=_prediction_state(counts),
         next=(render(claim_id, None), render(identity, "history")),
         **fields,
     )
@@ -747,8 +756,6 @@ def resolution_contract_card(
 def prediction_rows(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
-    *,
-    at_head: bool,
 ) -> tuple[PlaybillOrientPredictionV1, ...]:
     """Every live ResolutionContract with its bound windows counted by status."""
 
@@ -761,9 +768,7 @@ def prediction_rows(
                 "SELECT identity FROM resolution_contracts WHERE lifecycle='live' ORDER BY identity"
             )
         ]
-    tallies = (
-        window_tallies(instance, [item.identity.qualified for item in contracts]) if at_head else {}
-    )
+    tallies = window_tallies(instance, [item.identity.qualified for item in contracts])
     rows: list[PlaybillOrientPredictionV1] = []
     for contract in contracts:
         tally = tallies.get(contract.identity.qualified)
@@ -850,7 +855,7 @@ def mandate_rows(
 
 
 __all__ = [
-    "HISTORICAL_NOTE",
+    "LIVE_CARD_FIELDS",
     "LineOperations",
     "OperationalViewer",
     "capture_card",
@@ -863,6 +868,7 @@ __all__ = [
     "line_card",
     "line_operations",
     "line_rows",
+    "live_view",
     "lines_with_digest",
     "mandate_card",
     "mandate_rows",

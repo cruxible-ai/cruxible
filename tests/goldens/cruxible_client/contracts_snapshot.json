@@ -27498,6 +27498,25 @@
             "title": "Lines"
           }
         },
+        "live": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "live",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillLiveViewV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "mandates": {
           "default": null,
           "default_json_serializable": true,
@@ -27786,6 +27805,56 @@
               "compiler_digest"
             ],
             "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillLiveHeadV1": {
+            "additionalProperties": false,
+            "description": "The accepted head a live read was taken at: its git oid's 12-hex prefix and sequence.",
+            "properties": {
+              "generation": {
+                "minimum": 0,
+                "title": "Generation",
+                "type": "integer"
+              },
+              "git_oid": {
+                "pattern": "^[0-9a-f]{12}$",
+                "title": "Git Oid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "generation"
+            ],
+            "title": "PlaybillLiveHeadV1",
+            "type": "object"
+          },
+          "PlaybillLiveViewV1": {
+            "additionalProperties": false,
+            "description": "Marks the parts of an answer read live: operational state has no history.\n\n``as_of`` is the current head those parts were read at, which differs from\nthe answer's own coordinate when the read named an older ``at``; ``fields``\nnames what was read live (``card`` when the whole card is).",
+            "properties": {
+              "as_of": {
+                "$ref": "#/$defs/PlaybillLiveHeadV1"
+              },
+              "fields": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Fields",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-live-view-v1",
+                "default": "playbill-live-view-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "as_of",
+              "fields"
+            ],
+            "title": "PlaybillLiveViewV1",
             "type": "object"
           },
           "PlaybillOrientArmsV1": {
@@ -28861,6 +28930,17 @@
             ],
             "default": null,
             "title": "Lines"
+          },
+          "live": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillLiveViewV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "mandates": {
             "anyOf": [

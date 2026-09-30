@@ -22,6 +22,7 @@ from typing import Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.operational_reads import (
+    PlaybillLiveViewV1,
     PlaybillOrientCaptureContractV1,
     PlaybillOrientCaptureV1,
     PlaybillOrientLineV1,
@@ -283,6 +284,10 @@ class PlaybillOrientResultV1(_StrictOrientModel):
     mandates: tuple[PlaybillOrientMandateV1, ...] | None = Field(default=None, exclude_if=_is_none)
     truncated: bool = False
     next_cursor: str | None = Field(default=None, exclude_if=_is_none)
+    # Present when part of the answer is operational state -- runs, Line arms and
+    # pending counts, prediction windows -- read live at the current head
+    # (``live.as_of``) whatever ``coordinate`` the read named.
+    live: PlaybillLiveViewV1 | None = Field(default=None, exclude_if=_is_none)
     next: tuple[str, ...] = ()
 
 

@@ -89,12 +89,14 @@ from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.operational import (
+    LIVE_CARD_FIELDS,
     capture_card,
     capture_hex,
     captures_with_prefix,
     is_line_digest,
     line_card,
     lines_with_digest,
+    live_view,
     mandate_card,
     resolution_contract_card,
     uncited_capture_present,
@@ -1726,9 +1728,10 @@ def service_playbill_get(
     coordinate = resolve_read_coordinate(instance, at)
     evaluation_time = request.evaluation_time or utc_now()
     resolved = resolve_get_ref(instance, coordinate, request.ref, surface=request.surface)
-    if resolved.kind in {"proposal", "procedure_run"}:
-        # Proposals and runs are operational state, read only as of the current
-        # head; one response never mixes an older requested generation with it.
+    if resolved.kind == "proposal":
+        # Proposals are operational state, read only as of the current head;
+        # one response never mixes an older requested generation with it. (A
+        # Procedure run is read live whatever at names, and says so: `live`.)
         head = instance.accepted_coordinate()
         if request.at is not None and coordinate.git_oid != head.git_oid:
             raise ReadRefusalError(
@@ -1738,8 +1741,7 @@ def service_playbill_get(
                 repair=RepairOperationV1(
                     operation="playbill.get", arguments={"ref": resolved.display}
                 ),
-                repair_line=f"Omit at to read the {resolved.kind.replace('_', ' ')} as of the "
-                "current head",
+                repair_line="Omit at to read the proposal as of the current head",
                 context={"ref": resolved.display, "kind": resolved.kind},
             )
         coordinate = head
@@ -1759,8 +1761,6 @@ def service_playbill_get(
     fields: dict[str, Any] = {}
     surface = request.surface
     content = ExactContentReader(instance)
-    # Operational state (arms, occurrences, runs, windows) is read only at head.
-    at_head = coordinate.git_oid == instance.accepted_coordinate().git_oid
 
     def render(ref: str, detail: str | None) -> str:
         return _render_get(surface, ref, detail)
@@ -1801,7 +1801,6 @@ def service_playbill_get(
                 instance,
                 coordinate,
                 resolved.identity,
-                at_head=at_head,
                 evaluation_time=evaluation_time,
                 render=render,
                 viewer=viewer,
@@ -1815,9 +1814,7 @@ def service_playbill_get(
                 read_capture=functools.partial(_render_read_capture, surface),
             )
         elif resolved.kind == "resolution_contract":
-            card = resolution_contract_card(
-                instance, coordinate, resolved.identity, at_head=at_head, render=render
-            )
+            card = resolution_contract_card(instance, coordinate, resolved.identity, render=render)
         elif resolved.kind == "procedure_run":
             card = procedure_run_card(
                 instance,
@@ -1837,6 +1834,9 @@ def service_playbill_get(
         else:
             card = _proposal_card(instance, resolved, surface=surface)
         fields["card"] = card
+        live = LIVE_CARD_FIELDS.get(resolved.kind)
+        if live is not None:
+            fields["live"] = live_view(instance, live)
     elif request.detail == "evidence":
         fields["evidence"] = _claim_evidence(
             instance, coordinate, resolved, evaluation_time=evaluation_time, content=content
@@ -1860,6 +1860,8 @@ def service_playbill_get(
         fields["proof"] = _proof(
             instance, coordinate, resolved, evaluation_time=evaluation_time, access=access
         )
+        if resolved.kind == "procedure_run":
+            fields["live"] = live_view(instance, ("proof",))
     else:
         fields["body"] = _body(
             instance,

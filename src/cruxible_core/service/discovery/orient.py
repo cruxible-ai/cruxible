@@ -70,6 +70,7 @@ from cruxible_core.service.discovery.operational import (
     capture_contract_rows,
     capture_rows,
     line_rows,
+    live_view,
     mandate_rows,
     prediction_rows,
 )
@@ -840,6 +841,8 @@ def service_playbill_orient(
         if next_cursor is not None:
             calls.append(_Call("orient", (("section", section), ("cursor", next_cursor))))
         base[section] = page
+        if section in _LIVE_SECTIONS:
+            base["live"] = live_view(instance, _LIVE_SECTIONS[section])
         return PlaybillOrientResultV1(
             **base,
             section=section,
@@ -905,6 +908,19 @@ def service_playbill_orient(
     if next_cursor is not None:
         calls.append(_Call("orient", (("cursor", next_cursor),)))
     live_procedures = sum(item.lifecycle == "live" for item in state.procedures)
+    if attention.arms is not None or counts["runs"]:
+        base["live"] = live_view(
+            instance,
+            tuple(
+                name
+                for name, present in (
+                    ("attention.arms", attention.arms is not None),
+                    ("artifacts.runs", bool(counts["runs"])),
+                    ("artifacts.running", bool(counts["runs"])),
+                )
+                if present
+            ),
+        )
     return PlaybillOrientResultV1(
         **base,
         you=_you(caller, instance=instance),
@@ -926,6 +942,11 @@ def service_playbill_orient(
 
 
 _KEYSET = "keyset"
+#: The sections that carry live operational state, and which of their fields do.
+_LIVE_SECTIONS: dict[str, tuple[str, ...]] = {
+    "lines": ("lines.arm", "lines.due", "lines.waiting"),
+    "predictions": ("predictions.open", "predictions.settleable", "predictions.resolved"),
+}
 _OPERATIONAL_SECTIONS: frozenset[str] = frozenset(
     {"lines", "capture_contracts", "predictions", "mandates"}
 )
@@ -966,19 +987,18 @@ def _operational_rows(
 ) -> tuple[tuple[Any, ...], list[str], Any]:
     """An accepted operational family's rows, their keys, and each row's get reference.
 
-    Operational state (arm state, pending counts, bound windows) is read only
-    at the current head.
+    Operational state (arm state, pending counts, bound windows) is read live at
+    the current head; the section's answer carries ``live`` to say so.
     """
 
-    at_head = coordinate.git_oid == instance.accepted_coordinate().git_oid
     if section == "lines":
-        lines = line_rows(instance, coordinate, evaluation_time=evaluation_time, at_head=at_head)
+        lines = line_rows(instance, coordinate, evaluation_time=evaluation_time)
         return lines, [row.line for row in lines], lambda row: row.line
     if section == "capture_contracts":
         contracts = capture_contract_rows(instance, coordinate)
         return contracts, [row.contract for row in contracts], lambda row: row.contract
     if section == "predictions":
-        predictions = prediction_rows(instance, coordinate, at_head=at_head)
+        predictions = prediction_rows(instance, coordinate)
         return predictions, [row.contract for row in predictions], lambda row: row.contract
     mandates = mandate_rows(instance, coordinate, evaluation_time=evaluation_time)
     return (
@@ -1100,6 +1120,7 @@ def _runs_section(
     return PlaybillOrientResultV1(
         **base,
         section=section,
+        live=live_view(instance, ("runs",)),
         runs=rows,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,

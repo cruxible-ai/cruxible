@@ -9,9 +9,10 @@ families as compact rows.
 
 An accepted artifact (a Line, a ResolutionContract, a mandate) is read at the
 requested coordinate. What happens to it operationally -- arms, pending
-occurrences, runs, bound prediction windows -- is operational state, read as of
-now and only at the current head; a card read at an older coordinate says so in
-``note`` instead of mixing generations.
+occurrences, runs, bound prediction windows, capture availability -- has no
+history: it is read as of now at the current head, whatever coordinate the read
+names, and the answer says so with ``live`` (``PlaybillLiveViewV1``), which
+names that head and the fields read live. No answer mixes the two unannounced.
 """
 
 from __future__ import annotations
@@ -62,6 +63,26 @@ def capture_handle(digest: str) -> str:
     """``CAP-<12 hex>``: the short handle a card prints for a Capture digest."""
 
     return "CAP-" + digest.removeprefix("sha256:")[:CAPTURE_HANDLE_HEX]
+
+
+class PlaybillLiveHeadV1(_StrictOperationalModel):
+    """The accepted head a live read was taken at: its git oid's 12-hex prefix and sequence."""
+
+    git_oid: str = Field(pattern=r"^[0-9a-f]{12}$")
+    generation: int = Field(ge=0)
+
+
+class PlaybillLiveViewV1(_StrictOperationalModel):
+    """Marks the parts of an answer read live: operational state has no history.
+
+    ``as_of`` is the current head those parts were read at, which differs from
+    the answer's own coordinate when the read named an older ``at``; ``fields``
+    names what was read live (``card`` when the whole card is).
+    """
+
+    tag: Literal["playbill-live-view-v1"] = "playbill-live-view-v1"
+    as_of: PlaybillLiveHeadV1
+    fields: tuple[str, ...]
 
 
 class PlaybillRunRowV1(_StrictOperationalModel):
@@ -120,7 +141,6 @@ class PlaybillGetLineCardV1(_StrictOperationalModel):
     occurrences: tuple[PlaybillGetLineOccurrenceV1, ...] = ()
     recent_runs: tuple[PlaybillRunRowV1, ...] = ()
     runs_total: int = Field(default=0, ge=0)
-    note: str | None = Field(default=None, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 
@@ -167,7 +187,6 @@ class PlaybillGetResolutionContractCardV1(_StrictOperationalModel):
     state: Literal["open", "settleable", "resolved", "unbound", "not_observed"]
     windows: tuple[PlaybillGetPredictionWindowV1, ...] = ()
     windows_total: int = Field(default=0, ge=0)
-    note: str | None = Field(default=None, exclude_if=_omit_none)
     next: tuple[str, ...] = ()
 
 
@@ -311,6 +330,8 @@ __all__ = [
     "PlaybillGetRunNodeV1",
     "PlaybillGetRunTriggerV1",
     "PlaybillLineArmState",
+    "PlaybillLiveHeadV1",
+    "PlaybillLiveViewV1",
     "PlaybillMandateState",
     "PlaybillOrientCaptureContractV1",
     "PlaybillOrientCaptureV1",

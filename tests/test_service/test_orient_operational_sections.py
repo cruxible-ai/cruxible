@@ -117,14 +117,9 @@ def test_captures_page_by_key_and_refuse_a_foreign_cursor(prediction_world) -> N
         service_playbill_orient(instance, section="runs", cursor=first.next_cursor)
 
 
-def test_line_rows_off_the_head_carry_the_definition_only(line_world) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
-    from cruxible_core.service.discovery.operational import line_rows
+def test_the_lines_section_says_its_arm_state_is_live(line_world) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
+    instance, _line, _dispatched, when = line_world
 
-    instance, line, _dispatched, when = line_world
+    answer = service_playbill_orient(instance, section="lines", evaluation_time=when)
 
-    (row,) = line_rows(
-        instance, instance.accepted_coordinate(), evaluation_time=when, at_head=False
-    )
-
-    assert row.line == line.identity.qualified
-    assert row.arm is None and (row.due, row.waiting) == (0, 0)
+    assert answer.live is not None and answer.live.fields[0] == "lines.arm"

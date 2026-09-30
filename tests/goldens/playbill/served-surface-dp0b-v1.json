@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-09-30:operational-reads",
-    "surface_digest": "sha256:d74e54191c9dc2e1d13fa3bc625a04dfb7c863d9f373ca2b6030585189765009"
+    "surface_digest": "sha256:35fad695d022bf62a165f8d5597ef32236a4cee085836a65fb808d265b8e9a3f"
   },
   "surface": {
     "cli_leaves": [
@@ -1552,7 +1552,7 @@
         "request_model": "cruxible_client.contracts.get_reads.PlaybillGetRequestV1",
         "request_schema_digest": "sha256:165a780a37f888bf39db75a14c48e9c7921771d9e17a2004a52b91f74fbf2216",
         "response_model": "cruxible_client.contracts.get_reads.PlaybillGetResultV1",
-        "response_schema_digest": "sha256:6b82bb8b71ecbd325a7d417f1cbcf4739c9889b1122662dc204e6dcd7439adf4"
+        "response_schema_digest": "sha256:dec5004c99e6647aa8d34e39c4278a7395857ea2b3ff839ccad70fac31f3b395"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.playbill_init",
@@ -1768,7 +1768,7 @@
         "request_model": null,
         "request_schema_digest": null,
         "response_model": "cruxible_client.contracts.orient.PlaybillOrientResultV1",
-        "response_schema_digest": "sha256:edb0e1c18c09dc77955f3d79e60f44847b4df6d2cd577e1efeeaee9924cd6e3f"
+        "response_schema_digest": "sha256:8614bad5efc2de9af13716a8e2b49af08b783336ef8d6b6245e190052a1af8e5"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.list_policies_in_force",
@@ -2767,7 +2767,7 @@
         ],
         "input_schema_digest": "sha256:775b773da288fcad5cfc273b612791b914cc56204fd96632194a434d549f5314",
         "name": "cruxible_playbill_get",
-        "output_schema_digest": "sha256:76d81b4d40e6ae80a416ca50924ac779dfadf68ff1fbe21868acb39d25f4636a",
+        "output_schema_digest": "sha256:881d86b08f87ec8f82a5053866c228c083645ff3ab9e665f61ac08dad34ee08d",
         "permission": "READ_ONLY"
       },
       {
@@ -3049,7 +3049,7 @@
         ],
         "input_schema_digest": "sha256:5e3be8543de07684da310782a59bdf3a4c94f6cfc53affdac8b707722e5a1ccd",
         "name": "cruxible_playbill_orient",
-        "output_schema_digest": "sha256:12f94e68d2364db1d19ea624f1b6525364255fe650c942e25ed812c3d4fb775d",
+        "output_schema_digest": "sha256:f401ffdb943fd2f741a6eea04045d6d5dd5bfcfdcce9dd2c8f33d13dd747b3d6",
         "permission": "READ_ONLY"
       },
       {

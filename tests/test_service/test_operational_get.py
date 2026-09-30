@@ -100,7 +100,7 @@ def test_a_line_card_names_its_procedure_trigger_arms_and_runs(line_world) -> No
     assert [row.run for row in card.recent_runs] == admitted
     assert card.runs_total == len(admitted)
     assert card.recent_runs[0].line == line.identity.qualified
-    assert card.note is None
+    assert result.live is not None and "arms" in result.live.fields
     assert any(step.startswith("cruxible_playbill_get(") for step in card.next)
 
 

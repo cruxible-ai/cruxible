@@ -129,7 +129,7 @@ def test_a_running_run_names_its_current_node_and_elapsed_against_the_read(run_w
     assert card.elapsed_us == int(timedelta(minutes=2) / timedelta(microseconds=1))
 
 
-def test_run_references_refuse_with_a_repair(run_world) -> None:  # type: ignore[no-untyped-def]
+def test_run_references_refuse_with_a_repair_and_read_live(run_world) -> None:  # type: ignore[no-untyped-def]
     instance, _procedure, finished = run_world
 
     with pytest.raises(ReadRefusalError) as missing:
@@ -142,10 +142,11 @@ def test_run_references_refuse_with_a_repair(run_world) -> None:  # type: ignore
         _get(instance, "ProcedureRun:RUN-12")
     assert malformed.value.error_code == "playbill.get.ref_malformed"
 
+    # A run has no history: read beside an older at, it is live and says so.
     first = instance.accepted_history()[0].oid
-    with pytest.raises(ReadRefusalError) as historical:
-        _get(instance, finished.run_id, at=first)
-    assert historical.value.error_code == "playbill.get.historical_read_unsupported"
+    historical = _get(instance, finished.run_id, at=first)
+    assert historical.live is not None and historical.live.fields == ("card",)
+    assert historical.coordinate.git_oid == first[:12]
 
 
 def test_orient_lists_runs_newest_first_filters_running_and_pages_by_key(run_world) -> None:  # type: ignore[no-untyped-def]
