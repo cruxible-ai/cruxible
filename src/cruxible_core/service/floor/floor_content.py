@@ -30,11 +30,12 @@ from cruxible_core.service.floor.floor_current import (
     accepted_subjects,
     claim_verdicts,
     claims_by_subject,
-    current_path,
     floor_stamp,
     render_subject,
     stamped,
 )
+from cruxible_core.service.floor.floor_documents import document_files, document_parts
+from cruxible_core.storage.cas import BodyAccessContext
 
 MAX_REVIEW_SNAPSHOT_BYTES = 64 * 1024 * 1024
 
@@ -109,13 +110,14 @@ def current_content(
     coordinate: AcceptedProjectionCoordinate,
     claims: tuple[ClaimArtifactAny, ...],
     notes_oid: str | None,
+    access: BodyAccessContext | None = None,
 ) -> dict[str, bytes]:
     context, context_status = review_context(instance, notes_oid)
     live = tuple(claim for claim in claims if claim.lifecycle.state == "live")
     grouped = claims_by_subject(live)
     shells = accepted_subjects(instance, coordinate)
     claim_types = accepted_claim_types(instance, coordinate)
-    values = ValueRenderer()
+    values = ValueRenderer(instance)
     files: dict[str, bytes] = {}
     relevant_changes: dict[int, tuple[AcceptedGenerationLocation, ChangeSetRecordAnyVersion]] = {}
     records = instance.retained_record_reader()
@@ -135,7 +137,7 @@ def current_content(
                 values=values,
                 history=history,
             )
-            files[current_path(part.ref)] = stamped(part, stamp)
+            files.update(stamped(part, stamp))
             files[f"{PROVENANCE_SUBJECTS_PREFIX}{part.ref}.json"] = part.provenance
             for sequence in part.sequences:
                 if sequence not in relevant_changes:
@@ -144,6 +146,12 @@ def current_content(
                         generation,
                         history.read_generation_record(sequence, records),
                     )
+    for document in document_parts(
+        instance,
+        coordinate=coordinate,
+        access=access or BodyAccessContext(principal_id="playbill-floor"),
+    ):
+        files.update(document_files(document, stamp))
     for sequence, (generation, record) in sorted(relevant_changes.items()):
         review_entries = tuple(
             row
@@ -192,8 +200,10 @@ def current_content(
         "attributed review rationale, where retained in the pinned Git notes snapshot.\n\n"
         "History, rejected proposals, full evaluation transcripts, source bodies, and "
         "authoring-intent exhaust are not exported. No match here does not prove "
-        "absence from those surfaces. Evidence and exact-content bodies require "
-        "their normal authorized expansion; this export never reads them.\n\n"
+        "absence from those surfaces. Evidence bodies require their normal authorized "
+        "expansion; this export never reads them. Exact-content Claim values are shown "
+        "as their text, and Document bodies are under documents/ when the exporting "
+        "caller may read bodies.\n\n"
         "The manifest binds every file. The accepted coordinate and the notes commit "
         "in provenance/snapshot.json are separate rebuild inputs. "
         "Agent-chosen projections can provide more useful reading layouts.\n"

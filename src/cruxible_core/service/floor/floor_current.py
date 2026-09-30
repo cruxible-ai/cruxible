@@ -63,6 +63,7 @@ from cruxible_core.indexes.history.history_index import HistoryReader
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.read_flags import answer_flags, verdict_flags
 
@@ -79,6 +80,9 @@ FLOOR_FLAG_ORDER: tuple[FloorFlag, ...] = (
     "uncovered",
     "unsure_hold",
 )
+# A value inlines while it stays this small; longer text goes whole to a sibling file.
+INLINE_TEXT_BYTES = 2048
+INLINE_TEXT_LINES = 40
 _FLAGS_NOTE = "verdicts as of this file's coordinate; get the ref for live verdicts"
 
 
@@ -201,6 +205,8 @@ class _Shown:
     scalar: str | None
     block: tuple[str, tuple[str, ...]] | None
     note: str
+    # A text too long to inline: its sibling file's name and its text.
+    text_file: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -213,6 +219,8 @@ class SubjectPart:
     header_extra: str
     provenance: bytes
     sequences: tuple[int, ...]
+    # Full-text sibling files: (file name beside the current/ file, header, text).
+    texts: tuple[tuple[str, str, str], ...] = ()
 
 
 def subject_ref(path: str) -> str:
@@ -256,27 +264,58 @@ def _value_key(claim: ClaimArtifactAny) -> str:
     return repr(("literal", canonical_bytes(obj.value)))
 
 
-class ValueRenderer:
-    """Shows one Claim's object as the floor shows it."""
+_SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
-    def shown(self, claim: ClaimArtifactAny, *, ref: str, display: str) -> _Shown:
+
+class ValueRenderer:
+    """Shows one Claim's object as the floor shows it.
+
+    An exact-content value (a ruling, a method law) is shown as its text, read
+    once per digest from the body store the bytes were committed to, exactly as
+    ``get`` shows it. Text too long to keep a current/ file bounded goes whole
+    into a sibling ``<id>.<field>.txt`` file, never truncated; bytes that are not
+    UTF-8 text show as a typed marker with their size.
+    """
+
+    def __init__(self, instance: PlaybillInstance) -> None:
+        self._content = ExactContentReader(instance)
+
+    def shown(self, claim: ClaimArtifactAny, *, text_name: str) -> _Shown:
         obj = claim.statement.object
         note = _note(claim)
         if isinstance(obj, SubjectClaimObject):
             return _Shown(yaml_scalar(subject_ref(obj.address.artifact_path)), None, note)
         if isinstance(obj, ExactContentClaimObject):
-            return self.exact(obj, note=note, ref=ref, display=display)
-        value = obj.value
-        if isinstance(value, str) and "\n" in value:
+            value = self._content.of(obj)
+            if not isinstance(value, str):
+                size = "null" if value.length is None else str(value.length)
+                marker = f"{{exact_content: {value.exact_content}, bytes: {size}}}"
+                return _Shown(marker, None, note)
+            return self.text(value, note=note, text_name=text_name)
+        literal = obj.value
+        if isinstance(literal, str):
+            return self.text(literal, note=note, text_name=text_name)
+        return _Shown(literal_scalar(literal), None, note)
+
+    def text(self, value: str, *, note: str, text_name: str) -> _Shown:
+        encoded = len(value.encode("utf-8"))
+        lines = value.count("\n") + 1
+        if encoded > INLINE_TEXT_BYTES or lines > INLINE_TEXT_LINES:
+            marker = f"{{full_text: {text_name}, bytes: {encoded}, lines: {lines}}}"
+            return _Shown(marker, None, note, text_file=(text_name, value))
+        if "\n" in value:
             block = _block(value)
             if block is not None:
                 return _Shown(None, block, note)
-        return _Shown(literal_scalar(value), None, note)
+        return _Shown(yaml_scalar(value), None, note)
 
-    def exact(self, obj: ExactContentClaimObject, *, note: str, ref: str, display: str) -> _Shown:
-        length = None if obj.span is None else obj.span.end_byte - obj.span.start_byte
-        size = "null" if length is None else str(length)
-        return _Shown(f"{{exact_content: text, bytes: {size}}}", None, note)
+
+def text_file_name(ref: str, key: str, claim: ClaimArtifactAny | None) -> str:
+    """The sibling file a long text is written to: ``<id>.<field>[.<CLM->].txt``."""
+
+    stem = ref.rsplit("/", 1)[-1]
+    suffix = "" if claim is None else f".{claim_handle(claim)}"
+    return f"{stem}.{_SAFE_NAME.sub('_', key)}{suffix}.txt"
 
 
 def _entry_lines(key: str, values: Sequence[_Shown], *, listed: bool) -> list[str]:
@@ -320,6 +359,7 @@ def render_subject(
     for claim in claims:
         slots[(claim.statement.predicate, claim.statement.qualifier)].append(claim)
     entries: list[tuple[str, str, list[str]]] = []
+    texts: list[tuple[str, str, str]] = []
     flagged: list[tuple[str, list[FloorFlag]]] = []
     for (predicate, qualifier), members in slots.items():
         members.sort(key=lambda item: item.identity.name.encode())
@@ -342,7 +382,10 @@ def render_subject(
             marks |= claim_flags(item, verdicts)
         listed = many or len(shown) > 1
         rendered = sorted(
-            (values.shown(item, ref=ref, display=key) for item in shown),
+            (
+                values.shown(item, text_name=text_file_name(ref, key, item if listed else None))
+                for item in shown
+            ),
             key=lambda value: (
                 (value.scalar or "\n".join(value.block[1] if value.block else ())).encode(),
                 value.note.encode(),
@@ -350,6 +393,11 @@ def render_subject(
         )
         entries.append(
             (display, qualifier or "", _entry_lines(yaml_scalar(key), rendered, listed=listed))
+        )
+        texts.extend(
+            (value.text_file[0], f"field={key}  {value.note.split()[0]}", value.text_file[1])
+            for value in rendered
+            if value.text_file is not None
         )
         if marks:
             flagged.append((yaml_scalar(key), [flag for flag in FLOOR_FLAG_ORDER if flag in marks]))
@@ -397,14 +445,19 @@ def render_subject(
         header_extra="" if shell.lifecycle.state == "live" else "  lifecycle=retired",
         provenance=provenance,
         sequences=tuple(sorted(sequences)),
+        texts=tuple(sorted(texts)),
     )
 
 
-def stamped(part: SubjectPart, stamp: FloorStamp) -> bytes:
-    """One current/ file: its one-line header, then its body."""
+def stamped(part: SubjectPart, stamp: FloorStamp) -> dict[str, bytes]:
+    """One Subject's current/ file, its one-line header first, and its full texts."""
 
     header = f"# {part.ref}  kind={part.kind}  {stamp.at}{part.header_extra}\n"
-    return (header + part.body).encode("utf-8")
+    directory = CURRENT_PREFIX + part.ref.rsplit("/", 1)[0]
+    files = {current_path(part.ref): (header + part.body).encode("utf-8")}
+    for name, label, text in part.texts:
+        files[f"{directory}/{name}"] = f"# {part.ref}  {label}  {stamp.at}\n{text}".encode()
+    return files
 
 
 def _render_json(value: object) -> bytes:
@@ -521,6 +574,7 @@ __all__ = [
     "literal_scalar",
     "render_subject",
     "stamped",
+    "text_file_name",
     "subject_ref",
     "yaml_scalar",
 ]

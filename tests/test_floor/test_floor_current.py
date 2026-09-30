@@ -8,17 +8,36 @@ from typing import Any
 import pytest
 import yaml
 
+from cruxible_client.contracts.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+    document_path,
+    render_document,
+)
+from cruxible_client.contracts.get_reads import PlaybillExactContentRefV1
 from cruxible_client.contracts.write import PlaybillWriteRequestV1, WriteOutcome
+from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
 from cruxible_core.service.authoring.write_verbs import service_playbill_write
 from cruxible_core.service.floor.floor import service_export_playbill_floor
-from cruxible_core.service.floor.floor_current import literal_scalar, yaml_scalar
+from cruxible_core.service.floor.floor_current import (
+    INLINE_TEXT_BYTES,
+    ValueRenderer,
+    literal_scalar,
+    yaml_scalar,
+)
+from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._write_support import KIND, caller, seed_write_surface
 
 WI1 = f"{KIND}/wi-1"
 WI2 = f"{KIND}/wi-2"
 WI3 = f"{KIND}/wi-3"
 RULING = "Rulings are text.\nEvery line of this one greps on its own.\n"
+LONG_RULING = "".join(f"Clause {index}: the floor keeps every word.\n" for index in range(80))
+NOTE = "# Design note\n\nThe floor is the grep-first front door.\n"
+BODY_READER = BodyAccessContext(principal_id="owner", can_read_body=True)
 
 
 def _write(instance: PlaybillInstance, *changes: dict[str, Any], **options: Any) -> WriteOutcome:
@@ -50,6 +69,8 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         _set(WI1, "ruling", RULING),
         _set(WI1, "measured", 3),
     )
+    _write(instance, _set(WI3, "ruling", LONG_RULING))
+    _add_document(instance, "design-note", NOTE.encode())
     first = _write(instance, _set(WI2, "status", "ready"))
     _write(instance, _set(WI2, "status", "blocked"))
     _write(instance, _set(WI2, "status", "done", contend=True), at=first.coordinate.git_oid)
@@ -59,7 +80,37 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         "claims": claims,
         "governs": sorted(change.claim for change in written.changes if change.field == "governs"),
         "files": service_export_playbill_floor(instance),
+        "readable": service_export_playbill_floor(instance, access=BODY_READER),
     }
+
+
+def _add_document(instance: PlaybillInstance, name: str, body: bytes) -> None:
+    shell = DocumentShell(
+        identity=f"document:{name}",
+        document_kind="design",
+        title="Design note",
+        media_type="text/markdown",
+        body_digest=instance.store_document_body(body).digest,
+        authority=DocumentAuthority(required_tier="graph_write"),
+        governance_scope=("project:playbill",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+    base = instance.accepted_coordinate()
+    tree = instance.tree_at(base.git_oid)
+    tree[document_path(name)] = render_document(shell)
+    proposed = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/owner/{name}", proposed_base_oid=base.git_oid
+        ),
+        candidate_tree=tree,
+        timestamp="2026-09-30T11:59:00.000000Z",
+    )
+    assert proposed.candidate is not None, proposed.evaluation
+    receipt = service_activate_playbill_proposal(
+        instance, proposal_id=proposed.admission.proposal_id, activated_by="owner"
+    )
+    assert receipt.status == "accepted"
 
 
 def _current(world: dict[str, Any], subject_id: str) -> str:
@@ -95,7 +146,8 @@ def test_current_files_hold_no_digests_or_addresses(world: dict[str, Any]) -> No
         assert "sha256:" not in text, path
         assert "subjects/" not in text, path
         assert text.count(" at ") == 1, path
-        assert len(content) < 2048, path
+        if path.endswith(".yaml"):
+            assert len(content) < 2048, path
 
 
 def test_every_current_file_parses_as_yaml_with_its_values(world: dict[str, Any]) -> None:
@@ -104,6 +156,7 @@ def test_every_current_file_parses_as_yaml_with_its_values(world: dict[str, Any]
     assert parsed["status"] == "ready"
     assert parsed["governs"] == [WI2, WI3]
     assert parsed["measured"] == 3
+    assert parsed["ruling"] == RULING
     assert parsed["flags"] == {"measured": ["uncovered"]}
     for path, content in world["files"].items():
         if path.startswith("current/") and path.endswith(".yaml"):
@@ -161,3 +214,86 @@ def test_scalars_round_trip_through_yaml(value: str) -> None:
 @pytest.mark.parametrize("value", [None, True, False, 0, -3, {"b": [1, "x"], "a": None}, ["z"]])
 def test_literal_values_round_trip_through_yaml(value: object) -> None:
     assert yaml.safe_load(f"k: {literal_scalar(value)}\n") == {"k": value}
+
+
+def test_exact_content_reads_as_its_text_and_each_line_greps(world: dict[str, Any]) -> None:
+    text = _current(world, "wi-1")
+    ruling = world["claims"]["ruling"]
+    assert f"ruling: |  # {ruling} CAP-" in text
+    assert "\n  Every line of this one greps on its own.\n" in text
+
+
+def test_a_long_text_goes_whole_to_a_sibling_file_never_truncated(world: dict[str, Any]) -> None:
+    parsed = yaml.safe_load(_current(world, "wi-3"))
+    assert parsed["ruling"] == {
+        "full_text": "wi-3.ruling.txt",
+        "bytes": len(LONG_RULING.encode()),
+        "lines": LONG_RULING.count("\n") + 1,
+    }
+    header, full = world["files"][f"current/{KIND}/wi-3.ruling.txt"].decode().split("\n", 1)
+    assert header.startswith(f"# {WI3}  field=ruling  CLM-") and " gen " in header
+    assert full == LONG_RULING
+    assert len(LONG_RULING.encode()) > INLINE_TEXT_BYTES
+
+
+def test_bytes_that_are_not_text_show_a_typed_marker_with_their_size(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance: PlaybillInstance = world["instance"]
+    renderer = ValueRenderer(instance)
+    monkeypatch.setattr(
+        renderer._content,
+        "of",
+        lambda _obj: PlaybillExactContentRefV1(
+            exact_content="binary", content_digest="sha256:" + "0" * 64, length=12
+        ),
+    )
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        claim = projection.typed.source(f"Claim:{world['claims']['ruling']}")
+    shown = renderer.shown(claim, text_name="wi-1.ruling.txt")
+    assert shown.scalar == "{exact_content: binary, bytes: 12}"
+    assert yaml.safe_load(f"k: {shown.scalar}") == {"k": {"exact_content": "binary", "bytes": 12}}
+
+
+def test_documents_read_as_their_body_under_a_one_line_header(world: dict[str, Any]) -> None:
+    readable = world["readable"]["documents/design-note.md"].decode()
+    header, body = readable.split("\n", 1)
+    assert header.startswith("# Document:design-note  title=Design note  kind=design  ")
+    assert "media=text/markdown  at " in header
+    assert body == NOTE
+    envelope = json.loads(world["readable"]["provenance/documents/design-note.json"])
+    assert envelope["body_digest"].startswith("sha256:")
+    assert not any(path.endswith(".json.json") for path in world["readable"])
+
+
+def test_a_caller_without_body_access_gets_the_way_to_read_the_body(
+    world: dict[str, Any],
+) -> None:
+    withheld = world["files"]["documents/design-note.md"].decode()
+    assert "(body withheld: reading Document bodies needs the governed_write tier" in withheld
+    assert "get Document:design-note --detail body" in withheld
+    assert "The floor is the grep-first front door." not in withheld
+
+
+@pytest.mark.parametrize(("mode", "bodies"), [("READ_ONLY", False), ("GOVERNED_WRITE", True)])
+def test_the_export_carries_bodies_only_for_a_caller_who_may_read_them(
+    monkeypatch: pytest.MonkeyPatch, mode: str, bodies: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from cruxible_core.runtime import playbill_api
+    from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
+
+    seen: list[BodyAccessContext] = []
+
+    def export(_instance: object, **kwargs: Any) -> dict[str, bytes]:
+        seen.append(kwargs["access"])
+        raise LookupError("stop after the access decision")
+
+    monkeypatch.setattr(playbill_api, "service_export_playbill_floor", export)
+    monkeypatch.setattr(
+        playbill_api, "get_playbill_manager", lambda: SimpleNamespace(get=lambda _id: None)
+    )
+    with request_permission_scope(PermissionMode[mode]), pytest.raises(LookupError):
+        playbill_api.playbill_export_floor("inst_floor")
+    assert [item.can_read_body for item in seen] == [bodies]

@@ -531,7 +531,6 @@ def service_export_playbill_floor(
             )
         )
         files.update(_procedure_cards(instance, coordinate=coordinate, at=accepted))
-        files.update(_documents(instance, at=accepted, access=body_access))
         files[COVERAGE_MANIFEST_PATH] = _render(
             _coverage_manifest(instance, at=accepted).model_dump(mode="json")
         )
@@ -549,8 +548,16 @@ def service_export_playbill_floor(
 
     if format_version == 3:
         files.update(
-            current_content(instance, coordinate=coordinate, claims=claims, notes_oid=notes_oid)
+            current_content(
+                instance,
+                coordinate=coordinate,
+                claims=claims,
+                notes_oid=notes_oid,
+                access=body_access,
+            )
         )
+    else:
+        files.update(_documents(instance, at=accepted, access=body_access))
     ordered = {path: files[path] for path in sorted(files, key=lambda item: item.encode("utf-8"))}
     inventory = tuple(
         PlaybillFloorFileV1(

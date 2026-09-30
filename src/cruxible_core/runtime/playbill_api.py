@@ -2650,12 +2650,15 @@ def playbill_export_floor(
     """
 
     check_permission("cruxible_playbill_read", instance_id=instance_id)
+    # Document bodies keep their own read boundary: the floor carries them only
+    # for a caller who may read bodies, and says how to read them otherwise.
+    may_read_bodies = get_current_mode() >= PERMISSION_REQUIREMENTS["cruxible_playbill_body_read"]
     files = service_export_playbill_floor(
         get_playbill_manager().get(instance_id),
         at=at,
         format_version=format_version,
         review_notes_oid=review_notes_oid,
-        access=_access(instance_id, include_body=False),
+        access=_access(instance_id, include_body=may_read_bodies),
     )
     manifest = json.loads(files[MANIFEST_PATH])
     return contracts.PlaybillFloorExport(
