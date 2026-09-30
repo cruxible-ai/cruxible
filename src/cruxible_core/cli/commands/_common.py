@@ -199,23 +199,28 @@ def _get_lifecycle_client() -> DaemonLifecycleClient | None:
     client = obj.get("_lifecycle_client")
     if isinstance(client, DaemonLifecycleClient):
         return client
+    token = get_runtime_bearer_token()
     client = DaemonLifecycleClient(
         base_url=server_url,
         socket_path=server_socket,
-        token=get_runtime_bearer_token()
-        or _local_bootstrap_secret(server_url=server_url, server_socket=server_socket),
+        token=token,
+        operator_secret=(
+            None
+            if token is not None
+            else _local_bootstrap_secret(server_url=server_url, server_socket=server_socket)
+        ),
     )
     obj["_lifecycle_client"] = client
     return client
 
 
 def _local_bootstrap_secret(*, server_url: str | None, server_socket: str | None) -> str | None:
-    """The operator secret of the local daemon this command targets, if it is ours.
+    """The bootstrap secret of the local daemon this command targets, to sign with.
 
     Lifecycle commands (`server status`, `restart`, `stop`) fall back to it when
     no bearer token is configured, so a local restart needs no credential typed
-    in. It is sent only to the live daemon holding the state-root lock on this
-    exact transport, once that daemon proves it already holds the secret.
+    in. It keys a per-request MAC and never goes on the wire. It is read only
+    while a live daemon holds the state-root lock on this exact transport.
     """
 
     from cruxible_core.errors import CoreError
@@ -226,19 +231,9 @@ def _local_bootstrap_secret(*, server_url: str | None, server_socket: str | None
         state_root = get_server_state_root()
     except CoreError:
         return None
-    # The daemon on this transport must prove it already holds the secret
-    # before this process sends it: an unauthenticated probe answers a fresh
-    # challenge with an HMAC under the secret, revealing nothing.
-    prober = DaemonLifecycleClient(base_url=server_url, socket_path=server_socket)
-    try:
-        return read_local_bootstrap_secret(
-            state_root,
-            server_url=server_url,
-            server_socket=server_socket,
-            prove=prober.operator_proof,
-        )
-    finally:
-        prober.close()
+    return read_local_bootstrap_secret(
+        state_root, server_url=server_url, server_socket=server_socket
+    )
 
 
 def _current_cli_context() -> CliContextState:

@@ -159,7 +159,6 @@ def test_a_cached_lifecycle_client_cannot_bypass_a_later_governed_handshake(daem
         assert {name for name in dir(lifecycle) if not name.startswith("_")} == {
             "version",
             "daemon_identity",
-            "operator_proof",
             "server_info",
             "server_restart",
             "server_stop",

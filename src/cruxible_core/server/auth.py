@@ -7,19 +7,24 @@ import hmac
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from cruxible_client.contracts.errors import PlaybillBootstrapError
+from cruxible_client.contracts.operator_mac import (
+    OPERATOR_MAC_HEADER,
+    OPERATOR_NONCE_HEADER,
+    OPERATOR_TIMESTAMP_HEADER,
+)
 from cruxible_client.contracts.principals import (
     PRINCIPAL_ID_ENV,
     PRINCIPAL_ID_HEADER,
     is_canonical_principal_id,
 )
 from cruxible_client.contracts.repairs import RepairOperationV1
-from cruxible_core.errors import PrincipalRefusedError
+from cruxible_core.errors import PrincipalRefusalCode, PrincipalRefusedError
 from cruxible_core.runtime.permissions import (
     PermissionMode,
     clamp_to_capability_ceiling,
@@ -27,6 +32,7 @@ from cruxible_core.runtime.permissions import (
     request_permission_scope,
 )
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from cruxible_core.server.bootstrap_secret import OperatorRequestRefused, verify_operator_request
 from cruxible_core.server.config import (
     get_runtime_bootstrap_secret,
     is_origin_allowed,
@@ -40,7 +46,6 @@ from cruxible_core.server.errors import ErrorResponse, error_to_response
 from cruxible_core.server.request_logging import log_runtime_request
 from cruxible_core.server.route_paths import (
     HEALTH_PATH,
-    OPERATOR_PROOF_PATH,
     PLAYBILL_HOST_CREATE_PATH,
     PLAYBILL_HOST_SHOW_PATH,
     PLAYBILL_WORKSPACE_DETACH_PATH,
@@ -185,6 +190,56 @@ def _identity_refusal_response(request: Request, refusal: PrincipalRefusedError)
         error_type=refusal.__class__.__name__,
     )
     return response
+
+
+#: The lifecycle requests a local command may sign instead of sending a secret.
+_OPERATOR_MAC_ROUTES: tuple[tuple[str, str], ...] = (
+    ("GET", api_v1_path(SERVER_INFO_PATH)),
+    ("POST", api_v1_path(SERVER_RESTART_PATH)),
+    ("POST", api_v1_path(SERVER_STOP_PATH)),
+)
+
+
+def _operator_mac_refusal(
+    request: Request, *, bootstrap_secret: str | None, has_bearer: bool
+) -> PrincipalRefusedError | None:
+    """Verify one MAC-signed lifecycle request, or say why it is refused."""
+
+    def refused(code: str, detail: str) -> PrincipalRefusedError:
+        return PrincipalRefusedError(
+            cast(PrincipalRefusalCode, code),
+            f"{detail}; repair: run the command on the daemon's own host with its state "
+            "root, or set CRUXIBLE_SERVER_BEARER_TOKEN",
+            repair=RepairOperationV1(operation="server.status"),
+        )
+
+    if bootstrap_secret is None or has_bearer or _request_has_body(request):
+        return refused(
+            "runtime_bootstrap.operator_mac_invalid",
+            "a signed operator request needs an auth-on daemon with a bootstrap secret, "
+            "no bearer token, and no body",
+        )
+    if not any(
+        request.method == method and route_template_matches(request.url.path, route)
+        for method, route in _OPERATOR_MAC_ROUTES
+    ):
+        return refused(
+            "runtime_bootstrap.operator_mac_invalid",
+            "a signed operator request authorizes only server status, restart and stop",
+        )
+    try:
+        verify_operator_request(
+            bootstrap_secret,
+            method=request.method,
+            path=request.url.path,
+            query=request.url.query,
+            nonce=request.headers.get(OPERATOR_NONCE_HEADER),
+            timestamp=request.headers.get(OPERATOR_TIMESTAMP_HEADER),
+            mac=request.headers.get(OPERATOR_MAC_HEADER),
+        )
+    except OperatorRequestRefused as exc:
+        return refused(exc.code, str(exc))
+    return None
 
 
 def _bound_principal_refusal(credential: RuntimeCredentialRecord) -> PrincipalRefusedError | None:
@@ -363,7 +418,7 @@ async def token_auth_middleware(
     # They skip auth resolution but NOT the Origin allowlist above — a hostile
     # page must not be able to fingerprint the loopback daemon by probing
     # /health or /version from the browser.
-    if request.url.path in {HEALTH_PATH, VERSION_PATH, OPERATOR_PROOF_PATH}:
+    if request.url.path in {HEALTH_PATH, VERSION_PATH}:
         return await call_next(request)
     if _is_bootstrap_claim_request(request):
         return await _call_next_with_request_log(request, call_next, auth_context=None)
@@ -381,6 +436,32 @@ async def token_auth_middleware(
     resolved_context: ResolvedAuthContext | None = None
     bootstrap_secret = get_runtime_bootstrap_secret()
     auth_enabled = is_server_auth_enabled()
+
+    if request.headers.get(OPERATOR_MAC_HEADER) is not None:
+        # A local lifecycle command signed this request with the bootstrap
+        # secret instead of sending it. Only the daemon-wide lifecycle reads and
+        # levers accept it, never alongside a bearer token, never with a body.
+        mac_refusal = _operator_mac_refusal(
+            request,
+            bootstrap_secret=bootstrap_secret if auth_enabled else None,
+            has_bearer=bearer_token is not None,
+        )
+        if mac_refusal is not None:
+            return _identity_refusal_response(request, mac_refusal)
+        if request.headers.get(EFFECTIVE_PERMISSION_MODE_HEADER) is not None:
+            return _unauthorized_request_response(request)
+        operator_mode = clamp_to_capability_ceiling(PermissionMode.ADMIN)
+        resolved_context = replace(
+            _runtime_bootstrap_operator_context(), effective_permission_mode=operator_mode
+        )
+        with _auth_context_scope(resolved_context, request):
+            with (
+                request_permission_scope(operator_mode),
+                request_instance_scope(None),
+            ):
+                return await _call_next_with_request_log(
+                    request, call_next, auth_context=resolved_context
+                )
 
     if bearer_token is not None:
         if (

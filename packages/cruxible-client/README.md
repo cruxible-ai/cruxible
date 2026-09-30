@@ -4733,21 +4733,6 @@ daemon_identity() -> tuple[str, str | None]
 The daemon's version and the boot id of its process image, from `/version`. A
 restarted daemon answers with a new boot id.
 
-<a id="api-cruxibleclient-operator-proof"></a>
-
-### `CruxibleClient.operator_proof`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-operator_proof(challenge: str) -> str | None
-```
-
-Credential-free `POST /operator-proof`: the daemon answers a 64-hex challenge
-with an HMAC under its bootstrap secret, proving it holds the secret without
-revealing it, or None when auth is off. Local lifecycle commands verify it
-before sending a locally stored secret.
-
 <a id="api-cruxibleclient-check-playbill-projection-blocks"></a>
 
 ### `CruxibleClient.check_playbill_projection_blocks`

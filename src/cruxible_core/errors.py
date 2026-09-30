@@ -245,6 +245,9 @@ PrincipalRefusalCode = Literal[
     "playbill.identity.credential_unbound",
     "playbill.identity.permission_insufficient",
     "runtime_credential.auth_off",
+    "runtime_bootstrap.operator_mac_invalid",
+    "runtime_bootstrap.operator_mac_stale",
+    "runtime_bootstrap.operator_mac_replayed",
     "runtime_credential.principal_not_ordinary",
     "runtime_credential.principal_authority_required",
     "runtime_credential.principal_proof_invalid",
@@ -259,6 +262,9 @@ _PRINCIPAL_REFUSAL_STATUS: dict[str, int] = {
     "playbill.identity.principal_claim_mismatch": 401,
     "runtime_credential.principal_proof_replayed": 409,
     "runtime_credential.auth_off": 409,
+    "runtime_bootstrap.operator_mac_invalid": 401,
+    "runtime_bootstrap.operator_mac_stale": 401,
+    "runtime_bootstrap.operator_mac_replayed": 401,
 }
 
 

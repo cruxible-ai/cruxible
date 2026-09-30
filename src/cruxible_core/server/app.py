@@ -18,7 +18,6 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
@@ -35,14 +34,9 @@ from cruxible_core.runtime.execution_policy import discover_isolated_executors
 from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.auth import token_auth_middleware
-from cruxible_core.server.bootstrap_secret import (
-    OPERATOR_CHALLENGE_PATTERN,
-    operator_proof,
-    prepare_bootstrap_secret,
-)
+from cruxible_core.server.bootstrap_secret import prepare_bootstrap_secret
 from cruxible_core.server.config import (
     auth_off_startup_notice,
-    get_runtime_bootstrap_secret,
     get_server_fatal_log_path,
     get_server_state_root,
     is_server_auth_enabled,
@@ -58,7 +52,6 @@ from cruxible_core.server.errors import (
 from cruxible_core.server.registry import get_registry
 from cruxible_core.server.request_logging import configure_request_logging
 from cruxible_core.server.restart import PROCESS_BOOT_ID
-from cruxible_core.server.route_paths import OPERATOR_PROOF_PATH
 from cruxible_core.server.routes.hosted_instances import router as hosted_instances_router
 from cruxible_core.server.routes.instances import router as instances_router
 from cruxible_core.server.routes.playbill import router as playbill_router
@@ -91,12 +84,6 @@ def _format_request_validation_error(error: Mapping[str, Any]) -> str:
     if error_type.startswith(_TEMPORAL_ERROR_TYPE_PREFIXES):
         message = f"{message} ({ISO_8601_FORMAT_HINT})"
     return f"{location}: {message}"
-
-
-class OperatorProofRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    challenge: str = Field(pattern=OPERATOR_CHALLENGE_PATTERN)
 
 
 def create_app() -> FastAPI:
@@ -253,16 +240,6 @@ def create_app() -> FastAPI:
         # ever grant. Authorized callers read the tier from the denial context
         # of a refused operation instead.
         return {"status": "ok"}
-
-    @app.post(OPERATOR_PROOF_PATH, include_in_schema=False)
-    async def operator_proof_route(req: OperatorProofRequest) -> JSONResponse:
-        # Credential-free by design: the answer is an HMAC under the bootstrap
-        # secret, so it proves this daemon holds the secret and reveals nothing.
-        # Local lifecycle commands ask before they send the secret anywhere.
-        secret = get_runtime_bootstrap_secret()
-        if not is_server_auth_enabled() or secret is None:
-            return JSONResponse(status_code=404, content={"proof": None})
-        return JSONResponse(content={"proof": operator_proof(secret, req.challenge)})
 
     @app.get("/version")
     async def version() -> dict[str, str]:

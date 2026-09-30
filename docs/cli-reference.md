@@ -156,16 +156,19 @@ daemon holds the state-root lock it writes the secret owner-only (0600) to
 `<state-root>/daemon/bootstrap-secret`, and prints only that path. An in-place
 restart keeps the same secret. `server status`, `server restart` and
 `server stop` use that file by default when no `CRUXIBLE_SERVER_BEARER_TOKEN` is
-set, so a local restart needs no credential typed in. The secret is never sent
-to any other process: a live daemon must hold the state-root lock right now, the
-lock must record exactly the transport the command is about to use (the socket
-path, or the bound host and port as written: `localhost`, `127.0.0.1` and `::1`
-are different endpoints, since IPv4 and IPv6 loopback can host different
-listeners on one port), and the
-daemon answering there must first prove it already holds the secret (it answers
-a fresh random challenge on the credential-free `POST /operator-proof` with an
-HMAC under the secret, which reveals nothing). A stale lock left by a stopped or
-crashed daemon releases nothing, whoever now listens on its endpoint. `--bootstrap-secret-file PATH` also writes a 0600 copy to
+set, so a local restart needs no credential typed in. The secret is never sent:
+each such request carries a MAC keyed by the secret over its method, path,
+body digest, a fresh nonce and a timestamp, and the daemon accepts it only if
+the MAC verifies under its own secret, the timestamp is within 60 seconds of its
+clock, and the nonce is new (`runtime_bootstrap.operator_mac_invalid`,
+`operator_mac_stale`, `operator_mac_replayed`). Only `server status`, `restart`
+and `stop` accept a signed request. As defense in depth the secret is read only
+while a live daemon holds the state-root lock and the lock records exactly the
+transport the command is about to use (the socket path, or the bound host and
+port as written: `localhost`, `127.0.0.1` and `::1` are different endpoints,
+since IPv4 and IPv6 loopback can host different listeners on one port). A relay
+or a process that took over the endpoint receives nothing it can reuse. An
+explicit `CRUXIBLE_SERVER_BEARER_TOKEN` is sent as a bearer token, as before. `--bootstrap-secret-file PATH` also writes a 0600 copy to
 PATH; it needs auth and is refused on an auth-off start, which removes any stale
 state-root copy. With `--socket`, the socket is bound with mode 0600;
 a missing socket directory is created 0700; a socket directory that is not
