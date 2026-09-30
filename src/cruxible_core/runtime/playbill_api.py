@@ -440,6 +440,19 @@ def _actor_id(instance_id: str) -> str:
     return actor.actor_id
 
 
+def _require_writer(instance_id: str) -> None:
+    """The write boundary for an instance mutation that records no actor.
+
+    Every instance mutation passes the same principal refusal as an attributed
+    write -- an unbound credential or an unregistered claim is refused -- before
+    it has any side effect. The architecture guardrail
+    ``test_every_instance_write_passes_the_principal_boundary`` holds new writes
+    to it.
+    """
+
+    _actor_id(instance_id)
+
+
 def _access(instance_id: str, *, include_body: bool) -> BodyAccessContext:
     actor = _actor_context()
     principal_id = "anonymous" if actor is None else actor.actor_id
@@ -653,6 +666,7 @@ def playbill_ledger_set_mirror(
     """
 
     check_permission("cruxible_playbill_ledger_set_mirror", instance_id=instance_id)
+    _require_writer(instance_id)
     instance = get_playbill_manager().get(instance_id)
     state = instance.set_ledger_mirror(url)
     return _mirror_receipt(instance_id, url=instance.ledger_mirror_url() or url, state=state)
@@ -664,6 +678,7 @@ def playbill_ledger_publish(
     """Request publication to the configured mirror and wait for its acknowledgment."""
 
     check_permission("cruxible_playbill_ledger_publish", instance_id=instance_id)
+    _require_writer(instance_id)
     if isinstance(timeout, bool) or not 0 <= timeout <= 60:
         raise ValueError("timeout must be between 0 and 60 seconds")
     instance = get_playbill_manager().get(instance_id)
@@ -775,6 +790,7 @@ def playbill_store_body(
     instance_id: str, *, content_base64: str
 ) -> contracts.PlaybillCasObjectResult:
     check_permission("cruxible_playbill_store_body", instance_id=instance_id)
+    _require_writer(instance_id)
     try:
         content = base64.b64decode(content_base64, validate=True)
     except ValueError as exc:
@@ -1440,6 +1456,7 @@ def playbill_recover_claim_attestations(instance_id: str) -> None:
     """Synchronously restore the sole replay-valid evidence-ledger head."""
 
     check_permission("cruxible_playbill_claim_attestation_recover", instance_id=instance_id)
+    _require_writer(instance_id)
     get_playbill_manager().get(instance_id).claim_attestation_evidence_store().recover()
 
 

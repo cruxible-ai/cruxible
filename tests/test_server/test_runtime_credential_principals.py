@@ -488,3 +488,49 @@ def test_rotating_a_bound_credential_needs_its_principals_authority(
         headers={"Authorization": f"Bearer {operator_admin}"},
     )
     assert revoked.status_code == 200, revoked.text
+
+
+_UNGUARDED_WRITES = (
+    ("/playbill/bodies", {"content_base64": "Ym9keQ=="}),
+    ("/playbill/ledger/mirror", {"url": "https://mirror.example.test/ledger.git"}),
+    ("/playbill/ledger/publish", {"timeout": 0}),
+    ("/playbill/claim-attestations/recover", {}),
+)
+
+
+def test_an_unbound_credential_is_refused_on_every_instance_write(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance_id, _reviewer_key = playbill_http
+    unbound = _bearer(None, instance_id, PermissionMode.ADMIN)
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+
+    for path, body in _UNGUARDED_WRITES:
+        refused = client.post(
+            f"/api/v1/{instance_id}{path}",
+            json=body,
+            headers={"Authorization": f"Bearer {unbound}"},
+        )
+        assert refused.status_code == 403, (path, refused.text)
+        assert refused.json()["error_code"] == "playbill.identity.credential_unbound", path
+    mirror = client.get(
+        f"/api/v1/{instance_id}/playbill/ledger/clone-url",
+        headers={"Authorization": f"Bearer {unbound}"},
+    )
+    assert "mirror.example.test" not in mirror.text
+
+
+def test_an_unregistered_claim_is_refused_on_every_instance_write(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    from cruxible_client.contracts.principals import PRINCIPAL_ID_HEADER
+
+    client, instance_id, _reviewer_key = playbill_http
+
+    for path, body in _UNGUARDED_WRITES:
+        refused = client.post(
+            f"/api/v1/{instance_id}{path}", json=body, headers={PRINCIPAL_ID_HEADER: "mallory"}
+        )
+        assert refused.status_code == 403, (path, refused.text)
+        assert refused.json()["error_code"] == "playbill.identity.principal_absent", path

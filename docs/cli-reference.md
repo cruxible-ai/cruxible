@@ -110,7 +110,9 @@ credential, but never receives a replacement for someone else's principal.
 
 The bootstrap claim and `recover-admin` mint unbound operator credentials: they
 carry transport authority (host, init, credentials, daemon lifecycle) but act as
-no principal, so they cannot author (`playbill.identity.credential_unbound`).
+no principal, so they cannot author or perform any other instance write --
+body store, ledger mirror binding and publication, attestation recovery
+included (`playbill.identity.credential_unbound`).
 `playbill init` under such a credential designates the owner it names.
 Credentials minted before credentials named a principal are migrated as
 unbound, never rebound from their label; repair each by minting a bound one with
