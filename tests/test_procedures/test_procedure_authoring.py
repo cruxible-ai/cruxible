@@ -93,7 +93,7 @@ def test_accepted_claim_builder_expands_to_complete_expert_graph_golden() -> Non
     # Pinned at the revision-32 governed-triggers compiler; retention is by
     # replaying each retired coordinate, never by keeping its literal here.
     assert first.expanded_output_digest == (
-        "sha256:6edc707aeb97b2e118662ce3ad61a0247f7de1a1c2e1d5dd5fd9c3e2068ddc35"
+        "sha256:d8f2dd2b6302779d22e9c937c8dc597c2c161c825d022894dc8b12545122ded2"
     )
     assert [node.kind for node in first.definition.nodes] == ["state_tap", "guard", "project"]
     assert isinstance(first.definition.nodes[0], StateTapNodeV3)

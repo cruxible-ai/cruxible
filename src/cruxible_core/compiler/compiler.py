@@ -52,6 +52,7 @@ def _coordinate(
     projection_content: str | None = None,
     semantic_revision: int | None = None,
     candidate_card_renderer_digest: str | None = None,
+    revision_name: str | None = None,
 ) -> CompilerCoordinate:
     payload: dict[str, object] = {
         "implementation": "python-reference",
@@ -63,6 +64,8 @@ def _coordinate(
         payload["semantic_revision"] = semantic_revision
     if candidate_card_renderer_digest is not None:
         payload["candidate_card_renderer_digest"] = candidate_card_renderer_digest
+    if revision_name is not None:
+        payload["revision_name"] = revision_name
     return CompilerCoordinate(
         rule_digest=f"sha256:{canonical_digest('playbill-compiler-v1', payload)}"
     )
@@ -182,11 +185,14 @@ AUTHORITY_VERBS_COMPILER = _coordinate(
 )
 
 # Revision 32: every trigger is a governed Trigger artifact aimed at a Line or an
-# internal action, and a Line (v6) no longer embeds its own.
+# internal action, and a Line (v6) no longer embeds its own. A reverted change once
+# minted a revision-32 coordinate from the bare preimage; naming this revision in
+# its preimage keeps the two from ever sharing a digest.
 GOVERNED_TRIGGERS_COMPILER = _coordinate(
     projection_content="claims-procedures-runtime-v1",
     semantic_revision=32,
     candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
+    revision_name="governed-triggers-v1",
 )
 
 # The renderer a coordinate commits to is resolved from the coordinate itself,

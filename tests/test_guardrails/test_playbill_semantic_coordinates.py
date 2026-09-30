@@ -723,7 +723,7 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
     )
     assert (
         GOVERNED_TRIGGERS_COMPILER.rule_digest
-        == "sha256:2f7406d706d3e7c086bdb038ec2861329243e9f93f10791f02c11ce65d4031cc"
+        == "sha256:caf61c6006d6d26b5e32e7b2e9ff5cbdc1a1882b66ab5e94af933f46426b15ce"
     )
     assert current_compiler_coordinate() == GOVERNED_TRIGGERS_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
@@ -733,6 +733,27 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
     assert candidate_card_renderer_digest_for_compiler(current_compiler_coordinate()) == (
         CARD_RENDERER_DIGEST
     )
+
+
+def test_revision_32_never_shares_the_reverted_identity_refs_coordinate() -> None:
+    """A reverted change minted revision 32 from the bare preimage; this one is distinct."""
+
+    reverted_identity_refs = "sha256:" + canonical_digest(
+        "playbill-compiler-v1",
+        {
+            "implementation": "python-reference",
+            "schema_version": 1,
+            "projection_content": "claims-procedures-runtime-v1",
+            "semantic_revision": 32,
+            "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
+        },
+    )
+    assert reverted_identity_refs == (
+        "sha256:2f7406d706d3e7c086bdb038ec2861329243e9f93f10791f02c11ce65d4031cc"
+    )
+    assert GOVERNED_TRIGGERS_COMPILER.rule_digest != reverted_identity_refs
+    assert reverted_identity_refs not in {item.rule_digest for item in SUPPORTED_COMPILERS}
+    assert len({item.rule_digest for item in SUPPORTED_COMPILERS}) == len(SUPPORTED_COMPILERS)
 
 
 def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
