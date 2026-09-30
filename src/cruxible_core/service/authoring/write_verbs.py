@@ -44,6 +44,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExactContentObjectV1,
     AuthoringExistingClaimDispositionV1,
     AuthoringIntentV1,
+    AuthoringReferenceExpectationV1,
     ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
@@ -856,6 +857,16 @@ class _Planner:
             info = self.resolve_field(kind, target.field, index=index, path=f"{prefix}.field")
             name = self.field_name(info, kind)
             live = self.slot_claims(path, info.predicate) if self.subject_exists(path) else ()
+            # A slot that moved since the read is named as moved first, before
+            # what it holds now makes the retire empty or ambiguous.
+            self.check_slot_unchanged(
+                index=index,
+                subject=target.subject,
+                field_name=name,
+                subject_path_value=path,
+                predicate=info.predicate,
+                live=live,
+            )
             if not live:
                 raise _refuse(
                     "playbill.write.slot_empty",
@@ -873,14 +884,6 @@ class _Planner:
                     repair="Retire one of the listed Claims by ID",
                     field_path=prefix,
                 )
-            self.check_slot_unchanged(
-                index=index,
-                subject=target.subject,
-                field_name=name,
-                subject_path_value=path,
-                predicate=info.predicate,
-                live=live,
-            )
             return live[0].claim_id, target.subject, name, info.predicate, live[0].value
         claim_id = _bare(target)
         content = self.instance.blob_at(self.head.git_oid, claim_path(claim_id))
@@ -1035,6 +1038,9 @@ class _Lowered:
     payload: ChangeSetAuthoringPayloadV1
     claim_ids: tuple[str, ...]
     identity_by_change: dict[int, str]
+    # Every accepted Claim the write revises, retires or dispositions, pinned to
+    # the version planning read: admission refuses when one has moved since.
+    expectations: tuple[AuthoringReferenceExpectationV1, ...] = ()
 
 
 def _with_dispositions(
@@ -1050,7 +1056,7 @@ def _with_dispositions(
     )
 
 
-def _lower(plan: _Plan, *, because: str) -> _Lowered:
+def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinate) -> _Lowered:
     """Fold the plan into one change set, filling every disposition the slot law demands.
 
     A new Claim must disposition every live Claim of its slot when it is staged.
@@ -1107,6 +1113,55 @@ def _lower(plan: _Plan, *, because: str) -> _Lowered:
         payload=ChangeSetAuthoringPayloadV1(members=tuple(members), rationale=rationale),
         claim_ids=tuple(claim_ids),
         identity_by_change=identity_by_change,
+        expectations=_pinned_claims(members, minted=set(claim_ids), planned_at=planned_at),
+    )
+
+
+def _pinned_claims(
+    members: Sequence[AuthoringChangeSetMemberV1],
+    *,
+    minted: set[str],
+    planned_at: AcceptedProjectionCoordinate,
+) -> tuple[AuthoringReferenceExpectationV1, ...]:
+    """Pin each accepted Claim the members name to the version planning read.
+
+    The plan chose what to revise, retire and disposition from the slot as it
+    stood at ``planned_at``. Admission checks each pin against the head it
+    evaluates at, so a write whose slot moved in between is refused before it
+    becomes a proposal anyone could activate.
+    """
+
+    coordinate = AcceptedCoordinate.from_internal(planned_at)
+    pins: list[tuple[str, str]] = []
+    for position, member in enumerate(members):
+        prefix = f"members[{position}]"
+        if isinstance(member, ClaimRetirementMemberV1):
+            pins.append((f"{prefix}.retires", member.retires))
+        elif isinstance(member, ClaimAuthoringPayloadV1):
+            if member.revises is not None:
+                pins.append((f"{prefix}.revises", member.revises))
+            for ordinal, item in enumerate(member.existing_claim_dispositions):
+                if item.claim_id not in minted:
+                    pins.append(
+                        (f"{prefix}.existing_claim_dispositions[{ordinal}].claim_id", item.claim_id)
+                    )
+    return tuple(
+        sorted(
+            (
+                AuthoringReferenceExpectationV1(
+                    payload_path=path,
+                    artifact_kind="Claim",
+                    address=claim_id,
+                    minted_coordinate=coordinate,
+                )
+                for path, claim_id in pins
+            ),
+            key=lambda item: (
+                item.payload_path.encode("utf-8"),
+                item.artifact_kind.encode("ascii"),
+                item.address.encode("utf-8"),
+            ),
+        )
     )
 
 
@@ -1509,7 +1564,7 @@ def _service_write(
         plan = _Planner(instance, head=head, read_at=read_at, request=request).build()
         if all(item.member is None for item in plan.changes) and not plan.subjects:
             return _already_done(instance, head=head, plan=plan, request=request)
-        lowered = _lower(plan, because=request.because)
+        lowered = _lower(plan, because=request.because, planned_at=head)
     except (WriteRefusalError, ReadRefusalError) as error:
         return refuse(_refusal(error))
     coordinator = _coordinator(instance, lowered.claim_ids)
@@ -1533,6 +1588,7 @@ def _service_write(
         actor=caller.actor,
         payload=lowered.payload,
         canonical_timestamp=timestamp,
+        reference_expectations=lowered.expectations or None,
     )
     submitted = coordinator.submit(view.intent.intent_id, actor=caller.actor)
     intent = submitted.intent
@@ -1541,7 +1597,7 @@ def _service_write(
     if status.state in {"preflight_refused", "conflicted_after_rebase"} or (
         status.proposal_id is None and status.state != "accepted"
     ):
-        refusal = (
+        refusal = _slot_moved(instance, planned_at=head, read_at=read_at, request=request) or (
             _preflight_refusal(intent.last_preflight, lowered)
             if status.state == "preflight_refused" and intent.last_preflight is not None
             else WriteRefusal(
@@ -1571,20 +1627,33 @@ def _service_write(
     assert status.proposal_id is not None
     proposal_id = status.proposal_id
     evaluated_at = _evaluated_head(instance, intent, head)
-    if evaluated_at.git_oid != head.git_oid and request.at is not None:
-        # The head moved between the checks above and the submit: the slots are
-        # checked again against the head the proposal was evaluated at.
-        try:
-            _Planner(instance, head=evaluated_at, read_at=read_at, request=request).build()
-        except (WriteRefusalError, ReadRefusalError) as error:
-            return WriteOutcome(
-                status="refused",
-                changes=changes,
-                subjects_added=subjects_added,
-                proposal=WriteProposalRef(proposal_id=proposal_id, state=status.state),
-                coordinate=_compact(instance, evaluated_at),
-                refusal=_refusal(error),
-            )
+    moved = _slot_moved(
+        instance, planned_at=head, read_at=read_at, request=request, at=evaluated_at
+    )
+    if moved is not None:
+        # Admission held every Claim the plan names to its planned version; a
+        # Claim that joined a slot in between is caught here. The proposal is
+        # withdrawn before anything reports, so a refused write leaves nothing
+        # anyone could activate.
+        from cruxible_core.service.proposals.proposals import (
+            service_withdraw_playbill_proposal,
+        )
+
+        service_withdraw_playbill_proposal(
+            instance,
+            proposal_id=proposal_id,
+            actor_id=caller.actor.actor_id,
+            reason=f"{moved.code}: {moved.message}",
+            withdrawn_at=canonical_candidate_timestamp(utc_now()),
+        )
+        return WriteOutcome(
+            status="refused",
+            changes=changes,
+            subjects_added=subjects_added,
+            proposal=WriteProposalRef(proposal_id=proposal_id, state="withdrawn"),
+            coordinate=_compact(instance, evaluated_at),
+            refusal=moved,
+        )
     reason = _approval_reason(
         requires_approval=status.state == "awaiting_external_approval",
         caller=caller,
@@ -1688,6 +1757,32 @@ def _already_done(
         warnings=warnings,
         next=None if first is None else _render_get(request.surface, first),
     )
+
+
+def _slot_moved(
+    instance: PlaybillInstance,
+    *,
+    planned_at: AcceptedProjectionCoordinate,
+    read_at: AcceptedProjectionCoordinate,
+    request: PlaybillWriteRequestV1,
+    at: AcceptedProjectionCoordinate | None = None,
+) -> WriteRefusal | None:
+    """Why the plan no longer holds at ``at`` (the head by default), if it moved.
+
+    The write was planned at ``planned_at`` against the read coordinate
+    ``read_at`` (the planned head itself when the caller named none). Planning
+    again at the later head against that same read coordinate names the slot
+    that changed, in the terms of the write rather than of the change set.
+    """
+
+    later = instance.accepted_coordinate() if at is None else at
+    if later.git_oid == planned_at.git_oid:
+        return None
+    try:
+        _Planner(instance, head=later, read_at=read_at, request=request).build()
+    except (WriteRefusalError, ReadRefusalError) as error:
+        return _refusal(error)
+    return None
 
 
 def _evaluated_head(

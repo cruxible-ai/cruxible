@@ -26,6 +26,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring import write_verbs
 from cruxible_core.service.authoring.write_verbs import WriteCaller, service_playbill_write
 from cruxible_core.service.discovery.query_values import read_live_values
+from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 from tests.core_support._write_support import (
     CLAIM_TYPES,
     KIND,
@@ -463,6 +464,69 @@ def test_a_set_refuses_when_its_slot_moved_since_the_read_coordinate(
     contested = _refusal(_write(instance, _set(WI1, "status", "ready")))
     assert contested.code == "playbill.write.slot_contested"
     assert len(contested.candidates) == 2
+
+
+@pytest.mark.parametrize("slot", ["replaced", "filled"])
+@pytest.mark.parametrize("pinned", [False, True], ids=["unpinned", "pinned"])
+def test_a_competing_set_between_planning_and_submit_refuses_leaving_nothing_to_activate(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch, pinned: bool, slot: str
+) -> None:
+    """The slot is held to the planned coordinate through admission, not only before it."""
+
+    subject = WI1 if slot == "replaced" else WI2
+    _write(instance, _set(WI1, "status", "ready"))
+    read_at = instance.accepted_coordinate().git_oid
+    real = write_verbs._coordinator
+    interleaved: list[WriteOutcome | None] = []
+
+    def coordinator(target: PlaybillInstance, claim_ids: Any) -> Any:
+        # Planning is done; a competing set lands before this write is admitted.
+        if not interleaved:
+            interleaved.append(None)
+            interleaved[0] = _write(
+                target, _set(subject, "status", "blocked"), because="Someone else."
+            )
+        return real(target, claim_ids)
+
+    monkeypatch.setattr(write_verbs, "_coordinator", coordinator)
+    options = {"at": read_at} if pinned else {}
+    outcome = _write(instance, _set(subject, "status", "done"), **options)
+    assert interleaved[0] is not None and interleaved[0].status == "accepted"
+    refusal = _refusal(outcome)
+    assert refusal.code == "playbill.write.slot_changed", refusal
+    assert "'blocked'" in refusal.message
+    assert _values(instance, subject, "status") == ["blocked"]
+    # Nothing this write proposed is left for anyone to activate.
+    assert service_list_playbill_proposals(instance, status="open").entries == ()
+
+
+@pytest.mark.parametrize("pinned", [False, True], ids=["unpinned", "pinned"])
+def test_a_retire_by_slot_whose_slot_gained_a_contender_before_admission_is_withdrawn(
+    instance: PlaybillInstance, monkeypatch: pytest.MonkeyPatch, pinned: bool
+) -> None:
+    """Admission passes (the retired Claim did not move), so the proposal is withdrawn."""
+
+    _write(instance, _set(WI1, "status", "ready"))
+    read_at = instance.accepted_coordinate().git_oid
+    real = write_verbs._coordinator
+    interleaved: list[bool] = []
+
+    def coordinator(target: PlaybillInstance, claim_ids: Any) -> Any:
+        if not interleaved:
+            interleaved.append(True)
+            contender = _write(target, _set(WI1, "status", "blocked", contend=True))
+            assert contender.status == "accepted", contender
+        return real(target, claim_ids)
+
+    monkeypatch.setattr(write_verbs, "_coordinator", coordinator)
+    options = {"at": read_at} if pinned else {}
+    outcome = _write(
+        instance, {"op": "retire", "target": {"subject": WI1, "field": "status"}}, **options
+    )
+    assert _refusal(outcome).code == "playbill.write.slot_changed"
+    assert outcome.proposal is not None and outcome.proposal.state == "withdrawn"
+    assert _values(instance, WI1, "status") == ["blocked", "ready"]
+    assert service_list_playbill_proposals(instance, status="open").entries == ()
 
 
 def test_resetting_at_the_new_head_replaces_the_value(instance: PlaybillInstance) -> None:
