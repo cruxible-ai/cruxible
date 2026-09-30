@@ -20,13 +20,14 @@ Equivalence rules:
   the first, so two worlds in one test still have different keys and genesis
   coordinates, as two fresh builds would.
 - **Clean builds only.** A test that patches the runtime (an older compiler, a
-  poisoned Git environment) before asking for a world wants the patch to shape
-  that build. A template therefore records every name its build executed or
-  looked up. A request builds fresh, and neither uses nor creates a template,
-  when any live ``MonkeyPatch`` has replaced an attribute of such a name, when a
-  callable of such a name no longer matches the session baseline (patches made
-  without ``monkeypatch``), or when the Git-relevant environment differs from
-  the session baseline.
+  poisoned Git environment, a stricter init) before asking for a world wants
+  the patch to shape that build, and a build can reach patched code from any
+  thread (the HTTP host initializes on the TestClient's). So the rule does not
+  try to work out what a build touched: while any ``MonkeyPatch`` holds a live
+  attribute patch or non-environment item patch (other than the session's own
+  isolation seams in ``_ISOLATION_SEAMS``), or has changed the Git-relevant
+  environment, or a module-level callable no longer matches the session
+  baseline, every request builds fresh and no template is built or used.
 - **Opt out.** ``CRUXIBLE_TEST_FRESH_WORLDS=1`` disables templates entirely and
   reproduces the pre-template suite.
 """
@@ -80,6 +81,19 @@ _CALLABLE_TYPES = (
     type,
 )
 
+# Attribute patches every test carries from `tests/conftest.py`'s autouse
+# isolation fixtures. They redirect workspace-binding discovery, which no world
+# build reaches (every build passes its paths explicitly).
+_ISOLATION_SEAMS = frozenset(
+    {
+        ("cruxible_client.authoring.context", "_workspace_binding"),
+        ("cruxible_client.authoring.blocks", "_workspace_binding"),
+    }
+)
+
+# pytest patches its own objects (the config's temp-path factory, say).
+_PYTEST_INTERNALS = ("_pytest.", "pytest.")
+
 # Every MonkeyPatch the session creates, so a request can see live patches.
 _LIVE_PATCHES: weakref.WeakSet[pytest.MonkeyPatch] = weakref.WeakSet()
 if not getattr(pytest.MonkeyPatch.__init__, "_world_templates_tracked", False):
@@ -100,7 +114,6 @@ class Template(Generic[_T]):
     root: Path
     entries: tuple[str, ...]
     rewrites: tuple[str, ...]
-    names: frozenset[str]
     value: _T
 
 
@@ -113,7 +126,7 @@ class WorldTemplates:
         self._ordinals: dict[Hashable, int] = {}
         self._ordinal_test: str | None = None
         self._environment: dict[str, str] | None = None
-        self._callables: list[tuple[Any, str, Any]] | None = None
+        self._callables: list[tuple[str, Any, str, Any]] | None = None
         self._lock = threading.RLock()
         self._names = itertools.count()
         self.builds = 0
@@ -158,35 +171,29 @@ class WorldTemplates:
         with self._lock:
             self._ensure_baseline()
             key = (shape, ordinal)
+            reason = self._patched()
+            if reason is not None:
+                self._fallback(reason)
+                return None
             cached = self._templates.get(key)
             if cached is not None:
-                reason = self._patched(cached.names)
-                if reason is not None:
-                    self._fallback(reason)
-                    return None
                 return cached
-            if _environment() != self._environment:
-                self._fallback("environment")
-                return None
             if self._root is None:
                 self._root = Path(tempfile.mkdtemp(prefix="crux-world-templates-"))
             root = self._root / f"t{next(self._names):03d}"
             root.mkdir(parents=True)
             root = Path(os.path.realpath(root))
-            traced = _traced(build, root)
-            reason = "build left a thread running" if traced is None else self._patched(traced[1])
+            value = _quiescent_build(build, root)
+            reason = "build left a thread running" if value is _UNSETTLED else self._patched()
             if reason is not None:
-                # Built under a patch that may have shaped it: never share it.
+                # Something changed while it built: never share it.
                 shutil.rmtree(root, ignore_errors=True)
                 self._fallback(reason)
                 return None
-            assert traced is not None
-            value, names = traced
             built = Template(
                 root=root,
                 entries=tuple(sorted(item.name for item in root.iterdir())),
                 rewrites=_files_naming(root),
-                names=names,
                 value=value,
             )
             self._templates[key] = built
@@ -214,21 +221,25 @@ class WorldTemplates:
         if self._callables is None:
             self._callables = _callables()
 
-    def _patched(self, names: frozenset[str]) -> str | None:
-        """Name the first live difference a build over ``names`` would see, if any."""
+    def _patched(self) -> str | None:
+        """Name the first live patch or runtime difference, if there is one."""
 
         if _environment() != self._environment:
             return "environment"
         for patch in tuple(_LIVE_PATCHES):
             for target, name, _old in patch._setattr:
-                if name in names:
-                    return f"monkeypatch {type(target).__name__}.{name}"
+                owner = _owner(target)
+                if (owner, name) in _ISOLATION_SEAMS or owner.startswith(_PYTEST_INTERNALS):
+                    continue
+                return f"monkeypatch {owner}.{name}"
             for mapping, key, _old in patch._setitem:
-                if mapping is os.environ and isinstance(key, str) and _relevant_env(key):
+                if mapping is not os.environ:
+                    return f"monkeypatch item {key!r}"
+                if isinstance(key, str) and _relevant_env(key):
                     return f"monkeypatch env {key}"
-        for namespace, name, value in self._callables or ():
-            if name in names and namespace.get(name, _MISSING) is not value:
-                return f"replaced callable {name}"
+        for owner, namespace, name, value in self._callables or ():
+            if namespace.get(name, _MISSING) is not value and (owner, name) not in _ISOLATION_SEAMS:
+                return f"replaced callable {owner}.{name}"
         return None
 
     def _fallback(self, reason: str) -> None:
@@ -277,8 +288,8 @@ def _environment() -> dict[str, str]:
     return {name: value for name, value in os.environ.items() if _relevant_env(name)}
 
 
-def _callables() -> list[tuple[Any, str, Any]]:
-    found: list[tuple[Any, str, Any]] = []
+def _callables() -> list[tuple[str, Any, str, Any]]:
+    found: list[tuple[str, Any, str, Any]] = []
     for module_name, module in tuple(sys.modules.items()):
         if module is None or not module_name.startswith(_MODULE_PREFIXES):
             continue
@@ -288,50 +299,43 @@ def _callables() -> list[tuple[Any, str, Any]]:
         for name, value in tuple(namespace.items()):
             if not isinstance(value, _CALLABLE_TYPES):
                 continue
-            found.append((namespace, name, value))
+            found.append((module_name, namespace, name, value))
             if isinstance(value, type) and value.__module__ == module_name:
+                owner = f"{module_name}.{value.__qualname__}"
                 for member, member_value in tuple(value.__dict__.items()):
                     if isinstance(member_value, _CALLABLE_TYPES):
                         # The mappingproxy tracks the live class dictionary.
-                        found.append((value.__dict__, member, member_value))
+                        found.append((owner, value.__dict__, member, member_value))
     return found
 
 
-def _traced(build: Callable[[Path], _T], root: Path) -> tuple[_T, frozenset[str]] | None:
-    """Run ``build``; return its value and every name its code called or looked up.
+_UNSETTLED = object()
 
-    ``None`` when the build left a thread running that could still write into the
-    template after it is copied.
+
+def _quiescent_build(build: Callable[[Path], _T], root: Path) -> Any:
+    """Run ``build`` and wait for every thread it started.
+
+    ``_UNSETTLED`` when a thread it started is still running and could write
+    into the template after it is copied.
     """
 
-    codes: set[types.CodeType] = set()
-    builtins: set[str] = set()
-
-    def profile(frame: types.FrameType, event: str, arg: Any) -> None:
-        if event == "call":
-            codes.add(frame.f_code)
-        elif event == "c_call":
-            name = getattr(arg, "__name__", None)
-            if isinstance(name, str):
-                builtins.add(name)
-
     before = set(threading.enumerate())
-    previous = sys.getprofile()
-    sys.setprofile(profile)
-    try:
-        value = build(root)
-    finally:
-        sys.setprofile(previous)
+    value = build(root)
     for thread in set(threading.enumerate()) - before:
         thread.join(timeout=_QUIESCE_SECONDS)
         if thread.is_alive():
-            return None
+            return _UNSETTLED
     _quiesce(root)
-    names = set(builtins)
-    for code in codes:
-        names.add(code.co_name)
-        names.update(code.co_names)
-    return value, frozenset(names)
+    return value
+
+
+def _owner(target: object) -> str:
+    """The module name a patch target belongs to (the module, or its class's)."""
+
+    if isinstance(target, types.ModuleType):
+        return target.__name__
+    owner = target if isinstance(target, type) else type(target)
+    return f"{owner.__module__}.{owner.__qualname__}"
 
 
 def _quiesce(root: Path) -> None:
