@@ -162,7 +162,7 @@ def resolve_service_auth_posture(state_root: Path, requested: bool | None) -> bo
         return required
     if requested:
         repair = (
-            "run `cruxible server start --bootstrap-secret-file PATH`, claim the bootstrap "
+            "run `cruxible server start --auth --bootstrap-secret-file PATH`, claim the bootstrap "
             "credential, then rerun install-service with --auth"
         )
     else:

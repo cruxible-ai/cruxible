@@ -7,16 +7,20 @@ import hmac
 import secrets
 import sqlite3
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
 from cruxible_client.contracts.primitives import new_id
-from cruxible_client.contracts.temporal import format_datetime, utc_now
-from cruxible_core.actor_vocabulary import LOCAL_OPERATOR_ACTOR_ID
+from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.runtime_credentials import (
+    RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS,
+)
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime, utc_now
 from cruxible_core.errors import (
     BootstrapClaimRefusedError,
-    ConfigError,
     InstanceNotFoundError,
+    PrincipalRefusedError,
     RuntimeCredentialNotFoundError,
 )
 from cruxible_core.runtime.permissions import PermissionMode
@@ -38,6 +42,10 @@ class RuntimeCredentialRecord:
     created_at: str
     created_by: str | None = None
     revoked_at: str | None = None
+    # The principal this credential acts as; the label is a description only.
+    # None for an unbound operator credential (bootstrap claim, local recovery,
+    # or any row minted before this column existed): transport authority only.
+    principal_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -54,14 +62,6 @@ class RuntimeCredentialRecoveryBusyError(RuntimeError):
 
 class RuntimeCredentialRecoveryError(RuntimeError):
     """Raised when offline credential recovery cannot safely target an instance."""
-
-
-def _validate_credential_label(label: str) -> None:
-    if label.strip() == LOCAL_OPERATOR_ACTOR_ID:
-        raise ConfigError(
-            "Credential label 'operator' is reserved for the auth-off local "
-            "operator identity and cannot be minted."
-        )
 
 
 def _hash_token(token: str) -> str:
@@ -88,6 +88,15 @@ def _validate_governed_instance_id(instance_id: str) -> None:
     record = get_registry().get(instance_id)
     if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
         raise InstanceNotFoundError(instance_id)
+
+
+def _proof_replayed() -> PrincipalRefusedError:
+    return PrincipalRefusedError(
+        "runtime_credential.principal_proof_replayed",
+        "this signed consent already minted a credential; repair: sign a fresh "
+        "one with `cruxible credential mint --principal-id ID --key-dir DIR`",
+        repair=RepairOperationV1(operation="credential.mint"),
+    )
 
 
 class RuntimeCredentialStore:
@@ -120,10 +129,20 @@ class RuntimeCredentialStore:
                 )
                 """
             )
+            self._ensure_principal_column_conn(conn)
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_runtime_credentials_instance
                 ON runtime_credentials(instance_id)
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runtime_credential_proofs (
+                    proof_digest TEXT PRIMARY KEY,
+                    credential_id TEXT NOT NULL,
+                    used_at TEXT NOT NULL
+                )
                 """
             )
             conn.execute(
@@ -161,6 +180,7 @@ class RuntimeCredentialStore:
         label: str,
         permission_mode: PermissionMode = PermissionMode.ADMIN,
         created_by: str | None = None,
+        principal_id: str | None = None,
     ) -> CreatedRuntimeCredential:
         """Prepare an instance-scoped credential without committing it."""
         _validate_governed_instance_id(instance_id)
@@ -169,6 +189,7 @@ class RuntimeCredentialStore:
             label=label,
             permission_mode=permission_mode,
             created_by=created_by,
+            principal_id=principal_id,
         )
 
     def commit_prepared_credential(
@@ -176,16 +197,29 @@ class RuntimeCredentialStore:
         created: CreatedRuntimeCredential,
         *,
         reason: str = "runtime_credential_created",
+        proof_digest: str | None = None,
     ) -> CreatedRuntimeCredential:
-        """Commit a prepared credential after caller-side materialization succeeds."""
+        """Commit a prepared credential after caller-side materialization succeeds.
+
+        ``proof_digest`` names the principal's signed consent this credential
+        consumed; recording it in the same transaction makes that consent
+        single-use.
+        """
         _validate_governed_instance_id(created.record.instance_id)
-        with self._connect() as conn:
-            self._mark_auth_required_conn(
-                conn,
-                updated_at=created.record.created_at,
-                reason=reason,
-            )
-            self._insert_credential_conn(conn, created.record)
+        try:
+            with self._connect() as conn:
+                if proof_digest is not None:
+                    self._spend_proof_conn(conn, proof_digest, created.record)
+                self._mark_auth_required_conn(
+                    conn,
+                    updated_at=created.record.created_at,
+                    reason=reason,
+                )
+                self._insert_credential_conn(conn, created.record)
+        except sqlite3.IntegrityError as exc:
+            if proof_digest is None:
+                raise
+            raise _proof_replayed() from exc
         return created
 
     def create_credential(
@@ -195,6 +229,8 @@ class RuntimeCredentialStore:
         label: str,
         permission_mode: PermissionMode = PermissionMode.ADMIN,
         created_by: str | None = None,
+        principal_id: str | None = None,
+        proof_digest: str | None = None,
     ) -> CreatedRuntimeCredential:
         """Create an instance-scoped credential and return its token once."""
         created = self.prepare_credential(
@@ -202,8 +238,23 @@ class RuntimeCredentialStore:
             label=label,
             permission_mode=permission_mode,
             created_by=created_by,
+            principal_id=principal_id,
         )
-        return self.commit_prepared_credential(created)
+        return self.commit_prepared_credential(created, proof_digest=proof_digest)
+
+    def revoke_credentials_of_principal(self, *, instance_id: str, principal_id: str) -> int:
+        """Revoke every active credential that acts as ``principal_id``; return the count."""
+        revoked_at = format_datetime(utc_now())
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE runtime_credentials
+                SET revoked_at = ?
+                WHERE instance_id = ? AND principal_id = ? AND revoked_at IS NULL
+                """,
+                (revoked_at, instance_id, principal_id),
+            )
+        return int(cursor.rowcount)
 
     def recover_admin_credential(
         self,
@@ -242,6 +293,7 @@ class RuntimeCredentialStore:
                     f"Could not write runtime credentials DB at {self.db_path}: {exc}"
                 ) from exc
 
+            self._ensure_principal_column_conn(conn)
             self._validate_recovery_target_conn(conn, instance_id)
             self._ensure_recovery_events_table_conn(conn)
             self._mark_auth_required_conn(
@@ -394,7 +446,8 @@ class RuntimeCredentialStore:
                     token_hash,
                     created_at,
                     created_by,
-                    revoked_at
+                    revoked_at,
+                    principal_id
                 FROM runtime_credentials
                 WHERE token_hash = ? AND revoked_at IS NULL
                 """,
@@ -419,7 +472,8 @@ class RuntimeCredentialStore:
                     token_hash,
                     created_at,
                     created_by,
-                    revoked_at
+                    revoked_at,
+                    principal_id
                 FROM runtime_credentials
                 WHERE credential_id = ?
                 """,
@@ -443,7 +497,8 @@ class RuntimeCredentialStore:
                     token_hash,
                     created_at,
                     created_by,
-                    revoked_at
+                    revoked_at,
+                    principal_id
                 FROM runtime_credentials
                 WHERE instance_id = ?
                 ORDER BY created_at, credential_id
@@ -494,12 +549,15 @@ class RuntimeCredentialStore:
                 raise RuntimeCredentialNotFoundError(credential_id)
             label = str(existing["label"])
             permission_mode = _parse_permission_mode(str(existing["permission_mode"]))
+            principal_id = existing["principal_id"]
 
+        # A rotation replaces the token, never the principal it acts as.
         return self._new_created_credential(
             instance_id=instance_id,
             label=label,
             permission_mode=permission_mode,
             created_by=rotated_by,
+            principal_id=principal_id,
         )
 
     def commit_prepared_rotation(
@@ -508,13 +566,40 @@ class RuntimeCredentialStore:
         *,
         instance_id: str,
         credential_id: str,
+        proof_digest: str | None = None,
     ) -> CreatedRuntimeCredential:
-        """Revoke an active credential and commit a prepared replacement."""
+        """Revoke an active credential and commit a prepared replacement.
+
+        ``proof_digest`` names the principal's signed consent the replacement
+        consumed, spent in the same transaction exactly as a mint spends one.
+        """
         _validate_governed_instance_id(instance_id)
+        try:
+            return self._commit_rotation(
+                created,
+                instance_id=instance_id,
+                credential_id=credential_id,
+                proof_digest=proof_digest,
+            )
+        except sqlite3.IntegrityError as exc:
+            if proof_digest is None:
+                raise
+            raise _proof_replayed() from exc
+
+    def _commit_rotation(
+        self,
+        created: CreatedRuntimeCredential,
+        *,
+        instance_id: str,
+        credential_id: str,
+        proof_digest: str | None,
+    ) -> CreatedRuntimeCredential:
         with self._connect() as conn:
             existing = self._fetch_record_row(conn, instance_id, credential_id)
             if existing is None or existing["revoked_at"] is not None:
                 raise RuntimeCredentialNotFoundError(credential_id)
+            if proof_digest is not None:
+                self._spend_proof_conn(conn, proof_digest, created.record)
 
             self._mark_auth_required_conn(
                 conn,
@@ -610,8 +695,8 @@ class RuntimeCredentialStore:
         label: str,
         permission_mode: PermissionMode,
         created_by: str | None,
+        principal_id: str | None = None,
     ) -> CreatedRuntimeCredential:
-        _validate_credential_label(label)
         credential_id = _new_credential_id()
         token = _new_token(credential_id)
         token_hash = _hash_token(token)
@@ -626,6 +711,7 @@ class RuntimeCredentialStore:
                 token_hash=token_hash,
                 created_at=created_at,
                 created_by=created_by,
+                principal_id=principal_id,
             ),
             token=token,
         )
@@ -645,9 +731,10 @@ class RuntimeCredentialStore:
                 token_hash,
                 created_at,
                 created_by,
-                revoked_at
+                revoked_at,
+                principal_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.credential_id,
@@ -658,6 +745,7 @@ class RuntimeCredentialStore:
                 record.created_at,
                 record.created_by,
                 record.revoked_at,
+                record.principal_id,
             ),
         )
 
@@ -733,6 +821,52 @@ class RuntimeCredentialStore:
                 f"No ADMIN runtime credential exists for instance_id {instance_id!r}."
             )
 
+    @classmethod
+    def _spend_proof_conn(
+        cls, conn: sqlite3.Connection, proof_digest: str, record: RuntimeCredentialRecord
+    ) -> None:
+        """Record one signed consent as spent; a second spend raises IntegrityError."""
+
+        cls._prune_spent_proofs_conn(conn, now=record.created_at)
+        conn.execute(
+            """
+            INSERT INTO runtime_credential_proofs(proof_digest, credential_id, used_at)
+            VALUES (?, ?, ?)
+            """,
+            (proof_digest, record.credential_id, record.created_at),
+        )
+
+    @staticmethod
+    def _prune_spent_proofs_conn(conn: sqlite3.Connection, *, now: str) -> int:
+        """Forget spent consents that can no longer be replayed; return how many.
+
+        A consent is accepted only while its ``issued_at`` is within the skew
+        window of the daemon's clock, on either side. One spent at ``u`` was
+        issued no later than ``u + skew``, so it stops verifying by
+        ``u + 2 * skew``; past that its row guards nothing.
+        """
+
+        current = parse_datetime(now)
+        assert current is not None
+        horizon = current - timedelta(seconds=2 * RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS)
+        stale = [
+            (str(row[0]),)
+            for row in conn.execute("SELECT proof_digest, used_at FROM runtime_credential_proofs")
+            if (used := parse_datetime(str(row[1]))) is not None and used < horizon
+        ]
+        conn.executemany("DELETE FROM runtime_credential_proofs WHERE proof_digest = ?", stale)
+        return len(stale)
+
+    @staticmethod
+    def _ensure_principal_column_conn(conn: sqlite3.Connection) -> None:
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(runtime_credentials)")}
+        if "principal_id" not in columns:
+            # Migration, never a rebind: every credential minted before
+            # credentials named a principal stays unbound (NULL). It keeps its
+            # transport authority and can no longer author; the repair is to
+            # mint a principal-bound credential and revoke the unbound one.
+            conn.execute("ALTER TABLE runtime_credentials ADD COLUMN principal_id TEXT")
+
     @staticmethod
     def _ensure_recovery_events_table_conn(conn: sqlite3.Connection) -> None:
         conn.execute(
@@ -763,7 +897,8 @@ class RuntimeCredentialStore:
                 token_hash,
                 created_at,
                 created_by,
-                revoked_at
+                revoked_at,
+                principal_id
             FROM runtime_credentials
             WHERE instance_id = ? AND credential_id = ?
             """,
@@ -782,6 +917,7 @@ class RuntimeCredentialStore:
             created_at=row["created_at"],
             created_by=row["created_by"],
             revoked_at=row["revoked_at"],
+            principal_id=row["principal_id"],
         )
 
 

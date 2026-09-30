@@ -14,6 +14,8 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.server import app as server_app
 from cruxible_core.server.config import (
+    ServerAuthRequired,
+    auth_off_startup_notice,
     get_runtime_bootstrap_secret,
     get_server_fatal_log_path,
     get_server_log_path,
@@ -30,8 +32,22 @@ from cruxible_core.server.credentials import (
 from cruxible_core.server.registry import get_registry, reset_registry
 
 
-def test_default_localhost_without_auth_is_valid() -> None:
-    validate_server_startup_settings({})
+def test_default_tcp_without_auth_refuses_with_the_opt_in_repair() -> None:
+    with pytest.raises(ServerAuthRequired) as refused:
+        validate_server_startup_settings({})
+    assert refused.value.error_code == "cruxible.server.tcp_requires_auth"
+    assert "cruxible server start --auth" in str(refused.value)
+    assert "--socket PATH" in str(refused.value)
+
+
+def test_unix_socket_without_auth_is_valid() -> None:
+    validate_server_startup_settings({"CRUXIBLE_SERVER_SOCKET": "/run/cruxible/d.sock"})
+
+
+def test_auth_env_form_still_opts_in() -> None:
+    validate_server_startup_settings(
+        {"CRUXIBLE_SERVER_AUTH": "true", "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET": "secret"}
+    )
 
 
 def test_run_server_refuses_invalid_capability_ceiling_before_uvicorn(
@@ -58,12 +74,13 @@ def test_run_server_refuses_invalid_capability_ceiling_before_uvicorn(
     assert called is False
 
 
-def test_loopback_ipv6_without_auth_is_valid() -> None:
-    validate_server_startup_settings({"CRUXIBLE_HOST": "::1"})
+def test_loopback_ipv6_without_auth_refuses() -> None:
+    with pytest.raises(ServerAuthRequired, match="tcp_requires_auth"):
+        validate_server_startup_settings({"CRUXIBLE_HOST": "::1"})
 
 
 def test_public_bind_without_auth_fails() -> None:
-    with pytest.raises(ConfigError, match="non-loopback host without auth"):
+    with pytest.raises(ConfigError, match="tcp_requires_auth"):
         validate_server_startup_settings({"CRUXIBLE_HOST": "0.0.0.0"})
 
 
@@ -241,7 +258,7 @@ def test_run_server_fails_before_uvicorn_for_public_bind_without_auth(
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
 
     try:
-        with pytest.raises(ConfigError, match="non-loopback host without auth"):
+        with pytest.raises(ConfigError, match="tcp_requires_auth"):
             server_app.run_server()
     finally:
         reset_runtime_credential_store()
@@ -294,7 +311,8 @@ def test_run_server_warns_for_volatile_state_dir_and_instance_location(
 
     monkeypatch.setenv("CRUXIBLE_HOST", "127.0.0.1")
     monkeypatch.setenv("CRUXIBLE_PORT", "8126")
-    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "bootstrap-secret")
     monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
     monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=capture_run))
 
@@ -438,3 +456,74 @@ def test_the_fatal_fault_handler_writes_into_the_daemons_own_log_directory(
     written = expected.read_text(encoding="utf-8")
     assert "Current thread" in written
     assert "test_the_fatal_fault_handler_writes_into_the_daemons_own_log_directory" in written
+
+
+def test_socket_daemon_without_auth_says_so_in_one_line_and_tcp_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    served: list[int] = []
+
+    class _Socket:
+        def fileno(self) -> int:
+            return 7
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
+    # Recorded so the teardown removes what run_server writes into os.environ.
+    monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", "placeholder")
+    monkeypatch.setattr(server_app, "prepare_socket_directory", lambda _directory: None)
+    monkeypatch.setattr(server_app, "bind_private_unix_socket", lambda _path: _Socket())
+    monkeypatch.setitem(
+        sys.modules,
+        "uvicorn",
+        SimpleNamespace(run=lambda *_args, **kwargs: served.append(kwargs["fd"])),
+    )
+    reset_registry()
+    reset_runtime_credential_store()
+    try:
+        server_app.run_server(socket_path=str(tmp_path / "run" / "d.sock"))
+    finally:
+        reset_registry()
+        reset_runtime_credential_store()
+
+    assert served == [7]
+    err_lines = capsys.readouterr().err.splitlines()
+    assert err_lines.count(auth_off_startup_notice()) == 1
+    assert "cruxible server start --auth" in auth_off_startup_notice()
+
+
+def test_run_server_auth_flag_sets_the_env_form(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    called: dict[str, object] = {}
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
+    # Recorded so the teardown removes what run_server writes into os.environ.
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "false")
+    monkeypatch.setenv("CRUXIBLE_HOST", "localhost")
+    monkeypatch.setenv("CRUXIBLE_PORT", "1")
+    monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "bootstrap-secret")
+    monkeypatch.setitem(
+        sys.modules, "uvicorn", SimpleNamespace(run=lambda *_a, **kw: called.update(kw))
+    )
+    reset_registry()
+    reset_runtime_credential_store()
+    try:
+        server_app.run_server(host="127.0.0.1", port=8127, auth=True)
+    finally:
+        reset_registry()
+        reset_runtime_credential_store()
+
+    import os
+
+    assert os.environ["CRUXIBLE_SERVER_AUTH"] == "true"
+    assert called["port"] == 8127
+    assert auth_off_startup_notice() not in capsys.readouterr().err

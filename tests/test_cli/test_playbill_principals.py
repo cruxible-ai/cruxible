@@ -147,3 +147,56 @@ def test_cli_principal_add_refuses_daemon_kind() -> None:
 
     assert result.exit_code != 0
     assert "'daemon' is not one of 'ordinary', 'recovery'" in result.output
+
+
+def test_the_global_principal_id_reaches_the_client_and_whoami_says_it_is_a_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.delenv("CRUXIBLE_PRINCIPAL_ID", raising=False)
+    constructed: list[dict[str, Any]] = []
+
+    class StubClient:
+        def __init__(self, **kwargs: Any) -> None:
+            constructed.append(kwargs)
+
+        def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
+            return contracts.PlaybillWhoAmI(
+                actor_id="alice",
+                credential_label=None,
+                actor_id_source="principal_claim",
+                authenticated=False,
+                credential_permission_mode="admin",
+                principal_registration_status="active",
+                active_principal_ids=["alice"],
+                coordinate=COORDINATE,
+                can_author=True,
+                authoring_refusal=None,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common.CruxibleClient", StubClient)
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common.client_compatibility.check_daemon_compatibility",
+        lambda _client: None,
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-socket",
+            str(tmp_path / "d.sock"),
+            "--instance-id",
+            "inst_principals",
+            "--principal-id",
+            "alice",
+            "playbill",
+            "whoami",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert constructed[0]["principal_id"] == "alice"
+    assert "configured principal ID (CRUXIBLE_PRINCIPAL_ID)" in result.output
+    assert "Identity is a claim, not authentication" in result.output
+    assert "Can author: yes" in result.output

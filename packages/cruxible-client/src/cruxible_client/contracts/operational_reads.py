@@ -102,7 +102,7 @@ class PlaybillGetLineArmV1(_StrictOperationalModel):
 
     arm: str
     state: PlaybillLineArmState
-    principal_kind: Literal["runtime_credential", "local_operator"]
+    principal_kind: Literal["runtime_credential", "principal_claim", "local_operator"]
     # Who armed it: the local operator, or a runtime credential's label and id.
     # A runtime credential's are shown only to that credential or an admin;
     # anyone else reads ``armed_by_withheld``.
@@ -230,8 +230,8 @@ class PlaybillGetRunTriggerV1(_StrictOperationalModel):
     line: str
     occurrence: str | None = Field(default=None, exclude_if=_omit_none)
     arm: str | None = Field(default=None, exclude_if=_omit_none)
-    principal_kind: Literal["runtime_credential", "local_operator"] | None = Field(
-        default=None, exclude_if=_omit_none
+    principal_kind: Literal["runtime_credential", "principal_claim", "local_operator"] | None = (
+        Field(default=None, exclude_if=_omit_none)
     )
     # Withheld, as on a Line card, unless the reader is the arming credential or an admin.
     armed_by: str | None = Field(default=None, exclude_if=_omit_none)

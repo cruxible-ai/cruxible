@@ -21,6 +21,9 @@
         "line_changed",
         "epoch_changed",
         "credential_revoked",
+        "credential_unbound",
+        "principal_inactive",
+        "arm_requires_rearm",
         "credential_scope_changed",
         "permission_insufficient",
         "authentication_changed"
@@ -1284,6 +1287,7 @@
           "schema": {
             "enum": [
               "runtime_credential",
+              "principal_claim",
               "local_operator"
             ],
             "title": "Kind",
@@ -1299,11 +1303,25 @@
             "title": "Label",
             "type": "string"
           }
+        },
+        "tag": {
+          "default": "line-arm-principal-v2",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "line-arm-principal-v2",
+            "default": "line-arm-principal-v2",
+            "title": "Tag",
+            "type": "string"
+          }
         }
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "Who armed a Line: the credential rechecked before every automatic admission.\n\nOnly the credential's identifier is retained, never a token.",
+        "description": "Who armed a Line: the authority rechecked before every automatic admission.\n\n``runtime_credential`` retains only the credential's identifier, never a\ntoken. On an auth-off daemon, ``principal_claim`` is an arm made under a\nconfigured principal ID (``label``), whose accepted standing is rechecked\nbefore every admission; ``local_operator`` is the implicit local operator\nthat claimed no principal, and never resolves to a registered principal.",
         "properties": {
           "credential_id": {
             "anyOf": [
@@ -1320,6 +1338,7 @@
           "kind": {
             "enum": [
               "runtime_credential",
+              "principal_claim",
               "local_operator"
             ],
             "title": "Kind",
@@ -1327,6 +1346,12 @@
           },
           "label": {
             "title": "Label",
+            "type": "string"
+          },
+          "tag": {
+            "const": "line-arm-principal-v2",
+            "default": "line-arm-principal-v2",
+            "title": "Tag",
             "type": "string"
           }
         },
@@ -1522,6 +1547,9 @@
                   "line_changed",
                   "epoch_changed",
                   "credential_revoked",
+                  "credential_unbound",
+                  "principal_inactive",
+                  "arm_requires_rearm",
                   "credential_scope_changed",
                   "permission_insufficient",
                   "authentication_changed"
@@ -1563,7 +1591,7 @@
         "$defs": {
           "LineArmPrincipalV1": {
             "additionalProperties": false,
-            "description": "Who armed a Line: the credential rechecked before every automatic admission.\n\nOnly the credential's identifier is retained, never a token.",
+            "description": "Who armed a Line: the authority rechecked before every automatic admission.\n\n``runtime_credential`` retains only the credential's identifier, never a\ntoken. On an auth-off daemon, ``principal_claim`` is an arm made under a\nconfigured principal ID (``label``), whose accepted standing is rechecked\nbefore every admission; ``local_operator`` is the implicit local operator\nthat claimed no principal, and never resolves to a registered principal.",
             "properties": {
               "credential_id": {
                 "anyOf": [
@@ -1580,6 +1608,7 @@
               "kind": {
                 "enum": [
                   "runtime_credential",
+                  "principal_claim",
                   "local_operator"
                 ],
                 "title": "Kind",
@@ -1587,6 +1616,12 @@
               },
               "label": {
                 "title": "Label",
+                "type": "string"
+              },
+              "tag": {
+                "const": "line-arm-principal-v2",
+                "default": "line-arm-principal-v2",
+                "title": "Tag",
                 "type": "string"
               }
             },
@@ -1692,6 +1727,9 @@
                   "line_changed",
                   "epoch_changed",
                   "credential_revoked",
+                  "credential_unbound",
+                  "principal_inactive",
+                  "arm_requires_rearm",
                   "credential_scope_changed",
                   "permission_insufficient",
                   "authentication_changed"
@@ -12122,6 +12160,156 @@
         "certificate",
         "frontier",
         "verdict"
+      ]
+    },
+    "PlaybillAuthoringRefusalV1": {
+      "fields": {
+        "code": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "code",
+          "required": true,
+          "schema": {
+            "enum": [
+              "playbill.identity.credential_unbound",
+              "playbill.identity.principal_unconfigured",
+              "playbill.identity.principal_absent",
+              "playbill.identity.principal_revoked",
+              "playbill.identity.permission_insufficient",
+              "playbill.instance.decommissioned"
+            ],
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "detail": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "detail",
+          "required": true,
+          "schema": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "repair": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "repair",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RepairOperationV1"
+              },
+              {
+                "$ref": "#/$defs/HandEditRepairV1"
+              }
+            ],
+            "title": "Repair"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Why this actor cannot author, and the runnable repair.",
+        "properties": {
+          "code": {
+            "enum": [
+              "playbill.identity.credential_unbound",
+              "playbill.identity.principal_unconfigured",
+              "playbill.identity.principal_absent",
+              "playbill.identity.principal_revoked",
+              "playbill.identity.permission_insufficient",
+              "playbill.instance.decommissioned"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "repair": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RepairOperationV1"
+              },
+              {
+                "$ref": "#/$defs/HandEditRepairV1"
+              }
+            ],
+            "title": "Repair"
+          }
+        },
+        "required": [
+          "code",
+          "detail",
+          "repair"
+        ],
+        "title": "PlaybillAuthoringRefusalV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "code",
+        "detail",
+        "repair"
       ]
     },
     "PlaybillAuthoringSubmitResult": {
@@ -27807,6 +27995,80 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
+          "PlaybillAuthoringRefusalV1": {
+            "additionalProperties": false,
+            "description": "Why this actor cannot author, and the runnable repair.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "playbill.identity.credential_unbound",
+                  "playbill.identity.principal_unconfigured",
+                  "playbill.identity.principal_absent",
+                  "playbill.identity.principal_revoked",
+                  "playbill.identity.permission_insufficient",
+                  "playbill.instance.decommissioned"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "repair"
+            ],
+            "title": "PlaybillAuthoringRefusalV1",
+            "type": "object"
+          },
           "PlaybillLiveHeadV1": {
             "additionalProperties": false,
             "description": "The accepted head a live read was taken at: its git oid's 12-hex prefix and sequence.",
@@ -28673,6 +28935,17 @@
                 ],
                 "title": "Actor"
               },
+              "authoring_refusal": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "can_author": {
                 "title": "Can Author",
                 "type": "boolean"
@@ -28688,18 +28961,6 @@
                 ],
                 "default": null,
                 "title": "Principal"
-              },
-              "reason": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Reason"
               }
             },
             "required": [
@@ -28765,6 +29026,26 @@
               "nodes_done"
             ],
             "title": "PlaybillRunRowV1",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
             "type": "object"
           }
         },
@@ -69308,8 +69589,15 @@
           "json_name": "actor_id",
           "required": true,
           "schema": {
-            "title": "Actor Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
           }
         },
         "actor_id_source": {
@@ -69319,11 +69607,49 @@
           "required": true,
           "schema": {
             "enum": [
-              "runtime_credential_label",
+              "runtime_credential",
+              "unbound_credential",
+              "principal_claim",
               "local_operator"
             ],
             "title": "Actor Id Source",
             "type": "string"
+          }
+        },
+        "authenticated": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "authenticated",
+          "required": true,
+          "schema": {
+            "title": "Authenticated",
+            "type": "boolean"
+          }
+        },
+        "authoring_refusal": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "authoring_refusal",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "can_author": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "can_author",
+          "required": true,
+          "schema": {
+            "title": "Can Author",
+            "type": "boolean"
           }
         },
         "coordinate": {
@@ -69341,8 +69667,15 @@
           "json_name": "credential_label",
           "required": true,
           "schema": {
-            "title": "Credential Label",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Label"
           }
         },
         "credential_permission_mode": {
@@ -69367,13 +69700,20 @@
           "json_name": "principal_registration_status",
           "required": true,
           "schema": {
-            "enum": [
-              "active",
-              "revoked",
-              "absent"
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "revoked",
+                  "absent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Principal Registration Status",
-            "type": "string"
+            "title": "Principal Registration Status"
           }
         },
         "tag": {
@@ -69393,6 +69733,40 @@
       },
       "json_schema": {
         "$defs": {
+          "HandEditInstructionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "required_change": {
+                "minLength": 1,
+                "title": "Required Change",
+                "type": "string"
+              },
+              "target": {
+                "minLength": 1,
+                "title": "Target",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "required_change"
+            ],
+            "title": "HandEditInstructionV1",
+            "type": "object"
+          },
+          "HandEditRepairV1": {
+            "additionalProperties": false,
+            "properties": {
+              "hand_edit": {
+                "$ref": "#/$defs/HandEditInstructionV1"
+              }
+            },
+            "required": [
+              "hand_edit"
+            ],
+            "title": "HandEditRepairV1",
+            "type": "object"
+          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -69431,6 +69805,66 @@
             ],
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
+          },
+          "PlaybillAuthoringRefusalV1": {
+            "additionalProperties": false,
+            "description": "Why this actor cannot author, and the runnable repair.",
+            "properties": {
+              "code": {
+                "enum": [
+                  "playbill.identity.credential_unbound",
+                  "playbill.identity.principal_unconfigured",
+                  "playbill.identity.principal_absent",
+                  "playbill.identity.principal_revoked",
+                  "playbill.identity.permission_insufficient",
+                  "playbill.instance.decommissioned"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail": {
+                "title": "Detail",
+                "type": "string"
+              },
+              "repair": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RepairOperationV1"
+                  },
+                  {
+                    "$ref": "#/$defs/HandEditRepairV1"
+                  }
+                ],
+                "title": "Repair"
+              }
+            },
+            "required": [
+              "code",
+              "detail",
+              "repair"
+            ],
+            "title": "PlaybillAuthoringRefusalV1",
+            "type": "object"
+          },
+          "RepairOperationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": {
+                "additionalProperties": true,
+                "title": "Arguments",
+                "type": "object"
+              },
+              "operation": {
+                "minLength": 1,
+                "title": "Operation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation"
+            ],
+            "title": "RepairOperationV1",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -69443,23 +69877,57 @@
             "type": "array"
           },
           "actor_id": {
-            "title": "Actor Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
           },
           "actor_id_source": {
             "enum": [
-              "runtime_credential_label",
+              "runtime_credential",
+              "unbound_credential",
+              "principal_claim",
               "local_operator"
             ],
             "title": "Actor Id Source",
             "type": "string"
           },
+          "authenticated": {
+            "title": "Authenticated",
+            "type": "boolean"
+          },
+          "authoring_refusal": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAuthoringRefusalV1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "can_author": {
+            "title": "Can Author",
+            "type": "boolean"
+          },
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           },
           "credential_label": {
-            "title": "Credential Label",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Label"
           },
           "credential_permission_mode": {
             "enum": [
@@ -69472,13 +69940,20 @@
             "type": "string"
           },
           "principal_registration_status": {
-            "enum": [
-              "active",
-              "revoked",
-              "absent"
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "revoked",
+                  "absent"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Principal Registration Status",
-            "type": "string"
+            "title": "Principal Registration Status"
           },
           "tag": {
             "const": "playbill-whoami-v1",
@@ -69491,10 +69966,13 @@
           "actor_id",
           "credential_label",
           "actor_id_source",
+          "authenticated",
           "credential_permission_mode",
           "principal_registration_status",
           "active_principal_ids",
-          "coordinate"
+          "coordinate",
+          "can_author",
+          "authoring_refusal"
         ],
         "title": "PlaybillWhoAmI",
         "type": "object"
@@ -69503,6 +69981,9 @@
         "active_principal_ids",
         "actor_id",
         "actor_id_source",
+        "authenticated",
+        "authoring_refusal",
+        "can_author",
         "coordinate",
         "credential_label",
         "credential_permission_mode",
@@ -88204,6 +88685,18 @@
                 "title": "Permission Mode",
                 "type": "string"
               },
+              "principal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Principal Id"
+              },
               "revoked_at": {
                 "anyOf": [
                   {
@@ -88320,6 +88813,26 @@
             "type": "string"
           }
         },
+        "principal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "principal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Principal Id"
+          }
+        },
         "revoked_at": {
           "default": null,
           "default_json_serializable": true,
@@ -88380,6 +88893,18 @@
             ],
             "title": "Permission Mode",
             "type": "string"
+          },
+          "principal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Principal Id"
           },
           "revoked_at": {
             "anyOf": [
@@ -88485,6 +89010,18 @@
                 ],
                 "title": "Permission Mode",
                 "type": "string"
+              },
+              "principal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Principal Id"
               },
               "revoked_at": {
                 "anyOf": [

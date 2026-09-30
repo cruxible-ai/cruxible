@@ -7,6 +7,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.inputs import (
     ClaimInput,
@@ -549,11 +551,23 @@ def test_preflight_accepts_a_client_selected_occurrence_from_multiple_matches(
 
 def test_preflight_refuses_an_actor_absent_from_the_principal_registry(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from cruxible_core.authoring import coordinator as coordinator_module
+    from cruxible_core.errors import PrincipalRefusedError
+
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="unregistered-writer")
+    # Create refuses such an actor before any work...
+    with pytest.raises(PrincipalRefusedError, match="playbill.identity.principal_absent"):
+        coordinator.create(
+            actor=actor, payload=_self_source_payload(), canonical_timestamp=TIMESTAMP
+        )
+    # ...and preflight still refuses one whose principal lapsed after its draft
+    # was opened, which is the only way such a draft exists.
+    monkeypatch.setattr(coordinator_module, "require_authoring_principal", lambda *_a: None)
     intent = coordinator.create(
         actor=actor,
         payload=_self_source_payload(),

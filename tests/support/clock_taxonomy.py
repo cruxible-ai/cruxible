@@ -74,6 +74,9 @@ def is_time_bearing_field(name: str, annotation: str) -> bool:
 # `observed_at` the instant the daemon evaluated the source, while an attestation
 # is `observed_at` the time its attestor asserts.
 CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
+    # A signed mint consent is accepted only within a window around the
+    # daemon's clock; issued_at anchors that window.
+    ("RuntimeCredentialMintStatementV1", "issued_at"): "VALIDITY WINDOW",
     ("LineArmV1", "armed_at"): "VALIDITY WINDOW",
     ("LineArmV1", "evaluated_until"): "VALIDITY WINDOW",
     ("LineArmV1", "stopped_at"): "VALIDITY WINDOW",

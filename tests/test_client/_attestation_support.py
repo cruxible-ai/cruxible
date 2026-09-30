@@ -36,7 +36,8 @@ class ServiceAttestationClient:
             self.instance,
             actor_id=self.actor_id,
             credential_label=self.actor_id,
-            actor_id_source="runtime_credential_label",
+            actor_id_source="runtime_credential",
+            authenticated=True,
             permission_mode=PermissionMode.GOVERNED_WRITE,
         )
         return contracts.PlaybillWhoAmI.model_validate(value.model_dump(mode="json"))

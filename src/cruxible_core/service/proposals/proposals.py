@@ -18,6 +18,7 @@ from cruxible_client.contracts.errors import (
     ProposalReadmitRequiresResubmission,
     ProposalSelectorAmbiguousError,
 )
+from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
 from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
 from cruxible_core.indexes.proposals.proposal_index import timestamp
 from cruxible_core.proposals.proposals import (
@@ -32,6 +33,7 @@ from cruxible_core.service.authoring.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
 )
+from cruxible_core.service.identity import authoring_refusal, principal_standing
 from cruxible_core.service.list_pages import (
     decode_list_cursor,
     encode_list_cursor,
@@ -42,7 +44,14 @@ from cruxible_core.service.list_pages import (
 ProposalInventoryStatus = Literal["open", "settled", "incomplete"]
 ProposalIncompleteReason = Literal["missing_admission", "missing_evaluation", "missing_candidate"]
 ProposalTerminalReason = Literal["accepted", "refused", "stale", "withdrawn"]
-WhoAmIActorIdSource = Literal["runtime_credential_label", "local_operator"]
+#: Where the actor ID came from. ``runtime_credential`` is the principal the
+#: bearer credential is bound to; ``unbound_credential`` is a credential that
+#: acts as no principal (no actor ID); ``principal_claim`` is an auth-off
+#: daemon's configured principal ID, a claim of identity, not authentication.
+WhoAmIActorIdSource = Literal[
+    "runtime_credential", "unbound_credential", "principal_claim", "local_operator"
+]
+_CREDENTIAL_SOURCES = frozenset({"runtime_credential", "unbound_credential"})
 PrincipalRegistrationStatus = Literal["active", "revoked", "absent"]
 CredentialPermissionMode = Literal["read_only", "governed_write", "graph_write", "admin"]
 
@@ -117,21 +126,34 @@ class PlaybillProposalSelectorResultV1(_StrictOperationalReadModel):
 
 class PlaybillWhoAmIV1(_StrictOperationalReadModel):
     tag: Literal["playbill-whoami-v1"] = "playbill-whoami-v1"
-    actor_id: str
-    credential_label: str
+    # None only for an unbound credential, which acts as no principal.
+    actor_id: str | None
+    # The credential's description; never the source of the actor ID.
+    credential_label: str | None
     actor_id_source: WhoAmIActorIdSource
+    # False when no bearer credential backs the identity: an auth-off daemon
+    # trusts every process of its OS user equally, so the actor ID is a claim.
+    authenticated: bool
     credential_permission_mode: CredentialPermissionMode
-    principal_registration_status: PrincipalRegistrationStatus
+    # None when the request names no principal (an unbound credential).
+    principal_registration_status: PrincipalRegistrationStatus | None
     active_principal_ids: tuple[str, ...]
     coordinate: PlaybillAcceptedCoordinate
+    # Whether authoring create would accept this actor, and the refusal it
+    # would return otherwise: the same code, detail and repair.
+    can_author: bool
+    authoring_refusal: PlaybillAuthoringRefusalV1 | None
 
     @model_validator(mode="after")
     def _credential_binding(self) -> "PlaybillWhoAmIV1":
-        if (
-            self.actor_id_source == "runtime_credential_label"
-            and self.credential_label != self.actor_id
-        ):
-            raise ValueError("runtime credential label must equal the governed actor id")
+        if (self.actor_id_source in _CREDENTIAL_SOURCES) != self.authenticated:
+            raise ValueError("only a runtime credential authenticates the actor")
+        if (self.actor_id_source == "unbound_credential") != (self.actor_id is None):
+            raise ValueError("exactly an unbound credential names no actor")
+        if (self.actor_id is None) != (self.principal_registration_status is None):
+            raise ValueError("a registration status belongs to a named actor")
+        if self.can_author != (self.authoring_refusal is None):
+            raise ValueError("an actor that cannot author carries exactly its refusal")
         return self
 
 
@@ -763,10 +785,12 @@ def service_withdraw_playbill_proposal(
 def service_playbill_whoami(
     instance: PlaybillInstance,
     *,
-    actor_id: str,
-    credential_label: str,
+    actor_id: str | None,
+    credential_label: str | None,
     actor_id_source: WhoAmIActorIdSource,
+    authenticated: bool,
     permission_mode: PermissionMode,
+    credential_id: str | None = None,
 ) -> PlaybillWhoAmIV1:
     """Explain the transport-derived actor and its accepted principal status."""
 
@@ -778,12 +802,24 @@ def service_playbill_whoami(
             key=lambda item: item.encode("utf-8"),
         )
     )
-    matched = next((item for item in principals if item.principal_id == actor_id), None)
-    registration: PrincipalRegistrationStatus = "absent" if matched is None else matched.status
+    registration: PrincipalRegistrationStatus | None = (
+        None if actor_id is None else principal_standing(instance, actor_id)
+    )
+    refusal = authoring_refusal(
+        instance,
+        actor_id=actor_id,
+        configured=actor_id_source != "local_operator",
+        credential_id=credential_id,
+        credential_label=credential_label,
+        permission_mode=permission_mode,
+    )
     return PlaybillWhoAmIV1(
         actor_id=actor_id,
         credential_label=credential_label,
         actor_id_source=actor_id_source,
+        authenticated=authenticated,
+        can_author=refusal is None,
+        authoring_refusal=refusal,
         credential_permission_mode=cast(CredentialPermissionMode, permission_mode.name.lower()),
         principal_registration_status=registration,
         active_principal_ids=active,

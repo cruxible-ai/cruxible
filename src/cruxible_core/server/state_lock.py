@@ -41,9 +41,15 @@ class StateRootLockRecord:
 
     pid: int
     transport: str
+    # The holder's process-image boot id: local operator requests sign it, so a
+    # request made for one daemon image is refused by the next.
+    boot_id: str | None = None
 
     def as_dict(self) -> dict[str, object]:
-        return {"tag": _LOCK_TAG, "pid": self.pid, "transport": self.transport}
+        record: dict[str, object] = {"tag": _LOCK_TAG, "pid": self.pid, "transport": self.transport}
+        if self.boot_id is not None:
+            record["boot_id"] = self.boot_id
+        return record
 
 
 def state_lock_path(state_root: Path) -> Path:
@@ -70,7 +76,10 @@ def read_state_lock(state_root: Path) -> StateRootLockRecord | None:
     transport = payload.get("transport")
     if not isinstance(pid, int) or not isinstance(transport, str):
         return None
-    return StateRootLockRecord(pid=pid, transport=transport)
+    boot_id = payload.get("boot_id")
+    return StateRootLockRecord(
+        pid=pid, transport=transport, boot_id=boot_id if isinstance(boot_id, str) else None
+    )
 
 
 def state_lock_holder_is_alive(state_root: Path) -> bool:
@@ -101,9 +110,10 @@ def state_lock_holder_is_alive(state_root: Path) -> bool:
 class StateRootLock:
     """Hold one state root exclusively for the daemon process's lifetime."""
 
-    def __init__(self, state_root: Path, *, transport: str) -> None:
+    def __init__(self, state_root: Path, *, transport: str, boot_id: str | None = None) -> None:
         self.path = state_lock_path(state_root)
         self.transport = transport
+        self.boot_id = boot_id
         self._descriptor: int | None = None
 
     def acquire(self) -> "StateRootLock":
@@ -139,7 +149,9 @@ class StateRootLock:
         os.write(
             descriptor,
             json.dumps(
-                StateRootLockRecord(pid=os.getpid(), transport=self.transport).as_dict(),
+                StateRootLockRecord(
+                    pid=os.getpid(), transport=self.transport, boot_id=self.boot_id
+                ).as_dict(),
                 separators=(",", ":"),
                 sort_keys=True,
             ).encode("utf-8"),

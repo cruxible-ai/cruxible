@@ -82,6 +82,7 @@ from cruxible_client.contracts.write import (
 )
 from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
 from cruxible_client.errors import ServerUnreachableError
+from cruxible_client.transport.http import configured_principal_id
 from cruxible_core import __version__
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputV1,
@@ -147,7 +148,7 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 
 _client_cache: CruxibleClient | None = None
-_client_cache_key: tuple[str | None, str | None, str | None] | None = None
+_client_cache_key: tuple[str | None, str | None, str | None, str | None] | None = None
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
 _AUTHORING_INPUT: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringInputV1)
@@ -307,7 +308,8 @@ def _get_client() -> CruxibleClient | None:
         reset_client_cache()
         return None
     token = get_runtime_bearer_token()
-    cache_key = (settings.server_url, settings.server_socket, token)
+    principal_id = configured_principal_id()
+    cache_key = (settings.server_url, settings.server_socket, token, principal_id)
     with _client_cache_lock:
         if _client_cache is None or _client_cache_key != cache_key:
             reset_client_cache()
@@ -315,6 +317,7 @@ def _get_client() -> CruxibleClient | None:
                 base_url=settings.server_url,
                 socket_path=settings.server_socket,
                 token=token,
+                principal_id=principal_id,
             )
             _client_cache_key = cache_key
         return _client_cache

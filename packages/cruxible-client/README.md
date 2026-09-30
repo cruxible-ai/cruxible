@@ -105,6 +105,7 @@ checks run.
 | Setting | Default / behavior |
 |---|---|
 | `CRUXIBLE_SERVER_BEARER_TOKEN` | Used when `token` is omitted; never creates a principal or grants rights. |
+| `CRUXIBLE_PRINCIPAL_ID` | Used when `principal_id` is omitted; the daemon checks it is a registered, active principal before any write and attributes the session to it; reads stay open. |
 | `CRUXIBLE_CLI_CONTEXT_PATH` | Otherwise `~/.cruxible/client-context.json`. |
 | `CRUXIBLE_CLIENT_TIMEOUT_S` | Ordinary HTTP read/write timeout: 180 seconds; connect/pool: 5 seconds. |
 | Default access profile | `sdk-default`, classes `("instance", "public")`, disclose restricted existence `True`. |
@@ -127,6 +128,7 @@ connect(
     target: str | None = None,
     instance: str | None = None,
     token: SecretStr | None = None,
+    principal_id: str | None = None,
     workspace: Path | None = None,
     access_profile: AccessProfile | None = None,
     at: AcceptedCoordinate | api.PlaybillAcceptedCoordinate | None = None,
@@ -143,6 +145,7 @@ Opens a transport, checks client/daemon contract compatibility, resolves context
 | `target` | `None` | Explicit HTTP(S) endpoint or unix:/absolute/socket. It does not select an arbitrary local instance directory. |
 | `instance` | `None` | Daemon instance ID. Omission uses resolved workspace/client context. |
 | `token` | `None` | Bearer credential as SecretStr; otherwise CRUXIBLE_SERVER_BEARER_TOKEN. |
+| `principal_id` | `None` | Principal this session acts as; otherwise CRUXIBLE_PRINCIPAL_ID. With daemon auth off it is a claim of identity, not authentication; with auth on it must equal the credential's principal. |
 | `workspace` | `None` | Client workspace root for source selection, projections, and configured floors. |
 | `access_profile` | `None` | Declared access classes and disclosure preference; server authorization remains authoritative. |
 | `at` | `None` | Explicit accepted coordinate. Omission follows the live/pinned object semantics stated above. |
@@ -4731,8 +4734,9 @@ Import: `cruxible_client.contracts.authoring.inputs.AuthoringInputError`. [Sourc
 ## Lower-level HTTP client
 
 `CruxibleClient` is synchronous, exported from `cruxible_client`. Construct
-with exactly one of base_url or socket_path and an optional explicit bearer
-token; unlike Playbill.connect, this constructor does not resolve workspace
+with exactly one of base_url or socket_path, an optional explicit bearer
+token, and an optional principal ID sent as `X-Cruxible-Principal-Id` (with
+daemon auth off it is a claim of identity, not authentication); unlike Playbill.connect, this constructor does not resolve workspace
 context or perform the SDK compatibility/orientation workflow. Use a context
 manager or close(). Public methods below retain explicit instance IDs and
 typed request/response contracts. A method whose signature takes `request`
@@ -4748,7 +4752,7 @@ responses can raise validation errors; ambiguous transport completion must be
 checked before retrying a write.
 
 ```text
-CruxibleClient(*, base_url: str | None=None, socket_path: str | None=None, token: str | None=None) -> None
+CruxibleClient(*, base_url: str | None=None, socket_path: str | None=None, token: str | None=None, principal_id: str | None=None) -> None
 ```
 
 <a id="api-cruxibleclient-close"></a>
@@ -4980,12 +4984,21 @@ HTTP: `POST f'/api/v1/{instance_id}/runtime/bootstrap/claim'`.
 create_runtime_credential(
     instance_id: str,
     *,
-    label: str,
-    permission_mode: contracts.RuntimeCredentialPermissionMode = 'admin',
+    principal_id: str,
+    permission_mode: contracts.RuntimeCredentialPermissionMode,
+    label: str | None = None,
+    principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
 ) -> contracts.RuntimeCredentialResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/runtime/credentials'`.
+
+Mints a credential that acts as `principal_id`. The daemon refuses unless the
+principal is registered and active and the request carries its authority:
+either the request already acts as that principal, or `principal_proof` is its
+single-use consent signed with its registered key
+(`cruxible_client.authoring.signing.sign_runtime_credential_mint`). An admin
+credential alone is never enough. `label` is a description only.
 
 <a id="api-cruxibleclient-list-runtime-credentials"></a>
 
@@ -5018,10 +5031,20 @@ HTTP: `POST f'/api/v1/{instance_id}/runtime/credentials/{credential_id}/revoke'`
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-rotate_runtime_credential(instance_id: str, credential_id: str) -> contracts.RuntimeCredentialResult
+rotate_runtime_credential(
+    instance_id: str,
+    credential_id: str,
+    *,
+    principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
+) -> contracts.RuntimeCredentialResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate'`.
+
+A credential bound to a principal is replaced only with that principal's
+authority, exactly as minting one: the request acts as the principal, or
+`principal_proof` is its signed consent to the credential's current mode and
+label. An unbound operator credential rotates on the admin tier alone.
 
 <a id="api-cruxibleclient-init-playbill"></a>
 

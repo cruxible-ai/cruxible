@@ -129,6 +129,7 @@ from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidenceV2 as TerminalSettlementEvidenceV2,
 )
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny as _ProcedureArtifactAny,
 )
@@ -452,6 +453,12 @@ class RuntimeCredentialBootstrapResult(BaseModel):
 class RuntimeCredentialMetadata(BaseModel):
     credential_id: str
     instance_id: str
+    # The principal this credential acts as. None only for the unbound
+    # operator credentials (the bootstrap claim, local recovery, and any
+    # credential minted before credentials named a principal): they carry
+    # transport authority but can never author.
+    principal_id: str | None = None
+    # A description only; it never decides who acts.
     label: str
     permission_mode: RuntimeCredentialPermissionMode
     created_at: str
@@ -673,13 +680,25 @@ class PlaybillWhoAmI(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-whoami-v1"] = "playbill-whoami-v1"
-    actor_id: str
-    credential_label: str
-    actor_id_source: Literal["runtime_credential_label", "local_operator"]
+    # None only for an unbound credential, which acts as no principal.
+    actor_id: str | None
+    # The credential's description; never the source of the actor ID.
+    credential_label: str | None
+    actor_id_source: Literal[
+        "runtime_credential", "unbound_credential", "principal_claim", "local_operator"
+    ]
+    # False when no bearer credential backs the identity: an auth-off daemon
+    # trusts every process of its OS user equally, so the actor ID is a claim.
+    authenticated: bool
     credential_permission_mode: Literal["read_only", "governed_write", "graph_write", "admin"]
-    principal_registration_status: Literal["active", "revoked", "absent"]
+    # None when the request names no principal (an unbound credential).
+    principal_registration_status: Literal["active", "revoked", "absent"] | None
     active_principal_ids: list[str]
     coordinate: PlaybillAcceptedCoordinate
+    # Whether authoring create would accept this actor, and the refusal it
+    # would return otherwise: the same code, detail and repair.
+    can_author: bool
+    authoring_refusal: PlaybillAuthoringRefusalV1 | None
 
 
 class PlaybillRefusalInspection(BaseModel):

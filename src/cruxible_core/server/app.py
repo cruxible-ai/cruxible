@@ -34,7 +34,9 @@ from cruxible_core.runtime.execution_policy import discover_isolated_executors
 from cruxible_core.runtime.permissions import init_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.auth import token_auth_middleware
+from cruxible_core.server.bootstrap_secret import prepare_bootstrap_secret
 from cruxible_core.server.config import (
+    auth_off_startup_notice,
     get_server_fatal_log_path,
     get_server_state_root,
     is_server_auth_enabled,
@@ -261,6 +263,8 @@ def run_server(
     state_root: str | None = None,
     socket_path: str | None = None,
     capability_ceiling: str | None = None,
+    auth: bool = False,
+    bootstrap_secret_file: str | None = None,
 ) -> None:
     """Launch the Cruxible daemon over UDS or host/port transport.
 
@@ -273,7 +277,13 @@ def run_server(
     and startup validation all observe the same effective settings, and so an
     in-place re-exec (``cruxible server restart``) reproduces them via
     ``sys.argv``.
+
+    ``auth=True`` is the explicit local opt-in (``server start --auth``); it sets
+    ``CRUXIBLE_SERVER_AUTH=true``, which stays the env form of the same switch.
+    A Unix-socket daemon defaults to auth off; a TCP daemon refuses without it.
     """
+    if auth:
+        os.environ["CRUXIBLE_SERVER_AUTH"] = "true"
     if host is not None:
         os.environ["CRUXIBLE_HOST"] = host
     if port is not None:
@@ -296,8 +306,13 @@ def run_server(
         else f"{os.environ.get('CRUXIBLE_HOST', '127.0.0.1')}:"
         f"{os.environ.get('CRUXIBLE_PORT', '8100')}"
     )
-    with StateRootLock(get_server_state_root(), transport=transport):
-        _serve(resolved_socket)
+    with StateRootLock(get_server_state_root(), transport=transport, boot_id=PROCESS_BOOT_ID):
+        _serve(
+            resolved_socket,
+            bootstrap_secret_file=(
+                None if bootstrap_secret_file is None else Path(bootstrap_secret_file)
+            ),
+        )
 
 
 #: The fatal-fault log handle, held for the life of the process. faulthandler
@@ -594,7 +609,7 @@ def _sigterm_unwinds() -> Iterator[None]:
         signal.signal(signal.SIGTERM, previous)
 
 
-def _serve(resolved_socket: str | None) -> None:
+def _serve(resolved_socket: str | None, *, bootstrap_secret_file: Path | None = None) -> None:
     """Start uvicorn under an already-held state-root lock."""
     enable_fatal_fault_handler()
     if resolved_socket:
@@ -605,6 +620,9 @@ def _serve(resolved_socket: str | None) -> None:
     # at a different tier therefore fail closed before the daemon serves.
     init_permissions()
 
+    # Under the lock, so a daemon refused by it never replaces the running
+    # daemon's secret file. Only the path is printed, never the secret.
+    prepare_bootstrap_secret(get_server_state_root(), extra_file=bootstrap_secret_file)
     credential_store = get_runtime_credential_store()
     registry = get_registry()
     runtime_credentials_available = credential_store.has_active_credentials()
@@ -615,6 +633,10 @@ def _serve(resolved_socket: str | None) -> None:
     )
     if is_server_auth_enabled():
         credential_store.mark_auth_required("server_startup_auth_enabled")
+    else:
+        # Only a Unix-socket daemon gets here without auth (validation above
+        # refuses TCP), so this one line is the whole local trust model.
+        print(auth_off_startup_notice(), file=sys.stderr)
     for warning in volatile_state_path_warnings(
         instance_locations=[
             (record.instance_id, record.location) for record in registry.list_instances()

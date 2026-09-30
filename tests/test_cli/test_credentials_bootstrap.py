@@ -191,18 +191,23 @@ def test_credential_mint_list_and_revoke_round_trip(
             self,
             instance_id: str,
             *,
-            label: str,
-            permission_mode: contracts.RuntimeCredentialPermissionMode = "admin",
+            principal_id: str,
+            permission_mode: contracts.RuntimeCredentialPermissionMode,
+            label: str | None = None,
+            principal_proof: object = None,
         ):
             captured["created"] = {
                 "instance_id": instance_id,
+                "principal_id": principal_id,
                 "label": label,
                 "permission_mode": permission_mode,
+                "principal_proof": principal_proof,
             }
             credential = contracts.RuntimeCredentialMetadata(
                 credential_id="rcred_dispatch",
                 instance_id=instance_id,
-                label=label,
+                principal_id=principal_id,
+                label=label or principal_id,
                 permission_mode=permission_mode,
                 created_at=created_at,
                 created_by="rcred_admin",
@@ -230,7 +235,16 @@ def test_credential_mint_list_and_revoke_round_trip(
 
     minted = runner.invoke(
         cli,
-        [*prefix, "mint", "--label", "dispatch", "--mode", "graph_write"],
+        [
+            *prefix,
+            "mint",
+            "--principal-id",
+            "dispatcher",
+            "--label",
+            "dispatch",
+            "--mode",
+            "graph_write",
+        ],
     )
     listed = runner.invoke(cli, [*prefix, "list"])
     revoked = runner.invoke(cli, [*prefix, "revoke", "rcred_dispatch"])
@@ -239,15 +253,19 @@ def test_credential_mint_list_and_revoke_round_trip(
     assert minted.exit_code == 0, minted.output
     assert minted.output.count("crt_dispatch") == 1
     assert listed.exit_code == 0, listed.output
-    assert "rcred_dispatch\tgraph_write\tactive\tdispatch" in listed.output
+    assert "rcred_dispatch\tgraph_write\tactive\tdispatcher\tdispatch" in listed.output
     assert revoked.exit_code == 0, revoked.output
     assert "Credential revoked." in revoked.output
     assert listed_after_revoke.exit_code == 0, listed_after_revoke.output
-    assert "rcred_dispatch\tgraph_write\trevoked\tdispatch" in listed_after_revoke.output
+    assert (
+        "rcred_dispatch\tgraph_write\trevoked\tdispatcher\tdispatch" in listed_after_revoke.output
+    )
     assert captured["created"] == {
         "instance_id": "inst_123",
+        "principal_id": "dispatcher",
         "label": "dispatch",
         "permission_mode": "graph_write",
+        "principal_proof": None,
     }
     assert captured["revoked"] == {
         "instance_id": "inst_123",
@@ -255,7 +273,7 @@ def test_credential_mint_list_and_revoke_round_trip(
     }
 
 
-def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
+def test_server_start_hands_the_secret_file_to_the_daemon_and_prints_no_secret(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
     tmp_path: Path,
@@ -276,20 +294,18 @@ def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
     )
 
     assert result.exit_code == 0, result.output
-    generated = os.environ["CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET"]
-    assert generated
-    assert generated not in result.output
-    assert secret_file.read_text().strip() == generated
-    assert stat.S_IMODE(secret_file.stat().st_mode) == 0o600
-    assert f"Wrote bootstrap secret file: {secret_file} (0600)" in result.output
-    assert "cruxible playbill host create" in result.output
-    assert "credential claim-bootstrap --secret-file" in result.output
+    # The daemon generates and writes the secret once it holds the state root;
+    # the launching command neither generates nor prints one.
+    assert "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET" not in os.environ
+    assert result.output == ""
     assert captured == {
         "host": None,
         "port": None,
         "state_root": None,
         "socket_path": None,
         "capability_ceiling": None,
+        "auth": False,
+        "bootstrap_secret_file": str(secret_file.resolve()),
     }
 
 
@@ -341,7 +357,8 @@ def test_credential_claim_mint_and_list_emit_json(
 
     claimed = runner.invoke(cli, [*prefix, "claim-bootstrap", "--json"])
     minted = runner.invoke(
-        cli, [*prefix, "mint", "--label", "reader", "--mode", "read_only", "--json"]
+        cli,
+        [*prefix, "mint", "--principal-id", "reader", "--mode", "read_only", "--json"],
     )
     listed = runner.invoke(cli, [*prefix, "list", "--json"])
 
@@ -356,3 +373,121 @@ def test_credential_claim_mint_and_list_emit_json(
     assert json.loads(minted.stdout)["token"] == "crt_reader"
     assert json.loads(minted.stdout)["credential"]["credential_id"] == "rcred_reader"
     assert json.loads(listed.stdout)["credentials"][0]["permission_mode"] == "read_only"
+
+
+def test_credential_mint_signs_the_principals_consent_with_its_key_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    from cruxible_client.contracts.runtime_credentials import verify_runtime_credential_proof
+    from cruxible_core.governance.keys import generate_client_principal_key
+
+    key = generate_client_principal_key(
+        tmp_path / "agent-keys", principal_id="agent-b", kind="ordinary", forbidden_roots=()
+    )
+    captured: dict[str, object] = {}
+
+    class StubClient:
+        def create_runtime_credential(self, instance_id: str, **kwargs: object):
+            captured.update(kwargs)
+            credential = contracts.RuntimeCredentialMetadata(
+                credential_id="rcred_agent",
+                instance_id=instance_id,
+                principal_id="agent-b",
+                label="agent-b",
+                permission_mode="governed_write",
+                created_at="2026-09-29T00:00:00Z",
+            )
+            return contracts.RuntimeCredentialResult(credential=credential, token="crt_agent")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    base = ["--server-url", "http://server", "--instance-id", "inst_123", "credential", "mint"]
+
+    minted = runner.invoke(
+        cli,
+        [
+            *base,
+            "--principal-id",
+            "agent-b",
+            "--key-dir",
+            str(tmp_path / "agent-keys"),
+            "--mode",
+            "governed_write",
+        ],
+    )
+    missing = runner.invoke(
+        cli,
+        [*base, "--principal-id", "ghost", "--key-dir", str(tmp_path), "--mode", "read_only"],
+    )
+
+    assert minted.exit_code == 0, minted.output
+    assert "Principal: agent-b" in minted.output
+    proof = captured["principal_proof"]
+    assert proof.statement.principal_id == "agent-b"  # type: ignore[attr-defined]
+    assert proof.statement.instance_id == "inst_123"  # type: ignore[attr-defined]
+    assert verify_runtime_credential_proof(
+        proof,  # type: ignore[arg-type]
+        public_key=key.principal.public_key,
+    )
+    assert missing.exit_code == 2
+    assert "no private key for principal ghost" in missing.output
+
+
+def test_credential_mint_writes_the_token_into_the_principals_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.cli.principal_settings import write_principal_settings
+    from cruxible_core.governance.keys import generate_client_principal_key
+
+    key = generate_client_principal_key(
+        tmp_path / "agent-keys", principal_id="agent-b", kind="ordinary", forbidden_roots=()
+    )
+    settings = write_principal_settings(
+        tmp_path / "agent-keys",
+        ctx_obj={"server_url": "http://server"},
+        instance_id="inst_123",
+        principal_id="agent-b",
+        private_key_path=key.private_key_path,
+        token=None,
+        written_by="test",
+    )
+
+    class StubClient:
+        def create_runtime_credential(self, instance_id: str, **_kwargs: object):
+            credential = contracts.RuntimeCredentialMetadata(
+                credential_id="rcred_agent",
+                instance_id=instance_id,
+                principal_id="agent-b",
+                label="agent-b",
+                permission_mode="governed_write",
+                created_at="2026-09-29T00:00:00Z",
+            )
+            return contracts.RuntimeCredentialResult(credential=credential, token="crt_secret")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    minted = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://server",
+            "--instance-id",
+            "inst_123",
+            "credential",
+            "mint",
+            "--principal-id",
+            "agent-b",
+            "--key-dir",
+            str(tmp_path / "agent-keys"),
+            "--mode",
+            "governed_write",
+        ],
+    )
+
+    assert minted.exit_code == 0, minted.output
+    assert "crt_secret" not in minted.output
+    assert f"Token written to {settings}" in minted.output
+    assert "export CRUXIBLE_SERVER_BEARER_TOKEN=crt_secret" in settings.read_text()
+    assert stat.S_IMODE(settings.stat().st_mode) == 0o600

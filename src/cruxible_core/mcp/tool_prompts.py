@@ -79,8 +79,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "claim_types, queries, or interfaces (the provider interfaces a Procedure can call)."
     ),
     "cruxible_playbill_whoami": (
-        "Use when you need which instance this server acts on, who you are there, and "
-        "the adapter and daemon versions."
+        "Use when you need which instance this server acts on, who you are there, "
+        "whether you can author (and the repair when not), and the adapter and daemon "
+        "versions."
     ),
     "cruxible_playbill_proposal_list": (
         "Use when you need to find open proposals or inspect terminal proposal outcomes. "

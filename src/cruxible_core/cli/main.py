@@ -971,6 +971,15 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     help="Opaque server-mode instance ID. Defaults to remembered CLI context.",
 )
 @click.option(
+    "--principal-id",
+    default=None,
+    envvar="CRUXIBLE_PRINCIPAL_ID",
+    help=(
+        "Principal this process acts as (also CRUXIBLE_PRINCIPAL_ID). With daemon auth "
+        "off it is a claim of identity, not authentication."
+    ),
+)
+@click.option(
     "--no-workspace",
     is_flag=True,
     default=False,
@@ -988,6 +997,7 @@ def cli(
     server_url: str | None,
     server_socket: str | None,
     instance_id: str | None,
+    principal_id: str | None,
     no_workspace: bool,
     json_compact: bool | None,
 ) -> None:
@@ -1021,6 +1031,7 @@ def cli(
             "server_url": settings.server_url,
             "server_socket": settings.server_socket,
             "instance_id": resolved.instance_id,
+            "principal_id": (principal_id or "").strip() or None,
             "require_server": settings.require_server,
             "json_compact": json_compact,
             "target_transport_source": resolved.transport_source,

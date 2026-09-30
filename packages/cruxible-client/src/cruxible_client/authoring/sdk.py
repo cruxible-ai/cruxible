@@ -247,7 +247,7 @@ from cruxible_client.contracts.write import (
     WriteRole,
 )
 from cruxible_client.errors import CoreError
-from cruxible_client.transport.http import CruxibleClient
+from cruxible_client.transport.http import CruxibleClient, configured_principal_id
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.world import World
@@ -1840,6 +1840,7 @@ class Playbill:
         target: str | None = None,
         instance: str | None = None,
         token: SecretStr | None = None,
+        principal_id: str | None = None,
         workspace: Path | None = None,
         access_profile: AccessProfile | None = None,
         at: AcceptedCoordinate | api.PlaybillAcceptedCoordinate | None = None,
@@ -1889,6 +1890,7 @@ class Playbill:
             base_url=resolved.server_url,
             socket_path=resolved.server_socket,
             token=raw_token,
+            principal_id=(principal_id if principal_id is not None else configured_principal_id()),
         )
         try:
             client_compatibility.check_daemon_compatibility(client)

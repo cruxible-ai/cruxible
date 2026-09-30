@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Literal
 
 from cruxible_client._error_base import CoreError as CoreError
+from cruxible_client.contracts.repairs import HandEditRepairV1, RepairOperationV1
 from cruxible_client.errors import permission_denied_message
 
 _MAX_DISPLAY_ERRORS = 10
@@ -232,6 +233,60 @@ class BootstrapClaimRefusedError(AuthenticationError):
         super().__init__(
             f"{error_code}: {summary.format(instance_id=instance_id)} Repair: {repair}"
         )
+
+
+PrincipalRefusalCode = Literal[
+    "playbill.identity.principal_claim_invalid",
+    "playbill.identity.principal_claim_mismatch",
+    "playbill.identity.principal_absent",
+    "playbill.identity.principal_revoked",
+    "playbill.identity.principal_unconfigured",
+    "playbill.identity.init_owner_mismatch",
+    "playbill.identity.credential_unbound",
+    "playbill.identity.permission_insufficient",
+    "runtime_credential.auth_off",
+    "runtime_bootstrap.operator_mac_invalid",
+    "runtime_bootstrap.operator_mac_stale",
+    "runtime_bootstrap.operator_mac_replayed",
+    "runtime_credential.principal_not_ordinary",
+    "runtime_credential.principal_authority_required",
+    "runtime_credential.principal_proof_invalid",
+    "runtime_credential.principal_proof_replayed",
+]
+
+#: HTTP status per identity refusal: a malformed claim is a bad request, a claim
+#: contradicting its credential is unauthenticated, and a well-formed identity
+#: that may not act here is forbidden.
+_PRINCIPAL_REFUSAL_STATUS: dict[str, int] = {
+    "playbill.identity.principal_claim_invalid": 400,
+    "playbill.identity.principal_claim_mismatch": 401,
+    "runtime_credential.principal_proof_replayed": 409,
+    "runtime_credential.auth_off": 409,
+    "runtime_bootstrap.operator_mac_invalid": 401,
+    "runtime_bootstrap.operator_mac_stale": 401,
+    "runtime_bootstrap.operator_mac_replayed": 401,
+    "runtime_bootstrap.operator_mac_boot_changed": 401,
+}
+
+
+class PrincipalRefusedError(CoreError):
+    """The principal a request acts as cannot act here; names the code and repair.
+
+    The message already carries the runnable CLI command; ``repair`` carries the
+    same next step as a served operation so every surface renders it typed.
+    """
+
+    def __init__(
+        self,
+        error_code: PrincipalRefusalCode,
+        message: str,
+        *,
+        repair: RepairOperationV1 | HandEditRepairV1 | None = None,
+    ) -> None:
+        self.error_code = error_code
+        self.repair = repair
+        self.http_status = _PRINCIPAL_REFUSAL_STATUS.get(error_code, 403)
+        super().__init__(f"{error_code}: {message}")
 
 
 class InstanceScopeError(CoreError):

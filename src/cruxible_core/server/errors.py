@@ -50,6 +50,7 @@ from cruxible_core.errors import (
     InstanceNotFoundError,
     InstanceScopeError,
     PermissionDeniedError,
+    PrincipalRefusedError,
     RuntimeCredentialNotFoundError,
 )
 from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
@@ -172,6 +173,8 @@ def _status_for_error(exc: CoreError) -> int:
         # A served Procedure/Line surface refusal is a request fault the caller
         # can repair, never a daemon fault: the class declares its own 4xx so
         # the code and the repair the envelope carries are actionable.
+        return exc.http_status
+    if isinstance(exc, PrincipalRefusedError):
         return exc.http_status
     if isinstance(exc, AuthenticationError):
         return 401

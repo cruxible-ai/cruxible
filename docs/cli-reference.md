@@ -8,6 +8,7 @@ The public CLI has four top-level command groups.
 --server-url TEXT
 --server-socket TEXT
 --instance-id TEXT
+--principal-id TEXT
 --no-workspace
 --json-compact
 --version
@@ -25,6 +26,20 @@ exactly one of `server_url` or `server_socket`; its root must agree with the roo
 of `.playbill/sources.yaml` when both exist. The global context is only a
 fallback, its remembered instance remains bound to the transport on which it
 was selected, and entering one workspace never retargets another.
+
+`--principal-id` (or `CRUXIBLE_PRINCIPAL_ID`) names the principal this process
+acts as; the CLI, SDK (`Playbill.connect(principal_id=...)`) and MCP server all
+send it with every request. The daemon checks that it names a registered, active
+principal on the instance before any write and attributes the work to it; an
+unregistered or revoked ID is refused on writes (`playbill.identity.principal_absent`
+/ `principal_revoked`) with the command that repairs it. Reads stay open, so an
+agent can read (and `whoami` explains its standing) while its registration
+awaits activation. With daemon auth off the principal ID is a
+claim of identity, not authentication: every process of the same OS user is
+equally trusted and could claim any principal. With auth on the bearer
+credential decides who acts, and a principal ID that disagrees with it is refused
+(`playbill.identity.principal_claim_mismatch`). Approvals are unaffected either
+way: they are signed with the principal's private key.
 
 `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180) bounds how long a client waits for a
 daemon that has accepted a request. An SDK `Playbill.connect()` reads only the
@@ -58,10 +73,10 @@ Manage runtime bearer credentials:
 
 ~~~text
 cruxible credential claim-bootstrap [--secret-file PATH] [--json]
-cruxible credential mint --label LABEL --mode TIER [--json]
+cruxible credential mint --principal-id ID --mode TIER [--key-dir DIR] [--label TEXT] [--json]
 cruxible credential list [--json]
-cruxible credential rotate
-cruxible credential revoke
+cruxible credential rotate CREDENTIAL_ID [--key-dir DIR]
+cruxible credential revoke CREDENTIAL_ID
 cruxible credential recover-admin [--state-root DIR] [--instance-id ID] [--json]
 ~~~
 
@@ -72,8 +87,37 @@ refuses only a transport chosen for that invocation (`--server-url`,
 exactly one has a directory under `<state-root>/instances`, that instance is the
 target; otherwise pass `--instance-id`.
 
-These credentials authorize transport operations. They are distinct from
-Playbill signing principals.
+These credentials authorize transport operations. Each one acts as exactly one
+Playbill principal, stored with the credential; the label is a description and
+never decides who acts. `credential mint` refuses unless that principal is
+registered and active (`playbill.identity.principal_absent` /
+`principal_revoked`) and ordinary (a recovery principal never holds one:
+`runtime_credential.principal_not_ordinary`), and it needs the principal's own authority, not just an
+admin credential: either the request already acts as that principal, or
+`--key-dir` signs the principal's single-use consent with its registered key
+(`runtime_credential.principal_authority_required`,
+`principal_proof_invalid`, `principal_proof_replayed`). On a daemon with auth
+off, where a bearer credential authenticates nothing, minting is refused
+(`runtime_credential.auth_off`, repair: `cruxible server start --auth`) and
+nothing is stored, so the state root is never silently latched into requiring
+auth. Revoking a principal
+revokes every credential that acts as it: the next request with one is refused
+with `playbill.identity.principal_revoked` and the rows are marked revoked.
+Rotation keeps the principal, tier and label, so rotating a bound credential
+needs the same authority minting it would: the request acts as that principal,
+or `credential rotate --key-dir DIR` signs its consent. Any admin may revoke a
+credential, but never receives a replacement for someone else's principal.
+
+The bootstrap claim and `recover-admin` mint unbound operator credentials: they
+carry transport authority (host, init, credentials, daemon lifecycle) but act as
+no principal, so they cannot author or perform any other instance write --
+body store, ledger mirror binding and publication, attestation recovery
+included (`playbill.identity.credential_unbound`).
+`playbill init` under such a credential designates the owner it names.
+Credentials minted before credentials named a principal are migrated as
+unbound, never rebound from their label; repair each by minting a bound one with
+`cruxible credential mint --principal-id ID --key-dir DIR --mode TIER`, then
+revoking the old one.
 
 `credential mint --mode` picks a cumulative tier. `read_only` reads only.
 `governed_write` also proposes and authors, but cannot submit approvals or
@@ -85,7 +129,7 @@ permission refusal names the tier it needs and what that tier allows.
 ## server
 
 ~~~text
-cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port PORT]
+cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port PORT] [--auth]
 cruxible server install-service [SERVER-START FLAGS] [--print] [--replace]
 cruxible server status
 cruxible server restart
@@ -93,7 +137,43 @@ cruxible server stop [--timeout SECONDS] [--json]
 ~~~
 
 server start is the long-running daemon process and does not connect to an
-existing server. With `--socket`, the socket is bound with mode 0600;
+existing server.
+
+Auth depends on the transport. A Unix-socket daemon defaults to auth off and
+prints one line saying so when it starts: every process that can reach its
+owner-only socket directory already runs as your OS user, and bearer tokens
+would protect nothing from a process that can read the token files anyway. A
+TCP daemon, loopback included, refuses to start without auth
+(`cruxible.server.tcp_requires_auth`), because any local user or network peer
+that can reach the port could otherwise act as any principal. `--auth` is the
+explicit opt-in on either transport; `CRUXIBLE_SERVER_AUTH=true` is its
+environment form. Once a state root has run with auth it refuses to start
+without it (`cruxible.server.auth_latched`).
+
+With auth on, the daemon's runtime bootstrap secret (its unscoped operator
+credential) is never printed to stdout, stderr or the request log. Once the
+daemon holds the state-root lock it writes the secret owner-only (0600) to
+`<state-root>/daemon/bootstrap-secret`, and prints only that path. An in-place
+restart keeps the same secret. `server status`, `server restart` and
+`server stop` use that file by default when no `CRUXIBLE_SERVER_BEARER_TOKEN` is
+set, so a local restart needs no credential typed in. The secret is never sent:
+each such request carries a MAC keyed by the secret over its method, path,
+body digest, a fresh nonce, a timestamp and the daemon's unpredictable boot id
+(read from the live lock record), and the daemon accepts it only if the boot id
+is its own current process image's, the MAC verifies under its own secret, the
+timestamp is within 60 seconds of its clock, and the nonce is new
+(`runtime_bootstrap.operator_mac_boot_changed`, `operator_mac_invalid`,
+`operator_mac_stale`, `operator_mac_replayed`). A request captured before an
+in-place restart therefore cannot be replayed after it. Only `server status`, `restart`
+and `stop` accept a signed request. As defense in depth the secret is read only
+while a live daemon holds the state-root lock and the lock records exactly the
+transport the command is about to use (the socket path, or the bound host and
+port as written: `localhost`, `127.0.0.1` and `::1` are different endpoints,
+since IPv4 and IPv6 loopback can host different listeners on one port). A relay
+or a process that took over the endpoint receives nothing it can reuse. An
+explicit `CRUXIBLE_SERVER_BEARER_TOKEN` is sent as a bearer token, as before. `--bootstrap-secret-file PATH` also writes a 0600 copy to
+PATH; it needs auth and is refused on an auth-off start, which removes any stale
+state-root copy. With `--socket`, the socket is bound with mode 0600;
 a missing socket directory is created 0700; a socket directory that is not
 yours and owner-only, or an ancestor another user could use to replace it, is
 refused at startup. State defaults to `~/.cruxible`; `--state-root` overrides
@@ -137,7 +217,8 @@ record without writing. Installation refuses an existing unit unless
 with `launchctl start ai.cruxible.daemon` on macOS,
 `systemctl --user start cruxible.service` on Linux, or run
 `cruxible server start`. Auth defaults to the state root's durable auth latch;
-an explicit `--auth`/`--no-auth` disagreement is refused. Service files contain
+an explicit `--auth`/`--no-auth` disagreement is refused, and a TCP service
+without auth is refused (`service_install.tcp_requires_auth`). Service files contain
 no bearer or bootstrap secret, and auth-on installation requires an active
 durable runtime credential first.
 
@@ -329,7 +410,7 @@ those blocks (`playbill block depublish`) or retire their backing Claims first.
 
 ~~~text
 cruxible playbill init --key-dir DIR
-  [--principal-id ID]
+  --principal-id ID
   [--reviewer-key-dir DIR]
   [--require-independent-approval]
   [--recovery-key-dir DIR]
@@ -339,6 +420,13 @@ cruxible playbill init --key-dir DIR
   [--object-format sha1|sha256]
   [--mirror-url URL]
 ~~~
+
+Makes you the owner under `--principal-id` (default: the configured
+`CRUXIBLE_PRINCIPAL_ID` / global `--principal-id`; they must agree). On an
+auth-off daemon the init request claims that principal, so no bootstrap secret
+is needed; set `CRUXIBLE_PRINCIPAL_ID` to it afterwards so later commands act as
+the owner. An init whose caller is not one of the owner principals it names is
+refused with `playbill.identity.init_owner_mismatch`.
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
 ledger with its public principal record. A missing `--key-dir` is created with
@@ -1180,7 +1268,15 @@ it matches, with no explicit call. Runs use the arming caller's credential,
 which the daemon rechecks before every admission: a revoked credential, one
 moved to another instance, or one no longer permitted to dispatch stops the arm
 with that reason (`credential_revoked`, `credential_scope_changed`,
-`permission_insufficient`). Arming needs governed write, and keeps only the
+`permission_insufficient`, `credential_unbound`). The accepted standing of the
+principal the arm acts as is rechecked too: a credential's bound principal, or
+on an auth-off daemon the principal the arming request claimed, that is no
+longer active stops the arm (`principal_inactive`) and revokes that principal's
+credentials; an arm made with no principal claimed runs as the implicit local
+operator. An arm recorded before arms named this provenance cannot say which it
+was, so it is stopped (`arm_requires_rearm`) rather than carried across a
+restart, and `line status`, `server status` and `next` name the rearm repair.
+Arming needs governed write, and keeps only the
 credential's identifier, never a token. A Line that can propose
 or settle refuses to arm while no current mandate covers it. An arm is pinned to the
 Line version current when it was armed: any accepted change to the Line stops
@@ -1870,7 +1966,8 @@ The map of accepted state, in one call. With no option it prints each Subject
 kind with its live Subject count and its predicates (short name, cardinality,
 type or enum members, and the CaptureContracts whose evidence the ClaimType
 admits, by name), the artifact counts, the named queries with their parameters,
-who you are and whether you can author (and why not), what the `next` queue
+who you are and whether you can author (when not, the same `authoring_refusal`
+code, detail and repair that `whoami` reports), what the `next` queue
 holds, and the next commands to run. When any Line was ever armed, attention
 counts the arms as the instance's Line consumer reports them (running,
 stalled, stopped) and names up to three stalled or stopped Lines with the stop
@@ -2092,8 +2189,18 @@ cruxible playbill proposal activate PROPOSAL_ID [--workspace-root DIR]
   [--no-sync]
 ~~~
 
-`cruxible playbill whoami` names the credential-derived actor, its effective
-permission mode, accepted principal-registration status, and current coordinate.
+`cruxible playbill whoami` names the actor and where its ID came from (the
+credential's principal, the configured principal ID, or the local operator),
+whether a credential authenticates it (with auth off the ID is a claim, not
+authentication), its effective permission mode, accepted principal-registration
+status, and current coordinate. It also says whether this actor can author and,
+if not, why: `can_author` and `authoring_refusal` carry exactly the code, detail
+and repair authoring would return (`playbill.identity.principal_unconfigured`,
+`principal_absent`, `principal_revoked`, `credential_unbound`,
+`permission_insufficient`, or `playbill.instance.decommissioned`). Authoring
+refuses such an actor at `authoring create`, before any payload is compiled or
+preflighted, rather than at proposal evaluation
+(`playbill.proposal.creator_principal_invalid`).
 `proposal list` prints a labeled `COORDINATE_TIME` column and deterministically
 separates current open candidates from accepted, refused, and stale terminal
 evidence so retries do not depend on remembered IDs. It returns one page
@@ -2182,7 +2289,8 @@ ledger](#playbill-ledger) for what the mirror carries and how to get its URL.
 
 ~~~text
 cruxible playbill principal list
-cruxible playbill principal add PRINCIPAL_ID --kind ordinary --key-dir DIR --name NAME
+cruxible playbill principal add PRINCIPAL_ID --key-dir DIR [--signer-key PATH]
+  [--mode governed_write] [--kind ordinary] [--name NAME] [--json]
 cruxible playbill principal rotate ...
 cruxible playbill principal revoke ...
 cruxible playbill principal recover ...
@@ -2203,6 +2311,28 @@ grants authority immediately nor sends a private key to the daemon. Other
 non-creator principals may record additional voluntary approvals. `--kind`
 is explicit and may be `ordinary` or `recovery`; the daemon kind is
 instance-owned. Recovery principals cannot approve ordinary Document candidates.
+
+`principal add` is the one command that sets up an agent. With `--signer-key`
+(your own private key; also `CRUXIBLE_PRINCIPAL_KEY`) it proposes the
+registration, approves it as you, and activates it. When the daemon runs with
+auth it then mints the new principal's bearer credential at `--mode` (default
+`governed_write`), signed with the new principal's key. Everything the agent
+needs lands owner-only in `DIR/cruxible.env`: the transport, the instance, its
+principal ID, its key path, and, with auth, its credential (written, never
+printed). The agent loads it with `set -a; . DIR/cruxible.env; set +a`; the CLI,
+SDK and MCP server all read those variables. Without `--signer-key` the
+registration is only proposed and the command prints each remaining step:
+`proposal approve`, `proposal activate`, and, with auth,
+`credential mint --principal-id ID --key-dir DIR`, which writes the token into
+the same settings file. `playbill init` writes the owner's settings file the
+same way. `proposal approve` defaults `--signer-id` to the configured principal
+and `--key` to `CRUXIBLE_PRINCIPAL_KEY`.
+
+A propose-only agent is a principal whose credential is `governed_write`: it
+can author and propose, and the tier refuses approvals and activation. That
+limit needs daemon auth; with auth off every process of the OS user is equally
+trusted and could load another principal's settings. See the
+[quickstart](quickstart.md#add-a-propose-only-agent) for the worked example.
 
 ## playbill sources
 

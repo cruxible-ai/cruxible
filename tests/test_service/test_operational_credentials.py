@@ -123,8 +123,9 @@ def test_the_runtime_get_passes_the_authenticated_viewer(monkeypatch: pytest.Mon
         playbill_api,
         "get_current_auth_context",
         lambda: ResolvedAuthContext(
-            principal_id="cred-reader",
-            principal_label="reader",
+            credential_id="cred-reader",
+            credential_label="reader",
+            principal_id="reader",
             credential_type="runtime_credential",
             instance_scope="inst",
             role=None,
@@ -155,7 +156,7 @@ def test_a_run_proof_reads_live_and_withholds_another_principals_credential(
     assert hidden.live is not None and hidden.live.fields == ("proof",)
     assert hidden.live.as_of.generation == instance.accepted_history()[-1].sequence
     dumped = str(hidden.proof)
-    assert "line-operator" not in dumped and "cred-arm" not in dumped
+    assert "line-operator" not in dumped and "cred-arm" not in dumped and "owner" not in dumped
     assert hidden.proof["attribution"]["actor_id"] is None
     assert hidden.proof["receipt"] == {"withheld": "names the arming credential"}
     assert hidden.proof["receipt_digest"] is not None
@@ -168,5 +169,6 @@ def test_a_run_proof_reads_live_and_withholds_another_principals_credential(
         at=at,
     )
     assert shown.proof is not None
-    assert shown.proof["attribution"]["actor_id"] == "line-operator"
-    assert shown.proof["receipt"]["attribution"]["actor_id"] == "line-operator"
+    # A credential arm's run acts as the credential's principal, not its label.
+    assert shown.proof["attribution"]["actor_id"] == "owner"
+    assert shown.proof["receipt"]["attribution"]["actor_id"] == "owner"

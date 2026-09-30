@@ -51,6 +51,7 @@ from cruxible_client.authoring.examples import (
     document_example,
 )
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
+from cruxible_client.authoring.signing import sign_runtime_credential_mint
 from cruxible_client.authoring.sources import (
     compile_client_source_context,
     load_source_catalog,
@@ -138,6 +139,11 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.cli.principal_settings import (
+    PRINCIPAL_KEY_ENV,
+    PRINCIPAL_SETTINGS_FILE,
+    write_principal_settings,
+)
 from cruxible_core.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingSourceObservationV1,
@@ -182,6 +188,7 @@ from cruxible_core.governance.keys import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
+from cruxible_core.server.config import get_runtime_bearer_token
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequestV1,
     ProcedureBindRequestV1,
@@ -929,7 +936,14 @@ def create_host(
 
 @playbill_group.command("init")
 @click.option("--key-dir", required=True, help="Client custody directory outside the workspace.")
-@click.option("--principal-id", default="bootstrap-admin", show_default=True)
+@click.option(
+    "--principal-id",
+    default=None,
+    help=(
+        "Owner principal ID this init makes you (default: CRUXIBLE_PRINCIPAL_ID or the "
+        "global --principal-id)."
+    ),
+)
 @click.option(
     "--reviewer-key-dir",
     default=None,
@@ -974,7 +988,7 @@ def create_host(
 @handle_errors
 def init_playbill(
     key_dir: str,
-    principal_id: str,
+    principal_id: str | None,
     reviewer_key_dir: str | None,
     require_independent_approval: bool,
     recovery_key_dir: str | None,
@@ -986,7 +1000,11 @@ def init_playbill(
     mirror_url: str | None,
     output_json: bool,
 ) -> None:
-    """Create client custody and bootstrap the governed approval policy."""
+    """Make you the owner: create client custody and bootstrap the approval policy.
+
+    With daemon auth off, the owner principal ID is the identity this process
+    claims for the init request; no bootstrap secret is needed.
+    """
 
     git_workspace = (
         _explicit_git_workspace_root(workspace_path)
@@ -1011,6 +1029,24 @@ def init_playbill(
             replace=replace,
             **config_transport,
         )
+    configured = _root_ctx_obj().get("principal_id")
+    if principal_id is None:
+        principal_id = configured
+    if principal_id is None:
+        raise click.UsageError(
+            "playbill init needs the owner principal ID; repair: "
+            "`cruxible playbill init --principal-id ID --key-dir DIR`"
+        )
+    if configured is not None and configured != principal_id:
+        raise click.UsageError(
+            f"--principal-id {principal_id} disagrees with the configured principal "
+            f"{configured} (CRUXIBLE_PRINCIPAL_ID or the global --principal-id); repair: "
+            "pass one principal ID"
+        )
+    if get_runtime_bearer_token() is None:
+        # Auth off: the init request claims the owner it creates. With a bearer
+        # credential the credential decides who acts, so no claim is sent.
+        _root_ctx_obj()["principal_id"] = principal_id
     workspace = git_workspace
     specifications: list[tuple[Path, str, PrincipalKind]] = [
         (Path(key_dir).expanduser(), principal_id, "ordinary")
@@ -1056,8 +1092,18 @@ def init_playbill(
     for marker in markers:
         marker.unlink()
     _activate_server_instance(result.instance_id)
+    owner_token = _mint_owner_credential(owner, principal_id=principal_id)
+    settings = write_principal_settings(
+        Path(key_dir),
+        ctx_obj=_root_ctx_obj(),
+        instance_id=result.instance_id,
+        principal_id=principal_id,
+        private_key_path=owner.private_key_path,
+        token=owner_token,
+        written_by="cruxible playbill init",
+    )
     if output_json:
-        _emit_json(_json_receipt(result))
+        _emit_json({**_json_receipt(result), "owner_settings_path": str(settings)})
         return
     click.echo(f"Playbill initialized at {result.coordinate.git_oid}")
     click.echo(f"Approval policy: {result.approval_policy_mode}")
@@ -1066,9 +1112,57 @@ def init_playbill(
         click.echo(f"Workspace ref failure: {result.workspace_advertisement.failure_code}")
     click.echo(f"Owner public key: {owner.principal.public_key}")
     click.echo(f"Owner private key retained locally at: {owner.private_key_path}")
+    click.echo(f"Owner principal: {principal_id}")
+    click.echo(f"Owner settings: {settings}")
+    click.echo(
+        f"Next: set -a; . {settings}; set +a -- later commands then act as {principal_id} "
+        "(CRUXIBLE_PRINCIPAL_ID)"
+        + (
+            "."
+            if owner_token is not None
+            else "; with daemon auth off that is a claim of identity, not authentication: "
+            "every process of this OS user is equally trusted."
+        )
+    )
     if reviewer is not None:
         click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
         click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
+
+
+def _mint_owner_credential(owner: GeneratedKeyMaterial, *, principal_id: str) -> str | None:
+    """With daemon auth on, mint the new owner's own admin credential; return its token.
+
+    The operator credential that ran init acts as no principal, so the owner
+    needs one that acts as it. The owner's fresh key signs its consent. With auth
+    off nothing is minted: the configured principal ID is the identity.
+    """
+
+    if get_runtime_bearer_token() is None:
+        # An auth-on daemon answers nothing without a bearer credential.
+        return None
+    identity = _server_call(
+        lambda client, instance_id: client.playbill_whoami(instance_id),
+        command_name="playbill init",
+    )
+    if not identity.authenticated or identity.actor_id == principal_id:
+        return None
+    minted = _server_call(
+        lambda client, instance_id: client.create_runtime_credential(
+            instance_id,
+            principal_id=principal_id,
+            permission_mode="admin",
+            principal_proof=sign_runtime_credential_mint(
+                instance_id=instance_id,
+                principal_id=principal_id,
+                permission_mode="admin",
+                label=principal_id,
+                private_key_path=owner.private_key_path,
+                forbidden_roots=_custody_forbidden_roots(),
+            ),
+        ),
+        command_name="playbill init",
+    )
+    return minted.token
 
 
 @playbill_group.group("body")
@@ -1792,18 +1886,39 @@ def review_proposal(
 
 @proposal_group.command("approve")
 @click.argument("proposal_id")
-@click.option("--signer-id", required=True)
-@click.option("--key", "private_key_path", required=True, type=click.Path(dir_okay=False))
+@click.option(
+    "--signer-id",
+    default=None,
+    help="Signing principal (default: CRUXIBLE_PRINCIPAL_ID or the global --principal-id).",
+)
+@click.option(
+    "--key",
+    "private_key_path",
+    required=True,
+    envvar=PRINCIPAL_KEY_ENV,
+    type=click.Path(dir_okay=False),
+    help="The signer's private key (also CRUXIBLE_PRINCIPAL_KEY).",
+)
 @click.option("--yes", is_flag=True, help="Approve after rendering without an interactive prompt.")
 @json_option
 @handle_errors
 def approve_proposal(
     proposal_id: str,
-    signer_id: str,
+    signer_id: str | None,
     private_key_path: str,
     yes: bool,
     output_json: bool,
 ) -> None:
+    configured = _root_ctx_obj().get("principal_id")
+    if signer_id is None:
+        if configured is None:
+            raise click.UsageError(
+                "proposal approve needs the signing principal; repair: pass --signer-id ID "
+                "or set CRUXIBLE_PRINCIPAL_ID"
+            )
+        signer_id = str(configured)
+    resolved_signer: str = signer_id
+
     def _resolve_and_prepare(
         client: CruxibleClient, instance_id: str
     ) -> tuple[str, contracts.PlaybillApprovalChallenge]:
@@ -1811,7 +1926,7 @@ def approve_proposal(
             instance_id, proposal_id
         ).proposal_id
         return resolved_id, client.prepare_playbill_approval(
-            instance_id, resolved_id, signer_id=signer_id, include_body=True
+            instance_id, resolved_id, signer_id=resolved_signer, include_body=True
         )
 
     resolved_id, challenge = _server_call(
@@ -1825,7 +1940,7 @@ def approve_proposal(
         raise click.Abort()
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
     signer = LocalEd25519ApprovalSigner.open(
-        signer_id=signer_id,
+        signer_id=resolved_signer,
         private_key_path=Path(private_key_path),
         expected_public_key=principal.public_key,
         forbidden_roots=_custody_forbidden_roots(),
@@ -1919,14 +2034,35 @@ def whoami(output_json: bool) -> None:
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    click.echo(f"Actor: {result.actor_id}")
-    if result.actor_id_source == "runtime_credential_label":
-        click.echo(f"Actor ID comes from credential label: {result.credential_label}")
+    click.echo(f"Actor: {result.actor_id or 'none (this credential acts as no principal)'}")
+    if result.actor_id_source == "runtime_credential":
+        click.echo(
+            f"Actor ID is the principal this bearer credential is bound to "
+            f"(credential: {result.credential_label})"
+        )
+    elif result.actor_id_source == "unbound_credential":
+        click.echo(
+            f"Bearer credential {result.credential_label} is bound to no principal: it keeps "
+            "its transport authority but cannot author"
+        )
+    elif result.actor_id_source == "principal_claim":
+        click.echo("Actor ID comes from the configured principal ID (CRUXIBLE_PRINCIPAL_ID)")
     else:
-        click.echo("Actor ID comes from the local operator identity")
+        click.echo("Actor ID comes from the local operator identity (no principal configured)")
+    if not result.authenticated:
+        click.echo(
+            "Identity is a claim, not authentication: daemon auth is off, so every "
+            "process of this OS user is equally trusted."
+        )
     click.echo(f"Credential permission mode: {result.credential_permission_mode}")
-    click.echo(f"Principal registration: {result.principal_registration_status}")
+    click.echo(f"Principal registration: {result.principal_registration_status or 'none'}")
     click.echo(f"Active principals: {', '.join(result.active_principal_ids) or 'none'}")
+    if result.authoring_refusal is None:
+        click.echo("Can author: yes")
+    else:
+        refusal = result.authoring_refusal
+        click.echo(f"Can author: no ({refusal.code})")
+        click.echo(f"  Why: {refusal.detail}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
 
@@ -2151,43 +2287,227 @@ def list_principals(output_json: bool) -> None:
     show_default=True,
     help="Closed principal kind; daemon is instance-owned.",
 )
-@click.option("--key-dir", required=True)
-@click.option("--name", "proposal_name", required=True)
+@click.option(
+    "--key-dir",
+    required=True,
+    help="New principal's custody directory: receives its key and its cruxible.env settings.",
+)
+@click.option(
+    "--name", "proposal_name", default=None, help="Proposal name (default: add-PRINCIPAL_ID)."
+)
+@click.option(
+    "--signer-key",
+    default=None,
+    envvar=PRINCIPAL_KEY_ENV,
+    type=click.Path(dir_okay=False),
+    help=(
+        "Your own private key (also CRUXIBLE_PRINCIPAL_KEY). Approves and activates the "
+        "registration in the same command; without it the registration is only proposed."
+    ),
+)
+@click.option(
+    "--mode",
+    "permission_mode",
+    type=click.Choice(("read_only", "governed_write", "graph_write", "admin")),
+    default="governed_write",
+    show_default=True,
+    help=(
+        "Tier of the bearer credential minted for the new principal when the daemon runs "
+        "with auth. governed_write proposes and authors but cannot approve or activate."
+    ),
+)
 @json_option
 @handle_errors
 def add_principal(
     principal_id: str,
     kind: str,
     key_dir: str,
-    proposal_name: str,
+    proposal_name: str | None,
+    signer_key: str | None,
+    permission_mode: str,
     output_json: bool,
 ) -> None:
-    """Generate a client-held key and propose principal registration."""
+    """Set up one principal (an agent) in one command.
+
+    Generates the principal's key in `--key-dir`, proposes its registration,
+    and, with `--signer-key` (your own key), approves and activates it. When
+    the daemon runs with auth it also mints the principal's bearer credential,
+    signed with the new key. Everything the agent needs -- connection settings,
+    principal ID, key path, and that credential -- lands in `DIR/cruxible.env`.
+    """
 
     principal_kind = cast(PrincipalKind, kind)
     try:
-        ref_name = canonical_proposal_ref_name(proposal_name)
+        ref_name = canonical_proposal_ref_name(proposal_name or f"add-{principal_id}")
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="--name") from exc
+    custody = Path(key_dir).expanduser()
+    mode = cast(contracts.RuntimeCredentialPermissionMode, permission_mode)
 
-    def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
+    def call(client: CruxibleClient, instance_id: str) -> _PrincipalAddOutcome:
         existing = client.list_playbill_principals(instance_id)
         if any(item.get("principal_id") == principal_id for item in existing.principals):
             raise click.ClickException(f"Playbill principal already exists: {principal_id}")
         material = generate_client_principal_key(
-            Path(key_dir).expanduser(),
+            custody,
             principal_id=principal_id,
             kind=principal_kind,
             forbidden_roots=_custody_forbidden_roots(),
         )
-        return client.propose_playbill_principal_change(
+        proposed = client.propose_playbill_principal_change(
             instance_id,
             principal=material.principal.model_dump(mode="json"),
             proposal_name=ref_name,
         )
+        outcome = _PrincipalAddOutcome(
+            instance_id=instance_id,
+            material=material,
+            proposal=proposed,
+            proposal_id=_admitted_proposal_id(proposed),
+        )
+        if signer_key is None or outcome.proposal_id is None:
+            return outcome
+        identity = client.playbill_whoami(instance_id)
+        if identity.actor_id is None:
+            return outcome
+        outcome.signer_id = identity.actor_id
+        _approve_with_key(
+            client,
+            instance_id,
+            outcome.proposal_id,
+            signer_id=identity.actor_id,
+            private_key_path=Path(signer_key).expanduser(),
+        )
+        activated = client.activate_playbill_proposal(instance_id, outcome.proposal_id)
+        outcome.activated = activated.status == "accepted"
+        if outcome.activated and identity.authenticated and principal_kind == "ordinary":
+            minted = client.create_runtime_credential(
+                instance_id,
+                principal_id=principal_id,
+                permission_mode=mode,
+                principal_proof=sign_runtime_credential_mint(
+                    instance_id=instance_id,
+                    principal_id=principal_id,
+                    permission_mode=mode,
+                    label=principal_id,
+                    private_key_path=material.private_key_path,
+                    forbidden_roots=_custody_forbidden_roots(),
+                ),
+            )
+            outcome.credential = minted
+        return outcome
 
-    result = _server_call(call, command_name="playbill principal add")
-    _emit_json(result.model_dump(mode="json"))
+    outcome = _server_call(call, command_name="playbill principal add")
+    token = None if outcome.credential is None else outcome.credential.token
+    settings = write_principal_settings(
+        custody,
+        ctx_obj=_root_ctx_obj(),
+        instance_id=outcome.instance_id,
+        principal_id=principal_id,
+        private_key_path=outcome.material.private_key_path,
+        token=token,
+        written_by="cruxible playbill principal add",
+    )
+    next_steps = _principal_add_next_steps(outcome, principal_id, custody, permission_mode)
+    if output_json:
+        _emit_json(
+            {
+                "principal_id": principal_id,
+                "status": "active" if outcome.activated else "proposed",
+                "proposal_id": outcome.proposal_id,
+                "private_key_path": str(outcome.material.private_key_path),
+                "settings_path": str(settings),
+                "credential": (
+                    None
+                    if outcome.credential is None
+                    else outcome.credential.credential.model_dump(mode="json")
+                ),
+                "next_steps": next_steps,
+                "proposal": outcome.proposal.model_dump(mode="json"),
+            }
+        )
+        return
+    state = "registered and active" if outcome.activated else "proposed, not yet active"
+    click.echo(f"Principal {principal_id}: {state}")
+    if outcome.proposal_id is not None:
+        click.echo(f"Proposal: {outcome.proposal_id}")
+    click.echo(f"Private key retained locally at: {outcome.material.private_key_path}")
+    if outcome.credential is not None:
+        credential = outcome.credential.credential
+        click.echo(
+            f"Bearer credential: {credential.credential_id} ({credential.permission_mode}), "
+            "written to the settings file, not printed"
+        )
+    click.echo(f"Settings: {settings}")
+    click.echo(f"The agent loads them with: set -a; . {settings}; set +a")
+    for step in next_steps:
+        click.echo(f"Next: {step}")
+
+
+@dataclass
+class _PrincipalAddOutcome:
+    instance_id: str
+    material: GeneratedKeyMaterial
+    proposal: contracts.PlaybillProposalInspection
+    proposal_id: str | None
+    signer_id: str | None = None
+    activated: bool = False
+    credential: contracts.RuntimeCredentialResult | None = None
+
+
+def _admitted_proposal_id(proposed: contracts.PlaybillProposalInspection) -> str | None:
+    admission = proposed.proposal.get("admission")
+    if isinstance(admission, Mapping) and isinstance(admission.get("proposal_id"), str):
+        return str(admission["proposal_id"])
+    return None
+
+
+def _approve_with_key(
+    client: CruxibleClient,
+    instance_id: str,
+    proposal_id: str,
+    *,
+    signer_id: str,
+    private_key_path: Path,
+) -> None:
+    challenge = client.prepare_playbill_approval(instance_id, proposal_id, signer_id=signer_id)
+    principal = PrincipalRecord.model_validate(challenge.signer_principal)
+    signer = LocalEd25519ApprovalSigner.open(
+        signer_id=signer_id,
+        private_key_path=private_key_path,
+        expected_public_key=principal.public_key,
+        forbidden_roots=_custody_forbidden_roots(),
+    )
+    attestation = signer.sign(ApprovalStatement.model_validate(challenge.statement))
+    client.submit_playbill_approval(
+        instance_id, proposal_id, attestation=attestation.model_dump(mode="json")
+    )
+
+
+def _principal_add_next_steps(
+    outcome: _PrincipalAddOutcome, principal_id: str, custody: Path, permission_mode: str
+) -> list[str]:
+    if outcome.activated:
+        return []
+    if outcome.proposal_id is None:
+        return [
+            "the registration proposal was not admitted; inspect it with "
+            "`cruxible playbill proposal list`"
+        ]
+    signer = outcome.signer_id or "YOUR_PRINCIPAL_ID"
+    steps = []
+    if outcome.signer_id is None:
+        steps.append(
+            f"cruxible playbill proposal approve {outcome.proposal_id} --signer-id {signer} "
+            "--key YOUR_PRIVATE_KEY"
+        )
+    steps.append(f"cruxible playbill proposal activate {outcome.proposal_id}")
+    steps.append(
+        f"with daemon auth on: cruxible credential mint --principal-id {principal_id} "
+        f"--key-dir {custody} --mode {permission_mode} (writes the token into "
+        f"{PRINCIPAL_SETTINGS_FILE})"
+    )
+    return steps
 
 
 def _principal_successor(
@@ -5948,7 +6268,12 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     ]
     you = result.get("you")
     if you is not None:
-        verdict = "can author" if you["can_author"] else f"cannot author: {you['reason']}"
+        refusal = you.get("authoring_refusal") or {}
+        verdict = (
+            "can author"
+            if you["can_author"]
+            else f"cannot author ({refusal.get('code')}): {refusal.get('detail')}"
+        )
         lines.append(f"You: {you['actor'] or '(no actor)'}, {verdict}")
     kinds = result.get("kinds")
     if kinds is not None:

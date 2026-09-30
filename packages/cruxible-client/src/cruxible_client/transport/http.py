@@ -44,6 +44,11 @@ from cruxible_client.contracts.kits import (
     PlaybillKitRemoveRequestV1,
     PlaybillKitStatusV1,
 )
+from cruxible_client.contracts.principals import (
+    PRINCIPAL_ID_ENV,
+    PRINCIPAL_ID_HEADER,
+    is_canonical_principal_id,
+)
 from cruxible_client.contracts.procedures.source_requests import (
     ProcedureSourcePreviewRequestV1,
     ProcedureSourcePreviewV1,
@@ -54,6 +59,7 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallRequestV1,
     PlaybillProviderInstallResultV1,
 )
+from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProofV1
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.contracts.write import (
     PlaybillRetireRequestV1,
@@ -73,6 +79,26 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 _CLAIM_TYPE_MIGRATION_RESPONSE: TypeAdapter[contracts.PlaybillClaimTypeMigrationResponse] = (
     TypeAdapter(contracts.PlaybillClaimTypeMigrationResponse)
 )
+
+
+def validate_principal_id(principal_id: str) -> str:
+    """Refuse a principal ID no registry could hold, before it reaches the wire."""
+
+    if not is_canonical_principal_id(principal_id):
+        raise ConfigError(
+            f"principal ID {principal_id!r} is not a canonical lowercase identifier "
+            "(a letter, then up to 127 of a-z 0-9 . _ -); repair: set "
+            f"{PRINCIPAL_ID_ENV} or --principal-id to a registered principal ID"
+        )
+    return principal_id
+
+
+def configured_principal_id(environ: Mapping[str, str] | None = None) -> str | None:
+    """The principal ID this process is configured to act as, if any."""
+
+    env = os.environ if environ is None else environ
+    raw = (env.get(PRINCIPAL_ID_ENV) or "").strip()
+    return validate_principal_id(raw) if raw else None
 
 
 # The per-request budget an ordinary call is given.
@@ -140,10 +166,14 @@ class CruxibleClient:
         base_url: str | None = None,
         socket_path: str | None = None,
         token: str | None = None,
+        principal_id: str | None = None,
     ) -> None:
         if bool(base_url) == bool(socket_path):
             raise ConfigError("Configure exactly one of base_url or socket_path for CruxibleClient")
         headers = {"Authorization": f"Bearer {token}"} if token else {}
+        if principal_id is not None:
+            headers[PRINCIPAL_ID_HEADER] = validate_principal_id(principal_id)
+        self.principal_id = principal_id
         if socket_path is not None:
             target = f"unix:{socket_path}"
             raw_client = httpx.Client(
@@ -322,13 +352,28 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        label: str,
-        permission_mode: contracts.RuntimeCredentialPermissionMode = "admin",
+        principal_id: str,
+        permission_mode: contracts.RuntimeCredentialPermissionMode,
+        label: str | None = None,
+        principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
     ) -> contracts.RuntimeCredentialResult:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/runtime/credentials",
-            json={"label": label, "permission_mode": permission_mode},
-        )
+        """Mint a credential that acts as ``principal_id``.
+
+        The daemon refuses unless the principal is active and this request
+        carries its authority: the request already acts as that principal, or
+        ``principal_proof`` is the principal's signed consent. ``label`` is a
+        description only.
+        """
+
+        body: dict[str, object] = {
+            "principal_id": principal_id,
+            "permission_mode": permission_mode,
+        }
+        if label is not None:
+            body["label"] = label
+        if principal_proof is not None:
+            body["principal_proof"] = principal_proof.model_dump(mode="json")
+        response = self._client.post(f"/api/v1/{instance_id}/runtime/credentials", json=body)
         return self._parse_model(response, contracts.RuntimeCredentialResult)
 
     def list_runtime_credentials(self, instance_id: str) -> contracts.RuntimeCredentialListResult:
@@ -344,10 +389,21 @@ class CruxibleClient:
         return self._parse_model(response, contracts.RuntimeCredentialResult)
 
     def rotate_runtime_credential(
-        self, instance_id: str, credential_id: str
+        self,
+        instance_id: str,
+        credential_id: str,
+        *,
+        principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
     ) -> contracts.RuntimeCredentialResult:
+        """Replace a credential's token; a bound one needs its principal's authority."""
+
         response = self._client.post(
-            f"/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate"
+            f"/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate",
+            json=(
+                None
+                if principal_proof is None
+                else {"principal_proof": principal_proof.model_dump(mode="json")}
+            ),
         )
         return self._parse_model(response, contracts.RuntimeCredentialResult)
 

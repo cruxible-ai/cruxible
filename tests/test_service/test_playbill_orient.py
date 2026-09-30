@@ -14,6 +14,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV3,
     ClaimEvidenceAdmissionRuleV3,
 )
+from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery import orient as orient_module
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.orient import OrientCaller, service_playbill_orient
@@ -31,7 +32,7 @@ from tests.core_support._knowledge_loop_support import (
 )
 from tests.test_claims.test_claims import _claim_type
 
-OWNER = OrientCaller("owner", "active", "admin")
+OWNER = OrientCaller("owner", "admin")
 UPGRADE_NOTE = "1 ClaimType still names CaptureContracts by digest; run evidence_rules_upgrade"
 
 
@@ -92,7 +93,7 @@ def test_default_orient_names_each_kind_with_its_predicates_as_values(seeded) ->
 
     wire = result.model_dump(mode="json")
     # Absent optional parts are left off the wire rather than sent as nulls.
-    assert "kind_detail" not in wire and "reason" not in wire["you"]
+    assert "kind_detail" not in wire and "authoring_refusal" not in wire["you"]
     assert "description" not in wire["kinds"][0]["predicates"][0]
     assert "sha256:" not in json.dumps(wire["kinds"])
 
@@ -144,23 +145,39 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
 
 
 @pytest.mark.parametrize(
-    ("caller", "reason"),
+    ("caller", "code"),
     [
-        (None, "no authenticated actor"),
-        (OrientCaller("stranger", "absent", "admin"), "has no active principal"),
-        (OrientCaller("gone", "revoked", "admin"), "registration: revoked"),
-        (OrientCaller("owner", "active", "read_only"), "read_only"),
+        (None, "playbill.identity.credential_unbound"),
+        (OrientCaller("stranger", "admin"), "playbill.identity.principal_absent"),
+        (
+            OrientCaller("operator", "admin", configured=False),
+            "playbill.identity.principal_unconfigured",
+        ),
+        (OrientCaller("owner", "read_only"), "playbill.identity.permission_insufficient"),
     ],
 )
 def test_you_cannot_author_without_an_active_principal_and_says_why(
     seeded,  # type: ignore[no-untyped-def]
     caller: OrientCaller | None,
-    reason: str,
+    code: str,
 ) -> None:
+    from cruxible_core.service.identity import authoring_refusal
+
     you = service_playbill_orient(seeded, caller=caller).you
 
     assert you is not None and you.can_author is False
-    assert you.reason is not None and reason in you.reason
+    assert you.authoring_refusal is not None and you.authoring_refusal.code == code
+    # The same refusal whoami reports and authoring returns.
+    assert you.authoring_refusal == authoring_refusal(
+        seeded,
+        actor_id=None if caller is None else caller.actor_id,
+        configured=True if caller is None else caller.configured,
+        credential_id=None,
+        credential_label=None,
+        permission_mode=PermissionMode[
+            (caller.credential_permission_mode if caller else "read_only").upper()
+        ],
+    )
 
 
 def test_next_suggestions_are_rendered_for_each_surface(seeded) -> None:  # type: ignore[no-untyped-def]
@@ -455,8 +472,9 @@ def test_a_decommissioned_instance_cannot_be_authored_even_by_an_active_writer(o
 
     assert you is not None and you.can_author is False
     assert you.actor == "owner" and you.principal == "owner"
-    assert you.reason is not None
-    assert "decommissioned" in you.reason and "migrated to a new host" in you.reason
+    assert you.authoring_refusal is not None
+    assert you.authoring_refusal.code == "playbill.instance.decommissioned"
+    assert "migrated to a new host" in you.authoring_refusal.detail
 
 
 def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]

@@ -55,6 +55,7 @@ from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.exhaust.journal_index import RunPageInvalidated
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.discovery import (
     AcceptedProviderInterface,
@@ -75,6 +76,7 @@ from cruxible_core.service.discovery.operational import (
     prediction_rows,
 )
 from cruxible_core.service.discovery.runs import run_counts, run_rows
+from cruxible_core.service.identity import authoring_refusal, principal_standing
 from cruxible_core.service.list_pages import (
     ListContinuation,
     PlaybillListCursorMismatch,
@@ -123,8 +125,10 @@ class OrientCaller:
     """Who is asking, as the transport authenticated it (whoami's answer)."""
 
     actor_id: str | None
-    principal_registration_status: Literal["active", "revoked", "absent"] | None
     credential_permission_mode: str | None
+    # False for the implicit local operator, which names no principal.
+    configured: bool = True
+    credential_label: str | None = None
 
 
 # -- reading accepted state -------------------------------------------------
@@ -625,44 +629,27 @@ def _arms(instance: PlaybillInstance, *, evaluation_time: datetime) -> PlaybillO
 
 
 def _you(caller: OrientCaller | None, *, instance: PlaybillInstance) -> PlaybillOrientYouV1:
-    terminal = instance.descriptor.decommissioned
-    if terminal is not None:
-        # Every write door refuses a decommissioned instance, whoever asks.
-        active = caller is not None and caller.principal_registration_status == "active"
-        return PlaybillOrientYouV1(
-            actor=None if caller is None else caller.actor_id,
-            principal=caller.actor_id if caller is not None and active else None,
-            can_author=False,
-            reason=(
-                f"the instance was decommissioned at {terminal.decommissioned_at} "
-                f"({terminal.reason}); every write is refused"
-            ),
-        )
-    if caller is None or caller.actor_id is None:
-        return PlaybillOrientYouV1(
-            actor=None,
-            can_author=False,
-            reason="no authenticated actor; connect with a credential to author",
-        )
-    registration = caller.principal_registration_status
-    if registration != "active":
-        return PlaybillOrientYouV1(
-            actor=caller.actor_id,
-            can_author=False,
-            reason=(
-                f"actor {caller.actor_id!r} has no active principal "
-                f"(registration: {registration or 'unknown'}); an admin registers one "
-                "with a principal change"
-            ),
-        )
-    if caller.credential_permission_mode == "read_only":
-        return PlaybillOrientYouV1(
-            actor=caller.actor_id,
-            principal=caller.actor_id,
-            can_author=False,
-            reason="this credential is read_only; authoring needs governed_write",
-        )
-    return PlaybillOrientYouV1(actor=caller.actor_id, principal=caller.actor_id, can_author=True)
+    """Whether the caller can author, with the same refusal whoami and authoring give."""
+
+    actor_id = None if caller is None else caller.actor_id
+    mode_name = None if caller is None else caller.credential_permission_mode
+    refusal = authoring_refusal(
+        instance,
+        actor_id=actor_id,
+        configured=True if caller is None else caller.configured,
+        credential_id=None,
+        credential_label=None if caller is None else caller.credential_label,
+        permission_mode=(
+            PermissionMode.READ_ONLY if mode_name is None else PermissionMode[mode_name.upper()]
+        ),
+    )
+    active = actor_id is not None and principal_standing(instance, actor_id) == "active"
+    return PlaybillOrientYouV1(
+        actor=actor_id,
+        principal=actor_id if active else None,
+        can_author=refusal is None,
+        authoring_refusal=refusal,
+    )
 
 
 # -- paging -------------------------------------------------------------------
