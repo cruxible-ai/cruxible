@@ -40,6 +40,13 @@ from tests.core_support._support import (
 from tests.core_support._world_templates import FRESH_WORLDS_ENV, WorldTemplates, copy_template
 
 
+@pytest.fixture(autouse=True)
+def templates_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests exercise templates, so a suite run with the opt-out set keeps them on."""
+
+    monkeypatch.delenv(FRESH_WORLDS_ENV, raising=False)
+
+
 def _observable(state: RecoveredInstanceState) -> dict[str, Any]:
     """Everything a reader can take off a recovery, minus the copy's own path."""
 

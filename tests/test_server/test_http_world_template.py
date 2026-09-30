@@ -10,9 +10,11 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.types import PlaybillTrustRoot
 from cruxible_core.runtime.instance import PlaybillInstance
-from tests.core_support._world_templates import WorldTemplates, copy_template
+from tests.core_support._world_templates import FRESH_WORLDS_ENV, WorldTemplates, copy_template
 from tests.test_runtime.test_world_templates import _names_template, _observable
 from tests.test_server.conftest import _build_http_world
 
@@ -29,7 +31,10 @@ def _opened(state: Path, instance_id: str) -> PlaybillInstance:
     return PlaybillInstance.open(state / "instances" / instance_id, trust_root=trust)
 
 
-def test_a_copied_host_registers_and_reopens_to_the_fresh_host(tmp_path: Path) -> None:
+def test_a_copied_host_registers_and_reopens_to_the_fresh_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(FRESH_WORLDS_ENV, raising=False)
     templates = WorldTemplates()
     templates.configure(tmp_path / "templates")
     template = templates.template(("private-http",), lambda root: _build_http_world(root, False))
