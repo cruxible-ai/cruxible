@@ -123,6 +123,7 @@ from cruxible_core.service.claims.claims import (
 from cruxible_core.service.discovery.query import (
     _AcceptedQueryFactsRead,
     build_accepted_query_facts,
+    verify_retired_claim_adjudication,
 )
 from cruxible_core.service.discovery.search import claim_resolution_statuses
 from cruxible_core.service.evidence.evidence import (
@@ -2662,6 +2663,9 @@ def _claim_dependency_items(
     # No consumed Claim inputs means there can be no stale dependency edge.
     # Check the accepted population before building replay/visibility facts.
     if claims is not None and not any(claim.backing.input_claim_digests for claim in claims):
+        # The skipped retired build would have refused an accepted retired
+        # Claim whose adjudication rule no longer reproduces; still refuse.
+        verify_retired_claim_adjudication(instance, coordinate=coordinate)
         return ()
 
     facts = (
