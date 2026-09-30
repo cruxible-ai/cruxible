@@ -322,6 +322,7 @@ def test_resume_does_not_recompute_for_time_or_restart_and_schema_mismatch_rebui
 
 def test_door_movement_recomputes_and_health_reports_lag(tmp_path: Path) -> None:
     from cruxible_core.consumers.runner import consumer_statuses
+    from tests.test_consumers.test_prediction_settlement import drain
 
     instance, owner, *_rest = _foreign_world(tmp_path, bind=False)
     _drain(instance)
@@ -332,6 +333,7 @@ def test_door_movement_recomputes_and_health_reports_lag(tmp_path: Path) -> None
     _drain(instance)
     assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
     assert _stored(instance, EVALUATION_TIME).held_claims
+    drain(instance, now=EVALUATION_TIME)
     statuses = consumer_statuses(SimpleNamespace(open_instances=lambda: (("inst", instance),)))
     assert any(row.kind == "next" and row.state == "running" for row in statuses)
     _assert_equivalent(instance, EVALUATION_TIME, expect_stored=True)

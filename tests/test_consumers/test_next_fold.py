@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_core.consumers import next as folded
-from cruxible_core.consumers.next import NEXT_QUEUE, evidence, predictions
+from cruxible_core.consumers.next import NEXT_QUEUE, evidence, predictions, queue
 from cruxible_core.consumers.protocol import ConsumerWork
 from cruxible_core.consumers.runner import (
     ConsumerRunner,
@@ -173,3 +173,17 @@ def test_unknown_disable_setting_refuses_loop_startup(monkeypatch: pytest.Monkey
     with pytest.raises(ValueError, match="Unknown CRUXIBLE_DISABLED_CONSUMERS"):
         runner.start()
     assert runner.thread is None and runner._executors == {}
+
+
+@pytest.mark.parametrize("part", ("queue", "evidence", "prediction"))
+def test_lost_part_state_lags_until_that_part_rebuilds(tmp_path: Path, part: str) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    drain(instance, now=EVALUATION_TIME)
+    assert NEXT_QUEUE.health(instance, now=EVALUATION_TIME)[0].state == "running"
+    modules = {"queue": queue, "evidence": evidence, "prediction": predictions}
+    modules[part]._STATE.path(instance).unlink()
+    (health,) = NEXT_QUEUE.health(instance, now=EVALUATION_TIME)
+    assert health.state == "lagging"
+    assert health.detail[part] == {"state": "lagging", "initialized": False}
+    drain(instance, now=EVALUATION_TIME)
+    assert NEXT_QUEUE.health(instance, now=EVALUATION_TIME)[0].state == "running"

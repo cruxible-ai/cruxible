@@ -127,11 +127,14 @@ class NextConsumers:
                         if key not in {"last_error_at", "sweep_completed_at"}
                     },
                 }
-        for (name, operation), error in _errors(instance).items():
+        errors = _errors(instance)
+        if not details and not errors:
+            return ()
+        for name in _PARTS:
+            details.setdefault(name, {"state": "lagging", "initialized": False})
+        for (name, operation), error in errors.items():
             details.setdefault(name, {}).update(state="stalled")
             details[name].setdefault("errors", {})[operation] = error
-        if not details:
-            return ()
         stalled = any(detail["state"] == "stalled" for detail in details.values())
         lagging = any(detail["state"] == "lagging" for detail in details.values())
         return (
