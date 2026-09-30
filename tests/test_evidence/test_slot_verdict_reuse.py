@@ -212,3 +212,100 @@ def test_a_shared_capture_observed_inconsistently_is_not_remembered(tmp_path, mo
     monkeypatch.setattr(playbill_evidence, "_current_replay_available", available)
 
     assert _derive(instance, fresh=False) == _derive(instance, fresh=True)
+
+
+def _rewrite_in_place(path: Path, *, keep_mtime: bool) -> None:
+    import os
+
+    before = path.stat()
+    os.chmod(path, 0o600)
+    content = path.read_bytes()
+    path.write_bytes(bytes([content[0] ^ 1]) + content[1:])
+    if keep_mtime:
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+
+def _outcome(call):  # type: ignore[no-untyped-def]
+    try:
+        return call()
+    except Exception as exc:  # noqa: BLE001 - the refusal itself is the outcome compared
+        return (type(exc).__name__, str(exc))
+
+
+def _remembered_derivation(instance):  # type: ignore[no-untyped-def]
+    coordinate = instance.accepted_coordinate()
+    context = ClaimVerdictReadContext(instance, coordinate)
+    return playbill_search.claim_resolution_statuses(
+        instance,
+        claims=context.claims(),
+        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        evaluation_time=EVALUATION_TIME,
+        read_context=context,
+    )
+
+
+@pytest.mark.parametrize("keep_mtime", [False, True], ids=["rewrite", "rewrite-keep-mtime"])
+def test_a_remembered_derivation_is_not_served_over_a_body_rewritten_in_place(
+    tmp_path: Path, keep_mtime: bool
+) -> None:
+    """The shard fingerprint sees arrivals and removals; the body fingerprints see the rest."""
+
+    instance, _owner = seed_claims(tmp_path)
+    context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
+    capture = context.claims()[0].backing.capture_digests[0]
+    fingerprint = playbill_search.verdict_input_fingerprint(instance)
+    _derive(instance, fresh=True)
+
+    _rewrite_in_place(instance.body_store()._path(capture), keep_mtime=keep_mtime)
+    # The keyed shard fingerprint does not move; the entry must still not be served.
+    assert playbill_search.verdict_input_fingerprint(instance) == fingerprint
+    # Served straight from the remembered derivation: nothing is reset.
+    warm = _outcome(lambda: _remembered_derivation(instance))
+    cold = _outcome(lambda: _derive(instance, fresh=True))
+    assert warm == cold
+    assert warm[0] == "PlaybillCasError"
+
+
+@pytest.mark.parametrize("keep_mtime", [False, True], ids=["rewrite", "rewrite-keep-mtime"])
+def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place(
+    tmp_path: Path, keep_mtime: bool
+) -> None:
+    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_client.contracts.write import PlaybillWriteRequestV1
+    from cruxible_core.service.authoring.write_verbs import service_playbill_write
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+    from tests.core_support._write_support import KIND, caller, seed_write_surface
+
+    instance, _owner = seed_write_surface(tmp_path)
+    outcome = service_playbill_write(
+        instance,
+        request=PlaybillWriteRequestV1.model_validate(
+            {
+                "because": "The ruling as written.",
+                "changes": [
+                    {"op": "set", "subject": f"{KIND}/wi-1", "field": "ruling", "value": "Ruled.\n"}
+                ],
+            }
+        ),
+        caller=caller(),
+    )
+    assert outcome.status == "accepted", outcome
+    claim_id = outcome.changes[0].claim
+    request = PlaybillGetRequestV1(ref=str(claim_id))
+    access = BodyAccessContext(principal_id="owner")
+
+    def read() -> object:
+        return service_playbill_get(instance, request=request, access=access).model_dump(
+            mode="json", exclude={"evaluation_time"}
+        )
+
+    assert read()["card"]["verdict"] == "supported"  # type: ignore[index]
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        digest = projection.typed.source(f"Claim:{claim_id}").statement.object.content_digest
+    _rewrite_in_place(instance.body_store()._path(digest), keep_mtime=keep_mtime)
+
+    warm = _outcome(read)
+    playbill_search.reset_claim_resolution_memo()
+    assert warm == _outcome(read)
+    assert warm[0] == "PlaybillCasError"

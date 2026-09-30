@@ -636,26 +636,49 @@ def test_the_shared_write_records_a_profile_only_where_it_can_name_a_daemon(
 
 
 def _spoil(instance: PlaybillInstance, digest: str, how: str) -> None:
+    """Erase a body, or corrupt it in place as a rotting disk would.
+
+    ``corrupt-keep-mtime`` also restores the file's times, so only its inode
+    change time says it moved.
+    """
+
     import os
 
     store = instance.body_store()
     if how == "erase":
         assert store.erase(digest)
         return
-    path = store._path(digest)  # the object on disk, as a rotting disk would change it
+    path = store._path(digest)
+    before = path.stat()
     os.chmod(path, 0o600)
     content = path.read_bytes()
     path.write_bytes(bytes([content[0] ^ 1]) + content[1:])
+    if how == "corrupt-keep-mtime":
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        assert path.stat().st_mtime_ns == before.st_mtime_ns
+        assert path.stat().st_size == before.st_size
 
 
 def _cold(instance: PlaybillInstance, **options: Any) -> dict[str, bytes]:
+    """An export with no kept floor output and no remembered verdict derivation."""
+
+    from cruxible_core.service.discovery.search import reset_claim_resolution_memo
+
     instance.floor_export_memo.clear()
     instance.floor_structure_memo.clear()
     instance.floor_current_memo.clear()
+    reset_claim_resolution_memo()
     return service_export_playbill_floor(instance, **options)
 
 
-@pytest.mark.parametrize("how", ["erase", "corrupt"])
+def _outcome(export: Any) -> Any:
+    try:
+        return export()
+    except Exception as exc:  # noqa: BLE001 - the refusal itself is the outcome compared
+        return (type(exc).__name__, str(exc))
+
+
+@pytest.mark.parametrize("how", ["erase", "corrupt", "corrupt-keep-mtime"])
 @pytest.mark.parametrize("target", ["document", "ruling", "long-ruling"])
 def test_warm_exports_agree_with_cold_ones_after_a_body_goes_bad(
     tmp_path: Any, how: str, target: str
@@ -675,28 +698,23 @@ def test_warm_exports_agree_with_cold_ones_after_a_body_goes_bad(
         with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
             digest = projection.typed.source(f"Claim:{claim_id}").statement.object.content_digest
     _spoil(instance, digest, how)
-    # The same coordinate, served from the kept export, and the next one,
-    # rendered incrementally, both match a cold export.
-    assert service_export_playbill_floor(instance, access=BODY_READER) == _cold(
-        instance, access=BODY_READER
-    )
-    service_export_playbill_floor(instance, access=BODY_READER)
+
+    # The same coordinate, where every kept output and remembered verdict is
+    # warm, and the next one, rendered incrementally, both match a truly cold
+    # export: identical files, or the identical refusal.
+    same = _outcome(lambda: service_export_playbill_floor(instance, access=BODY_READER))
+    assert same == _outcome(lambda: _cold(instance, access=BODY_READER))
+    _outcome(lambda: service_export_playbill_floor(instance, access=BODY_READER))
     _write(instance, _set(WI2, "status", "done"))
-    if how == "corrupt" and target != "document":
-        # A ruling's bytes are also its own evidence. At a new coordinate the
-        # shared verdict derivation re-reads that evidence and refuses a corrupt
-        # body outright, so warm and cold exports both refuse, alike.
-        from cruxible_client.contracts.errors import PlaybillCasError
+    incremental = _outcome(lambda: service_export_playbill_floor(instance, access=BODY_READER))
+    assert incremental == _outcome(lambda: _cold(instance, access=BODY_READER))
 
-        with pytest.raises(PlaybillCasError) as warm_refusal:
-            service_export_playbill_floor(instance, access=BODY_READER)
-        with pytest.raises(PlaybillCasError) as cold_refusal:
-            _cold(instance, access=BODY_READER)
-        assert str(warm_refusal.value) == str(cold_refusal.value)
+    if target != "document" and how != "erase":
+        # A ruling's bytes are also its own evidence, and a verified verdict
+        # refuses a corrupt evidence body outright.
+        assert same[0] == "PlaybillCasError" and incremental[0] == "PlaybillCasError"
         return
-    incremental = service_export_playbill_floor(instance, access=BODY_READER)
-    assert incremental == _cold(instance, access=BODY_READER)
-
+    assert isinstance(same, dict) and isinstance(incremental, dict)
     if target == "document":
         assert "(body unavailable:" in incremental["documents/design-note.md"].decode()
     elif target == "ruling":
@@ -706,13 +724,6 @@ def test_warm_exports_agree_with_cold_ones_after_a_body_goes_bad(
         )
     else:
         assert f"current/{KIND}/wi-3.ruling.txt" not in incremental
-
-
-def _outcome(export: Any) -> object:
-    try:
-        return export()
-    except Exception as exc:  # noqa: BLE001 - the refusal itself is the outcome compared
-        return (type(exc).__name__, str(exc))
 
 
 def test_kept_discovery_cards_agree_with_cold_ones_after_a_capture_is_erased(

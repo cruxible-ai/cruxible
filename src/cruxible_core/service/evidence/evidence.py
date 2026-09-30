@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import pickle
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Mapping, MutableSet
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableSet
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
@@ -649,6 +649,49 @@ def _cas_file_identity(store: Any, digest: str) -> tuple[int, int, int, int, int
     except ValueError:
         return None
     return cast(tuple[int, int, int, int, int] | None, identity)
+
+
+BodyFingerprints = tuple[tuple[str, tuple[int, int, int, int, int] | None], ...]
+
+
+def capture_body_fingerprints(
+    instance: ClaimReadSourceProtocol,
+    capture_digests: Iterable[str],
+    *,
+    store: Any = None,
+) -> BodyFingerprints:
+    """The file identity of every body-store object behind these Captures' verdicts.
+
+    For a Capture whose replay availability is remembered, those are the CAS
+    objects that availability consulted (the Capture body and its source or
+    commitment bytes), with the identity each had when it was derived; otherwise
+    the Capture body's current identity. The identity is the one CAS ``verify``
+    keys its own reuse on, so it moves with any write, rewrite or removal,
+    including an in-place edit that restores the modification time.
+    """
+
+    root = getattr(instance, "root", None)
+    store = store if store is not None else instance.body_store()
+    seen: dict[str, tuple[int, int, int, int, int] | None] = {}
+    for digest in sorted(set(capture_digests)):
+        remembered = (
+            memo_get(_AVAILABILITY_MEMO, (str(root), digest)) if isinstance(root, Path) else None
+        )
+        if remembered is not None:
+            for consulted, identity in remembered[1]:
+                seen.setdefault(consulted, identity)
+        else:
+            seen.setdefault(digest, _cas_file_identity(store, digest))
+    return tuple(sorted(seen.items()))
+
+
+def body_fingerprints_hold(
+    instance: ClaimReadSourceProtocol, fingerprints: BodyFingerprints, *, store: Any = None
+) -> bool:
+    """Whether every recorded body-store object still has the identity it had: one stat each."""
+
+    store = store if store is not None else instance.body_store()
+    return all(_cas_file_identity(store, digest) == seen for digest, seen in fingerprints)
 
 
 def _current_replay_available(
