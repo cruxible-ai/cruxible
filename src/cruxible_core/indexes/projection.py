@@ -210,6 +210,15 @@ class AssemblerResult(_StrictProjectionModel):
         self._source_authentication_stamp = stamp
         return self
 
+    def __eq__(self, other: object) -> bool:
+        # The carried stamp is process-local provenance, not part of the result:
+        # a result equals its own serialized round trip.
+        if not isinstance(other, AssemblerResult):
+            return NotImplemented
+        return self.__dict__ == other.__dict__
+
+    __hash__ = None  # type: ignore[assignment]  # row_counts is a dict; never hashable
+
     @field_validator("manifest_path")
     @classmethod
     def _manifest_path(cls, value: str) -> str:
