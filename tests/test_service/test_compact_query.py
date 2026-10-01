@@ -250,10 +250,15 @@ def test_spec_query_pins_claim_types_at_the_coordinate(instance: Any) -> None:
 
 
 def test_flags_come_from_the_verdict_machinery(instance: Any, monkeypatch: Any) -> None:
-    def flagged(*_args: Any, identities: Any, **_kwargs: Any) -> dict[str, tuple[str, ...]]:
-        return {identity: ("stale", "unsure_hold") for identity in identities}
+    from cruxible_core.service.discovery.read_flags import ClaimRead
 
-    monkeypatch.setattr(compact_module, "claim_flags", flagged)
+    def flagged(*_args: Any, identities: Any, **_kwargs: Any) -> dict[str, ClaimRead]:
+        return {
+            identity: ClaimRead(flags=("stale", "unsure_hold"), verdict="stale", status="accepted")
+            for identity in identities
+        }
+
+    monkeypatch.setattr(compact_module, "claim_reads", flagged)
     result = _query(instance, kind=SUBJECT_KIND, select=["status"])
 
     assert [row["flags"] for row in result.rows] == [

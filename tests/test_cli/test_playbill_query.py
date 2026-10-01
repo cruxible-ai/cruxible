@@ -268,3 +268,32 @@ def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
     assert "Affirmed." in table
     assert "Reversed Reversed" in table and "…" in table
     assert "<unavailable 40 bytes sha256:cdcdcdcdcdcd>" in table
+
+
+def test_status_claims_budgets_and_receipt_reach_the_request(stub: _StubClient) -> None:
+    result = _run(
+        "dev.roadmap_item",
+        "--status",
+        "live",
+        "--status",
+        "retired",
+        "--claims",
+        "--json",
+    )
+    assert result.exit_code == 0, result.output
+    request = stub.requests[-1]
+    assert request.status == ("live", "retired") and request.claims is True
+
+    named = _run(
+        "--name",
+        "dev.items",
+        "--budgets",
+        '{"max_results": 7, "max_traversal_depth": 0}',
+        "--receipt",
+        "full",
+        "--json",
+    )
+    assert named.exit_code == 0, named.output
+    request = stub.requests[-1]
+    assert request.budgets is not None and request.budgets.max_results == 7
+    assert request.receipt == "full"

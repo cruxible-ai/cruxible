@@ -51,7 +51,7 @@ PlaybillGetRefKind = Literal[
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
 # never re-adjudicated here.
-PlaybillReadFlag = Literal["stale", "contested", "contradicted", "unsure_hold"]
+PlaybillReadFlag = Literal["stale", "contested", "contradicted", "uncovered", "unsure_hold"]
 # Which surface ``next`` suggestions are rendered for.
 PlaybillReadSurface = Literal["mcp", "cli", "sdk"]
 

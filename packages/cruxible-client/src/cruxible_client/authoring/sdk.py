@@ -178,9 +178,11 @@ from cruxible_client.contracts.claims import (
     SubjectClaimObject,
 )
 from cruxible_client.contracts.compact_query import (
+    QueryClaimStatus,
     QueryFilterV1,
     QueryFollowDirection,
     QueryFollowV1,
+    QueryReceiptDetail,
 )
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV2,
@@ -3369,6 +3371,10 @@ class Playbill:
         params: Mapping[str, object] | None = None,
         at: AcceptedCoordinate | str | None = None,
         evaluation_time: datetime | str | None = None,
+        status: Sequence[QueryClaimStatus] = ("live",),
+        claims: bool = False,
+        budgets: QueryBudgetsV1 | None = None,
+        receipt: QueryReceiptDetail = "compact",
     ) -> QueryResult:
         """Answer any question over accepted state: one page of values with flags.
 
@@ -3408,6 +3414,10 @@ class Playbill:
                 "spec": spec,
                 "name": None if name is None else _address(name, RefKind.QUERY),
                 "params": None if params is None else dict(params),
+                "status": tuple(status),
+                "claims": claims,
+                "budgets": budgets,
+                "receipt": receipt,
             }
         )
         return self._run_query_request(request, at=at, evaluation_time=evaluation_time)

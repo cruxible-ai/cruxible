@@ -30,7 +30,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
 from typing import Any, Literal, cast
 
@@ -39,10 +39,13 @@ from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, ty
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claim_verdicts import EvidenceCurrency, EvidenceRelativeClaimVerdict
 from cruxible_client.contracts.compact_query import (
+    PlaybillQueryClaimV1,
     PlaybillQueryColumnV1,
     PlaybillQueryReceiptV1,
+    PlaybillQueryReplayV1,
     PlaybillQueryRequestV1,
     PlaybillQueryResult,
+    QueryClaimStatus,
     QueryFilterOperator,
     QueryFilterV1,
     QueryFlag,
@@ -119,18 +122,17 @@ from cruxible_core.service.discovery.query_vocabulary import (
     value_type_of,
 )
 from cruxible_core.service.discovery.read_flags import (
+    ClaimRead,
     answer_flags,
     claim_flags,
+    claim_reads,
     ordered_flags,
     verdict_flags,
 )
 from cruxible_core.service.list_pages import (
     PlaybillListCursorMismatch,
     PlaybillListCursorStale,
-    decode_list_cursor,
-    encode_list_cursor,
     list_snapshot,
-    page_after_boundary,
 )
 from cruxible_core.service.read_refusals import (
     NEAREST_LIMIT,
@@ -166,6 +168,9 @@ _ENGINE_TYPES: dict[str, QueryValueTypeV1] = {
     "subject": "subject_reference",
 }
 _LOWERED_OPERATORS = frozenset({"eq", "ne", "lt", "lte", "gt", "gte", "in"})
+_LIVE_ONLY: tuple[QueryClaimStatus, ...] = ("live",)
+# A slot's answer: what resolution accepted, or its unresolved contenders.
+_ANSWER_STATUSES = frozenset({"accepted", "conflicted"})
 
 
 # -- mode and coordinate ------------------------------------------------------
@@ -204,6 +209,21 @@ def _mode(request: PlaybillQueryRequestV1) -> QueryMode:
             "params bind a named query only",
             repair="pass name with params, or drop params",
         )
+    if (request.budgets is not None or request.receipt != "compact") and mode != "named":
+        raise query_refusal(
+            "playbill.query.mode_invalid",
+            "budgets and receipt apply to a named query only",
+            repair="pass name with budgets or receipt, or drop them",
+        )
+    shapes_cells = request.claims or request.status != _LIVE_ONLY
+    if shapes_cells and (
+        mode != "inline" or request.kind is None or request.kind in ARTIFACT_KINDS
+    ):
+        raise query_refusal(
+            "playbill.query.mode_invalid",
+            "status and claims shape the cells of a compact query on a Subject kind",
+            repair='pass a Subject kind (e.g. kind="dev.roadmap_item"), or drop status and claims',
+        )
     return mode
 
 
@@ -223,6 +243,7 @@ class _Answer:
     render: Callable[[Sequence[Any]], list[dict[str, Any]]]
     capped: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
+    replay: PlaybillQueryReplayV1 | None = None
 
 
 @dataclass(frozen=True)
@@ -272,15 +293,16 @@ class _InlineFilter:
     value: object
 
 
-ROW_METADATA = frozenset({"subject", "subject_id", "flags"})
+ROW_METADATA = frozenset({"subject", "subject_id", "flags", "claims"})
 
 
 def _out(name: str) -> str:
     """The row key a column's values are served under.
 
     ``subject``, ``subject_id`` and ``flags`` are row metadata on every Subject
-    row. A column named like one of them keeps its values under
-    ``value.<name>`` instead of overwriting the metadata or losing its values.
+    row, and ``claims`` when a query asks for each cell's Claims. A column named
+    like one of them keeps its values under ``value.<name>`` instead of
+    overwriting the metadata or losing its values.
     ``_column_keys`` then makes the keys unique across the whole column set; a
     projection needs no more, since its field names are distinct identifiers.
     """
@@ -847,7 +869,11 @@ def _default_columns(
 
 @dataclass
 class _RowRenderer:
-    """Render rows of bound Subjects into values and flags, reading only one page."""
+    """Render rows of bound Subjects into values and flags, reading only one page.
+
+    ``status`` selects which Claims each cell shows (``live`` is the slot's
+    answer as ``get`` shows it); ``claims`` also answers each cell's Claims.
+    """
 
     instance: PlaybillInstance
     coordinate: AcceptedProjectionCoordinate
@@ -856,6 +882,43 @@ class _RowRenderer:
     columns: Sequence[_Column]
     content: ExactContentReader
     values: ValueIndex = field(default_factory=ValueIndex)
+    status: tuple[QueryClaimStatus, ...] = _LIVE_ONLY
+    claims: bool = False
+    retired: ValueIndex = field(default_factory=ValueIndex)
+
+    def _shown(
+        self, path: str, predicate: str, reads: Mapping[str, ClaimRead]
+    ) -> tuple[list[LiveValue], list[LiveValue]]:
+        """The live and retired Claims one cell shows, in index order."""
+
+        slot = self.values.slot(path, predicate)
+        answer = [
+            item
+            for item in slot
+            if item.identity in reads and reads[item.identity].status in _ANSWER_STATUSES
+        ] or list(slot)
+        live = [
+            item
+            for item in slot
+            if ("live" in self.status and item in answer)
+            or (item.identity in reads and reads[item.identity].status in self.status)
+        ]
+        retired = self.retired.slot(path, predicate) if "retired" in self.status else []
+        return live, list(retired)
+
+    def _cell_claim(self, item: LiveValue, reads: Mapping[str, ClaimRead]) -> PlaybillQueryClaimV1:
+        value: object = item.value
+        if item.exact:
+            value = self.content.value(str(item.value), item.span)
+        read = reads.get(item.identity)
+        return PlaybillQueryClaimV1(
+            claim=item.identity.removeprefix("Claim:"),
+            value=summary_value(value),
+            verdict="retired" if read is None else read.verdict,
+            status=cast(Any, "retired" if read is None else read.status),
+            role=cast(Any, item.role),
+            qualifier=item.qualifier,
+        )
 
     def render(
         self,
@@ -881,19 +944,28 @@ class _RowRenderer:
                 paths=by_binding.get(binding, set()),
                 predicates=wanted,
             )
+            if "retired" in self.status:
+                ensure_values(
+                    self.retired,
+                    self.instance,
+                    self.coordinate,
+                    paths=by_binding.get(binding, set()),
+                    predicates=wanted,
+                    lifecycle="retired",
+                )
         with self.instance.bind_accepted_projection(self.coordinate) as projection:
             labels = subject_labels(projection.typed.connection, paths)
-        shown: list[LiveValue] = []
+        slot_members: list[LiveValue] = []
         for row in rows:
             for column in self.columns:
                 path = row.get(column.binding)
                 if path is None or column.field is None or column.field.predicate is None:
                     continue
-                shown.extend(self.values.slot(path, column.field.predicate))
-        flags = claim_flags(
+                slot_members.extend(self.values.slot(path, column.field.predicate))
+        reads = claim_reads(
             self.instance,
             self.coordinate,
-            identities=[item.identity for item in shown],
+            identities=[item.identity for item in slot_members],
             evaluation_time=self.evaluation_time,
         )
         rendered: list[dict[str, Any]] = []
@@ -905,6 +977,7 @@ class _RowRenderer:
                 "subject_id": label.split("/", 1)[1] if "/" in label else label,
             }
             row_flags: set[QueryFlag] = set(extra_flags[position]) if extra_flags else set()
+            cell_claims: dict[str, list[dict[str, Any]]] = {}
             for column in self.columns:
                 path = row.get(column.binding)
                 if column.field is None:
@@ -915,11 +988,17 @@ class _RowRenderer:
                     out[column.name] = None if bound is None else bound.split("/", 1)[-1]
                     continue
                 info = column.field.info
-                slot = [] if path is None else self.values.slot(path, info.predicate)
-                values = distinct(_value_identity(item) for item in slot)
-                for item in slot:
-                    row_flags.update(flags.get(item.identity, ()))
-                row_flags.update(answer_flags(info.cardinality, len(values)))
+                live, retired = (
+                    ([], []) if path is None else self._shown(path, info.predicate, reads)
+                )
+                for item in live:
+                    row_flags.update(reads[item.identity].flags if item.identity in reads else ())
+                row_flags.update(
+                    answer_flags(
+                        info.cardinality, len(distinct(_value_identity(item) for item in live))
+                    )
+                )
+                values = distinct(_value_identity(item) for item in (*live, *retired))
                 listed = info.cardinality == "many" or len(values) > 1
                 if info.value_type == "exact_content":
                     values = _exact_values(self.content, values)
@@ -927,7 +1006,14 @@ class _RowRenderer:
                     out[column.name] = values
                 else:
                     out[column.name] = values[0] if values else None
+                if self.claims and (live or retired):
+                    cell_claims[column.name] = [
+                        self._cell_claim(item, reads).model_dump(mode="json")
+                        for item in (*live, *retired)
+                    ]
             out["flags"] = ordered_flags(row_flags)
+            if self.claims:
+                out["claims"] = cell_claims
             rendered.append(out)
         return rendered
 
@@ -1134,6 +1220,8 @@ def _compact_subject_query(
         evaluation_time=evaluation_time,
         columns=columns,
         content=content,
+        status=request.status,
+        claims=request.claims,
     )
     if inline or request.contains is not None:
         candidates = _apply_inline(
@@ -1991,7 +2079,10 @@ def _named_answer(
 
     definition = accepted_query_definition(instance, name=request.name, coordinate=coordinate)
     artifacts = isinstance(definition.query.entry, QueryArtifactsEntryV2)
-    budgets = _server_budgets(
+    # A caller's own budgets run as given, up to the definition's maximum (the
+    # engine refuses past it); the default is the definition's, held under the
+    # surface's server ceiling.
+    budgets = request.budgets or _server_budgets(
         definition.query.default_budgets,
         ARTIFACT_QUERY_MAX_RESULTS if artifacts else COMPACT_QUERY_MAX_RESULTS,
     )
@@ -2004,8 +2095,17 @@ def _named_answer(
         budgets=budgets,
     )
     _refuse_engine(run.result, declared=tuple(item.name for item in definition.query.parameters))
+    replay = (
+        PlaybillQueryReplayV1(
+            definition_path=run.definition_path,
+            result=run.result,
+            execution=run.receipt,
+        )
+        if request.receipt == "full"
+        else None
+    )
     if isinstance(definition.query.entry, QueryArtifactsEntryV2):
-        return _artifact_answer(
+        answer = _artifact_answer(
             instance,
             coordinate,
             vocabulary,
@@ -2016,16 +2116,19 @@ def _named_answer(
             request=None,
             budgets=budgets,
         )
-    return _engine_answer(
-        instance,
-        coordinate,
-        vocabulary,
-        definition=definition,
-        result=run.result,
-        evaluation_time=evaluation_time,
-        mode="named",
-        content=content,
-    )
+    else:
+        answer = _engine_answer(
+            instance,
+            coordinate,
+            vocabulary,
+            definition=definition,
+            result=run.result,
+            evaluation_time=evaluation_time,
+            mode="named",
+            content=content,
+        )
+    answer.replay = replay
+    return answer
 
 
 def _spec_answer(
@@ -2091,6 +2194,96 @@ def _selection(request: PlaybillQueryRequestV1, mode: QueryMode) -> dict[str, An
     return {"query": typed_digest(Sha256Value, "playbill-query-selection-v1", body).tagged}
 
 
+_CURSOR_TAG = "q1"
+_CURSOR_OID = 16
+_CURSOR_DIGEST = 12
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+@dataclass(frozen=True)
+class _QueryCursor:
+    """What a short query cursor pins: the generation, the instant, the listing, the place."""
+
+    git_oid: str
+    evaluation_time: datetime
+    selection: str
+    snapshot: str
+    offset: int
+
+
+def _base36(value: int) -> str:
+    digits = ""
+    while True:
+        value, digit = divmod(value, 36)
+        digits = _BASE36[digit] + digits
+        if not value:
+            return digits
+
+
+def _digest_part(tagged: str) -> str:
+    return tagged.partition(":")[2][:_CURSOR_DIGEST]
+
+
+def _encode_cursor(
+    *,
+    served: AcceptedCoordinate,
+    evaluation_time: datetime,
+    selection: str,
+    snapshot: str,
+    offset: int,
+) -> str:
+    """A query cursor in about 60 characters.
+
+    It names the accepted generation by a 16-hex git oid prefix, the
+    evaluation instant in microseconds, 12-hex prefixes of the selection and
+    listing digests, and the row offset. A listing that matches its snapshot
+    prefix is the same listing, so the offset is the place to continue.
+    """
+
+    micros = (evaluation_time - _EPOCH) // timedelta(microseconds=1)
+    return ".".join(
+        (
+            _CURSOR_TAG,
+            served.git_oid[:_CURSOR_OID],
+            _base36(micros),
+            _digest_part(selection),
+            _digest_part(snapshot),
+            str(offset),
+        )
+    )
+
+
+def _cursor_mismatch(detail: str) -> PlaybillListCursorMismatch:
+    return PlaybillListCursorMismatch(
+        f"{PlaybillListCursorMismatch.error_code}: {detail}; query again without a cursor"
+    )
+
+
+def _decode_cursor(cursor: str, *, selection: str) -> _QueryCursor:
+    parts = cursor.split(".")
+    if (
+        len(parts) != 6
+        or parts[0] != _CURSOR_TAG
+        or len(parts[1]) != _CURSOR_OID
+        or not all(char in "0123456789abcdef" for char in parts[1])
+        or not parts[2]
+        or not all(char in _BASE36 for char in parts[2])
+        or not all(len(part) == _CURSOR_DIGEST for part in parts[3:5])
+        or not parts[5].isdigit()
+    ):
+        raise _cursor_mismatch("the cursor is not a query cursor")
+    if parts[3] != _digest_part(selection):
+        raise _cursor_mismatch("the cursor was minted for a different query")
+    return _QueryCursor(
+        git_oid=parts[1],
+        evaluation_time=_EPOCH + timedelta(microseconds=int(parts[2], 36)),
+        selection=parts[3],
+        snapshot=parts[4],
+        offset=int(parts[5]),
+    )
+
+
 def service_playbill_query(
     instance: PlaybillInstance,
     *,
@@ -2102,25 +2295,22 @@ def service_playbill_query(
     """
 
     mode = _mode(request)
-    selection = _selection(request, mode)
+    selection = _selection(request, mode)["query"]
     continuation = (
-        None
-        if request.cursor is None
-        else decode_list_cursor(request.cursor, list_name=LIST_NAME, selection=selection)
+        None if request.cursor is None else _decode_cursor(request.cursor, selection=selection)
     )
     evaluation_time = request.evaluation_time
     at: AcceptedCoordinate | str | None = request.at
     if continuation is not None:
-        pinned = AcceptedCoordinate.model_validate(continuation.coordinate["at"])
+        pinned = AcceptedCoordinate.from_internal(
+            resolve_read_coordinate(instance, continuation.git_oid)
+        )
         if at is not None:
             requested = AcceptedCoordinate.from_internal(resolve_read_coordinate(instance, at))
             if requested != pinned:
-                raise PlaybillListCursorMismatch(
-                    f"{PlaybillListCursorMismatch.error_code}: the cursor continues a different "
-                    "coordinate; query again without a cursor"
-                )
+                raise _cursor_mismatch("the cursor continues a different coordinate")
         at = pinned
-        pinned_time = datetime.fromisoformat(str(continuation.coordinate["evaluation_time"]))
+        pinned_time = continuation.evaluation_time
         if evaluation_time is not None and evaluation_time != pinned_time:
             raise PlaybillListCursorStale(
                 f"{PlaybillListCursorStale.error_code}: the cursor continues an answer "
@@ -2184,16 +2374,18 @@ def service_playbill_query(
 
     served = AcceptedCoordinate.from_internal(coordinate)
     snapshot = list_snapshot([list(key) for key in answer.keys])
-    page, truncated = page_after_boundary(
-        answer.candidates,
-        keys=answer.keys,
-        snapshot=snapshot,
-        continuation=continuation,
-        limit=request.limit,
-        list_name=LIST_NAME,
-    )
-    start = 0 if continuation is None else list(answer.keys).index(continuation.last_key) + 1
-    last_key = answer.keys[start + len(page) - 1] if page else None
+    start = 0
+    if continuation is not None:
+        if continuation.snapshot != _digest_part(snapshot):
+            raise PlaybillListCursorStale(
+                f"{PlaybillListCursorStale.error_code}: the query answer changed since the "
+                "cursor's first page; query again without a cursor"
+            )
+        if continuation.offset > len(answer.candidates):
+            raise _cursor_mismatch("the cursor's place is past the end of the answer")
+        start = continuation.offset
+    page = tuple(answer.candidates[start : start + request.limit])
+    truncated = start + len(page) < len(answer.candidates)
     # Every row is bounded by get's card rule: a string over 500 characters is
     # cut to {value, truncated, length}; get(detail="evidence") reads it whole.
     rows = [
@@ -2201,16 +2393,13 @@ def service_playbill_query(
         for row in answer.render(page)
     ]
     next_cursor = None
-    if truncated and last_key is not None:
-        next_cursor = encode_list_cursor(
-            list_name=LIST_NAME,
-            coordinate={
-                "at": served.model_dump(mode="json"),
-                "evaluation_time": evaluation_time.isoformat(),
-            },
+    if truncated and page:
+        next_cursor = _encode_cursor(
+            served=served,
+            evaluation_time=evaluation_time,
             selection=selection,
             snapshot=snapshot,
-            last_key=last_key,
+            offset=start + len(page),
         )
     return PlaybillQueryResult(
         kind=answer.kind,
@@ -2225,6 +2414,7 @@ def service_playbill_query(
             spec_digest=answer.spec_digest,
             coordinate=served,
             evaluation_time=evaluation_time,
+            replay=answer.replay,
         ),
     )
 

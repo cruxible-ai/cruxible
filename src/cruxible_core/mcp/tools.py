@@ -19,7 +19,12 @@ from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeRequestV1,
     ClaimTypeUpgradeResultV1,
 )
-from cruxible_client.contracts.compact_query import QueryFilterV1, QueryFollowV1
+from cruxible_client.contracts.compact_query import (
+    QueryClaimStatus,
+    QueryFilterV1,
+    QueryFollowV1,
+    QueryReceiptDetail,
+)
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
 from cruxible_client.contracts.get_reads import (
     GET_HISTORY_MAX_LIMIT,
@@ -41,6 +46,7 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallResultV1,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
+from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.write import (
     Change,
@@ -1179,6 +1185,10 @@ def register_tools(
         cursor: str | None = None,
         name: str | None = None,
         params: dict[str, str | int | bool] | None = None,
+        status: list[QueryClaimStatus] | None = None,
+        claims: bool = False,
+        budgets: QueryBudgetsV1 | None = None,
+        receipt: QueryReceiptDetail = "compact",
         at: AcceptedCoordinate | str | int | None = None,
         evaluation_time: str | None = None,
     ) -> contracts.PlaybillQueryResult:
@@ -1195,6 +1205,10 @@ def register_tools(
             cursor=cursor,
             name=name,
             params=params,
+            status=status,
+            claims=claims,
+            budgets=budgets,
+            receipt=receipt,
             at=_read_at(at),
             evaluation_time=evaluation_time,
         )

@@ -4855,8 +4855,28 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     default=None,
     help="A QueryDefinitionSpecV1 file (JSON or YAML).",
 )
+@click.option(
+    "--status",
+    "statuses",
+    multiple=True,
+    type=click.Choice(["live", "overturned", "refused", "retired"]),
+    help="Which Claims cells show (repeatable): live (default), overturned, refused, retired.",
+)
+@click.option("--claims", "with_claims", is_flag=True, help="Also show each cell's Claims.")
 @click.option("--name", "query_name", default=None, help="Run an accepted named query.")
 @click.option("--param", "param_pairs", multiple=True, help="Named query parameter k=v.")
+@click.option(
+    "--budgets",
+    "budgets_json",
+    default=None,
+    help='Named query budgets as JSON, e.g. \'{"max_results": 100, "max_traversal_depth": 0}\'.',
+)
+@click.option(
+    "--receipt",
+    type=click.Choice(["compact", "full"]),
+    default="compact",
+    help="full adds a named query's replay receipt (Claims read, paths, verdict).",
+)
 @click.option(
     "--at",
     "at_oid",
@@ -4878,8 +4898,12 @@ def query_group(
     limit: int | None,
     cursor: str | None,
     spec_path: str | None,
+    statuses: tuple[str, ...],
+    with_claims: bool,
     query_name: str | None,
     param_pairs: tuple[str, ...],
+    budgets_json: str | None,
+    receipt: str,
     at_oid: str | None,
     evaluation_time: str | None,
     output_json: bool,
@@ -4933,11 +4957,20 @@ def query_group(
         "spec": spec,
         "name": query_name,
         "params": params,
+        "claims": with_claims,
+        "receipt": receipt,
         "at": at_oid,
         "evaluation_time": None if evaluation_time is None else parse_datetime(evaluation_time),
     }
     if limit is not None:
         fields["limit"] = limit
+    if statuses:
+        fields["status"] = list(dict.fromkeys(statuses))
+    if budgets_json is not None:
+        try:
+            fields["budgets"] = json.loads(budgets_json)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="--budgets") from exc
     try:
         request = contracts.PlaybillQueryRequestV1.model_validate(fields)
     except ValidationError as exc:
@@ -4950,6 +4983,13 @@ def query_group(
         _emit_json(result.model_dump(mode="json"))
         return
     click.echo(render_query_table(result))
+    for row in result.rows if with_claims else ():
+        for column, entries in (row.get("claims") or {}).items():
+            for entry in entries:
+                click.echo(
+                    f"claim {row.get('subject', '')} {column}: {entry['claim']} "
+                    f"{entry['status']} {entry['verdict']} {entry['role']}"
+                )
     if result.truncated and result.next_cursor is not None:
         again = _without_cursor(ctx.meta.get("playbill_query_args", []))
         click.echo(

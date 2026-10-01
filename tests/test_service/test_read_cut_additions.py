@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 
 import pytest
@@ -125,3 +126,174 @@ def test_orient_counts_claims_by_status_including_retired(tmp_path: Path) -> Non
     assert counts.accepted + counts.conflicted + counts.overturned + counts.refused == 1
     # The section and kind views carry no counts; only the default map does.
     assert service_playbill_orient(instance, section="documents").artifacts is None
+
+
+def _contended(tmp_path: Path) -> tuple[PlaybillInstance, str]:
+    """A work item whose status slot has a winner and a later, contradicting contender."""
+
+    from tests.core_support._knowledge_loop_support import seed_claims
+    from tests.test_integration.test_next_closed_loop import _current_claim
+    from tests.test_service.test_get_reads import _contend
+
+    instance, owner = seed_claims(tmp_path)
+    first = _current_claim(instance)
+    _contend(instance, owner, first, "blocked", "read-cut-conflict")
+    return instance, first.identity.name
+
+
+def _query_at(instance: PlaybillInstance, **fields: object):  # type: ignore[no-untyped-def]
+    return _query(instance, **fields)
+
+
+def _query(instance: PlaybillInstance, **fields: object):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+    from cruxible_core.service.discovery.compact_query import service_playbill_query
+
+    return service_playbill_query(instance, request=PlaybillQueryRequestV1.model_validate(fields))
+
+
+def test_query_cells_show_the_slot_answer_and_name_each_claims_status(tmp_path: Path) -> None:
+    from tests.core_support._knowledge_loop_support import EVALUATION_TIME, SUBJECT_KIND
+
+    instance, winner = _contended(tmp_path)
+    # Before the contender's evidence is observed, resolution selects the first.
+    where = [{"field": "subject_id", "eq": "wi-42"}]
+    _query = functools.partial(_query_at, evaluation_time=EVALUATION_TIME)
+
+    # Live: the slot's answer, as get shows it; the set-aside contender is not a value.
+    (row,) = _query(instance, kind=SUBJECT_KIND, where=where, select=["status"]).rows
+    assert row["status"] == "ready" and "contested" not in row["flags"]
+    assert "claims" not in row
+
+    # Opt in to the Claims resolution set aside, and to each cell's Claims.
+    (row,) = _query(
+        instance,
+        kind=SUBJECT_KIND,
+        where=where,
+        select=["status"],
+        status=["live", "overturned", "refused"],
+        claims=True,
+    ).rows
+    assert sorted(row["status"]) == ["blocked", "ready"]
+    cell = {item["value"]: item for item in row["claims"]["status"]}
+    assert cell["ready"]["claim"] == winner and cell["ready"]["status"] == "accepted"
+    assert cell["blocked"]["status"] in {"overturned", "refused"}
+    assert {item["role"] for item in cell.values()} <= {"normative", "observation"}
+
+    # Only the set-aside ones.
+    (row,) = _query(
+        instance,
+        kind=SUBJECT_KIND,
+        where=where,
+        select=["status"],
+        status=["overturned", "refused"],
+    ).rows
+    assert row["status"] == "blocked"
+
+
+def test_query_lists_retired_claims_by_status(world: PlaybillInstance) -> None:
+    title = _write(
+        world, {"op": "set", "subject": f"{KIND}/wi-3", "field": "title", "value": "Old"}
+    )
+    _write(world, {"op": "retire", "target": title[0]})
+    where = [{"field": "subject_id", "eq": "wi-3"}]
+
+    (live,) = _query(world, kind=KIND, where=where, select=["title"]).rows
+    assert live["title"] is None
+    (row,) = _query(
+        world, kind=KIND, where=where, select=["title"], status=["retired"], claims=True
+    ).rows
+    assert row["title"] == "Old"
+    (claim,) = row["claims"]["title"]
+    assert claim == {
+        "claim": title[0],
+        "value": "Old",
+        "verdict": "retired",
+        "status": "retired",
+        "role": claim["role"],
+    }
+
+
+def test_query_flags_show_an_uncovered_verdict(world: PlaybillInstance) -> None:
+    from cruxible_core.service.discovery.read_flags import verdict_flags
+
+    assert verdict_flags("uncovered", "accepted") == ("uncovered",)
+    assert verdict_flags("supported", "accepted") == ()
+
+
+def test_status_and_claims_refuse_outside_a_compact_kind_query(world: PlaybillInstance) -> None:
+    from cruxible_core.service.read_refusals import ReadRefusalError
+
+    for fields in (
+        {"contains": "x", "claims": True},
+        {"kind": "ClaimType", "status": ["retired"]},
+        {"kind": KIND, "budgets": {"max_results": 1, "max_traversal_depth": 0}},
+        {"kind": KIND, "receipt": "full"},
+    ):
+        with pytest.raises(ReadRefusalError) as refused:
+            _query(world, **fields)
+        assert refused.value.error_code == "playbill.query.mode_invalid", fields
+
+
+def test_query_cursors_are_short_and_continue_the_same_listing(world: PlaybillInstance) -> None:
+    from cruxible_core.service.list_pages import (
+        PlaybillListCursorMismatch,
+        PlaybillListCursorStale,
+    )
+
+    first = _query(world, kind=KIND, limit=1)
+    assert first.truncated and first.next_cursor is not None
+    assert len(first.next_cursor) < 80
+    second = _query(world, kind=KIND, limit=1, cursor=first.next_cursor)
+    assert second.rows[0]["subject_id"] != first.rows[0]["subject_id"]
+    assert second.receipt.coordinate == first.receipt.coordinate
+    assert second.receipt.evaluation_time == first.receipt.evaluation_time
+
+    with pytest.raises(PlaybillListCursorMismatch):
+        _query(world, kind=KIND, limit=1, select=["status"], cursor=first.next_cursor)
+    with pytest.raises(PlaybillListCursorMismatch):
+        _query(world, kind=KIND, limit=1, cursor="not-a-cursor")
+    stale = first.next_cursor.rsplit(".", 2)
+    with pytest.raises(PlaybillListCursorStale):
+        _query(world, kind=KIND, limit=1, cursor=f"{stale[0]}.000000000000.{stale[2]}")
+
+
+@pytest.fixture(scope="module")
+def named(tmp_path_factory: pytest.TempPathFactory) -> PlaybillInstance:
+    from tests.test_service.test_playbill_orient import _seeded_world
+
+    return _seeded_world(tmp_path_factory.mktemp("read-cut-named"))
+
+
+def test_a_named_query_takes_budgets_up_to_its_maximum_and_a_full_receipt(
+    named: PlaybillInstance,
+) -> None:
+    from cruxible_core.service.discovery.query import service_run_playbill_query
+    from cruxible_core.service.read_refusals import ReadRefusalError
+    from tests.core_support._knowledge_loop_support import QUERY_NAME
+
+    compact = _query(named, name=QUERY_NAME)
+    assert compact.receipt.replay is None
+
+    full = _query(named, name=QUERY_NAME, receipt="full")
+    replay = full.receipt.replay
+    assert replay is not None
+    assert replay.definition_path.endswith(".json") and replay.result.verdict == "completed"
+    run = service_run_playbill_query(
+        named,
+        name=QUERY_NAME,
+        evaluation_time=full.receipt.evaluation_time,
+    )
+    # The replay receipt is the run's own result and execution receipt.
+    assert replay.result.model_dump(mode="json") == run.result.model_dump(mode="json")
+    assert replay.execution.model_dump(mode="json") == run.receipt.model_dump(mode="json")
+    assert [row.bindings for row in replay.result.rows] == [row.bindings for row in run.result.rows]
+
+    one = _query(
+        named, name=QUERY_NAME, budgets={"max_results": 1, "max_traversal_depth": 0}, receipt="full"
+    )
+    assert len(one.rows) == 1 and one.receipt.replay is not None
+    assert one.receipt.replay.result.budgets.max_results == 1
+    with pytest.raises(ReadRefusalError) as refused:
+        _query(named, name=QUERY_NAME, budgets={"max_results": 51, "max_traversal_depth": 0})
+    assert "ceiling" in str(refused.value) or "maximum" in str(refused.value)
