@@ -2860,7 +2860,16 @@ def playbill_get(instance_id: str, *, request: PlaybillGetRequestV1) -> Playbill
     result = service_playbill_get(
         get_playbill_manager().get(instance_id),
         request=request.model_copy(update={"full_coordinate": True}),
-        access=_access(instance_id, include_body=request.detail == "body"),
+        # A Document's why maps its source to its body when the caller may read
+        # bodies; it never refuses for want of that permission.
+        access=_access(
+            instance_id,
+            include_body=request.detail == "body"
+            or (
+                request.detail == "why"
+                and _permits("cruxible_playbill_body_read", instance_id=instance_id)
+            ),
+        ),
         installed_classifier_digests=(
             PROVIDER_BUCKET_CLASSIFIER_REGISTRY.installed_classifier_digests
         ),

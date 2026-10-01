@@ -1124,6 +1124,7 @@ def _document_card(
         revision=shell.lifecycle.revision,
         next=(
             _render_get(surface, resolved.display, "body"),
+            _render_get(surface, resolved.display, "why"),
             _render_get(surface, resolved.display, "history"),
         ),
     )
@@ -1781,6 +1782,7 @@ def _body(
         document=_name(resolved.identity),
         media_type=read.media_type,
         size=size,
+        body_digest=read.body_digest,
         range=window_range,
         text=text,
         content_base64=encoded,

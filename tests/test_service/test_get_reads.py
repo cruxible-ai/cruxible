@@ -238,6 +238,31 @@ def test_a_document_reads_as_metadata_then_body_by_range(world: dict[str, Any]) 
     assert (part.range.start, part.range.end, part.size) == (2, 8, len(_BODY))
     history = _get(instance, "Document:design", detail="history").history
     assert history is not None and len(history.revisions) == 1
+    # The body names its whole digest, which proof's facts carry too.
+    proof = _get(instance, "Document:design", detail="proof").proof
+    assert whole.body_digest == part.body_digest
+    assert whole.body_digest in json.dumps(proof)
+
+
+def test_a_document_explains_why_as_explain_did(world: dict[str, Any]) -> None:
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from cruxible_core.service.discovery.explain import service_explain_playbill_subject
+    from cruxible_core.service.discovery.get import resolve_get_ref
+    from cruxible_core.service.read_refusals import resolve_read_coordinate
+
+    instance = world["instance"]
+    result = _get(instance, "Document:design", detail="why")
+    coordinate = resolve_read_coordinate(instance, None)
+    resolved = resolve_get_ref(instance, coordinate, "Document:design")
+    expected = service_explain_playbill_subject(
+        instance,
+        subject=SemanticAddress.whole_artifact(resolved.path or ""),
+        at=result.accepted_coordinate
+        or _get(instance, "Document:design", detail="proof").accepted_coordinate,  # type: ignore[arg-type]
+        detail="summary",
+        access=_ACCESS,
+    )
+    assert result.why == expected.model_dump(mode="json")
 
 
 def test_a_body_over_the_cap_refuses_with_the_range_repair(
@@ -295,7 +320,7 @@ def test_a_detail_that_does_not_apply_refuses_naming_the_ones_that_do(
     refused = _refusal(world["instance"], "Document:design", detail="evidence")
 
     assert refused.error_code == "playbill.get.detail_unsupported"
-    assert refused.context["allowed"] == ["summary", "history", "proof", "body"]
+    assert refused.context["allowed"] == ["summary", "why", "history", "proof", "body"]
 
 
 def test_a_proposal_reads_by_id_prefix_with_its_next_step(world: dict[str, Any]) -> None:

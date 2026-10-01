@@ -4274,6 +4274,13 @@ def write_changes(
     help="Revisions per --detail history page, newest first (default 20).",
 )
 @click.option("--cursor", default=None, help="Continue --detail history from its next_cursor.")
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="With --detail body: write the body's exact bytes to this new file (read in ranges).",
+)
 @json_option
 @handle_errors
 def get_by_ref(
@@ -4284,6 +4291,7 @@ def get_by_ref(
     evaluation_time: str | None,
     limit: int | None,
     cursor: str | None,
+    output_path: str | None,
     output_json: bool,
 ) -> None:
     """Read one governed thing by reference, values first.
@@ -4316,6 +4324,11 @@ def get_by_ref(
             "; ".join(errors) + " (example: cruxible playbill get Document:design "
             "--detail body --range 0:4096)"
         ) from None
+    if output_path is not None:
+        if detail != "body":
+            raise click.UsageError("--output writes a Document body; pass --detail body")
+        _write_body(request, Path(output_path), whole=byte_range is None)
+        return
     result = _server_call(
         lambda client, instance_id: client.playbill_get(instance_id, request=request),
         command_name="playbill get",
@@ -4329,6 +4342,53 @@ def get_by_ref(
             f"next: cruxible playbill get {shlex.quote(ref)} --detail history "
             f"--cursor {result.next_cursor}"
         )
+
+
+def _write_body(request: Any, destination: Path, *, whole: bool) -> None:
+    """Write a Document body's exact bytes to a new file, binary-safe.
+
+    Without a range the whole body is read range by range at the first read's
+    coordinate, so a body past the whole-body cap still lands in one file.
+    """
+
+    import base64
+
+    from cruxible_client.contracts.get_reads import GET_BODY_RANGE_MAX_BYTES, PlaybillByteRangeV1
+
+    def read(window: Any, at: Any) -> Any:
+        ranged = request.model_copy(update={"range": window, "at": at})
+        result = _server_call(
+            lambda client, instance_id: client.playbill_get(instance_id, request=ranged),
+            command_name="playbill get",
+        )
+        assert result.body is not None
+        return result
+
+    first = read(
+        PlaybillByteRangeV1(start=0, end=GET_BODY_RANGE_MAX_BYTES) if whole else request.range,
+        request.at,
+    )
+    body = first.body
+    pinned = first.coordinate.git_oid
+    chunks: list[bytes] = []
+
+    def chunk(part: Any) -> bytes:
+        if part.text is not None:
+            return str(part.text).encode("utf-8")
+        return base64.b64decode(part.content_base64 or "", validate=True)
+
+    chunks.append(chunk(body))
+    end = 0 if body.range is None else body.range.end
+    while whole and end < body.size:
+        window = PlaybillByteRangeV1(start=end, end=min(end + GET_BODY_RANGE_MAX_BYTES, body.size))
+        part = read(window, pinned).body
+        chunks.append(chunk(part))
+        end = part.range.end
+    with destination.open("xb") as handle:
+        handle.write(b"".join(chunks))
+    click.echo(
+        f"wrote {sum(len(item) for item in chunks)} bytes to {destination} ({body.body_digest})"
+    )
 
 
 def _get_value_text(

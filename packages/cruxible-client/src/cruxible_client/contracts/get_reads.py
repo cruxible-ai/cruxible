@@ -73,7 +73,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "claim": ("summary", "evidence", "why", "history", "proof"),
     "subject": ("summary", "why", "history", "proof"),
     "claim_type": ("summary", "history", "proof"),
-    "document": ("summary", "history", "proof", "body"),
+    "document": ("summary", "why", "history", "proof", "body"),
     "procedure": ("summary", "history", "proof"),
     "query": ("summary", "history", "proof"),
     "capture_contract": ("summary", "history", "proof"),
@@ -479,9 +479,12 @@ class PlaybillGetHistoryV1(_StrictGetModel):
 
 
 class PlaybillGetBodyV1(_StrictGetModel):
+    """A byte range of one Document body; ``body_digest`` names the whole body."""
+
     document: str
     media_type: str
     size: int
+    body_digest: str
     # The bytes returned; absent for an empty Document, which has none.
     range: PlaybillByteRangeV1 | None = None
     text: str | None = Field(default=None, exclude_if=_omit_none)
