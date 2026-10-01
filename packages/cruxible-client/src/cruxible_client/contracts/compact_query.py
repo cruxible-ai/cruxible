@@ -45,6 +45,11 @@ PLAYBILL_QUERY_MAX_SELECT = 64
 QueryScalar = Union[str, int, bool]
 """One filter value. Dates, times and Subject references are strings."""
 
+QueryParameterValue = Union[str, int, bool, None]
+"""One named query parameter value. ``null`` binds an optional parameter
+explicitly, which is not the same as omitting it (omission takes its default);
+the accepted QueryDefinition decides whether a value is valid."""
+
 QueryFilterOperator = Literal["eq", "ne", "lt", "lte", "gt", "gte", "in", "exists", "contains"]
 QUERY_FILTER_OPERATORS: tuple[QueryFilterOperator, ...] = (
     "eq",
@@ -294,7 +299,7 @@ class PlaybillQueryRequestV1(BaseModel):
     cursor: str | None = Field(default=None, max_length=512)
     spec: QueryDefinitionSpecV1 | None = None
     name: str | None = Field(default=None, max_length=256)
-    params: dict[str, QueryScalar] | None = None
+    params: dict[str, QueryParameterValue] | None = None
     budgets: QueryBudgetsV1 | None = Field(
         default=None,
         description="Named query budgets, up to the definition's maximum; default its own.",
@@ -444,6 +449,7 @@ __all__ = [
     "QueryFollowV1",
     "QueryMode",
     "QueryReceiptDetail",
+    "QueryParameterValue",
     "QueryScalar",
     "query_filter",
 ]

@@ -1056,7 +1056,7 @@ def register_tools(
         ] = contracts.PLAYBILL_QUERY_DEFAULT_LIMIT,
         cursor: str | None = None,
         name: str | None = None,
-        params: dict[str, str | int | bool] | None = None,
+        params: dict[str, str | int | bool | None] | None = None,
         status: list[QueryClaimStatus] | None = None,
         claims: bool = False,
         budgets: QueryBudgetsV1 | None = None,

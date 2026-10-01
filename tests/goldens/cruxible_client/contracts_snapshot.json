@@ -61016,6 +61016,9 @@
                     },
                     {
                       "type": "boolean"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },
@@ -63128,6 +63131,9 @@
                     },
                     {
                       "type": "boolean"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 },

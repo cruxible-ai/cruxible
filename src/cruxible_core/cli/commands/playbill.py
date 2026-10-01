@@ -4268,7 +4268,9 @@ def _query_param_value(raw: str) -> object:
         decoded = json.loads(raw)
     except ValueError:
         return raw
-    return decoded if isinstance(decoded, str | int | bool) else raw
+    # JSON null binds an optional parameter explicitly (omitting it takes the
+    # default); pass '"null"' for the four-letter string.
+    return decoded if decoded is None or isinstance(decoded, str | int | bool) else raw
 
 
 def _without_cursor(args: Sequence[str]) -> list[str]:

@@ -406,4 +406,6 @@ replacement for transport authorization.
 Workspace source tools take `root_aliases` as a list of `{alias, path}` records.
 Coverage takes `bindings` as a list of `{path, source_id}` records. Duplicate aliases
 or paths are refused. Named-query `params` and Procedure `input` use the vocabulary
-and input contracts declared in accepted state, which the daemon validates.
+and input contracts declared in accepted state, which the daemon validates. A `params`
+value may be `null`, which binds an optional parameter explicitly; omitting it takes the
+parameter's default.
