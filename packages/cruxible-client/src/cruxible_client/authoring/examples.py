@@ -62,7 +62,7 @@ from cruxible_client.contracts.query.grammar import (
     QuerySubjectFieldRefV1,
 )
 from cruxible_client.contracts.subjects import SubjectShell
-from cruxible_client.contracts.triggers import CadenceScheduleV1
+from cruxible_client.contracts.triggers import CronScheduleV1
 
 AuthoringExampleName = Literal[
     "claim-existing-capture",
@@ -272,18 +272,20 @@ def line_example() -> LineInput:
 
 
 def trigger_example() -> TriggerInput:
-    """An hourly Trigger that runs the `--example line` Line.
+    """A Trigger that runs the `--example line` Line hourly, on the hour.
 
-    Name `line_name` or `action` (`evidence.sweep`, `prediction.anchor_retry`),
-    never both. A schedule is `cadence` (`interval_seconds`), `capture_landing`
-    (an exact CaptureContract `event`), or `window_close` (a `window`); an
-    internal action takes a cadence only.
+    Name `line_name` or `action` (a registered internal action such as
+    `evidence.sweep`), never both. A schedule is `cadence` (`interval_seconds`),
+    `cron` (a five-field `expression` and an IANA `timezone`, default UTC),
+    `capture_landing` (an exact CaptureContract `event`), or `window_close` (a
+    `window`). Any kind serves a target that needs no event; a Line that binds
+    its triggering Capture needs one that fires on that exact event.
     """
 
     return TriggerInput(
         kind="trigger",
         name="replace-me",
-        schedule=CadenceScheduleV1(interval_seconds=3600),
+        schedule=CronScheduleV1(expression="0 * * * *"),
         line_name="replace-me",
     )
 

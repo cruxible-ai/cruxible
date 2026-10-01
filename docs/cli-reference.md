@@ -230,21 +230,30 @@ identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 
 ### Internal triggers
 
-The daemon's internal cadences are governed Trigger artifacts
+The daemon's internal schedules are governed Trigger artifacts
 (`triggers/<name>.json`) aimed at an internal action, not daemon-local
-configuration. `evidence.sweep` and `prediction.anchor_retry` take a cadence
-schedule only. A new instance is initialized with `evidence-sweep` (daily) and
-`prediction-anchor-retry` (hourly); change an interval, add a Trigger, or retire
+configuration. Internal actions are registered in code (`evidence.sweep`,
+`prediction.anchor_retry`); each declares the input it needs, and a Trigger
+aimed at one takes any schedule that supplies it. Neither of today's actions
+needs an input, so any schedule kind serves; an action name that is not
+registered is refused at acceptance (`playbill.trigger.action_unknown`). A new
+instance is initialized with `evidence-sweep` (daily) and
+`prediction-anchor-retry` (hourly); change a schedule, add a Trigger, or retire
 one through an ordinary proposal. `playbill next` reports any internal action
 no live Trigger schedules.
 
 Each live cadence fires once on the first tick after it is accepted, then one
 interval after its last fire; a changed interval counts from the last fire, and
-a retired Trigger stops. Fires, which record the Trigger and the action, and
-pending one-shot deadlines are retained under each instance's
+a retired Trigger stops. A cron schedule fires at each calendar instant it
+names, and after downtime once, for the latest instant it missed. A
+`capture_landing` or event-anchored `window_close` Trigger reads Captures
+forward from when it is first seen, never back-filling earlier ones, and fires
+once per event (a window when it closes); a fixed `window_close` fires once when
+it closes. Fires, which record the Trigger, the action and any Capture event
+fired on, and pending one-shot deadlines are retained under each instance's
 `exhaust/triggers.sqlite3`; this append-only event log is not disposable worker
-state. Workers follow fires by action and resume from its sequences. Library
-mode fires no triggers.
+state. Workers follow fires by action, may ignore an event they do not need,
+and resume from its sequences. Library mode fires no triggers.
 
 ### Proposal receive operational configuration
 
@@ -1186,14 +1195,20 @@ Line over the `--example procedure` Procedure, and `--example
 acquisition-policy` a policy for a Source Procedure's Line.
 
 When a Line runs is not the Line's own: a `trigger` input authors a Trigger
-(`triggers/<name>.json`) whose `schedule` is a `cadence`, a `capture_landing`
-on one exact CaptureContract, or a `window_close`, and whose target is one
-Line (`line_name`) or one internal action (`action`, cadence only). A Line can
+(`triggers/<name>.json`) whose `schedule` is a `cadence`, a `cron`, a
+`capture_landing` on one exact CaptureContract, or a `window_close`, and whose
+target is one Line (`line_name`) or one registered internal action (`action`).
+A `cron` schedule is a standard five-field expression (`minute hour
+day-of-month month day-of-week`; numbers, `*`, ranges, steps and lists, with
+day-of-week 0-7 and Sunday both 0 and 7; no names or `@` macros) read in an IANA
+`timezone`, default `UTC`. A wall time a DST change skips never fires and one it
+repeats fires once; the Trigger law refuses an expression or timezone outside
+this grammar (`playbill.trigger.cron_invalid`). A Line can
 have several Triggers; one with none runs only when run explicitly, and `run`
 of a Line with Triggers names the Trigger it fires on (`--trigger`). Retiring
 a Line with live Triggers aimed at it refuses unless they are retired or
 retargeted in the same change set. `authoring create --example trigger` prints
-an hourly Trigger for the `--example line` Line, and `get Trigger:NAME` reads
+an hourly cron Trigger for the `--example line` Line, and `get Trigger:NAME` reads
 one.
 
 `check` is read-only: it evaluates every live Trigger aimed at the Line and
@@ -1218,14 +1233,16 @@ Procedure settles does so on its own under its mandate.
 
 An arm never catches up. It admits only what it matched itself since it was
 armed or since the daemon last restarted; anything pending before that, or
-recorded by `evaluate`, waits for explicit `dispatch`. A cadence tick is the
-exception: it is not an event but "the Trigger is due", so when a Line is
-armed or its arm resumes, a cadence tick still pending from before closes as `lapsed`
+recorded by `evaluate`, waits for explicit `dispatch`. A cadence or cron tick is
+the exception: it is not an event but "the Trigger is due", so when a Line is
+armed or its arm resumes, a tick still pending from before closes as `lapsed`
 -- retained, never run implicitly, and still runnable as exactly that tick
 with `dispatch --occurrence-id DIGEST --retry`, even after newer ticks ran --
 and the arm ticks on from its own start rather than catching up on ticks it
-missed. Each cadence Trigger keeps its own chain: it is due one interval after
-the last occurrence it fired, whatever other Triggers aimed at the Line fired. `disarm` stops further
+missed. Each cadence or cron Trigger keeps its own chain: it is due one interval,
+or at the next calendar instant, after the last occurrence it fired, whatever
+other Triggers aimed at the Line fired; a cron tick long overdue runs once, for
+its latest instant. `disarm` stops further
 admissions; a run already admitted keeps going. Both are idempotent: arming a
 Line already armed by the same credential at the same version returns it
 unchanged with `outcome: already_armed`, and disarming a stopped arm returns

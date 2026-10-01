@@ -1498,10 +1498,13 @@ Set `trigger_input="feed"` on `ChangeSetDraft.line(...)` to bind the event's
 Capture to the Procedure's Source alias `feed`. Every new Line authors as
 Line v6 under compiler revision 32, and declares the exact event that input
 accepts: the Source's CaptureContract. A Line runs on the Triggers aimed at it;
-`ChangeSetDraft.trigger(name=..., schedule=..., line=...)` defines one. Every
+`ChangeSetDraft.trigger(name=..., schedule=..., line=...)` defines one; its
+`schedule` is a `CadenceScheduleV1`, `CronScheduleV1(expression=...,
+timezone=...)`, `CaptureLandingScheduleV1` or `WindowCloseScheduleV1`, and
+`action=` aims it at a registered internal action instead of a Line. Every
 Trigger aimed at a `trigger_input` Line must fire on that event, as a
-capture-arrival schedule or an event-relative window. Cadence and fixed-window
-Triggers cannot provide this input.
+capture-arrival schedule or an event-relative window. Cadence, cron and
+fixed-window Triggers cannot provide this input.
 
 Use `pb.check_line(name)` to inspect trigger matches and their `dispatch_status`.
 `pb.dispatch_line(name)` processes pending work; unusable exact Captures close as
