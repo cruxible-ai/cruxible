@@ -35,7 +35,7 @@ def install(client: _WorldClient, monkeypatch, *, paged=False, invalid=False):
 
     def batch(_instance_id: str, *, request: Any):
         calls.append(request)
-        view = client.get_playbill_claim(
+        view = client._claim_view(
             _instance_id, "Claim:CLM-" + ("8" if request.cursor else "9") * 32
         )
         client.claim_reads.pop()  # fixture construction is not a transport request
@@ -55,12 +55,11 @@ def test_prefetch_keeps_contenders_and_avoids_claim_and_search_calls(connection,
     world = pb.world()
     subject = world.sec.vulnerability["cve-2026-69247"]
     calls = install(client, monkeypatch, paged=True)
-    previous_searches = len(client.searches)
     views = world.prefetch(subjects=[subject], predicates=[world.sec.vuln.severity], page_size=1)
     assert subject.severity == views
     assert len(subject.severity) == 2  # no arbitrary contender selection
     assert len(calls) == 2
-    assert len(client.searches) == previous_searches and client.claim_reads == []
+    assert client.claim_reads == []
     assert calls[0].at == calls[1].at == _COORDINATE
     assert calls[0].evaluation_time == calls[1].evaluation_time
 

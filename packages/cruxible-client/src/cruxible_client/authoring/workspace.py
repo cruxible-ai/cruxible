@@ -528,13 +528,7 @@ class _CoverageClient(Protocol):
         scan_budget: Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillCoverageResult: ...
 
-    def search_playbill(
-        self,
-        instance_id: str,
-        *,
-        mode: Literal["search", "list", "orient"],
-        kinds: Sequence[str] = ("claim", "demand", "procedure"),
-    ) -> contracts.PlaybillSearchResult: ...
+    def playbill_head(self, instance_id: str) -> contracts.PlaybillHeadV1: ...
 
 
 def _canonical_json(value: object) -> bytes:
@@ -1482,7 +1476,9 @@ def observe_playbill_next_workspace_with_coverage(
                 resolved_coordinate = (
                     resolve_coordinate()
                     if resolve_coordinate is not None
-                    else client.search_playbill(instance_id, mode="orient").coordinate
+                    else contracts.PlaybillAcceptedCoordinate.model_validate(
+                        client.playbill_head(instance_id).coordinate.model_dump(mode="json")
+                    )
                 )
         if resolved_coordinate is not None:
             projection = observe_playbill_projection_coverage(

@@ -130,21 +130,13 @@ def _resolver(client: Any, instance_id: str) -> ResolveCoverage:
 
 
 def _floor_generation_resolver(client: Any, instance_id: str) -> ResolveFloorGenerations:
-    """Use the same search-orient wire as the CLI hook for floor freshness."""
+    """Use the same head read as the CLI hook for floor freshness."""
 
     def generation(at: AcceptedCoordinate | None) -> int:
-        answer = client.search_playbill(
-            instance_id,
-            mode="orient",
-            kinds=("claim", "demand", "procedure"),
-            at=None if at is None else at.model_dump(mode="json"),
+        head = client.playbill_head(
+            instance_id, at=None if at is None else at.model_dump(mode="json")
         )
-        if answer.orientation is None:
-            raise RuntimeError("Playbill orient returned no floor generation")
-        value = answer.orientation.get("generation")
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-            raise RuntimeError("Playbill orient returned an invalid floor generation")
-        return value
+        return int(head.generation)
 
     def resolve(coordinate: AcceptedCoordinate) -> FloorGenerationPairV1:
         return FloorGenerationPairV1(

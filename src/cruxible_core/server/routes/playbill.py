@@ -27,7 +27,12 @@ from cruxible_client.contracts.claim_type_upgrade import (
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1, PlaybillGetResultV1
+from cruxible_client.contracts.get_reads import (
+    PlaybillGetBatchRequestV1,
+    PlaybillGetBatchResultV1,
+    PlaybillGetRequestV1,
+    PlaybillGetResultV1,
+)
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -1228,6 +1233,12 @@ def read_claim_values(instance_id: str, req: ClaimValuesRequestV1) -> ClaimValue
 def get_by_ref(instance_id: str, req: PlaybillGetRequestV1) -> PlaybillGetResultV1:
     """One governed thing by reference, values first; ``detail`` chooses the depth."""
     return playbill_api.playbill_get(resolve_server_instance_id(instance_id), request=req)
+
+
+@router.post("/{instance_id}/playbill/get-batch", response_model=PlaybillGetBatchResultV1)
+def get_batch(instance_id: str, req: PlaybillGetBatchRequestV1) -> PlaybillGetBatchResultV1:
+    """SDK-internal: several references at one coordinate (agents call get per reference)."""
+    return playbill_api.playbill_get_batch(resolve_server_instance_id(instance_id), request=req)
 
 
 @router.post("/{instance_id}/playbill/set", response_model=WriteOutcome)

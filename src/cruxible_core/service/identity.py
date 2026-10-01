@@ -72,18 +72,18 @@ def principal_refusal(
             "repair: set CRUXIBLE_PRINCIPAL_ID (or pass --principal-id) to your "
             f"registered principal ID (active principals: {named})",
             repair=RepairOperationV1(
-                operation="playbill.principal.list",
-                arguments={"configure": "CRUXIBLE_PRINCIPAL_ID"},
+                operation="playbill.orient",
+                arguments={"section": "principals", "configure": "CRUXIBLE_PRINCIPAL_ID"},
             ),
         )
     if standing == "revoked":
         return PrincipalRefusedError(
             "playbill.identity.principal_revoked",
             f"principal {principal_id!r} was revoked on {instance_id}; repair: act as an "
-            "active principal (`cruxible playbill principal list`)",
+            "active principal (`cruxible playbill orient --section principals`)",
             repair=RepairOperationV1(
-                operation="playbill.principal.list",
-                arguments={"revoked_principal_id": principal_id},
+                operation="playbill.orient",
+                arguments={"section": "principals", "revoked_principal_id": principal_id},
             ),
         )
     return PrincipalRefusedError(

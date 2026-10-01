@@ -34,6 +34,7 @@ from cruxible_client.artifacts import (
 from cruxible_client.authoring.attestations import (
     append_prepared_claim_attestation,
     local_attestation_signer_from_environment,
+    principal_records,
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
@@ -1851,7 +1852,7 @@ def review_proposal(
     def _review_at_observed_coordinate(
         client: CruxibleClient, instance_id: str
     ) -> contracts.PlaybillProposalReview:
-        orientation = client.search_playbill(instance_id, mode="orient")
+        head = client.playbill_head(instance_id)
         next_observation = observe_playbill_next_workspace(workspace)
         observation: dict[str, object] = {
             "tag": "playbill-review-workspace-observation-v1",
@@ -1861,7 +1862,9 @@ def review_proposal(
         }
         projection = observe_playbill_projection_coverage(
             workspace,
-            coordinate=orientation.coordinate,
+            coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+                head.coordinate.model_dump(mode="json")
+            ),
         )
         if projection is not None:
             observation["projection_coverage"] = projection
@@ -2347,8 +2350,8 @@ def add_principal(
     mode = cast(contracts.RuntimeCredentialPermissionMode, permission_mode)
 
     def call(client: CruxibleClient, instance_id: str) -> _PrincipalAddOutcome:
-        existing = client.list_playbill_principals(instance_id)
-        if any(item.get("principal_id") == principal_id for item in existing.principals):
+        existing = principal_records(client, instance_id)
+        if any(item.principal_id == principal_id for item in existing):
             raise click.ClickException(f"Playbill principal already exists: {principal_id}")
         material = generate_client_principal_key(
             custody,
@@ -2519,8 +2522,7 @@ def _principal_successor(
     proposal_name: str,
 ) -> contracts.PlaybillProposalInspection:
     def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
-        listing = client.list_playbill_principals(instance_id)
-        matches = [PrincipalRecord.model_validate(item) for item in listing.principals]
+        matches = principal_records(client, instance_id)
         target = next((item for item in matches if item.principal_id == target_id), None)
         if target is None:
             raise click.ClickException(f"Unknown Playbill principal: {target_id}")
@@ -2584,8 +2586,7 @@ def recover_principal(
 @handle_errors
 def revoke_principal(principal_id: str, proposal_name: str, output_json: bool) -> None:
     def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
-        listing = client.list_playbill_principals(instance_id)
-        matches = [PrincipalRecord.model_validate(item) for item in listing.principals]
+        matches = principal_records(client, instance_id)
         target = next((item for item in matches if item.principal_id == principal_id), None)
         if target is None:
             raise click.ClickException(f"Unknown Playbill principal: {principal_id}")
@@ -4761,11 +4762,13 @@ def propose_compiler_upgrade(target_digest: str, proposal_name: str, output_json
     from cruxible_client.contracts.types import CompilerCoordinate
 
     def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
-        inspection = client.list_playbill_principals(instance_id)
+        head = client.playbill_head(instance_id)
         return client.propose_playbill_compiler_upgrade(
             instance_id,
             target=CompilerCoordinate(rule_digest=target_digest),
-            base=inspection.coordinate,
+            base=contracts.PlaybillAcceptedCoordinate.model_validate(
+                head.coordinate.model_dump(mode="json")
+            ),
             proposal_name=proposal_name,
         )
 
@@ -6961,24 +6964,16 @@ def _hook_resolver(config: CoverageWorkspaceConfig) -> ResolveCoverage:
 
 
 def _hook_floor_generation_resolver() -> ResolveFloorGenerations:
-    """Resolve old and current sequence numbers through the existing orient wire."""
+    """Resolve old and current generations through the head read."""
 
     def orientation(at: AcceptedCoordinate | None) -> int:
         result = _server_call(
-            lambda client, instance_id: client.search_playbill(
-                instance_id,
-                mode="orient",
-                kinds=("claim", "demand", "procedure"),
-                at=None if at is None else at.model_dump(mode="json"),
+            lambda client, instance_id: client.playbill_head(
+                instance_id, at=None if at is None else at.model_dump(mode="json")
             ),
             command_name="playbill hook floor freshness",
         )
-        if result.orientation is None:
-            raise click.ClickException("Playbill orient returned no floor generation")
-        generation = result.orientation.get("generation")
-        if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
-            raise click.ClickException("Playbill orient returned an invalid floor generation")
-        return generation
+        return result.generation
 
     def resolve(coordinate: AcceptedCoordinate) -> FloorGenerationPairV1:
         floor_generation = orientation(coordinate)

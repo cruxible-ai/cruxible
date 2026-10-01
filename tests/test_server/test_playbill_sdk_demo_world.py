@@ -198,6 +198,19 @@ def _install_direct_capture_contract(
     return capture_contract_digest(contract).tagged
 
 
+def _accepted_claims(pb: Playbill, predicate: str) -> list[str]:
+    """Every accepted Claim of ``predicate`` across the demo's two Subject kinds."""
+
+    return [
+        entry["claim"]
+        for kind in ("secops.policy", "secops.service")
+        for row in pb.query(kind, select=[predicate], claims=True, limit=500).rows
+        for entries in (row.get("claims") or {}).values()
+        for entry in entries
+        if entry["status"] == "accepted"
+    ]
+
+
 def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
     playbill_http: tuple[TestClient, str, Path],
     tmp_path: Path,
@@ -825,11 +838,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     _approve_and_activate(http, instance_id, private_key_path, kev_proposal)
     assert kev.status().state == "accepted"
     pb.refresh()
-    kev_identity = next(
-        str(row["identity"]).removeprefix("Claim:")
-        for row in pb.list(kinds=("claim",), statuses=("accepted",)).rows
-        if row.get("predicate") == triage_type.predicate
-    )
+    kev_identity = _accepted_claims(pb, triage_type.predicate)[0]
 
     critical = pb.claim(
         subject=SubjectRef(policy_subject.address, pb.coordinate),
@@ -917,8 +926,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         _approve_and_activate(http, instance_id, private_key_path, proposal_id)
         pb.refresh()
 
-    claim_rows = pb.list(kinds=("claim",), statuses=("accepted",)).rows
-    assert len([row for row in claim_rows if row.get("predicate") == triage_type.predicate]) == 6
+    assert len(_accepted_claims(pb, triage_type.predicate)) == 6
     guidance_subject = pb.subject(
         subject="secops.policy/response-guidance",
         pins=(),

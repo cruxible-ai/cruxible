@@ -13,6 +13,7 @@ from cruxible_client.authoring.sdk import ClaimView, Playbill
 from cruxible_client.authoring.sdk_types import ClaimRef, ClaimTypeRef, RefKind, SubjectRef
 from cruxible_client.contracts import PlaybillClaimViewV2
 from cruxible_client.contracts.get_reads import (
+    PlaybillGetBatchRequestV1,
     PlaybillGetClaimTypeCardV1,
     PlaybillGetEvidenceV1,
     PlaybillGetRequestV1,
@@ -56,8 +57,6 @@ def test_get_resolves_strings_and_typed_refs_directly(
         ),
     )
     pb = _sdk(client, instance_id, tmp_path)
-    # get never routes through search any more.
-    monkeypatch.setattr(pb, "_search", lambda **_kw: pytest.fail("get must not search"))
 
     subject = pb.get("project.work_item/wi-42")
     assert subject.kind is RefKind.SUBJECT and subject.identity == "project.work_item/wi-42"
@@ -424,3 +423,43 @@ def test_the_compact_coordinate_passes_back_as_at_on_every_surface(
     )
     assert oriented_cli.exit_code == 0, oriented_cli.output
     assert json.loads(oriented_cli.output)["generation"] == earlier.sequence
+
+
+def test_world_reads_values_subjects_and_vocabulary_through_the_read_verbs(
+    owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """World.values, Subject loading and the vocabulary ride query, get-batch and orient."""
+
+    client, instance_id, key = owned_playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    reviewer = instance._recovered.head.principals.require_active("reviewer")  # noqa: SLF001
+    seed_claims_into(
+        instance,
+        GeneratedKeyMaterial(
+            principal=reviewer, private_key_path=key, public_key_path=key.with_suffix(".pub")
+        ),
+    )
+    pb = _sdk(client, instance_id, tmp_path)
+
+    world = pb.world()
+    assert PREDICATE in world.predicates
+    assert world.kind("project.work_item").subject_ids == ("wi-42", "wi-43")
+
+    values = world.values(subjects=["project.work_item/wi-42"], predicates=[PREDICATE])
+    (value,) = values
+    assert (value.subject, value.predicate, value.value) == (
+        "project.work_item/wi-42",
+        PREDICATE,
+        "ready",
+    )
+    assert value.status == "accepted" and value.claim.startswith("CLM-")
+
+    head = pb.refresh()
+    assert head.coordinate.git_oid == pb.coordinate.git_oid
+    batch = pb._client.playbill_get_batch(  # noqa: SLF001
+        instance_id,
+        request=PlaybillGetBatchRequestV1(refs=(f"ClaimType:{PREDICATE}", value.claim)),
+    )
+    assert [item.kind for item in batch.results] == ["claim_type", "claim"]
+    assert {item.accepted_coordinate for item in batch.results} == {batch.coordinate}

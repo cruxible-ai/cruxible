@@ -39,7 +39,12 @@ from cruxible_client.contracts.errors import (
     PlaybillSinceRequestInvalid,
 )
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1, PlaybillGetResultV1
+from cruxible_client.contracts.get_reads import (
+    PlaybillGetBatchRequestV1,
+    PlaybillGetBatchResultV1,
+    PlaybillGetRequestV1,
+    PlaybillGetResultV1,
+)
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -1424,6 +1429,19 @@ class CruxibleClient:
             json=request.model_dump(mode="json", exclude_none=True),
         )
         return self._parse_model(response, PlaybillGetResultV1)
+
+    def playbill_get_batch(
+        self,
+        instance_id: str,
+        *,
+        request: PlaybillGetBatchRequestV1,
+    ) -> PlaybillGetBatchResultV1:
+        """SDK-internal: several references at one coordinate and one detail."""
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/get-batch",
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        return self._parse_model(response, PlaybillGetBatchResultV1)
 
     def playbill_set(self, instance_id: str, *, request: PlaybillSetRequestV1) -> WriteOutcome:
         """Put one value in one field of one Subject; a refused write is an outcome."""

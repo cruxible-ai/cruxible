@@ -518,7 +518,34 @@ class PlaybillGetResultV1(_StrictGetModel):
     evaluation_time: datetime
 
 
+#: The most references one internal batch read resolves.
+GET_BATCH_MAX_REFS = 64
+
+
+class PlaybillGetBatchRequestV1(_StrictGetModel):
+    """Several references read at one coordinate and one detail: an SDK-internal route.
+
+    Agents call ``get`` once per reference; the SDK reads a whole vocabulary
+    (every ClaimType envelope, for ``world()``) in a few round trips with this.
+    Every result answers the coordinate the first one resolved.
+    """
+
+    tag: Literal["playbill-get-batch-request-v1"] = "playbill-get-batch-request-v1"
+    refs: tuple[str, ...] = Field(min_length=1, max_length=GET_BATCH_MAX_REFS)
+    detail: Literal["summary", "proof"] = "proof"
+    at: PlaybillAcceptedCoordinate | str | None = None
+    evaluation_time: datetime | None = None
+    surface: PlaybillReadSurface = "sdk"
+
+
+class PlaybillGetBatchResultV1(_StrictGetModel):
+    tag: Literal["playbill-get-batch-result-v1"] = "playbill-get-batch-result-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    results: tuple[PlaybillGetResultV1, ...]
+
+
 __all__ = [
+    "GET_BATCH_MAX_REFS",
     "GET_BODY_DEFAULT_MAX_BYTES",
     "GET_BODY_RANGE_MAX_BYTES",
     "GET_DETAILS_BY_KIND",
@@ -529,6 +556,8 @@ __all__ = [
     "PlaybillExactContentRefV1",
     "PlaybillGetApprovalPolicyCardV1",
     "PlaybillGetAttestationEvidenceV1",
+    "PlaybillGetBatchRequestV1",
+    "PlaybillGetBatchResultV1",
     "PlaybillGetBodyV1",
     "PlaybillGetCaptureContractCardV1",
     "PlaybillGetCaptureEvidenceV1",

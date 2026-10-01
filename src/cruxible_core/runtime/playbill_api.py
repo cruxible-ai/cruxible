@@ -61,7 +61,12 @@ from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
 )
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1, PlaybillGetResultV1
+from cruxible_client.contracts.get_reads import (
+    PlaybillGetBatchRequestV1,
+    PlaybillGetBatchResultV1,
+    PlaybillGetRequestV1,
+    PlaybillGetResultV1,
+)
 from cruxible_client.contracts.kits import (
     PlaybillKitAddRequestV1,
     PlaybillKitBuildRequestV1,
@@ -2913,6 +2918,31 @@ def playbill_get(instance_id: str, *, request: PlaybillGetRequestV1) -> Playbill
             paths=(path,),
         )
     return result
+
+
+def playbill_get_batch(
+    instance_id: str, *, request: PlaybillGetBatchRequestV1
+) -> PlaybillGetBatchResultV1:
+    """Several references at one coordinate: each is one ``get``, pinned to the first's."""
+
+    results: list[PlaybillGetResultV1] = []
+    pinned: contracts.PlaybillAcceptedCoordinate | str | None = request.at
+    for ref in request.refs:
+        result = playbill_get(
+            instance_id,
+            request=PlaybillGetRequestV1(
+                ref=ref,
+                detail=request.detail,
+                at=pinned,
+                evaluation_time=request.evaluation_time,
+                surface=request.surface,
+                full_coordinate=True,
+            ),
+        )
+        pinned = result.accepted_coordinate
+        results.append(result)
+    assert isinstance(pinned, contracts.PlaybillAcceptedCoordinate)
+    return PlaybillGetBatchResultV1(coordinate=pinned, results=tuple(results))
 
 
 __all__ = [name for name in globals() if name.startswith("playbill_")]

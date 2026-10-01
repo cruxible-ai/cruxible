@@ -280,7 +280,10 @@ def test_a_recovery_principal_never_holds_a_credential(
     assert refused.status_code == 403  # type: ignore[attr-defined]
     body = refused.json()  # type: ignore[attr-defined]
     assert body["error_code"] == "runtime_credential.principal_not_ordinary"
-    assert body["repair"]["operation"] == "playbill.principal.list"
+    assert body["repair"] == {
+        "operation": "playbill.orient",
+        "arguments": {"section": "principals"},
+    }
 
 
 def test_revoking_a_principal_revokes_its_credentials(

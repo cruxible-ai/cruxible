@@ -133,6 +133,36 @@ def assert_independent_projection_evidence(
         )
 
 
+def _proof(
+    client: CruxibleClient,
+    instance_id: str,
+    ref: str,
+    *,
+    coordinate: AcceptedCoordinate,
+    evaluation_time: str | None = None,
+) -> Mapping[str, object]:
+    """One accepted artifact's full envelope through get, pinned to ``coordinate``."""
+
+    from cruxible_client.contracts import PlaybillAcceptedCoordinate
+    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+
+    result = client.playbill_get(
+        instance_id,
+        request=PlaybillGetRequestV1(
+            ref=ref,
+            detail="proof",
+            at=PlaybillAcceptedCoordinate.model_validate(coordinate.model_dump(mode="json")),
+            evaluation_time=(
+                None if evaluation_time is None else datetime.fromisoformat(evaluation_time)
+            ),
+            surface="sdk",
+        ),
+    )
+    if result.proof is None:  # pragma: no cover - proof always answers an artifact
+        raise ProjectionRepinError(f"{ref} answered no proof")
+    return result.proof
+
+
 def _claim_backing(
     client: CruxibleClient,
     instance_id: str,
@@ -142,27 +172,28 @@ def _claim_backing(
     evaluation_time: str,
 ) -> ProjectionClaimBackingV1:
     bare = name.removeprefix("Claim:")
-    view = client.get_playbill_claim(
-        instance_id,
-        bare,
-        at=coordinate.model_dump(mode="json"),
-        evaluation_time=evaluation_time,
+    proof = _proof(
+        client, instance_id, bare, coordinate=coordinate, evaluation_time=evaluation_time
     )
-    if AcceptedCoordinate.model_validate(view.coordinate.model_dump(mode="json")) != coordinate:
+    if AcceptedCoordinate.model_validate(proof.get("coordinate")) != coordinate:
         raise ProjectionRepinError("Claim backing returned a different accepted coordinate")
+    facts = proof.get("facts")
+    envelope = proof.get("envelope")
+    if not isinstance(facts, list) or not isinstance(envelope, Mapping):
+        raise ProjectionRepinError("Claim backing did not disclose its envelope and facts")
     statement = next(
         (
             item.get("value")
-            for item in view.facts
-            if item.get("schema_id") == "playbill.claim.statement"
+            for item in facts
+            if isinstance(item, Mapping) and item.get("schema_id") == "playbill.claim.statement"
         ),
         None,
     )
     lifecycle = next(
         (
             item.get("value")
-            for item in view.facts
-            if item.get("schema_id") == "playbill.claim.lifecycle"
+            for item in facts
+            if isinstance(item, Mapping) and item.get("schema_id") == "playbill.claim.lifecycle"
         ),
         None,
     )
@@ -173,7 +204,7 @@ def _claim_backing(
     state = lifecycle.get("lifecycle")
     if not isinstance(state, Mapping) or state.get("state") != "live":
         raise ProjectionRepinError("a projection backing must identify a live Claim")
-    if view.envelope.get("identity") != f"Claim:{bare}":
+    if envelope.get("identity") != f"Claim:{bare}":
         raise ProjectionRepinError("Claim backing identity differs from the requested Claim")
     return ProjectionClaimBackingV1(
         identity=ArtifactIdentity(kind="Claim", name=bare),
@@ -231,22 +262,33 @@ def _query_backing(
     coordinate: AcceptedCoordinate,
     evaluation_time: datetime,
 ) -> ProjectionQueryBackingV1:
+    from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+
     bare = name.removeprefix("QueryDefinition:")
     normalized = normalize_canonical(dict(parameters))
     assert isinstance(normalized, dict)
-    evaluated = client.run_playbill_query(
+    # The named query's full receipt is the replayable result a backing pins.
+    evaluated = client.query_playbill(
         instance_id,
-        bare,
-        at=coordinate.model_dump(mode="json"),
-        evaluation_time=format_datetime(evaluation_time),
-        parameters=normalized,
+        request=PlaybillQueryRequestV1.model_validate(
+            {
+                "name": bare,
+                "params": normalized or None,
+                "receipt": "full",
+                "limit": 1,
+                "at": coordinate.model_dump(mode="json"),
+                "evaluation_time": evaluation_time,
+            }
+        ),
     )
     if (
-        AcceptedCoordinate.model_validate(evaluated.coordinate.model_dump(mode="json"))
+        AcceptedCoordinate.model_validate(evaluated.receipt.coordinate.model_dump(mode="json"))
         != coordinate
     ):
         raise ProjectionRepinError("query backing returned a different accepted coordinate")
-    result = evaluated.result
+    if evaluated.receipt.replay is None:
+        raise ProjectionRepinError("the named query answered no replay receipt")
+    result = evaluated.receipt.replay.result
     if result.verdict != "completed":
         raise ProjectionRepinError("a refused query cannot back a declared projection block")
     if result.truncation.clipped_budgets:
@@ -257,7 +299,7 @@ def _query_backing(
     )
     return ProjectionQueryBackingV1(
         identity=ArtifactIdentity(kind="QueryDefinition", name=bare),
-        definition_digest=evaluated.definition_digest,
+        definition_digest=evaluated.receipt.spec_digest,
         resolved_parameter_bindings=bindings,
         canonical_param_digest=projection_parameter_digest(bindings),
         declared_evaluation_time=evaluation_time,
@@ -1098,25 +1140,14 @@ def repin_projection_block(
         generation = selected.generation
         backing: list[ProjectionBackingV1] = list(selected.current_backings)
     else:
-        orientation = client.search_playbill(
+        head = client.playbill_head(
             instance_id,
-            mode="orient",
             at=None if coordinate is None else coordinate.model_dump(mode="json"),
-            evaluation_time=formatted,
         )
-        active = AcceptedCoordinate.model_validate(orientation.coordinate.model_dump(mode="json"))
+        active = AcceptedCoordinate.model_validate(head.coordinate.model_dump(mode="json"))
         if coordinate is not None and active != coordinate:
-            raise ProjectionRepinError("orientation returned a different accepted coordinate")
-        if orientation.orientation is None:
-            raise ProjectionRepinError("orientation did not disclose the accepted generation")
-        generation_value = orientation.orientation.get("generation")
-        if (
-            not isinstance(generation_value, int)
-            or isinstance(generation_value, bool)
-            or generation_value < 0
-        ):
-            raise ProjectionRepinError("orientation did not disclose the accepted generation")
-        generation = generation_value
+            raise ProjectionRepinError("the head read returned a different accepted coordinate")
+        generation = head.generation
 
         backing = list(
             _claim_backings(
@@ -1140,16 +1171,15 @@ def repin_projection_block(
         )
         for identity in artifact_refs:
             if identity.kind == "ClaimType":
-                type_view = client.get_playbill_claim_type(
-                    instance_id, identity.name, at=active.model_dump(mode="json")
+                type_proof = _proof(
+                    client, instance_id, f"ClaimType:{identity.name}", coordinate=active
                 )
-                artifact_digest = type_view.artifact_digest
+                artifact_digest = str(type_proof["artifact_digest"])
             elif identity.kind == "Subject" and "/" in identity.name:
-                kind, name = identity.name.split("/", 1)
-                subject_view = client.get_playbill_subject(
-                    instance_id, kind, name, at=active.model_dump(mode="json")
-                )
-                artifact_digest = str(subject_view.envelope["artifact_digest"])
+                subject_proof = _proof(client, instance_id, identity.name, coordinate=active)
+                envelope = subject_proof["envelope"]
+                assert isinstance(envelope, Mapping)
+                artifact_digest = str(envelope["artifact_digest"])
             else:
                 raise ProjectionRepinError("artifact backing must be a Subject or ClaimType")
             backing.append(

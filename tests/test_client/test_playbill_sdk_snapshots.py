@@ -27,8 +27,10 @@ class _LiveClient(_WorldClient):
 
     def read_playbill_claim_batch(self, instance: str, *, request: Any) -> ClaimReadBatchResultV1:
         self.batches.append(request)
+        if request.subject_paths:
+            return super().read_playbill_claim_batch(instance, request=request)
         at = request.at or self.coordinate
-        views = tuple(self.get_playbill_claim(instance, name, at=at) for name in request.claim_ids)
+        views = tuple(self._claim_view(instance, name, at=at) for name in request.claim_ids)
         if self.corrupt_batch:
             views = (views[0].model_copy(update={"coordinate": _MOVED_COORDINATE}),)
         return ClaimReadBatchResultV1(coordinate=at, claims=views)
@@ -60,13 +62,13 @@ def connection(tmp_path: Path) -> tuple[Playbill, _LiveClient]:
 
 def test_live_batch_follows_another_writer_without_head_lookup(connection):
     pb, client = connection
-    before = len(client.searches)
+    before = len(client.head_reads)
     pb.claim_views(["CLM-first"])
     client.coordinate = _MOVED_COORDINATE
     pb.claim_views(["CLM-first"])
     assert [request.at for request in client.batches] == [None, None]
     assert pb.coordinate.git_oid == _MOVED_COORDINATE.git_oid
-    assert len(client.searches) == before
+    assert len(client.head_reads) == before
 
 
 def test_receipt_snapshot_reads_exact_acceptance_after_head_moves_again(connection):
@@ -93,7 +95,7 @@ def test_world_and_draft_do_not_share_the_live_coordinate_cell(connection):
     pb.refresh()
     assert world.coordinate == old
     assert world.sec.vulnerability["cve-2026-69247"].severity
-    assert client.searches[-1]["at"].git_oid == old.git_oid
+    assert client.batches[-1].at.git_oid == old.git_oid
     assert draft._playbill.coordinate == old
 
 
@@ -105,7 +107,7 @@ def test_pinned_world_and_refresh_keep_coordinate_without_reorienting_parent(con
     assert snapshot.world().coordinate.git_oid == "a" * 40
     snapshot.refresh()
     assert client.claim_type_coordinates[-1] == _COORDINATE
-    assert client.searches[-1]["at"] == _COORDINATE
+    assert client.head_reads[-1] == _COORDINATE
     assert pb.coordinate.git_oid == "b" * 40
 
 
@@ -160,7 +162,7 @@ def test_explicit_connect_skips_current_orientation(connection, monkeypatch, tmp
     from cruxible_client.authoring import sdk
 
     _, client = connection
-    client.searches.clear()
+    client.head_reads.clear()
     monkeypatch.setattr(sdk, "CruxibleClient", lambda **kwargs: client)
     monkeypatch.setattr(sdk.client_compatibility, "check_daemon_compatibility", lambda c: None)
     with Playbill.connect(
@@ -170,7 +172,7 @@ def test_explicit_connect_skips_current_orientation(connection, monkeypatch, tmp
         context=tmp_path / "no-context.json",
         at=_COORDINATE,
     ) as pinned:
-        assert client.searches == []
+        assert client.head_reads == []
         client.coordinate = _MOVED_COORDINATE
         pinned.claim_views(["CLM-old"])
         assert client.batches[-1].at == _COORDINATE

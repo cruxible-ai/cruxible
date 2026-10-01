@@ -150,8 +150,10 @@ def _principal_authority(
             "runtime_credential.principal_not_ordinary",
             f"principal {principal_id!r} is a {registered.kind} principal, and only ordinary "
             "principals hold credentials; repair: mint for an ordinary principal "
-            "(`cruxible playbill principal list`)",
-            repair=RepairOperationV1(operation="playbill.principal.list"),
+            "(`cruxible playbill orient --section principals`)",
+            repair=RepairOperationV1(
+                operation="playbill.orient", arguments={"section": "principals"}
+            ),
         )
     if principal_proof is not None:
         return _verified_proof_digest(

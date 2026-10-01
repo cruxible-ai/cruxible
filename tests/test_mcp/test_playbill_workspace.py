@@ -90,16 +90,11 @@ class _StubClient:
     ) -> contracts.PlaybillFloorExport:
         return _export()
 
-    def search_playbill(self, instance_id: str, *, mode: str) -> contracts.PlaybillSearchResult:
-        return contracts.PlaybillSearchResult(
-            mode="orient",
-            coordinate=_coordinate(),
-            evaluation_time="2026-08-22T00:00:00Z",
-            rows=[],
-            orientation={},
-            selection_basis_digest="sha256:" + "5" * 64,
-            truncated=False,
-            result_digest="sha256:" + "6" * 64,
+    def playbill_head(self, instance_id: str) -> contracts.PlaybillHeadV1:
+        return contracts.PlaybillHeadV1(
+            instance=instance_id,
+            coordinate=_coordinate().model_dump(mode="json"),  # type: ignore[arg-type]
+            generation=3,
         )
 
 

@@ -222,16 +222,8 @@ class _LocalCoverageClient:
             ),
         )
 
-    def search_playbill(
-        self,
-        instance_id: str,
-        *,
-        mode: Literal["search", "list", "orient"],
-        kinds: Sequence[str] = SEARCH_KINDS,
-    ) -> contracts.PlaybillSearchResult:
-        return playbill_api.playbill_search(
-            instance_id, mode=mode, kinds=tuple(cast(SearchKind, kind) for kind in kinds)
-        )
+    def playbill_head(self, instance_id: str) -> contracts.PlaybillHeadV1:
+        return playbill_api.playbill_head(instance_id)
 
 
 def _json(value: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any]) -> dict[str, Any]:
@@ -251,43 +243,22 @@ class _LocalAttestationClient:
     def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
         return playbill_api.playbill_whoami(instance_id)
 
-    def list_playbill_principals(self, instance_id: str) -> contracts.PlaybillPrincipalList:
-        return playbill_api.playbill_list_principals(instance_id)
-
-    def get_playbill_claim(
+    def orient_playbill(
         self,
         instance_id: str,
-        identity: str,
         *,
-        at: contracts.PlaybillAcceptedCoordinate | None = None,
-        evaluation_time: str | None = None,
-    ) -> contracts.PlaybillClaimViewV2:
-        return playbill_api.playbill_get_claim(
-            instance_id,
-            identity,
-            at=(
-                None
-                if at is None
-                else AcceptedCoordinate.model_validate(at.model_dump(mode="json"))
-            ),
-            evaluation_time=(
-                None if evaluation_time is None else datetime.fromisoformat(evaluation_time)
-            ),
+        section: contracts.PlaybillOrientSection,
+        limit: int,
+        cursor: str | None = None,
+    ) -> contracts.PlaybillOrientResultV1:
+        return playbill_api.playbill_orient(
+            instance_id, section=section, limit=limit, cursor=cursor, surface="sdk"
         )
 
-    def get_playbill_subject(
-        self,
-        instance_id: str,
-        subject_kind: str,
-        subject_id: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate,
-    ) -> contracts.PlaybillSubjectView:
-        return playbill_api.playbill_get_subject(
-            instance_id,
-            f"Subject:{subject_kind}/{subject_id}",
-            at=AcceptedCoordinate.model_validate(at.model_dump(mode="json")),
-        )
+    def playbill_get(
+        self, instance_id: str, *, request: PlaybillGetRequestV1
+    ) -> PlaybillGetResultV1:
+        return playbill_api.playbill_get(instance_id, request=request)
 
     def append_playbill_claim_attestation(
         self,
@@ -2739,14 +2710,16 @@ def handle_playbill_floor_export(
     if include and mode == "status":
         raise DataValidationError("include applies only to floor export modes 'bytes' and 'write'")
     if mode == "status":
-        search = _dispatch_remote_or_local(
-            lambda client: client.search_playbill(instance_id, mode="orient"),
-            lambda: playbill_api.playbill_search(instance_id, mode="orient"),
+        head = _dispatch_remote_or_local(
+            lambda client: client.playbill_head(instance_id),
+            lambda: playbill_api.playbill_head(instance_id),
             operation_name="cruxible_playbill_floor_export",
         )
         return inspect_workspace_floor(
             mcp_git_workspace_root(),
-            current_coordinate=search.coordinate,
+            current_coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+                head.coordinate.model_dump(mode="json")
+            ),
         )
     parts = floor_export_parts(include)
     if mode == "bytes":

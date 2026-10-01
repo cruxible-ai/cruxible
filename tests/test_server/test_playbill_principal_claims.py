@@ -312,8 +312,8 @@ def test_an_unregistered_claim_reads_orient_and_every_operational_section(
             {},
             "playbill.identity.principal_unconfigured",
             {
-                "operation": "playbill.principal.list",
-                "arguments": {"configure": "CRUXIBLE_PRINCIPAL_ID"},
+                "operation": "playbill.orient",
+                "arguments": {"section": "principals", "configure": "CRUXIBLE_PRINCIPAL_ID"},
             },
         ),
     ],
