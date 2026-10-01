@@ -18,35 +18,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 ROUTES = ROOT / "src" / "cruxible_core" / "server" / "routes"
 _HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete"})
 
-# Read routes the read-surface cut deletes outright; converting them here would
-# only collide with that deletion. Remove each name when its route is gone.
-_PENDING_REMOVAL = frozenset(
-    {
-        "claim_history",
-        "dereference_document",
-        "discover",
-        "document_history",
-        "expand",
-        "explain",
-        "explain_claim",
-        "get_claim",
-        "get_claim_type",
-        "get_document",
-        "get_query_definition",
-        "get_subject",
-        "list_claim_types",
-        "list_claims",
-        "list_documents",
-        "list_policies_in_force",
-        "list_principals",
-        "list_query_definitions",
-        "list_subjects",
-        "run_query",
-        "search",
-        "subject_history",
-    }
-)
-
 
 def _is_route(node: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:
     return any(
@@ -86,19 +57,11 @@ def test_the_scan_sees_routes() -> None:
 
 
 def test_no_route_holds_the_event_loop() -> None:
-    offenders = _async_routes_that_never_await()
-
     blocking = sorted(
-        f"{module}:{name}" for name, module in offenders.items() if name not in _PENDING_REMOVAL
+        f"{module}:{name}" for name, module in _async_routes_that_never_await().items()
     )
     assert blocking == [], (
         "these routes are `async def` but never await, so their synchronous work "
         "runs on the daemon's event loop and stalls every other request; declare "
         "them `def`: " + ", ".join(blocking)
-    )
-
-    stale = sorted(_PENDING_REMOVAL - offenders.keys())
-    assert stale == [], (
-        "these routes are gone or no longer `async def`; delete them from "
-        "_PENDING_REMOVAL: " + ", ".join(stale)
     )

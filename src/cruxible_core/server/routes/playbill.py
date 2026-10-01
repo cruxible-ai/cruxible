@@ -337,7 +337,7 @@ def whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
 
 
 @router.get("/{instance_id}/playbill/head", response_model=contracts.PlaybillHeadV1)
-async def head(
+def head(
     instance_id: str,
     at: str | None = Query(
         default=None,
