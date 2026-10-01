@@ -62,29 +62,6 @@ _SDK_CLASSES: tuple[type, ...] = (
     compact_query.QueryResult,
 )
 
-#: Members the surface cut (cut-a1) rewires onto the new read verbs or
-#: removes. They keep the docstrings they have; that branch owns their text,
-#: and merging it brings each survivor under the next-call rule.
-_SURFACE_CUT_OWNED = frozenset(
-    {
-        "Playbill.claim_type",
-        "Playbill.claim_view",
-        "Playbill.claim_views",
-        "Playbill.explain",
-        "Playbill.list",
-        "Playbill.provider_binding",
-        "Playbill.query_binding",
-        "Playbill.refresh",
-        "Playbill.run_query",
-        "Playbill.search",
-        "Playbill.world",
-        "ProjectionBlocks.repin",
-        "World.prefetch",
-        "World.values",
-        "WorldSubject.explain",
-    }
-)
-
 #: Read tools the surface cut removes; a docstring that names one sends the
 #: reader to a call that will not exist.
 _CUT_TOOL_CALL = re.compile(
@@ -113,23 +90,13 @@ def _members(cls: type) -> Iterator[tuple[str, object]]:
             yield name, target
 
 
-def _owner(cls: type, name: str) -> str:
-    for base in cls.__mro__:
-        if name in vars(base):
-            return f"{base.__name__}.{name}"
-    return f"{cls.__name__}.{name}"
-
-
 def test_every_public_sdk_member_names_the_next_call() -> None:
     missing: list[str] = []
     for cls in _SDK_CLASSES:
         for name, target in _members(cls):
-            qualified = f"{cls.__name__}.{name}"
-            if qualified in _SURFACE_CUT_OWNED or _owner(cls, name) in _SURFACE_CUT_OWNED:
-                continue
             doc = inspect.getdoc(target) or ""
             if "Next:" not in doc:
-                missing.append(qualified)
+                missing.append(f"{cls.__name__}.{name}")
     assert not missing, "a public SDK member's docstring names no next call:\n" + "\n".join(missing)
 
 
@@ -151,8 +118,6 @@ def test_no_sdk_docstring_sends_the_reader_to_a_cut_read_tool() -> None:
             *(
                 (inspect.getdoc(target) or "", f"{cls.__name__}.{name}")
                 for name, target in _members(cls)
-                if f"{cls.__name__}.{name}" not in _SURFACE_CUT_OWNED
-                and _owner(cls, name) not in _SURFACE_CUT_OWNED
             ),
         ):
             if _CUT_TOOL_CALL.search(text):

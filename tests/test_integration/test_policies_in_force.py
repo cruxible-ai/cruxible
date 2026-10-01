@@ -44,7 +44,7 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_path,
     render_query_definition,
 )
-from cruxible_core.service.claims.policies import list_playbill_policies_in_force
+from cruxible_core.service.claims.policies import service_playbill_policies_in_force
 from tests.core_support._adoption_fixture import _claim_type, _claim_type_path, _query_definition
 from tests.core_support._support import initialize_local
 from tests.test_indexes.test_resolution_contracts import _accept_tree
@@ -72,7 +72,7 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
         proposal_name="seed-policy-carriers",
     )
 
-    result = list_playbill_policies_in_force(instance)
+    result = service_playbill_policies_in_force(instance)
 
     assert result.coordinate.git_oid == instance.accepted_coordinate().git_oid
     assert [row.policy_kind for row in result.policies] == [
@@ -101,7 +101,7 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
     )
 
     genesis = instance.accepted_history()[0]
-    historical = list_playbill_policies_in_force(
+    historical = service_playbill_policies_in_force(
         instance,
         at=contracts.PlaybillAcceptedCoordinate(
             git_oid=genesis.oid,
@@ -136,7 +136,7 @@ def test_policy_inventory_skips_the_cards_an_accepted_change_leaves(tmp_path) ->
     accepted = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert [path for path in accepted if path.startswith("cards/")]
 
-    result = list_playbill_policies_in_force(instance)
+    result = service_playbill_policies_in_force(instance)
 
     assert result.policies
     assert not any(row.path.startswith("cards/") for row in result.policies)
@@ -253,7 +253,7 @@ def complete_policy_inventory(
             root / "indexed", tree, patch, instance=instance
         )
         patch.setattr(indexed, "accepted_coordinate", lambda: coordinate)
-        rows = tuple(list_playbill_policies_in_force(indexed).policies)
+        rows = tuple(service_playbill_policies_in_force(indexed).policies)
     expected = {
         "approval_policy": ("ApprovalPolicy:instance", None),
         "procedure_runtime_policy": ("ProcedureRuntimePolicy:instance", None),

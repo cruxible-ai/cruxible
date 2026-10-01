@@ -44,12 +44,12 @@ from cruxible_client.contracts.subjects import parse_subject, subject_digest, su
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
 from cruxible_core.service.discovery.query import _AcceptedQueryFactsRead, evaluate_accepted_query
 from cruxible_core.service.discovery.query_definitions import (
     _resolve_coordinate,
     accepted_query_definition,
 )
-from cruxible_core.service.discovery.search import claim_resolution_statuses
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from cruxible_core.service.floor.projection_lineage import (
     ClaimLineageNode as _ClaimNode,

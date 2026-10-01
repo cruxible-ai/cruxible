@@ -4,7 +4,7 @@ This is the TauBench-runnable surface, written as the harness recipe it has to
 support: allocate a host, bootstrap it, seed a ClaimType, a Subject, two Claims,
 and a named entrypoint through the governed propose/activate loop, then
 read the resulting accepted state back through every read the loop publishes --
-query execution with its receipt, semantic discovery, bounded expansion, and the
+orient, query with its replay receipt, get, and the
 deterministic floor.
 
 Every step goes through ``cruxible ...`` argv. Nothing here reaches into a
@@ -643,85 +643,88 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     )
     coordinate = accepted["accepted_coordinate"]
 
-    # -- reads ------------------------------------------------------------
+    # -- reads: orient, query and get ----------------------------------------
 
-    subjects = cruxible.json("playbill", "subject", "list")
-    assert {(item["subject_kind"], item["subject_id"]) for item in subjects["subjects"]} == {
-        (SUBJECT_KIND, "wi-42"),
-        (SUBJECT_KIND, "wi-43"),
-    }
-    assert subjects["coordinate"] == coordinate
+    oriented = cruxible.json("playbill", "orient", "--kind", SUBJECT_KIND)
+    assert oriented["coordinate"] == coordinate
+    assert set(oriented["kind_detail"]["sample_subject_ids"]) == {"wi-42", "wi-43"}
+    subject_ref = f"{SUBJECT_KIND}/wi-42"
     assert (
-        cruxible.json("playbill", "subject", "get", f"{SUBJECT_KIND}/wi-42")["envelope"]["identity"]
+        cruxible.json("playbill", "get", subject_ref, "--detail", "proof")["proof"]["envelope"][
+            "identity"
+        ]
         == f"Subject:{SUBJECT_KIND}/wi-42"
     )
-    assert cruxible.json("playbill", "subject", "history", f"{SUBJECT_KIND}/wi-42")["entries"]
+    assert cruxible.json("playbill", "get", subject_ref, "--detail", "history")["history"][
+        "revisions"
+    ]
 
-    claim_types = cruxible.json("playbill", "claim-type", "list")
+    claim_types = cruxible.json("playbill", "orient", "--section", "claim_types")
     assert [item["predicate"] for item in claim_types["claim_types"]] == [PREDICATE]
-    assert cruxible.json("playbill", "claim-type", "get", PREDICATE)["predicate"] == PREDICATE
-
-    claims = cruxible.json("playbill", "claim", "list", "--predicate", PREDICATE)
-    assert {item["envelope"]["identity"] for item in claims["claims"]} == set(claim_identities)
     assert (
-        cruxible.json("playbill", "claim", "get", claim_identities[0])["envelope"]["identity"]
+        cruxible.json("playbill", "get", f"ClaimType:{PREDICATE}", "--detail", "proof")["proof"][
+            "predicate"
+        ]
+        == PREDICATE
+    )
+
+    claims = cruxible.json("playbill", "query", SUBJECT_KIND, "--claims")
+    assert {
+        claim["claim"].removeprefix("Claim:")
+        for row in claims["rows"]
+        for cell in row["claims"].values()
+        for claim in cell
+    } == {identity.removeprefix("Claim:") for identity in claim_identities}
+    assert (
+        cruxible.json("playbill", "get", claim_identities[0], "--detail", "proof")["proof"][
+            "envelope"
+        ]["identity"]
         == claim_identities[0]
     )
-    assert cruxible.json("playbill", "claim", "history", claim_identities[0])["entries"]
-    explained = cruxible.json("playbill", "claim", "explain", claim_identities[0])
+    assert cruxible.json("playbill", "get", claim_identities[0], "--detail", "history")["history"][
+        "revisions"
+    ]
+    explained = cruxible.json("playbill", "get", claim_identities[0], "--detail", "why")["why"]
     assert explained["verdict"]["verdict"] == "supported", explained
     assert explained["law_evidence"]
 
-    definitions = cruxible.json("playbill", "query", "list")
-    assert [item["name"] for item in definitions["query_definitions"]] == [QUERY_NAME]
-    assert cruxible.json("playbill", "query", "get", QUERY_NAME)["name"] == QUERY_NAME
+    definitions = cruxible.json("playbill", "orient", "--section", "queries")
+    assert [item["name"] for item in definitions["queries"]] == [QUERY_NAME]
+    assert (
+        cruxible.json("playbill", "get", f"query:{QUERY_NAME}", "--detail", "proof")["proof"][
+            "name"
+        ]
+        == QUERY_NAME
+    )
 
-    # 6. Execute the entrypoint. The receipt is the replay coordinate of the
-    #    read, and it is surfaced in both output modes.
-    run = cruxible.json("playbill", "query", "run", QUERY_NAME)
-    assert run["result"]["verdict"] == "completed"
+    # 6. Execute the entrypoint. The full receipt is the replay coordinate of
+    #    the read.
+    run = cruxible.json("playbill", "query", "--name", QUERY_NAME, "--receipt", "full")
+    replay = run["receipt"]["replay"]
     projected = {
         next(field["value"] for field in row["fields"] if field["name"] == "item_id"): next(
             field["value"] for field in row["fields"] if field["name"] == "status"
         )
-        for row in run["result"]["rows"]
+        for row in replay["result"]["rows"]
     }
     assert projected == {"wi-42": "ready", "wi-43": "blocked"}
-    receipt = run["receipt"]
+    receipt = replay["execution"]
     assert receipt["tag"] == "playbill-query-execution-receipt-v1"
     assert receipt["verdict"] == "completed"
     assert receipt["result_digest"].startswith("sha256:")
-    assert receipt["definition_digest"] == run["definition_digest"]
-    # The daemon opens no journal for this read; PC-G owns that seam.
-    assert run["journal_record_digest"] is None
 
-    # Replaying at the receipt's own evaluation time reproduces it exactly, and
-    # the human rendering names the same receipt the JSON does.
-    human = cruxible.run(
+    # Replaying at the receipt's own evaluation time reproduces it exactly.
+    again = cruxible.json(
         "playbill",
         "query",
-        "run",
+        "--name",
         QUERY_NAME,
+        "--receipt",
+        "full",
         "--evaluation-time",
         receipt["evaluation_time"],
-    ).stdout
-    assert f"Receipt result digest: {receipt['result_digest']}" in human
-    assert f"Receipt definition: {receipt['definition_digest']}" in human
-    assert f"Receipt parameters: {receipt['parameter_digest']}" in human
-    assert f"{QUERY_NAME}: completed with 2 row(s)" in human
-
-    # 7. Discovery and bounded expansion over the same accepted coordinate.
-    page = cruxible.json("playbill", "discover", "--query", "wi-42", "--profile", "all")
-    assert page["vocabulary_entry_count"] > 0
-    assert any(
-        hit["address"]["artifact_path"] == f"subjects/{SUBJECT_KIND}/wi-42.json"
-        for hit in page["page"]["hits"]
     )
-
-    capsule = cruxible.json("playbill", "expand", f"subjects/{SUBJECT_KIND}/wi-42.json")
-    assert capsule["tag"] == "playbill-context-capsule-v1"
-    assert capsule["at"] == coordinate
-    assert capsule["canonical_summary"]["identity"] == f"Subject:{SUBJECT_KIND}/wi-42"
+    assert again["receipt"]["replay"]["execution"]["result_digest"] == receipt["result_digest"]
 
     # 8. Materialize the floor and prove it carries the accepted facts bound to
     #    the coordinate they were projected from.

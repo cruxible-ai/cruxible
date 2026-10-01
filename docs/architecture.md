@@ -54,7 +54,7 @@ accepted Git generation
         │
         ├──> rebuildable projections
         ├──> history
-        └──> explain
+        └──> get (why, history, proof)
 ~~~
 
 Proposal creation never mutates accepted state. Approval signs a frozen

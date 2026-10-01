@@ -748,29 +748,31 @@ with the matching `CruxibleClient` methods.
 
 ~~~text
 cruxible playbill document propose --envelope FILE --name NAME
-cruxible playbill document list
-cruxible playbill document get IDENTITY
-cruxible playbill document body IDENTITY [--output FILE]
-cruxible playbill document history IDENTITY
 ~~~
 
-## playbill subject
+`document propose` is the only Document subcommand; Documents are read through
+the general reads:
 
-~~~text
-cruxible playbill subject list [--kind KIND] [--limit N] [--cursor CURSOR]
-cruxible playbill subject get KIND/ID
-cruxible playbill subject history KIND/ID
-~~~
+| To | Run |
+|---|---|
+| list accepted Documents | `cruxible playbill orient --section documents` |
+| read one Document's envelope | `cruxible playbill get Document:NAME` |
+| read its body | `cruxible playbill get Document:NAME --detail body [--range a:b] [--output FILE]` |
+| explain it | `cruxible playbill get Document:NAME --detail why` |
+| read its revisions | `cruxible playbill get Document:NAME --detail history` |
+
+`--detail body` answers one page of at most 64 KiB; `--range start:end` reads a
+byte range, and `--output FILE` writes the body's exact bytes to a new file,
+paging past the cap.
 
 A Subject is an identity-only referent named by its canonical `kind/name`
-address — the spelling the SDK, claim objects, floor profiles, and `explain` all
-use.
-
-`subject get` renders the Subject's own facts and an `incoming` section: every
-live Claim whose subject-valued object is this Subject, grouped by predicate and
-naming the asserting Subject and the Claim id. A relation is stored once, on the
-asserting Subject, so without this section nothing answers "what touches this
-package" from the object side.
+address, the spelling the SDK, claim objects, floor profiles, and `get` all
+use. `cruxible playbill get KIND/ID` renders the Subject's own facts and an
+`incoming` section: every live Claim whose subject-valued object is this
+Subject, grouped by predicate and naming the asserting Subject and the Claim
+id. A relation is stored once, on the asserting Subject, so without this
+section nothing answers "what touches this package" from the object side.
+`--detail history` reads the Subject's revisions.
 
 ## playbill claim-type
 
@@ -780,9 +782,10 @@ cruxible playbill claim-type propose --input FILE --name NAME
 cruxible playbill claim-type migrate REQUEST_FILE
 cruxible playbill claim-type upgrade-evidence-rules
 cruxible playbill claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate] [--dry-run]
-cruxible playbill claim-type list
-cruxible playbill claim-type get PREDICATE
 ~~~
+
+Read the accepted ClaimTypes with `cruxible playbill orient --section
+claim_types`, one ClaimType with `cruxible playbill get ClaimType:PREDICATE`.
 
 A ClaimType is the governed interface a predicate must satisfy before any Claim
 may state it. `propose --input` accepts a complete `ClaimTypeInputV1`; ClaimType
@@ -859,33 +862,27 @@ version; the refusal names them.
 ~~~text
 cruxible playbill claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
   [--valid-until TS]
-cruxible playbill claim list [--subject PATH] [--kind KIND] [--predicate P] [--include-retired]
-cruxible playbill claim values --kind KIND [--subject ID ...] --predicate P [--predicate P ...]
-  [--evaluation-time TS] [--json]
-cruxible playbill claim get IDENTITY [--brief]
-cruxible playbill claim history IDENTITY
-cruxible playbill claim explain IDENTITY [--evaluation-time TS]
 ~~~
 
-`subject list` answers one page (default 50) of compact rows: `subject_kind`,
-`subject_id`, `lifecycle` and the count of live Claims; `subject get` reads one
-Subject's envelope and facts. A cut page carries `truncated` and `next_cursor`,
-which `--cursor` continues at the first page's coordinate; a cursor for another
-list or `--kind` is refused as `playbill.list.cursor_mismatch`.
-`subject list --kind` and `claim list --kind` narrow the listing to one Subject
-kind through the Subject index. `claim values` is the status-table read (the
-CLI form of the SDK's `world.values`): one row per live Claim, with its
-`subject_id`, predicate, value, verdict and resolution status, for every Subject
-of `--kind` (or only the named `--subject` IDs) and the given predicates,
-without full Claim views. It refuses rather than truncates past 8192 Claims.
+Claims are read through `playbill query`, `playbill get` and `playbill orient`.
+`cruxible playbill query KIND --select P --claims` is the status table: each
+cell names its Claims with their ID, value, verdict, resolution status and
+role, for every Subject of `KIND` (narrow with `--where 'subject_id in a,b'`);
+`--status overturned --status refused --status retired` adds the Claims
+resolution set aside or that were retired. A query lists a kind's live Subjects;
+`--status retired` also lists its retired Subjects, and every row then states its
+Subject's `lifecycle` (`live` or `retired`). `cruxible playbill get CLM-...`
+reads one Claim's card; `--detail why` its verdict with the law evidence and
+source handles it was computed from, `--detail history` its revisions, and
+`--detail proof` its full envelope and facts. `orient` counts Claims by status
+under `artifacts.claims`.
 
 Claims are written through `playbill set`, `add`, `retire` and `write`, or authored
 through `playbill authoring create`/`compile`; the retired direct v1 proposal
 commands are not a second writer. `playbill retire` retires a Claim with its
-complete dependent Claim closure in one change set. explain returns the verdict together with the law evidence and source
-handles it was computed from. When the Claim shares anything with a retired
-Claim, explain also carries a `retirement_context` section, which the CLI prints
-beneath the verdict. It is review context, not queue work, so `next` does not
+complete dependent Claim closure in one change set. When a Claim shares anything
+with a retired Claim, `get CLM-... --detail why` also carries a
+`retirement_context` section. It is review context, not queue work, so `next` does not
 report it. It lists each retired Claim the Claim shares a capture, an exact
 external source, or a same-version cited span with, with the relation kind, the
 shared capture, and the retired Claim and citation witnesses. It is read from
@@ -898,9 +895,9 @@ how an agent leaves contested state contested instead of forcing a judgment it
 is not confident in: it holds the Claim's rows in `next` (see below) until what
 the agent examined changes. `--valid-until` ends the attestation, and with it
 the hold.
-`claim get --brief` renders the typed subject, predicate, object, role,
-qualifier, flat lifecycle state, and predecessor digest. JSON returns the same
-shape in the top-level `statement` field alongside the canonical envelope.
+`get CLM-... --detail proof --json` carries the typed statement (subject,
+predicate, object, role, qualifier, lifecycle, predecessor digest) in its
+top-level `statement` field alongside the canonical envelope.
 
 ## playbill claim-attestation
 
@@ -1028,31 +1025,18 @@ for a caller any more: the marker must start in column zero, blocks cannot
 overlap, nest, or repeat an id, and marker-looking text inside a Markdown fence
 is not a declaration.
 
-## playbill policy
-
-~~~text
-cruxible playbill policy list [--limit N] [--cursor CURSOR] [--json]
-~~~
-
-Lists the live standalone and embedded governed policies at the accepted
-coordinate, one page at a time (default 25, at most 200). A cut page has
-`truncated: true` and a `next_cursor`; pass it back with `--cursor` to continue at
-the same coordinate.
-
 ## playbill query
 
 ~~~text
 cruxible playbill query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'|'f exists'|'f !exists'|'f~text']...
     [--contains TEXT] [--select a,b] [--follow field:alias]... [--follow-in field:alias]...
-    [--order-by f|-f]
-    [--limit N] [--cursor C] [--spec FILE | --name N --param k=v ...]
+    [--order-by f|-f] [--status live|overturned|refused|retired]... [--claims]
+    [--limit N] [--cursor C]
+    [--spec FILE | --name N --param k=v ... [--budgets JSON] [--receipt compact|full]]
     [--at GIT_OID] [--evaluation-time TS] [--json]
-cruxible playbill query list
-cruxible playbill query get NAME
-cruxible playbill query run NAME [--parameters FILE] [--evaluation-time TS]
 ~~~
 
-Without a subcommand, `query` answers any question over accepted state in one
+`query` has no subcommands: it answers any question over accepted state in one
 call, the same read as MCP `cruxible_playbill_query` and SDK `pb.query`. KIND is
 a Subject kind, or `ClaimType` / `Procedure` for definitions; `--contains` alone
 searches every live Claim value across kinds. `--where` filters combine as
@@ -1070,14 +1054,17 @@ way there is one row per (Subject, followed Subject) pair, and without
 Names and values are checked first: a wrong kind, field or enum member, or an
 operator that does not apply, refuses with its code, the nearest valid names and
 a repair. Text output is an aligned table of values and flags (`stale`,
-`contested`, `contradicted`, `unsure_hold`) followed by the next command when the
-page is truncated; `--json` gives the full answer with its receipt. `--spec` runs
-a `QueryDefinitionSpecV1` file inline; `--name` with `--param` runs an accepted
-named query.
-
-run executes one accepted QueryDefinition and prints its
-`playbill-query-execution-receipt-v1`: the definition digest, the resolved
-parameter digest, and the result digest that replays it.
+`contested`, `contradicted`, `uncovered`, `unsure_hold`) followed by the next
+command when the page is truncated; `--json` gives the full answer with its
+receipt. Cells show each slot's answer as `get` shows it; `--status` adds Claims
+resolution overturned or refused, or retired ones, and `--claims` names each
+cell's Claims (ID, status, verdict, role) beneath the table. `--spec` runs a
+`QueryDefinitionSpecV1` file inline; `--name` with `--param` runs an accepted
+named query (`orient --section queries` lists them, `get query:NAME --detail
+proof` reads one), `--budgets` sets its budgets up to the definition's maximum,
+and `--receipt full` adds its replay receipt (`receipt.replay`: the Claims each
+row read, traversal paths, bound parameters, verdict, and the
+`playbill-query-execution-receipt-v1` whose digests replay it).
 
 Author named queries through `playbill authoring compile`, then submit the intent
 and review/accept its proposal.
@@ -1973,20 +1960,6 @@ printed coordinate reads back; each history row prints both (`seq N at
 refuses with a code and the nearest names. `--json` prints the whole structured
 result.
 
-## playbill discover
-
-~~~text
-cruxible playbill discover [--query TEXT] [--entrypoint NAME]
-  [--profile interfaces|subjects|all]
-  [--evaluation-time TS]
-~~~
-
-Exactly one of --query or --entrypoint selects the page. Matching is exact and
-lexical over the accepted naming layer; it is never a similarity score. When a
-budget clips the hits, the result says `truncated: true` at the top level
-(`page.coverage` names the budget); discovery has no cursor, so narrow the query
-or raise the budget.
-
 ## playbill orient
 
 ~~~text
@@ -2035,7 +2008,16 @@ each as its `CAP-` handle), `capture_contracts` (version, grade, how many
 ClaimTypes admit each), `predictions` (each live ResolutionContract with its
 bound windows by status and the next close) and `mandates` (grant, state and
 expiry). The default map counts each family under `Artifacts` and never
-inlines their rows; each section suggests the `get` of its first row. Kinds page the same way
+inlines their rows; each section suggests the `get` of its first row.
+`--section interfaces` lists the provider interfaces a Procedure node can call,
+each with its interface digest, operation contract and the implementing
+Providers with their implementation digests (`get ProviderInterface:NAME`
+reads one, `--detail proof` its accepted inventory entry). `--section
+principals` lists the principal registry (`get Principal:ID` reads one), and
+`--section policies` every live standalone or embedded governed policy with its
+declaring artifact (`get ApprovalPolicy:instance` reads the approval policy).
+The default map also counts every accepted Claim by status (accepted,
+conflicted, overturned, refused, retired) under `artifacts.claims`. Kinds page the same way
 when there are more than `--limit`. `--at` reads an earlier accepted generation.
 `--json` returns the whole structured answer, including the coordinate and
 generation.
@@ -2048,20 +2030,6 @@ floor exported before generations were stamped). The text output prints
 `Floor: .playbill/floor at <oid>, N generation(s) behind; refresh: cruxible
 playbill floor export --force`. It reads only the floor's `manifest.json` and
 `provenance/snapshot.json`; it never re-exports.
-
-## playbill search and list
-
-~~~text
-cruxible playbill search QUERY [--kind KIND]... [--status STATUS]...
-  [--subject-path PATH] [--cursor JSON] [--evaluation-time TS]
-cruxible playbill list [--kind KIND]... [--status STATUS]...
-  [--subject-path PATH] [--cursor JSON] [--evaluation-time TS]
-~~~
-
-These are the generic headless discovery surface for Claims, Procedures, and
-installed demand policies. Their text output starts with a count header.
-Until demand policy is installed it explicitly reports
-`demand: not_installed`.
 
 ## playbill world
 
@@ -2090,15 +2058,6 @@ cruxible playbill since GENERATION [--max-rows N] [--max-bytes N]
 Returns signed accepted ChangeSet members in `(GENERATION, pinned head]` order.
 Follow `next_cursor` to continue against the same historical head even if main
 advances; the cursor binds the lower bound, access profile, and page budgets.
-
-## playbill expand
-
-~~~text
-cruxible playbill expand ARTIFACT_PATH [--facet NAME]... [--evaluation-time TS]
-~~~
-
-Returns one bounded context capsule for an accepted address. Repeat --facet to
-narrow what the capsule carries.
 
 ## playbill floor
 
@@ -2417,7 +2376,6 @@ ledger](#playbill-ledger) for what the mirror carries and how to get its URL.
 ## playbill principal
 
 ~~~text
-cruxible playbill principal list
 cruxible playbill principal add PRINCIPAL_ID --key-dir DIR [--signer-key PATH]
   [--mode governed_write] [--kind ordinary] [--name NAME] [--json]
 cruxible playbill principal rotate ...
@@ -2425,6 +2383,8 @@ cruxible playbill principal revoke ...
 cruxible playbill principal recover ...
 ~~~
 
+The principal registry is read with `cruxible playbill orient --section
+principals`, one principal with `cruxible playbill get Principal:ID`.
 Registration, rotation, revocation, and recovery are governed principal-change
 proposals. `principal add` generates the Ed25519 private key exclusively in the
 client-held `--key-dir` outside the current workspace and sends only its public
@@ -2474,20 +2434,10 @@ cruxible playbill sources propose ...
 Compilation reads declared local files client-side and emits a path-free bundle.
 The daemon never reads a submitted client path.
 
-## playbill explain
-
-~~~text
-cruxible playbill explain IDENTITY
-  [--detail summary|evidence|proof]
-  [--include-body]
-~~~
-
-IDENTITY is one accepted Document identity (`document:fleet.policy-note`) or one
-Subject address (`sec.package/click`, or the `Subject:`-prefixed spelling), which
-resolves to that Subject rather than refusing.
-
-summary and evidence are implemented. proof is reserved and returns a typed
-unsupported-detail result.
+Governance and provenance explanations are `get` details:
+`cruxible playbill get Document:NAME --detail why`, `get KIND/ID --detail why`,
+or `get CLM-... --detail why`; `--detail proof` reads the full accepted
+envelope and facts.
 
 Use --json on operation commands for machine-readable output. Run any command
 with --help for its exact options.

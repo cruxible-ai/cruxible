@@ -57,6 +57,7 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core import __version__ as DAEMON_VERSION
+from tests.test_client._read_fakes import ClaimTypeRead
 
 _DIGEST = "sha256:" + "1" * 64
 _COORDINATE = api.PlaybillAcceptedCoordinate(
@@ -77,15 +78,52 @@ class _Client:
         self.claim_type_object_kinds: dict[str, str] = {"sec.vuln.affects_package": "subject"}
         self.claim_type_reads = 0
 
-    def get_playbill_claim_type(
+    def playbill_head(self, instance_id: str, *, at: object = None) -> api.PlaybillHeadV1:
+        return api.PlaybillHeadV1(
+            instance=instance_id,
+            coordinate=_COORDINATE.model_dump(mode="json"),  # type: ignore[arg-type]
+            generation=4,
+        )
+
+    def playbill_get(self, instance_id: str, *, request: Any) -> Any:
+        """``get(detail="proof")`` over this fake's ClaimType and Claim views."""
+
+        from cruxible_client.contracts.get_reads import (
+            PlaybillGetCoordinateV1,
+            PlaybillGetResultV1,
+        )
+
+        assert request.detail == "proof"
+        if request.ref.startswith("ClaimType:"):
+            kind = "claim_type"
+            view: Any = self._claim_type_view(
+                instance_id, request.ref.removeprefix("ClaimType:"), at=request.at
+            )
+        else:
+            kind = "claim"
+            view = self._claim_view(instance_id, request.ref, at=request.at)
+        return PlaybillGetResultV1(
+            ref=request.ref,
+            kind=kind,  # type: ignore[arg-type]
+            detail="proof",
+            proof=view.model_dump(mode="json"),
+            coordinate=PlaybillGetCoordinateV1(git_oid=view.coordinate.git_oid[:12], generation=4),
+            accepted_coordinate=view.coordinate,
+            evaluation_time=request.evaluation_time or datetime(2026, 9, 1, tzinfo=UTC),
+        )
+
+    def _claim_view(self, _instance_id: str, _identity: str, **_values: Any) -> Any:
+        raise AssertionError("this fake reads no Claim")
+
+    def _claim_type_view(
         self,
         _instance_id: str,
         predicate: str,
         *,
         at: api.PlaybillAcceptedCoordinate,
-    ) -> api.PlaybillClaimTypeView:
+    ) -> ClaimTypeRead:
         self.claim_type_reads += 1
-        return api.PlaybillClaimTypeView(
+        return ClaimTypeRead(
             coordinate=at,
             path=f"claim-types/{predicate}.json",
             predicate=predicate,
@@ -98,18 +136,6 @@ class _Client:
         from types import SimpleNamespace
 
         return SimpleNamespace(coordinate=_COORDINATE)
-
-    def search_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSearchResult:
-        return api.PlaybillSearchResult(
-            mode=values["mode"],
-            coordinate=_COORDINATE,
-            evaluation_time=str(values["evaluation_time"]),
-            rows=[],
-            orientation={"state": "empty"} if values["mode"] == "orient" else None,
-            selection_basis_digest="sha256:" + "4" * 64,
-            truncated=False,
-            result_digest="sha256:" + "5" * 64,
-        )
 
     def since_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSinceResult:
         result_values: dict[str, object] = {
@@ -1118,7 +1144,7 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
     _workspace(tmp_path)
 
     class ClaimClient(_Client):
-        def get_playbill_claim(
+        def _claim_view(
             self,
             _instance_id: str,
             _identity: str,

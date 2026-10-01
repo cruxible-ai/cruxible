@@ -90,31 +90,24 @@ def test_http_document_lifecycle_and_explanation(
     assert activated.json()["activated_by"] == "operator"
     coordinate = activated.json()["accepted_coordinate"]
 
-    listed = client.get(f"/api/v1/{instance_id}/playbill/documents")
+    listed = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"section": "documents"})
     assert listed.status_code == 200, listed.text
     assert listed.json()["coordinate"] == coordinate
-    read = client.get(f"/api/v1/{instance_id}/playbill/documents/document:design/body")
-    assert read.status_code == 200, read.text
-    assert base64.b64decode(read.json()["content_base64"]) == body_bytes
-    explained = client.post(
-        f"/api/v1/{instance_id}/playbill/explain",
-        json={
-            "subject": {
-                "tag": "playbill-semantic-address-v1",
-                "artifact_path": "documents/design.json",
-                "selector": {
-                    "scheme": "artifact-v1",
-                    "value": "",
-                },
-            },
-            "at": coordinate,
-            "detail": "evidence",
-            "include_body": True,
-        },
+    assert [row["name"] for row in listed.json()["documents"]] == ["design"]
+    read = client.post(
+        f"/api/v1/{instance_id}/playbill/get", json={"ref": "Document:design", "detail": "body"}
     )
-    assert explained.status_code == 200, explained.text
-    assert explained.json()["coordinate"] == coordinate
-    assert explained.json()["attestation_coverage"]["coverage_binding"]["coverage"] == (
+    assert read.status_code == 200, read.text
+    assert read.json()["body"]["text"] == body_bytes.decode()
+    assert read.json()["body"]["body_digest"] == body_digest
+    why = client.post(
+        f"/api/v1/{instance_id}/playbill/get",
+        json={"ref": "Document:design", "detail": "why", "at": coordinate["git_oid"]},
+    )
+    assert why.status_code == 200, why.text
+    explained = why.json()["why"]
+    assert explained["coordinate"] == coordinate
+    assert explained["attestation_coverage"]["coverage_binding"]["coverage"] == (
         "containing_change_set"
     )
 
@@ -202,7 +195,7 @@ def test_policy_read_is_a_real_http_behavior(
 ) -> None:
     client, instance_id, _private_key_path = playbill_http
 
-    policies = client.get(f"/api/v1/{instance_id}/playbill/policies")
+    policies = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"section": "policies"})
     assert policies.status_code == 200, policies.text
     assert [item["policy_kind"] for item in policies.json()["policies"]] == [
         "approval_policy",
@@ -273,7 +266,12 @@ def test_http_permission_modes_separate_read_store_propose_approval_and_activati
 
     monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
     reset_permissions()
-    assert client.get(f"/api/v1/{instance_id}/playbill/documents").status_code == 200
+    assert (
+        client.get(
+            f"/api/v1/{instance_id}/playbill/orient", params={"section": "documents"}
+        ).status_code
+        == 200
+    )
     denied_store = client.post(
         f"/api/v1/{instance_id}/playbill/bodies",
         json={"content_base64": base64.b64encode(b"# Tiered\n").decode("ascii")},

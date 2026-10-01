@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import Playbill
 from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
+from cruxible_client.contracts import PlaybillClaimViewV2
 from cruxible_client.contracts.acquisition_policies import (
     IndependentCoherenceV1,
     InputAcquisitionRuleV1,
@@ -28,6 +30,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
 from cruxible_client.contracts.captures import CanonicalDurationV1, capture_contract_digest
 from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
@@ -63,6 +66,7 @@ from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._pc_c_support import capture_contract
 from tests.test_procedures.test_procedure_source_runs import _contracts
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
+from tests.test_server.test_provider_installation import interface_entry
 
 SUBJECT_KIND = "security.advisory"
 SUBJECT_ID = "osv-2026-0001"
@@ -370,6 +374,20 @@ def _binding_digest(workspace: Path) -> str:
     )
 
 
+def _claim_proof(
+    transport: CruxibleClient,
+    instance_id: str,
+    claim_id: str,
+    *,
+    evaluation_time: datetime | None = None,
+) -> PlaybillClaimViewV2:
+    proof = transport.playbill_get(
+        instance_id,
+        request=PlaybillGetRequestV1(ref=claim_id, detail="proof", evaluation_time=evaluation_time),
+    ).proof
+    return PlaybillClaimViewV2.model_validate(proof)
+
+
 @pytest.mark.parametrize("terminal_kind", ["propose_change_set", "emit_capture"])
 def test_the_rung2_loop_runs_over_public_surfaces_only(
     installed_host: tuple[TestClient, str, Path, Path],
@@ -380,14 +398,11 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     transport._client = http  # type: ignore[assignment]
 
     # 1. Discover the installed interface and the live Provider implementing it.
-    inventory = transport.discover_playbill(instance_id, profile="interfaces")
-    assert inventory.tag == "playbill-interface-inventory-v1"
-    interface = next(
-        item for item in inventory.interfaces if item.identity == "ProviderInterface:workspace.file"
-    )
-    assert interface.interface_digest == WORKSPACE_FILE_INTERFACE_V2_DIGEST
-    assert interface.providers, interface
-    provider = interface.providers[0]
+    interface = interface_entry(transport, instance_id, "workspace.file")
+    assert interface["identity"] == "ProviderInterface:workspace.file"
+    assert interface["interface_digest"] == WORKSPACE_FILE_INTERFACE_V2_DIGEST
+    assert interface["providers"], interface
+    provider = interface["providers"][0]
 
     # 2. Author definitions through public surfaces, including the typed SDK for capture.
     contract = capture_contract()
@@ -397,8 +412,8 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         artifact_digest=capture_contract_digest(contract).tagged,
     )
     definition = _procedure_definition(
-        interface=interface.model_dump(mode="json"),
-        provider=provider.model_dump(mode="json"),
+        interface=interface,
+        provider=provider,
         contract_pin=contract_pin,
         workspace=workspace,
         terminal_kind=terminal_kind,
@@ -574,7 +589,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
             if item["path"].startswith("claims/")
         )
         claim_id = member["path"].rsplit("/", 1)[1].removesuffix(".json")
-        view = transport.get_playbill_claim(instance_id, claim_id)
+        view = _claim_proof(transport, instance_id, claim_id)
         assert view.admission_accounts[0].capture_digest == capture_digest
         assert view.admission_accounts[0].status == "admitted"
         missing = transport.read_playbill_capture(
@@ -611,10 +626,11 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
 
     # 5. The accepted Claim reads back through the Claim route to its Capture.
     claim_id = child.path.rsplit("/", 1)[1].removesuffix(".json")
-    view = transport.get_playbill_claim(
+    view = _claim_proof(
+        transport,
         instance_id,
         claim_id,
-        evaluation_time=observation.source_read_receipt.read_at.isoformat(),
+        evaluation_time=observation.source_read_receipt.read_at,
     )
     assert view.statement.predicate == PREDICATE
     assert view.statement.object.model_dump(mode="json")["value"] == "high"

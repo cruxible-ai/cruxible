@@ -97,8 +97,9 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     group_claims, _ = _walk_lazy_map(CLI_COMMANDS)
     defined = _defined_click_objects()
     groups = [(obj, origin) for obj, origin in defined.values() if isinstance(obj, click.Group)]
-    # 32 includes the retained-Capture read group and the kit group.
-    assert len(groups) == 32, f"expected 32 Playbill/host groups, found {len(groups)}"
+    # 29 includes the retained-Capture read group and the kit group; the read
+    # cut removed the subject, policy and query groups (query is one command).
+    assert len(groups) == 29, f"expected 29 Playbill/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:
@@ -122,8 +123,8 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     """A command defined but never registered is dead or invisible, never fine."""
     group_claims, leaf_claims = _walk_lazy_map(CLI_COMMANDS)
     # Includes retained evidence reads through `capture read`, `cruxible mcp` and the kit verbs.
-    assert len(leaf_claims) == 131, (
-        f"expected 131 Playbill/host leaf commands, found {len(leaf_claims)}"
+    assert len(leaf_claims) == 108, (
+        f"expected 108 Playbill/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

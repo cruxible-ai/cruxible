@@ -21,7 +21,7 @@ from cruxible_client.authoring.projection_manifests import load_projection_manif
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
 from cruxible_client.contracts.declared_blocks import ProjectionQueryBackingV1
-from cruxible_client.contracts.projection import AcceptedProjectionCoordinate
+from cruxible_client.contracts.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_client.contracts.query.results import ClaimQueryResultV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.types import CompilerCoordinate
@@ -89,24 +89,25 @@ class _RepinClient:
             coordinate=COORDINATE,
         )
 
-    def search_playbill(self, _instance_id: str, **values: Any) -> api.PlaybillSearchResult:
-        return api.PlaybillSearchResult(
-            mode=values["mode"],
-            coordinate=COORDINATE,
-            evaluation_time=str(values["evaluation_time"]),
-            rows=[],
-            orientation={"generation": 7} if values["mode"] == "orient" else None,
-            selection_basis_digest="sha256:" + "6" * 64,
-            truncated=False,
-            result_digest="sha256:" + "7" * 64,
+    def playbill_head(self, instance_id: str, *, at: Any = None) -> api.PlaybillHeadV1:
+        return api.PlaybillHeadV1(
+            instance=instance_id,
+            coordinate=AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json")),
+            generation=7,
         )
 
-    def get_playbill_claim(
-        self,
-        _instance_id: str,
-        name: str,
-        **_values: Any,
-    ) -> SimpleNamespace:
+    def playbill_get(self, instance_id: str, *, request: Any) -> Any:
+        assert request.detail == "proof"
+        view = self._claim_view(request.ref)
+        return SimpleNamespace(
+            proof={
+                "coordinate": view.coordinate.model_dump(mode="json"),
+                "envelope": view.envelope,
+                "facts": view.facts,
+            }
+        )
+
+    def _claim_view(self, name: str) -> SimpleNamespace:
         self.on_claim()
         statement = ClaimStatement(
             subject=SemanticAddress.whole_artifact("subjects/project.work_item/wi-42.json"),
@@ -131,9 +132,26 @@ class _RepinClient:
             ],
         )
 
-    def run_playbill_query(
+    def query_playbill(self, _instance_id: str, *, request: Any) -> Any:
+        from cruxible_client.contracts.compact_query import PlaybillQueryReplayV1
+        from cruxible_core.query.engine import query_execution_receipt
+
+        assert request.name is not None and request.receipt == "full"
+        run = self._run(request.name, parameters=dict(request.params or {}))
+        return SimpleNamespace(
+            receipt=SimpleNamespace(
+                coordinate=run.coordinate,
+                spec_digest=run.definition_digest,
+                replay=PlaybillQueryReplayV1(
+                    definition_path="queries/project.items.json",
+                    result=run.result,
+                    execution=query_execution_receipt(run.result),
+                ),
+            )
+        )
+
+    def _run(
         self,
-        _instance_id: str,
         name: str,
         **values: Any,
     ) -> SimpleNamespace:
@@ -386,12 +404,16 @@ def test_repin_preserves_omitted_categories_and_policy_and_removes_only_explicit
 
     source = _workspace(tmp_path)
     client = _RepinClient()
-    client.get_playbill_subject = lambda *a, **k: SimpleNamespace(  # type: ignore[attr-defined]
-        envelope={"artifact_digest": "sha256:" + "5" * 64}
-    )
-    client.get_playbill_claim_type = lambda *a, **k: SimpleNamespace(  # type: ignore[attr-defined]
-        artifact_digest="sha256:" + "6" * 64
-    )
+    claim_proof = client.playbill_get
+
+    def proof(instance_id: str, *, request: Any) -> Any:
+        if request.ref.startswith("ClaimType:"):
+            return SimpleNamespace(proof={"artifact_digest": "sha256:" + "6" * 64})
+        if "/" in request.ref:
+            return SimpleNamespace(proof={"envelope": {"artifact_digest": "sha256:" + "5" * 64}})
+        return claim_proof(instance_id, request=request)
+
+    client.playbill_get = proof  # type: ignore[method-assign]
 
     def repin(**kwargs: Any):  # type: ignore[no-untyped-def]
         return repin_projection_block(

@@ -369,7 +369,7 @@ def test_transport_credentials_do_not_initialize_playbill_or_a_legacy_graph(
     assert credential.json()["error_code"] == "runtime_credential.auth_off"
     assert not Path(record.location).exists()
 
-    uninitialized = host_client.get(f"/api/v1/{instance_id}/playbill/documents")
+    uninitialized = host_client.get(f"/api/v1/{instance_id}/playbill/head")
     assert uninitialized.status_code == 409
     assert "not initialized" in uninitialized.text
     assert not Path(record.location).exists()

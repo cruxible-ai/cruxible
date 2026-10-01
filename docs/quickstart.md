@@ -110,10 +110,11 @@ uv run cruxible playbill proposal activate PROPOSAL_ID
 Read accepted state and its explanation:
 
 ~~~bash
-uv run cruxible playbill document get document:demo-policy
-uv run cruxible playbill document body document:demo-policy
-uv run cruxible playbill explain document:demo-policy --detail evidence
-uv run cruxible playbill document history document:demo-policy
+uv run cruxible playbill orient --section documents
+uv run cruxible playbill get Document:demo-policy
+uv run cruxible playbill get Document:demo-policy --detail body
+uv run cruxible playbill get Document:demo-policy --detail why
+uv run cruxible playbill get Document:demo-policy --detail history
 ~~~
 
 Storing body bytes was inert. Proposing created a frozen candidate. A voluntary

@@ -75,12 +75,6 @@ class PlaybillDocumentList(_StrictServiceModel):
     documents: tuple[PlaybillDocumentView, ...]
 
 
-class PlaybillPrincipalList(_StrictServiceModel):
-    tag: Literal["playbill-principal-list-v1"] = "playbill-principal-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    principals: tuple[PrincipalRecord, ...]
-
-
 class PlaybillBodyRead(_StrictServiceModel):
     tag: Literal["playbill-document-body-v1"] = "playbill-document-body-v1"
     identity: str
@@ -515,7 +509,7 @@ def service_activate_playbill_proposal(
     # keyed on the old one and would simply miss, but a memo that outlives the
     # state it summarizes is the kind of thing that is only ever discovered as a
     # stale answer, so activation forgets them outright.
-    from cruxible_core.service.discovery.search import reset_claim_resolution_memo
+    from cruxible_core.service.discovery.claim_status import reset_claim_resolution_memo
 
     # Remembered slot answers survive: each is re-validated against its own
     # reads at the new coordinate before it is served.
@@ -584,14 +578,6 @@ def service_list_playbill_documents(
     return PlaybillDocumentList(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
         documents=documents,
-    )
-
-
-def service_list_playbill_principals(instance: PlaybillInstance) -> PlaybillPrincipalList:
-    generation = instance.accepted_history()[-1]
-    return PlaybillPrincipalList(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        principals=generation.principals.principals,
     )
 
 
@@ -793,7 +779,6 @@ __all__ = [
     "PlaybillDocumentList",
     "PlaybillDocumentView",
     "PlaybillProposalInspection",
-    "PlaybillPrincipalList",
     "PlaybillRefusalInspection",
     "service_activate_playbill_proposal",
     "service_dereference_playbill_document",
@@ -801,7 +786,6 @@ __all__ = [
     "service_inspect_playbill_proposal",
     "service_inspect_playbill_refusal",
     "service_list_playbill_documents",
-    "service_list_playbill_principals",
     "service_playbill_document_history",
     "service_propose_compiler_upgrade",
     "service_propose_playbill_document",

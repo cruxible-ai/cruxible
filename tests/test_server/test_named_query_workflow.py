@@ -99,11 +99,12 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
     assert pb.accept(proposal.proposal_id).status == "accepted"
     name = definition.query_definition.identity.name
     if surface == "cli":
-        result = api.PlaybillQueryRun.model_validate(invoke("playbill", "query", "run", name))
-    elif surface == "mcp":
-        result = handlers.handle_playbill_run_query(
-            instance_id, name, parameters=None, evaluation_time=None, budgets=None
+        page = api.PlaybillQueryResult.model_validate(
+            invoke("playbill", "query", "--name", name, "--receipt", "full")
         )
+        result = _run(page, name)
+    elif surface == "mcp":
+        result = _run(handlers.handle_playbill_query(instance_id, name=name, receipt="full"), name)
     else:
         result = pb.run_query(name)
     assert result.result.verdict == "completed"
@@ -112,3 +113,20 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
         assert isinstance(result.artifact_definitions, tuple)
         if example is query_procedures_example:
             assert result.artifact_definitions == ()
+
+
+def _run(page: api.PlaybillQueryResult, name: str) -> api.PlaybillQueryRun:
+    """A named query's full receipt, read as the run it records."""
+
+    replay = page.receipt.replay
+    assert replay is not None
+    return api.PlaybillQueryRun(
+        coordinate=api.PlaybillAcceptedCoordinate.model_validate(
+            page.receipt.coordinate.model_dump(mode="json")
+        ),
+        name=name,
+        definition_path=replay.definition_path,
+        definition_digest=page.receipt.spec_digest,
+        result=replay.result,
+        receipt=replay.execution,
+    )

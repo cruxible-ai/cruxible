@@ -35,6 +35,7 @@ def test_http_orient_answers_the_map_rendered_for_the_requested_surface(
         "mandates",
         "runs",
         "running",
+        "claims",
     }
     assert body["you"]["actor"] is not None
     # Optional parts that do not apply are absent, never null.

@@ -28,7 +28,6 @@ from cruxible_core.service.authoring.documents import (
 )
 from cruxible_core.service.claims.subjects import (
     service_get_playbill_subject,
-    service_list_playbill_subjects,
     service_playbill_subject_history,
 )
 from cruxible_core.service.discovery.explain import (
@@ -160,9 +159,6 @@ def test_subject_acceptance_rebuild_history_and_explanation(tmp_path: Path) -> N
         "playbill.subject.provenance",
         "playbill.subject.references",
     }
-    (row,) = service_list_playbill_subjects(instance).subjects
-    assert f"Subject:{row.subject_kind}/{row.subject_id}" == subject.envelope["identity"]
-    assert (row.lifecycle, row.live_claims) == ("live", 0)
 
     history = service_playbill_subject_history(instance, identity=SUBJECT_IDENTITY)
     assert len(history.entries) == 1

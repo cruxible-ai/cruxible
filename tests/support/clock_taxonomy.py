@@ -179,7 +179,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ConsumptionEpochV1", "consumption_epoch_generation"): "SETTLEMENT ORDER",
     ("ConsumptionObservationGapV1", "unobserved_from_generation"): "SETTLEMENT ORDER",
     ("ConsumptionObservationResumeV1", "observed_from_generation"): "SETTLEMENT ORDER",
-    ("ContextCapsuleV1", "evaluation_time"): "EVALUATION INSTANT",
     ("CoverageManifestFileV1", "written_at"): "ASSERTION TIME",
     ("CoverageManifestFileV2", "written_at"): "ASSERTION TIME",
     ("CurationAcceptedFixedV1", "resolved_generation"): "SETTLEMENT ORDER",
@@ -200,7 +199,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ExhaustPromotionV1", "last_sequence"): "SETTLEMENT ORDER",
     ("ExhaustReceiptSetManifestV1", "first_sequence"): "SETTLEMENT ORDER",
     ("ExhaustReceiptSetManifestV1", "last_sequence"): "SETTLEMENT ORDER",
-    ("ExpandRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("ExternalSourceReadRequestV1", "observed_at"): "EVALUATION INSTANT",
     ("FloorGenerationPairV1", "current_generation"): "SETTLEMENT ORDER",
     ("FloorGenerationPairV1", "floor_generation"): "SETTLEMENT ORDER",
@@ -239,7 +237,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillBlockSyncReadResultV1", "generation"): "SETTLEMENT ORDER",
     ("PlaybillBlockSyncSuccessorCandidateV1", "generation"): "SETTLEMENT ORDER",
     ("PlaybillCandidateStatus", "accepted_generation"): "SETTLEMENT ORDER",
-    ("PlaybillClaimExplanationV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillQueryReceiptV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillQueryRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("_RowRenderer", "evaluation_time"): "EVALUATION INSTANT",
@@ -251,7 +248,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillClaimVerdictQueryV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimVerdictQueryV2", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimViewV2", "admission_evaluation_time"): "EVALUATION INSTANT",
-    ("PlaybillContextCapsule", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillCurationActionResult", "generation"): "SETTLEMENT ORDER",
     ("PlaybillCurationActionResultV1", "generation"): "SETTLEMENT ORDER",
     ("PlaybillCurationListRequestV1", "evaluation_time"): "EVALUATION INSTANT",
@@ -291,7 +287,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillReviewOperationalEventV1", "accepted_generation"): "SETTLEMENT ORDER",
     ("PlaybillReviewOperationalEventV1", "recorded_at"): "ASSERTION TIME",
     ("PlaybillReviewOperationalEventV1", "sequence"): "SETTLEMENT ORDER",
-    ("PlaybillSearchOrientationV1", "generation"): "SETTLEMENT ORDER",
     # The accepted candidate's own timestamp: the author's assertion of when
     # the head generation was made, surfaced by orient beside its sequence.
     ("PlaybillOrientResultV1", "accepted_at"): "ASSERTION TIME",
@@ -331,10 +326,13 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillGetRunNodeV1", "sequence"): "SETTLEMENT ORDER",
     # The accepted head a live operational read was taken at.
     ("PlaybillLiveHeadV1", "generation"): "SETTLEMENT ORDER",
+    # The accepted head (or named coordinate) a head read answers.
+    ("PlaybillHeadV1", "generation"): "SETTLEMENT ORDER",
+    # One internal get batch, evaluated at one instant.
+    ("PlaybillGetBatchRequestV1", "evaluation_time"): "EVALUATION INSTANT",
+    # The instant a query's first page pinned; its cursor continues it.
+    ("_QueryCursor", "evaluation_time"): "EVALUATION INSTANT",
     ("RunLocator", "admitted_at"): "EVALUATION INSTANT",
-    ("PlaybillSearchRequestV1", "evaluation_time"): "EVALUATION INSTANT",
-    ("PlaybillSearchResult", "evaluation_time"): "EVALUATION INSTANT",
-    ("PlaybillSearchResultV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillSinceCursor", "last_generation"): "SETTLEMENT ORDER",
     ("PlaybillSinceCursor", "lower_generation"): "SETTLEMENT ORDER",
     ("PlaybillSinceRequest", "generation"): "SETTLEMENT ORDER",

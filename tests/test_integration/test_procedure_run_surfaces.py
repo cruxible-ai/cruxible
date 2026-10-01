@@ -8,6 +8,7 @@ refusal on a fresh instance (``tests/test_server/test_playbill_operational_get_r
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from click.testing import CliRunner
@@ -20,7 +21,7 @@ from cruxible_core.cli.main import cli
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
 from cruxible_core.service.discovery.get import service_playbill_get
-from cruxible_core.service.discovery.orient import service_playbill_orient
+from cruxible_core.service.discovery.orient import service_playbill_head, service_playbill_orient
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.test_mcp.test_playbill_protocol_curation import _protocol_session, _run
 from tests.test_service.test_procedure_run_reads import run_world  # noqa: F401
@@ -36,6 +37,9 @@ class _ServiceClient:
     def playbill_get(self, instance_id: str, *, request: PlaybillGetRequestV1) -> Any:
         self.surfaces.append(request.surface)
         return service_playbill_get(self.instance, request=request, access=_ACCESS)
+
+    def playbill_head(self, instance_id: str, **_values: Any) -> Any:
+        return service_playbill_head(self.instance)
 
     def orient_playbill(self, instance_id: str, **values: Any) -> Any:
         from datetime import datetime
@@ -106,12 +110,14 @@ def test_the_mcp_tools_read_runs(run_world, monkeypatch) -> None:  # type: ignor
 
 def test_the_sdk_reads_a_run_card(run_world) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
     instance, _procedure, finished = run_world
-    playbill = Playbill.__new__(Playbill)
-    playbill._client = _ServiceClient(instance)  # type: ignore[assignment]
-    playbill._instance_id = "inst"
-    playbill._read_at = lambda coordinate=None: None  # type: ignore[method-assign,assignment]
-    playbill._evaluation_time = lambda: "2026-08-24T16:05:00+00:00"  # type: ignore[method-assign]
-    playbill._observe_read = lambda *_a, **_k: None  # type: ignore[method-assign]
+    # A connection opened without a workspace: reads serve, and orient reports
+    # no floor rather than reading one.
+    playbill = Playbill._from_client(  # type: ignore[arg-type]
+        _ServiceClient(instance),
+        instance_id="inst",
+        workspace=None,
+        clock=lambda: datetime(2026, 8, 24, 16, 5, tzinfo=UTC),
+    )
 
     card = playbill.get(f"ProcedureRun:{finished.run_id}")
 
@@ -120,3 +126,4 @@ def test_the_sdk_reads_a_run_card(run_world) -> None:  # type: ignore[no-untyped
     assert card.value.next[-1] == f'pb.get("ProcedureRun:{finished.run_id}", detail="proof")'
     runs = playbill.orient(section="runs")
     assert runs.runs is not None and len(runs.runs) == 2
+    assert runs.floor is None

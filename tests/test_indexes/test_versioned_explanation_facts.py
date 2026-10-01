@@ -8,7 +8,6 @@ from pathlib import Path
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.subjects import (
     service_get_playbill_subject,
-    service_list_playbill_subjects,
 )
 from tests.core_support._candidate_support import submit_query_definition_candidate
 from tests.core_support._knowledge_loop_support import (
@@ -21,12 +20,15 @@ from tests.core_support._knowledge_loop_support import (
 
 def _explanations(instance, coordinate) -> dict[str, list[dict[str, object]]]:
     at = PlaybillAcceptedCoordinate.from_internal(coordinate)
-    listing = service_list_playbill_subjects(instance, at=at)
+    with instance.bind_accepted_projection(coordinate) as projection:
+        identities = [
+            str(identity)
+            for (identity,) in projection.typed.connection.execute(
+                "SELECT identity FROM subjects ORDER BY identity"
+            )
+        ]
     views = [
-        service_get_playbill_subject(
-            instance, identity=f"Subject:{row.subject_kind}/{row.subject_id}", at=at
-        )
-        for row in listing.subjects
+        service_get_playbill_subject(instance, identity=identity, at=at) for identity in identities
     ]
     return {
         str(view.envelope["identity"]): sorted(

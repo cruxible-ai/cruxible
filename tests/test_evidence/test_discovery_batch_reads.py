@@ -7,12 +7,13 @@ import pytest
 from cruxible_core.indexes.sqlite import ProjectionHandle
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims import claims as playbill_claims
-from cruxible_core.service.discovery import search as playbill_search
+from cruxible_core.service.discovery import claim_status as playbill_search
 from cruxible_core.service.evidence import evidence as playbill_evidence
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from tests.core_support._knowledge_loop_support import seed_claims
 from tests.test_evidence.test_evidence_freshness import _fresh_world
-from tests.test_integration.test_playbill_search import EVALUATION_TIME, _request
+
+EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
 
 
 def test_discovery_matches_full_view_inputs_without_building_them(tmp_path, monkeypatch):
@@ -57,18 +58,14 @@ def test_discovery_matches_full_view_inputs_without_building_them(tmp_path, monk
 
     monkeypatch.setattr(playbill_evidence, "accepted_claim_providers", counted)
     playbill_search.reset_claim_resolution_memo()
-    result = playbill_search.service_search_playbill(
-        instance, request=_request(instance, mode="list", kinds=("claim",))
+    statuses = playbill_search.claim_resolution_statuses(
+        instance,
+        claims=ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims(),
+        at=at,
+        evaluation_time=EVALUATION_TIME,
     )
-    assert {r.identity for r in result.rows} == {c.identity.name for c in expected}
+    assert set(statuses) == {c.identity.name for c in expected}
     assert calls and len(calls) == 1
-    playbill_search.reset_claim_resolution_memo()
-    calls.clear()
-    result = playbill_search.service_search_playbill(
-        instance, request=_request(instance, mode="orient", kinds=("procedure",))
-    )
-    assert not calls
-    assert result.orientation.counts_by_kind[0].count == 0
 
 
 def test_batch_context_rechecks_time_and_replay_and_rejects_wrong_coordinate(tmp_path, monkeypatch):
@@ -164,13 +161,14 @@ def test_retained_records_answer_only_their_exact_location(tmp_path):
     assert len(instance.verified_change_set_records) == retained
 
 
-def test_subject_search_evaluates_only_that_subjects_claims(tmp_path, monkeypatch):
+def test_subject_statuses_evaluate_only_that_subjects_claims(tmp_path, monkeypatch):
     instance, _ = seed_claims(tmp_path)
-    everything = playbill_search.service_search_playbill(
-        instance, request=_request(instance, mode="list", kinds=("claim",))
-    )
+    at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    everything = ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims()
     subject = next(
-        r.subject for r in everything.rows if r.subject.artifact_path.endswith("wi-42.json")
+        c.statement.subject
+        for c in everything
+        if c.statement.subject.artifact_path.endswith("wi-42.json")
     )
     evaluated: list[str] = []
     resolve = playbill_search.resolve_playbill_claim_group
@@ -191,15 +189,17 @@ def test_subject_search_evaluates_only_that_subjects_claims(tmp_path, monkeypatc
 
     monkeypatch.setattr(TypedStateReader, "claim_attestations", selected)
     playbill_search.reset_claim_resolution_memo()
-    scoped = playbill_search.service_search_playbill(
-        instance, request=_request(instance, mode="list", kinds=("claim",), subject=subject)
+    context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
+    scoped = context.claims(subject=subject)
+    statuses = playbill_search.claim_resolution_statuses(
+        instance, claims=scoped, at=at, evaluation_time=EVALUATION_TIME, read_context=context
     )
-    assert scoped.rows == tuple(r for r in everything.rows if r.subject == subject)
+    assert set(statuses) == {c.identity.name for c in everything if c.statement.subject == subject}
     assert evaluated and set(evaluated) == {subject.artifact_path}
     # Attestations are selected for this subject's exact Claim versions only,
     # never read for the whole population.
     if playbill_evidence._serves_attestations(instance.accepted_coordinate()):
-        scoped_versions = {(f"Claim:{row.identity}", row.subject) for row in scoped.rows}
+        scoped_versions = {(c.identity.qualified, c.statement.subject) for c in scoped}
         assert selections and None not in selections
         assert {pair[0] for chunk in selections for pair in chunk} == {
             identity for identity, _ in scoped_versions
@@ -233,27 +233,24 @@ def test_status_batches_select_attestations_once_for_every_claim(tmp_path, monke
     assert {pair[0] for pair in calls[0]} >= {claim.identity.qualified for claim in live}
 
 
-def test_a_remembered_orientation_reads_no_claims(tmp_path, monkeypatch):
+def test_remembered_status_counts_read_no_claims(tmp_path, monkeypatch):
+    from cruxible_core.service.discovery.orient import _claim_counts
+
     instance, _ = seed_claims(tmp_path)
+    coordinate = instance.accepted_coordinate()
     playbill_search.reset_claim_resolution_memo()
-    first = playbill_search.service_search_playbill(
-        instance, request=_request(instance, mode="orient", kinds=("claim",))
-    )
+    first = _claim_counts(instance, coordinate, evaluation_time=EVALUATION_TIME)
 
     def unread(*args, **kwargs):
-        pytest.fail("a remembered orientation must not read or parse Claims")
+        pytest.fail("remembered status counts must not read or parse Claims")
 
     monkeypatch.setattr(ClaimVerdictReadContext, "claims", unread)
-    again = playbill_search.service_search_playbill(
-        instance, request=_request(instance, mode="orient", kinds=("claim",))
-    )
-    assert again.orientation == first.orientation
+    again = _claim_counts(instance, coordinate, evaluation_time=EVALUATION_TIME)
+    assert again == first
     # Without the memo the ordinary read path is taken (and here refused).
     playbill_search.reset_claim_resolution_memo()
     with pytest.raises(pytest.fail.Exception):
-        playbill_search.service_search_playbill(
-            instance, request=_request(instance, mode="orient", kinds=("claim",))
-        )
+        _claim_counts(instance, coordinate, evaluation_time=EVALUATION_TIME)
 
 
 def test_remembered_replay_availability_follows_the_consulted_cas_files(tmp_path):

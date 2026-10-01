@@ -128,7 +128,10 @@ def test_the_seed_bundle_uses_only_surviving_governed_writers(
     assert manifest["seed"]["applied_plan_digest"] == manifest["seed"]["plan_digest"]
 
     # And the accepted world is readable through the ordinary reads.
-    run = recipe.run_cli_json("playbill", "query", "run", "project.work_items")
+    page = recipe.run_cli_json(
+        "playbill", "query", "--name", "project.work_items", "--receipt", "full"
+    )
+    run = page["receipt"]["replay"]
     projected = {
         next(field["value"] for field in row["fields"] if field["name"] == "item_id"): next(
             field["value"] for field in row["fields"] if field["name"] == "status"

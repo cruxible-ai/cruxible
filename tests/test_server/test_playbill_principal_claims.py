@@ -100,7 +100,9 @@ def test_an_unregistered_claim_reads_but_is_refused_every_write(
     assert _init(client, tmp_path, managed, claim="alice").status_code == 200  # type: ignore[attr-defined]
     mallory = {PRINCIPAL_ID_HEADER: "mallory"}
 
-    listed = client.get(f"/api/v1/{INSTANCE}/playbill/principals", headers=mallory)
+    listed = client.get(
+        f"/api/v1/{INSTANCE}/playbill/orient", params={"section": "principals"}, headers=mallory
+    )
     who = client.get(f"/api/v1/{INSTANCE}/playbill/whoami", headers=mallory)
     withdrawn = client.post(
         f"/api/v1/{INSTANCE}/playbill/proposals/sha256:{'0' * 64}/withdraw",
@@ -312,8 +314,8 @@ def test_an_unregistered_claim_reads_orient_and_every_operational_section(
             {},
             "playbill.identity.principal_unconfigured",
             {
-                "operation": "playbill.principal.list",
-                "arguments": {"configure": "CRUXIBLE_PRINCIPAL_ID"},
+                "operation": "playbill.orient",
+                "arguments": {"section": "principals", "configure": "CRUXIBLE_PRINCIPAL_ID"},
             },
         ),
     ],

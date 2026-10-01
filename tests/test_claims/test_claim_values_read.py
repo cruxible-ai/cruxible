@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -12,11 +13,11 @@ from cruxible_core.service.claims.claim_reads import (
     service_read_claim_batch,
     service_read_claim_values,
 )
-from cruxible_core.service.discovery.search import claim_resolution_statuses
+from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from tests.core_support._knowledge_loop_support import seed_claims
-from tests.test_integration.test_playbill_search import EVALUATION_TIME
 
+EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
 SUBJECTS = (
     "subjects/project.work_item/wi-42.json",
     "subjects/project.work_item/wi-43.json",
@@ -165,20 +166,14 @@ def test_values_request_selects_paths_or_one_kind_never_both() -> None:
         ClaimValuesRequestV1()
 
 
-def test_subject_and_claim_lists_filter_by_subject_kind(tmp_path: Path) -> None:
+def test_claim_lists_filter_by_subject_kind(tmp_path: Path) -> None:
     from cruxible_core.service.claims.claims import service_list_playbill_claims
-    from cruxible_core.service.claims.subjects import service_list_playbill_subjects
 
     instance, _owner = seed_claims(tmp_path)
 
-    subjects = service_list_playbill_subjects(instance, subject_kind="project.work_item")
     claims = service_list_playbill_claims(instance, subject_kind="project.work_item")
     all_claims = service_list_playbill_claims(instance)
 
-    assert {
-        f"subjects/{row.subject_kind}/{row.subject_id}.json" for row in subjects.subjects
-    } == set(SUBJECTS)
-    assert service_list_playbill_subjects(instance, subject_kind="project.milestone").subjects == ()
     assert claims.claims == all_claims.claims
     assert len(claims.claims) == 2
     assert service_list_playbill_claims(instance, subject_kind="project.milestone").claims == ()

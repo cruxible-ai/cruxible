@@ -662,7 +662,7 @@ def _spoil(instance: PlaybillInstance, digest: str, how: str) -> None:
 def _cold(instance: PlaybillInstance, **options: Any) -> dict[str, bytes]:
     """An export with no kept floor output and no remembered verdict derivation."""
 
-    from cruxible_core.service.discovery.search import reset_claim_resolution_memo
+    from cruxible_core.service.discovery.claim_status import reset_claim_resolution_memo
 
     instance.floor_export_memo.clear()
     instance.floor_structure_memo.clear()
