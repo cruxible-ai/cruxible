@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **One `CAP-` handle resolver for reads and writes.** `get`, `read_capture`
+  and the write verbs' `--capture` now resolve a handle or digest prefix through
+  the same bounded lookup: a Capture accepted Claims cite, or one the instance
+  holds that verifies at the coordinate. A handle the write path accepted for a
+  Capture nothing cites yet used to refuse `not_found` in `get` and
+  `read_capture`; it now opens there too. A prefix more Captures share than one
+  lookup examines refuses `playbill.capture.ref_scan_exhausted` on reads, as it
+  already refused `playbill.write.capture_scan_exhausted` on writes.
+
 - **Stale proposals stay their author's work, and leave once superseded.** A
   `proposal_stale` row in `next` now shows only to the proposal's author (the
   caller's principal; a read without one shows none), since only the author may

@@ -631,6 +631,21 @@ def test_a_capture_handle_names_a_capture_no_accepted_claim_cites_yet(
     }
     assert fresh not in _accepted_capture_digests(instance)
     handle = capture_handle(fresh)
+    # One resolver: the handle the write verbs accept opens in get and
+    # read_capture too, though no accepted Claim cites it yet.
+    from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
+    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    reader = BodyAccessContext(principal_id="reader", can_read_body=True)
+    opened = service_playbill_get(instance, request=PlaybillGetRequestV1(ref=handle), access=reader)
+    assert opened.ref == f"Capture:{fresh}"
+    read = service_read_playbill_capture(
+        instance, request=CaptureReadRequestV1(capture_digest=handle), access=reader
+    )
+    assert read.capture_digest == fresh and read.status == "verified"
     cited = _write(
         instance, _set(WI2, "measured", 3, evidence={"kind": "capture", "capture": handle})
     )
@@ -897,7 +912,9 @@ def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(
             {"because": "x", "changes": [_set(WI1, "title", "x")]}
         ),
     )
-    monkeypatch.setattr(write_verbs, "_MAX_HANDLE_SCAN", 1)
+    from cruxible_core.service.evidence import capture_reads
+
+    monkeypatch.setattr(capture_reads, "CAPTURE_HANDLE_MAX_VERIFIED", 1)
     with pytest.raises(WriteRefusalError) as caught:
         planner.capture_by_handle("CAP-", index=0, path="changes[0].evidence.capture")
     assert caught.value.error_code == "playbill.write.capture_scan_exhausted"
@@ -913,7 +930,9 @@ def test_a_handle_in_a_crowded_shard_stops_at_the_work_limit(
     shard.mkdir(exist_ok=True)
     for index in range(3000):
         (shard / f"ab{index:062x}").touch()
-    monkeypatch.setattr(write_verbs, "_CAPTURE_SCAN_BUDGET", 500)
+    from cruxible_core.service.evidence import capture_reads
+
+    monkeypatch.setattr(capture_reads, "CAPTURE_HANDLE_SCAN_BUDGET", 500)
     refusal = _refusal(
         _write(
             instance,

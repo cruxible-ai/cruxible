@@ -2,9 +2,9 @@
 
 ``get(detail="evidence")`` names each Capture by its ``CAP-<12 hex>`` handle,
 and both ``get`` and ``read_capture`` accept it (a prefix must be unique among
-accepted Captures). A history row carries its generation's git oid beside the
-sequence, and ``at`` accepts either: the oid (or a 12+ hex prefix) or the
-generation number.
+the Captures the write verbs resolve too: cited, or retained and verifying).
+A history row carries its generation's git oid beside the sequence, and ``at``
+accepts either: the oid (or a 12+ hex prefix) or the generation number.
 """
 
 from __future__ import annotations
@@ -93,6 +93,36 @@ def test_read_capture_refuses_an_unknown_or_ambiguous_prefix(
     assert ambiguous.value.error_code == "playbill.capture.ref_ambiguous"
     assert ambiguous.value.http_status == 409
     assert tuple(ambiguous.value.candidates) == twins
+
+
+def test_a_handle_the_bounded_lookup_cannot_settle_refuses_in_every_read(
+    world,  # type: ignore[no-untyped-def]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reads resolve handles through the write verbs' bounded resolver, refusal included.
+
+    A lookup that runs out of budget never calls a partial answer unique; a
+    full digest names itself and needs no lookup at all.
+    """
+
+    from cruxible_core.service.evidence import capture_reads
+
+    instance, capture_digest, _contract = world
+    handle = "CAP-" + capture_digest.removeprefix("sha256:")[:12]
+    monkeypatch.setattr(capture_reads, "CAPTURE_HANDLE_SCAN_BUDGET", 0)
+
+    for read in (
+        lambda: _get(instance, handle),
+        lambda: service_read_playbill_capture(
+            instance, request=CaptureReadRequestV1(capture_digest=handle), access=_ACCESS
+        ),
+    ):
+        with pytest.raises(ReadRefusalError) as refused:
+            read()
+        assert refused.value.error_code == "playbill.capture.ref_scan_exhausted"
+        assert refused.value.http_status == 409
+        assert "longer handle" in str(refused.value.context["repair_line"])
+    assert _get(instance, f"Capture:{capture_digest}").ref == f"Capture:{capture_digest}"
 
 
 def test_read_capture_still_checks_permission_before_resolving_a_prefix() -> None:

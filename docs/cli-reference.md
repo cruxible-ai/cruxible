@@ -485,9 +485,12 @@ cruxible playbill capture read CAPTURE_DIGEST [--max-bytes BYTES]
 Verify a retained Capture and return its evidence metadata and bounded material as JSON.
 CAPTURE_DIGEST is the full digest, the `CAP-<12 hex>` handle `get --detail
 evidence` and Capture cards print, or a `sha256:` prefix of 12+ hex; a handle
-or prefix must name one Capture accepted Claims cite
+or prefix must name one Capture, resolved exactly as the write verbs resolve
+`--capture`: one accepted Claims cite, or one the instance holds that verifies
 (`playbill.capture.ref_ambiguous` lists the candidates,
-`playbill.capture.not_found` points at `orient --section captures`).
+`playbill.capture.not_found` points at `orient --section captures`, and
+`playbill.capture.ref_scan_exhausted` asks for a longer handle when more share
+the prefix than one bounded lookup examines).
 Uses body-read permission and never refetches the external source. The SDK equivalent
 is `pb.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
 

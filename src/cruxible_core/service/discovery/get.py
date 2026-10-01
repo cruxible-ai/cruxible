@@ -451,8 +451,10 @@ def _resolve_capture(
 ) -> ResolvedRef:
     """``CAP-<12+ hex>``, ``Capture:<digest>`` or a unique digest prefix, to one Capture.
 
-    Cited Captures resolve through the accepted index, by prefix; a Capture no
-    accepted Claim cites resolves by its full digest from the store.
+    A full digest names itself: cited, or held in the store uncited. A prefix
+    resolves as every verb resolves one (``resolve_capture_handle``): among
+    Captures cited at the coordinate and retained ones that verify there, so a
+    handle the write verbs accepted opens here too.
     """
 
     hex_digits = capture_hex(value)
@@ -469,17 +471,28 @@ def _resolve_capture(
             ),
             context={"ref": ref},
         )
-    with instance.bind_accepted_projection(coordinate) as projection:
-        matches = captures_with_prefix(
-            projection.typed.connection, hex_digits, limit=_MAX_CANDIDATES + 1
-        )
-    if len(matches) > 1:
-        raise _ambiguous(ref, [_display("capture", item) for item in matches])
-    if matches:
-        return ResolvedRef("capture", matches[0], _display("capture", matches[0]))
-    digest = "sha256:" + hex_digits
-    if len(hex_digits) == 64 and uncited_capture_present(instance, digest):
-        return ResolvedRef("capture", digest, _display("capture", digest))
+    if len(hex_digits) == 64:
+        digest = "sha256:" + hex_digits
+        with instance.bind_accepted_projection(coordinate) as projection:
+            cited = captures_with_prefix(projection.typed.connection, hex_digits, limit=1)
+        if cited or uncited_capture_present(instance, digest):
+            return ResolvedRef("capture", digest, _display("capture", digest))
+        raise _not_found("Capture", ref, (), surface=surface, section="captures")
+    from cruxible_core.service.evidence.capture_reads import (
+        CaptureHandleAmbiguous,
+        CaptureHandleExhausted,
+        CaptureHandleResolved,
+        capture_handle_exhausted,
+        resolve_capture_handle,
+    )
+
+    resolution = resolve_capture_handle(instance, coordinate, hex_digits)
+    if isinstance(resolution, CaptureHandleResolved):
+        return ResolvedRef("capture", resolution.digest, _display("capture", resolution.digest))
+    if isinstance(resolution, CaptureHandleAmbiguous):
+        raise _ambiguous(ref, [_display("capture", item) for item in resolution.candidates])
+    if isinstance(resolution, CaptureHandleExhausted):
+        raise capture_handle_exhausted(ref, field="ref")
     raise _not_found("Capture", ref, (), surface=surface, section="captures")
 
 

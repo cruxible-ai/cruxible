@@ -162,7 +162,7 @@ outside the language server/MCP process.
 |---|---|---|
 | `cruxible_playbill_list_documents` | List accepted Documents and coordinate | `READ_ONLY` |
 | `cruxible_playbill_get_document` | Read an accepted Document envelope | `READ_ONLY` |
-| `cruxible_playbill_read_capture` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among accepted Captures | `GOVERNED_WRITE` |
+| `cruxible_playbill_read_capture` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying) | `GOVERNED_WRITE` |
 | `cruxible_playbill_dereference` | Read permission-gated body bytes | `GOVERNED_WRITE` |
 | `cruxible_playbill_history` | Read accepted history | `READ_ONLY` |
 | `cruxible_playbill_explain` | Explain governance, provenance, coverage, and history | `READ_ONLY` |
