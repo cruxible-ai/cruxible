@@ -13,16 +13,10 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from cruxible_client.contracts.canonical import ArtifactDigest
 from cruxible_client.contracts.claim_types import ClaimType, parse_claim_type
-from cruxible_client.contracts.discovery import (
-    DiscoveryBudgetV1,
-    DiscoveryPageV1,
-    DiscoveryRequestV1,
-)
-from cruxible_client.contracts.errors import PlaybillFormatError, ProposalIntegrityError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
 from cruxible_client.contracts.provider_contracts import (
@@ -47,7 +41,6 @@ from cruxible_core.query.backends import ClaimQueryFactsV1, subject_query_view
 from cruxible_core.query.semantic_discovery import (
     DiscoveryVocabularyV1,
     build_discovery_vocabulary,
-    discover,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
@@ -58,19 +51,6 @@ from cruxible_core.service.discovery.query_definitions import QUERY_DEFINITION_P
 
 class _StrictDiscoveryServiceModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class PlaybillDiscoveryResultV1(_StrictDiscoveryServiceModel):
-    """One discovery page bound to the accepted coordinate that produced it."""
-
-    tag: Literal["playbill-discovery-result-v1"] = "playbill-discovery-result-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    page: DiscoveryPageV1
-    vocabulary_entry_count: int
-    # True when a budget clipped the page's hits; page.coverage names the clipped
-    # facet and the budget. Discovery has no cursor: raise budget.max_hits or
-    # budget.max_bytes, or narrow the query.
-    truncated: bool = False
 
 
 class ProviderInterfaceImplementationV1(_StrictDiscoveryServiceModel):
@@ -117,22 +97,6 @@ class ProviderInterfaceEntryV1(_StrictDiscoveryServiceModel):
     def _digest(cls, value: str) -> str:
         ArtifactDigest.from_tagged(value)
         return value
-
-
-class PlaybillInterfaceInventoryV1(_StrictDiscoveryServiceModel):
-    tag: Literal["playbill-interface-inventory-v1"] = "playbill-interface-inventory-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    provider_status: Literal["installed", "not_installed"]
-    interfaces: tuple[ProviderInterfaceEntryV1, ...]
-
-    @model_validator(mode="after")
-    def _correspondence(self) -> "PlaybillInterfaceInventoryV1":
-        identities = tuple(item.identity for item in self.interfaces)
-        if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("provider interfaces must be sorted and unique")
-        if (self.provider_status == "installed") != bool(self.interfaces):
-            raise ValueError("provider status must agree with interface entries")
-        return self
 
 
 @dataclass(frozen=True)
@@ -298,88 +262,11 @@ def build_accepted_discovery_vocabulary(
     )
 
 
-def service_discover_playbill_semantic(
-    instance: PlaybillInstance,
-    *,
-    evaluation_time: str,
-    query: str | None = None,
-    entrypoint: str | None = None,
-    at: PlaybillAcceptedCoordinate | None = None,
-    profile: Literal["interfaces", "subjects", "all"] = "interfaces",
-    budget: DiscoveryBudgetV1 = DiscoveryBudgetV1(),
-    procedures: Iterable[AcceptedProcedureV1] = (),
-    line_specs: Iterable[AcceptedLineSpecV1] = (),
-    external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
-    installed_classifier_digests: frozenset[str] = frozenset(),
-) -> PlaybillDiscoveryResultV1 | PlaybillInterfaceInventoryV1:
-    """Answer one exact/lexical discovery request without writing anything.
-
-    Exactly one of ``query`` or ``entrypoint`` selects the page; the accepted
-    discovery law refuses the ambiguous and the empty request alike.
-    """
-
-    if at is not None and not isinstance(at, PlaybillAcceptedCoordinate):
-        raise ProposalIntegrityError("discovery accepts only verified accepted coordinates")
-    coordinate = _resolve_coordinate(instance, at)
-    if profile == "interfaces" and query is None and entrypoint is None:
-        interfaces = tuple(
-            item.entry
-            for item in accepted_provider_interfaces(
-                instance,
-                coordinate,
-                installed_classifier_digests=installed_classifier_digests,
-            )
-        )
-        return PlaybillInterfaceInventoryV1(
-            coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-            provider_status="installed" if interfaces else "not_installed",
-            interfaces=interfaces,
-        )
-    if query is None and entrypoint is None:
-        # The discovery law refuses the empty request by design, but it did so
-        # from DiscoveryRequestV1's own validator below, which is not a CoreError
-        # and so reached the caller as an opaque 500. Only `interfaces` answers
-        # an empty request (the inventory returned above); say so, and name the
-        # verb that lists a profile without a search term.
-        raise PlaybillFormatError(
-            f"discover with profile={profile!r} needs a query or an entrypoint: "
-            "only profile='interfaces' answers an empty request. "
-            "Use `playbill list` to enumerate accepted artifacts without a search term."
-        )
-    vocabulary = build_accepted_discovery_vocabulary(
-        instance,
-        coordinate=coordinate,
-        procedures=procedures,
-        line_specs=line_specs,
-        external_readers=external_readers,
-    )
-    page = discover(
-        DiscoveryRequestV1(
-            query=query,
-            entrypoint=entrypoint,
-            at=vocabulary.at,
-            evaluation_time=evaluation_time,
-            profile=profile,
-            budget=budget,
-        ),
-        vocabulary=vocabulary,
-    )
-    return PlaybillDiscoveryResultV1(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-        page=page,
-        vocabulary_entry_count=len(vocabulary.entries),
-        truncated=bool(page.coverage.truncated_facets),
-    )
-
-
 __all__ = [
     "AcceptedProviderInterface",
-    "PlaybillInterfaceInventoryV1",
-    "PlaybillDiscoveryResultV1",
     "ProviderInterfaceEntryV1",
     "accepted_claim_types",
     "accepted_provider_interfaces",
     "accepted_query_definitions",
     "build_accepted_discovery_vocabulary",
-    "service_discover_playbill_semantic",
 ]

@@ -32,7 +32,7 @@ def test_registered_schema_catalog_matches_permission_catalog() -> None:
     assert set(_schemas()) == set(TOOL_PERMISSIONS)
 
 
-def test_init_and_explain_publish_their_protocol_enums() -> None:
+def test_init_and_get_publish_their_protocol_enums() -> None:
     schemas = _schemas()
     init = schemas["cruxible_playbill_init"].inputSchema
     assert set(init["required"]) == {"principals"}
@@ -41,8 +41,15 @@ def test_init_and_explain_publish_their_protocol_enums() -> None:
     # Bootstrap no longer installs a seed implicitly; provider setup is separate.
     assert "seed" not in init["properties"]
 
-    explain = schemas["cruxible_playbill_explain"].inputSchema
-    assert explain["properties"]["detail"]["enum"] == ["summary", "evidence", "proof"]
+    get = schemas["cruxible_playbill_get"].inputSchema
+    assert get["properties"]["detail"]["enum"] == [
+        "summary",
+        "evidence",
+        "why",
+        "history",
+        "proof",
+        "body",
+    ]
 
 
 def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation() -> None:
@@ -163,17 +170,6 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
     assert forbidden.isdisjoint(bind_schema["properties"])
 
 
-def test_search_schema_exposes_modes_but_not_access_or_digest_plumbing() -> None:
-    schema = _schemas()["cruxible_playbill_search"].inputSchema
-    assert schema["properties"]["mode"]["enum"] == ["search", "list", "orient"]
-    kind_schema = next(
-        member for member in schema["properties"]["kinds"]["anyOf"] if member.get("type") == "array"
-    )
-    assert kind_schema["items"]["enum"] == ["claim", "procedure", "demand"]
-    assert "access_profile" not in schema["properties"]
-    assert "selection_basis_digest" not in schema["properties"]
-
-
 def test_since_schema_exposes_the_frozen_history_wire() -> None:
     schema = _schemas()["cruxible_playbill_since"].inputSchema
     assert set(schema["properties"]) == {
@@ -205,3 +201,28 @@ def test_audit_schema_uses_the_central_budget_calibration() -> None:
         AUDIT_BUDGET_MIN_MAX_BYTES,
         AUDIT_BUDGET_MAX_MAX_BYTES,
     )
+
+
+def test_tool_parameters_use_declared_types_except_instance_defined_query_parameters() -> None:
+    import ast
+    from pathlib import Path
+
+    from cruxible_core.mcp import tools
+
+    tree = ast.parse(Path(tools.__file__).read_text())
+    offenders: list[str] = []
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef) or not function.name.startswith("cruxible_"):
+            continue
+        for parameter in (*function.args.args, *function.args.kwonlyargs):
+            if (function.name, parameter.arg) == ("cruxible_playbill_query", "params"):
+                continue  # Its accepted QueryDefinition declares the names and scalar types.
+            annotation = parameter.annotation
+            names = (
+                {node.id for node in ast.walk(annotation) if isinstance(node, ast.Name)}
+                if annotation is not None
+                else set()
+            )
+            if annotation is None or names & {"dict", "object", "Any"}:
+                offenders.append(f"{function.name}.{parameter.arg}")
+    assert offenders == [], f"untyped MCP parameters: {offenders}"

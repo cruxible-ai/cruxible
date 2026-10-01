@@ -171,12 +171,17 @@ def test_client_encodes_body_bytes_and_exact_coordinate_params() -> None:
             )
         return httpx.Response(
             200,
-            json={"tag": "playbill-document-list-v1", "coordinate": COORDINATE, "documents": []},
+            json={
+                "tag": "playbill-head-v1",
+                "instance": "inst_test",
+                "coordinate": COORDINATE,
+                "generation": 3,
+            },
         )
 
     client = _client(handler)
     client.store_playbill_body("inst_test", b"bytes\n")
-    listed = client.list_playbill_documents("inst_test", at=COORDINATE)
+    head = client.playbill_head("inst_test", at=COORDINATE)
     assert (
         json.loads(captured[0].content)["content_base64"] == base64.b64encode(b"bytes\n").decode()
     )
@@ -186,4 +191,4 @@ def test_client_encodes_body_bytes_and_exact_coordinate_params() -> None:
         "generation_root": COORDINATE["generation_root"],
         "compiler_digest": COORDINATE["compiler_digest"],
     }
-    assert listed.coordinate.git_oid == COORDINATE["git_oid"]
+    assert head.coordinate.git_oid == COORDINATE["git_oid"] and head.generation == 3

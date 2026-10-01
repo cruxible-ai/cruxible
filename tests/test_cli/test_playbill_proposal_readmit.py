@@ -9,7 +9,13 @@ from click.testing import CliRunner
 from cruxible_client import CruxibleClient, contracts
 from cruxible_client.contracts.errors import ProposalSelectorAmbiguousError
 from cruxible_core.cli.main import cli
-from tests.test_cli.test_playbill_search import COORDINATE
+
+COORDINATE = contracts.PlaybillAcceptedCoordinate(
+    git_oid="1" * 64,
+    semantic_root="sha256:" + "2" * 64,
+    generation_root="sha256:" + "3" * 64,
+    compiler_digest="sha256:" + "4" * 64,
+)
 
 SOURCE_ID = "sha256:" + "11" * 32
 NEW_ID = "sha256:" + "22" * 32

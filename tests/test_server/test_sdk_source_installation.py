@@ -5,6 +5,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 from cruxible_client import Disposition, Playbill
 from cruxible_client.authoring.inputs import CarriedContractInput
@@ -36,6 +37,16 @@ from tests.test_procedures.test_procedure_proposal_delivery import _claim_type, 
 from tests.test_procedures.test_procedure_source_runs import _policy
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 from tests.test_server.test_provider_installation import installer_http  # noqa: F401
+
+
+def _proof(client: CruxibleClient, instance_id: str, ref: str) -> dict[str, Any]:
+    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+
+    proof = client.playbill_get(
+        instance_id, request=PlaybillGetRequestV1(ref=ref, detail="proof")
+    ).proof
+    assert proof is not None
+    return dict(proof)
 
 
 def test_installed_fetch_parent_proposal_and_accepted_derivation(
@@ -337,29 +348,28 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         pb.refresh()
         claims = pb.world().security.advisory["osv-2026-0001"].claims
         assert len(claims) == 2
-        original = client.get_playbill_claim(
-            instance_id, next(v.claim_id for v in claims if v.role == "observation")
+        original = _proof(
+            client, instance_id, next(v.claim_id for v in claims if v.role == "observation")
         )
-        derived_claim = client.get_playbill_claim(
-            instance_id, next(v.claim_id for v in claims if v.role == "derivation")
+        derived_claim = _proof(
+            client, instance_id, next(v.claim_id for v in claims if v.role == "derivation")
         )
         from cruxible_client.contracts.claims import ClaimBackingV2
 
         backing = ClaimBackingV2.model_validate(
             next(
                 fact["value"]
-                for fact in derived_claim.facts
+                for fact in derived_claim["facts"]
                 if fact["schema_id"] == "playbill.claim.backing"
             )
         )
-        assert backing.input_claim_digests == (original.envelope["artifact_digest"],)
+        assert backing.input_claim_digests == (original["envelope"]["artifact_digest"],)
         assert (
             backing.reducer_digest
             == pb.accepted_procedure("verify-parent").readiness().procedure_artifact_digest
         )
-        assert client.get_playbill_claim_type(
-            instance_id, definition.predicate
-        ).envelope == definition.model_dump(mode="json")
+        claim_type = _proof(client, instance_id, f"ClaimType:{definition.predicate}")
+        assert claim_type["envelope"] == definition.model_dump(mode="json")
     finally:
         server.shutdown()
         server.server_close()

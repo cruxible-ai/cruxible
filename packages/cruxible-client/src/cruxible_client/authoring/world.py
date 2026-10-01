@@ -71,7 +71,7 @@ from cruxible_client.contracts.records import RecordConstructor
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.compact_query import CompactQuery
     from cruxible_client.authoring.sdk import ClaimView, Playbill, SubjectDraft
-    from cruxible_client.contracts.claim_reads import ClaimValueV1
+    from cruxible_client.contracts.compact_query import PlaybillQueryClaimValueV1
     from cruxible_client.contracts.write import (
         Change,
         Evidence,
@@ -455,10 +455,13 @@ class WorldSubject(SubjectRef):
         return self._world._claims_about(self.address)
 
     def explain(self) -> object:
-        """Read this Subject's governance and provenance context."""
+        """Read this Subject's governance and provenance context.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
 
         self._world._assert_current()
-        return self._world._playbill.explain(self)
+        return self._world._playbill._get(self.address, "why", None, self.coordinate).why
 
     def set(
         self,
@@ -1093,85 +1096,102 @@ class World:
         return self._subject_cache.get(subject_kind, {})
 
     def _load_subjects(self) -> None:
-        from cruxible_client.authoring.sdk import _api_coordinate
+        """Read every live Subject of every kind, complete, at this World's coordinate.
 
-        playbill = self._playbill
-        # Only which Subjects exist is needed here, so read the index rather
-        # than a listing that compiles every Subject's facts.
-        listing = playbill._client.list_playbill_subject_index(
-            playbill._instance_id,
-            at=_api_coordinate(self._coordinate),
-        )
-        if listing.coordinate.model_dump(mode="json") != self._coordinate.model_dump(mode="json"):
-            raise WorldStructureError("Subject listing returned a different accepted coordinate")
-        for entry in listing.subjects:
-            if entry.lifecycle == "retired":
-                continue
-            subject_kind, subject_id = entry.subject_kind, entry.subject_id
-            self._subject_cache.setdefault(subject_kind, {})[subject_id] = WorldSubject(
-                address=f"{subject_kind}/{subject_id}",
-                coordinate=self._coordinate,
-                _world=self,
-            )
-        self._subjects_loaded = True
-
-    def _claim_rows(self, subject_address: str) -> tuple[Mapping[str, object], ...]:
-        """Walk every page of the subject-filtered list, cached per Subject.
-
-        The served list carries a row budget, so one call answers the first page
-        and says so. A read that returned that page as if it were the whole
-        answer would under-report a Subject with more Claims than the budget and
-        give no signal, which is the one failure mode hard state must not have.
-        This follows the cursor to exhaustion, and refuses -- typed, naming what
-        it had -- if the daemon reports a truncated page it cannot continue.
-
-        A cursor that does not advance is that same refusal, not a page to fetch
-        again. Two ways for a client to be wrong about a truncated list, and
-        only one of them was covered: a daemon that reports no further page, and
-        a daemon that reports the cursor it was just given. The second is skew
-        rather than corruption -- the answer is not wrong, the walk simply never
-        ends -- and an unbounded loop appending the same rows forever is a poor
-        failure mode for a client whose whole thesis is refusing wrong answers.
+        One value-free ``query`` per kind lists Subjects ordered by ID, and
+        asks for retired ones too (marked by ``lifecycle``) so every listed
+        row is one the evaluator bound. A page continues by its cursor; an
+        answer the server capped continues as a new window after the last ID
+        it listed. Anything else that stops short -- a truncated answer with
+        neither a cursor nor a cap, a cursor or window that does not advance,
+        a row without its lifecycle -- refuses, and nothing is cached: a
+        partial inventory would call an accepted Subject absent.
         """
 
-        cached = self._row_cache.get(subject_address)
-        if cached is not None:
-            return cached
-        from cruxible_client.authoring.sdk import _subject_address
+        loaded: dict[str, dict[str, WorldSubject]] = {}
+        for subject_kind in self._kind_paths():
+            loaded[subject_kind] = {
+                subject_id: WorldSubject(
+                    address=f"{subject_kind}/{subject_id}",
+                    coordinate=self._coordinate,
+                    _world=self,
+                )
+                for subject_id in self._live_subject_ids(subject_kind)
+            }
+        for subject_kind, subjects in loaded.items():
+            if subjects:
+                self._subject_cache[subject_kind] = subjects
+        self._subjects_loaded = True
 
-        subject = _subject_address(subject_address).model_dump(mode="json")
-        rows: list[Mapping[str, object]] = []
-        cursor: Mapping[str, object] | None = None
+    def _live_subject_ids(self, subject_kind: str) -> list[str]:
+        from cruxible_client.contracts.compact_query import (
+            PLAYBILL_QUERY_MAX_LIMIT,
+            PlaybillQueryRequestV1,
+        )
+
+        playbill = self._playbill
+        live: list[str] = []
+        after: str | None = None
         while True:
-            page = self._playbill._search(
-                mode="list",
-                query=None,
-                kinds=("claim",),
-                statuses=(),
-                subject=subject,
-                cursor=cursor,
-            )
-            rows.extend(row for row in page.rows if isinstance(row, Mapping))
+            last: str | None = None
+            cursor: str | None = None
+            while True:
+                page = playbill._client.query_playbill(
+                    playbill._instance_id,
+                    request=PlaybillQueryRequestV1.model_validate(
+                        {
+                            "kind": subject_kind,
+                            "select": ("subject_id",),
+                            "where": ()
+                            if after is None
+                            else ({"field": "subject_id", "gt": after},),
+                            "order_by": ("subject_id",),
+                            "status": ("live", "retired"),
+                            "limit": PLAYBILL_QUERY_MAX_LIMIT,
+                            "cursor": cursor,
+                            "at": None
+                            if cursor is not None
+                            else self._coordinate.model_dump(mode="json"),
+                        }
+                    ),
+                )
+                if page.receipt.coordinate.model_dump(mode="json") != (
+                    self._coordinate.model_dump(mode="json")
+                ):
+                    raise WorldStructureError(
+                        "Subject listing returned a different accepted coordinate"
+                    )
+                for row in page.rows:
+                    lifecycle = row.get("lifecycle")
+                    if lifecycle not in ("live", "retired"):
+                        raise WorldStructureError(
+                            f"the {subject_kind} Subject listing did not state each "
+                            "Subject's lifecycle"
+                        )
+                    last = str(row["subject_id"])
+                    if lifecycle == "live":
+                        live.append(last)
+                if page.next_cursor is None:
+                    break
+                if not page.rows or page.next_cursor == cursor:
+                    raise WorldStructureError(
+                        f"the {subject_kind} Subject listing is truncated and its cursor "
+                        "does not advance; no Subjects were cached"
+                    )
+                cursor = page.next_cursor
             if not page.truncated:
-                break
-            if page.cursor is None or not page.rows:
+                return live
+            if not page.capped:
                 raise WorldStructureError(
-                    f"the accepted list of Claims about {subject_address!r} is truncated "
-                    f"after {len(rows)} rows and cannot be continued: the daemon reported "
-                    "no further page. Repair: read the Claims through `playbill list` with "
-                    "an explicit cursor rather than trusting a short answer here"
+                    f"the {subject_kind} Subject listing is truncated with no cursor to "
+                    "continue it; no Subjects were cached"
                 )
-            if cursor is not None and page.cursor == cursor:
+            if last is None or (after is not None and last <= after):
                 raise WorldStructureError(
-                    f"the accepted list of Claims about {subject_address!r} is truncated "
-                    f"after {len(rows)} rows and cannot be continued: the daemon handed "
-                    "back the cursor it was given, so the walk does not advance. Repair: "
-                    "read the Claims through `playbill list` with an explicit cursor "
-                    "rather than trusting a short answer here"
+                    f"the {subject_kind} Subject listing hit the server cap "
+                    f"({', '.join(page.capped)}) without advancing; no Subjects were cached"
                 )
-            cursor = page.cursor
-        self._row_cache[subject_address] = tuple(rows)
-        return self._row_cache[subject_address]
+            after = last
 
     def prefetch(
         self,
@@ -1187,6 +1207,8 @@ class World:
         Every live contender is retained. If the explicit budget is exceeded,
         no partial attribute cache is installed and the caller can narrow the
         selection or increase ``max_claims``.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
         from datetime import datetime
 
@@ -1275,47 +1297,111 @@ class World:
         *,
         subjects: Sequence[str | SubjectRef],
         predicates: Sequence[str | ClaimTypeRef] = (),
-    ) -> tuple[ClaimValueV1, ...]:
-        """Each live Claim's value and verdict for these Subjects, in one request.
+    ) -> tuple[PlaybillQueryClaimValueV1, ...]:
+        """Each live Claim's value, verdict and status for these Subjects, through ``query``.
 
-        Lighter than ``prefetch`` when only values and verdicts are wanted: the
-        daemon reads the Claims' statements and their slot verdicts, not full
-        Claim views. Strings are subject kind/id addresses or paths and fully
-        qualified predicates.
+        Lighter than ``prefetch`` when only values and verdicts are wanted: one
+        ``query`` per Subject kind asks for each cell's Claims, including those
+        resolution overturned or refused. Strings are subject kind/id addresses
+        or paths and fully qualified predicates.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
-        from datetime import datetime
-
-        from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1
+        from cruxible_client.contracts.compact_query import PLAYBILL_QUERY_MAX_SELECT
 
         self._assert_current()
         for ref in (*subjects, *predicates):
             if isinstance(ref, (SubjectRef, ClaimTypeRef)):
                 self._playbill._assert_coordinate(ref.coordinate)
-        paths = tuple(
-            address if address.startswith("subjects/") else f"subjects/{address}.json"
+        addresses = [
+            address.removeprefix("subjects/").removesuffix(".json")
             for address in (ref.address if isinstance(ref, SubjectRef) else ref for ref in subjects)
+        ]
+        names = {ref.address if isinstance(ref, ClaimTypeRef) else ref for ref in predicates}
+        by_kind: dict[str, list[str]] = {}
+        for address in dict.fromkeys(addresses):
+            kind, _, subject_id = address.partition("/")
+            by_kind.setdefault(kind, []).append(subject_id)
+        playbill = self._playbill
+        # Every page is one answer: this World's coordinate and one evaluation
+        # instant, however many Subject and predicate batches it takes.
+        evaluation_time = playbill._evaluation_time()
+        values: list[PlaybillQueryClaimValueV1] = []
+        for kind, ids in by_kind.items():
+            admitted = {full for group in self._leaf_map(kind).values() for full in group}
+            select = sorted(admitted & names if names else admitted)
+            for start in range(0, len(ids), 256) if select else ():
+                for first in range(0, len(select), PLAYBILL_QUERY_MAX_SELECT):
+                    values.extend(
+                        self._value_page(
+                            kind,
+                            ids[start : start + 256],
+                            select[first : first + PLAYBILL_QUERY_MAX_SELECT],
+                            evaluation_time=evaluation_time,
+                        )
+                    )
+        return tuple(values)
+
+    def _value_page(
+        self,
+        kind: str,
+        ids: Sequence[str],
+        select: Sequence[str],
+        *,
+        evaluation_time: str,
+    ) -> list[PlaybillQueryClaimValueV1]:
+        """Every Claim value of one Subject and predicate batch, every page of it."""
+        from cruxible_client.contracts.compact_query import (
+            PLAYBILL_QUERY_MAX_LIMIT,
+            PlaybillQueryClaimValueV1,
+            PlaybillQueryRequestV1,
         )
-        names = tuple(ref.address if isinstance(ref, ClaimTypeRef) else ref for ref in predicates)
-        result = self._playbill._client.read_playbill_claim_values(
-            self._playbill._instance_id,
-            request=ClaimValuesRequestV1.model_validate(
-                {
-                    "at": self._coordinate.model_dump(mode="json"),
-                    "subject_paths": paths,
-                    "predicates": names,
-                    "evaluation_time": datetime.fromisoformat(self._playbill._evaluation_time()),
-                }
-            ),
-        )
-        self._assert_current()
-        if result.coordinate.model_dump(mode="json") != self._coordinate.model_dump(mode="json"):
-            raise WorldStructureError("Claim values returned a different accepted coordinate")
-        if any(
-            row.subject_path not in paths or (names and row.predicate not in names)
-            for row in result.values
-        ):
-            raise WorldStructureError("Claim values returned rows outside the selection")
-        return result.values
+
+        playbill = self._playbill
+        values: list[PlaybillQueryClaimValueV1] = []
+        cursor: str | None = None
+        while True:
+            page = playbill._client.query_playbill(
+                playbill._instance_id,
+                request=PlaybillQueryRequestV1.model_validate(
+                    {
+                        "kind": kind,
+                        "where": [{"field": "subject_id", "in": list(ids)}],
+                        "select": list(select),
+                        "status": ("live", "overturned", "refused"),
+                        "claims": True,
+                        "limit": PLAYBILL_QUERY_MAX_LIMIT,
+                        "cursor": cursor,
+                        "at": None
+                        if cursor is not None
+                        else self._coordinate.model_dump(mode="json"),
+                        "evaluation_time": None if cursor is not None else evaluation_time,
+                    }
+                ),
+            )
+            self._assert_current()
+            if page.receipt.coordinate.model_dump(mode="json") != (
+                self._coordinate.model_dump(mode="json")
+            ):
+                raise WorldStructureError("Claim values returned a different accepted coordinate")
+            predicate_of = {
+                column.name: column.predicate for column in page.columns if column.predicate
+            }
+            for row in page.rows:
+                for column, entries in (row.get("claims") or {}).items():
+                    values.extend(
+                        PlaybillQueryClaimValueV1.model_validate(
+                            {**entry, "subject": row["subject"], "predicate": predicate_of[column]}
+                        )
+                        for entry in entries
+                    )
+            if not page.truncated:
+                return values
+            if page.next_cursor is None or page.next_cursor == cursor or not page.rows:
+                raise WorldStructureError(
+                    f"the {kind} Claim values are truncated and cannot be continued"
+                )
+            cursor = page.next_cursor
 
     def _claims_about(
         self,
@@ -1333,26 +1419,11 @@ class World:
             )
         if cached is not None:
             return cached
-        playbill = self._playbill
-        views: list[ClaimView] = []
-        for row in self._claim_rows(subject_address):
-            identity = row.get("identity")
-            if not isinstance(identity, str):
-                continue
-            # The served row already names the predicate and marks a retired
-            # Claim, so a per-predicate view reads only the Claims that can
-            # survive the filter instead of every Claim about the Subject.
-            if predicate is not None and row.get("predicate") != predicate:
-                continue
-            if row.get("status") == "retired":
-                continue
-            view = self._view_cache.get(identity)
-            if view is None:
-                view = playbill.claim_view(identity)
-                self._view_cache[identity] = view
-            if view.lifecycle_state == "live":
-                views.append(view)
-        self._claim_cache[(subject_address, predicate)] = tuple(views)
+        # One bounded, coordinate-pinned batch read of every live Claim about
+        # the Subject (or of one predicate), walked to its last page.
+        self.prefetch(
+            subjects=(subject_address,), predicates=() if predicate is None else (predicate,)
+        )
         return self._claim_cache[(subject_address, predicate)]
 
     def __getattr__(self, name: str) -> Any:

@@ -351,7 +351,7 @@ def test_a_card_states_the_interface_and_its_policies_without_any_policy_body() 
     assert card.usage.claim_count == 2
     assert card.usage.subject_count == 2
     assert card.usage.contended_subject_count == 0
-    assert card.expansion_links[0].operation == "expand"
+    assert card.expansion_links[0].operation == "get"
     assert card.coverage.truncated_facets == ()
 
 

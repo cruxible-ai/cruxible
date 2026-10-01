@@ -56,7 +56,7 @@ _ADD = {"op": "add", "subject": WI1, "field": "governs", "value": f"{KIND}/wi-2"
     ("actor_id", "code", "operation"),
     [
         # The implicit local operator names no principal: configure one.
-        ("operator", "playbill.identity.principal_unconfigured", "playbill.principal.list"),
+        ("operator", "playbill.identity.principal_unconfigured", "playbill.orient"),
         # A configured principal ID nobody registered: an owner adds it.
         ("ghost", "playbill.identity.principal_absent", "playbill.principal.add"),
     ],

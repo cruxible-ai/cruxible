@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client import contracts
 from cruxible_client import errors as client_errors
+from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
 from cruxible_client.contracts.errors import (
     ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
@@ -24,7 +24,6 @@ from cruxible_core.errors import (
     PermissionDeniedError,
     RuntimeCredentialNotFoundError,
 )
-from cruxible_core.query.search import PlaybillSearchBudgetsV1
 from cruxible_core.server.errors import error_to_response
 from cruxible_core.server.errors import response_to_error as compat_response_to_error
 
@@ -166,14 +165,11 @@ def test_proposal_integrity_split_reaches_the_http_surface(
 ) -> None:
     client, instance_id, _private_key = playbill_http
 
-    def fail_search(*_args: object, **_kwargs: object) -> object:
+    def fail_head(*_args: object, **_kwargs: object) -> object:
         raise error
 
-    monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_search", fail_search)
-    response = client.post(
-        f"/api/v1/{instance_id}/playbill/search",
-        json={"mode": "list"},
-    )
+    monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_head", fail_head)
+    response = client.get(f"/api/v1/{instance_id}/playbill/head")
 
     assert response.status_code == expected_status, response.text
     assert response.json()["error_type"] == type(error).__name__
@@ -281,54 +277,6 @@ def test_http_next_refuses_a_foreign_cursor_with_its_declared_repair(
     assert unbounded.status_code == 422, unbounded.text
 
 
-def test_http_discover_refuses_an_empty_request_typed_not_as_a_server_error(
-    playbill_http: tuple[TestClient, str, Path],
-) -> None:
-    """Only profile=interfaces answers an empty request; the rest refuse typed.
-
-    The discovery law always refused this, but it refused from a pydantic
-    validator the route builds server-side, so the refusal reached the caller
-    as an opaque 500.
-    """
-    client, instance_id, _private_key = playbill_http
-
-    for profile in ("subjects", "all"):
-        response = client.post(
-            f"/api/v1/{instance_id}/playbill/discover",
-            json={"profile": profile},
-        )
-
-        assert response.status_code == 400, response.text
-        body = response.json()
-        assert body["error_type"] == "PlaybillFormatError"
-        assert "needs a query or an entrypoint" in body["message"]
-        assert profile in body["message"]
-
-
-def test_http_discover_still_answers_an_empty_interfaces_request(
-    playbill_http: tuple[TestClient, str, Path],
-) -> None:
-    """A host with no Provider package installed still answers, and says so.
-
-    Installed interfaces are asserted by the env-gated provider-installation
-    tests; this one pins the typed answer an initialized host gives.
-    """
-
-    client, instance_id, _private_key = playbill_http
-
-    response = client.post(
-        f"/api/v1/{instance_id}/playbill/discover",
-        json={"profile": "interfaces"},
-    )
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    parsed = contracts.PlaybillInterfaceInventory.model_validate(payload)
-    assert payload["tag"] == "playbill-interface-inventory-v1"
-    assert payload["provider_status"] == "not_installed"
-    assert not parsed.interfaces
-
-
 def test_http_activate_refuses_a_missing_proposal_id_typed(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
@@ -354,86 +302,22 @@ def test_a_frozen_model_failing_inside_a_service_stays_a_generic_server_error(
     """
     client, instance_id, _private_key = playbill_http
 
-    def exploding_search(selected: str, **values: object) -> object:
-        PlaybillSearchBudgetsV1(max_rows=0)  # below the model's own floor
+    def exploding_head(*_args: object, **_kwargs: object) -> object:
+        PlaybillQueryRequestV1(kind="x", limit=0)  # below the model's own floor
         raise AssertionError("unreachable")
 
-    monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_search", exploding_search)
+    monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_head", exploding_head)
     # The default TestClient re-raises server exceptions; this asserts on the
     # body the client would actually receive.
     quiet = TestClient(client.app, raise_server_exceptions=False)
-    response = quiet.post(
-        f"/api/v1/{instance_id}/playbill/search",
-        json={"mode": "list"},
-    )
+    response = quiet.get(f"/api/v1/{instance_id}/playbill/head")
 
     assert response.status_code == 500, response.text
     body = response.json()
     assert body["error_type"] == "InternalServerError"
     assert body["message"] == "internal server error"
     # The internal model name never reaches the client.
-    assert "PlaybillSearchBudgetsV1" not in response.text
-
-
-def test_the_caller_shaped_refusals_stay_typed_400s(
-    playbill_http: tuple[TestClient, str, Path],
-) -> None:
-    """The two surfaces X4 fixed refuse at the boundary, not through a blanket rule."""
-    client, instance_id, _private_key = playbill_http
-
-    empty_kinds = client.post(
-        f"/api/v1/{instance_id}/playbill/search",
-        json={"mode": "list", "kinds": []},
-    )
-    assert empty_kinds.status_code == 200, empty_kinds.text
-
-    empty_discover = client.post(
-        f"/api/v1/{instance_id}/playbill/discover",
-        json={"profile": "subjects"},
-    )
-    assert empty_discover.status_code == 400, empty_discover.text
-    assert empty_discover.json()["error_type"] == "PlaybillFormatError"
-
-
-@pytest.mark.parametrize("query", (None, "   "))
-def test_search_mode_without_a_query_is_a_coded_400_with_a_repair(
-    playbill_http: tuple[TestClient, str, Path],
-    query: str | None,
-) -> None:
-    client, instance_id, _private_key = playbill_http
-    payload: dict[str, object] = {"mode": "search"}
-    if query is not None:
-        payload["query"] = query
-
-    response = client.post(f"/api/v1/{instance_id}/playbill/search", json=payload)
-
-    assert response.status_code == 400, response.text
-    body = response.json()
-    assert body["error_code"] == "playbill.search.query_required"
-    assert "mode 'list'" in body["repair"]["hand_edit"]["required_change"]
-
-
-def test_a_missing_claim_type_is_a_coded_404_naming_the_nearest_predicates(
-    playbill_http: tuple[TestClient, str, Path],
-) -> None:
-    client, instance_id, _private_key = playbill_http
-    declared = client.get(f"/api/v1/{instance_id}/playbill/claim-types")
-    assert declared.status_code == 200, declared.text
-    predicates = [row["predicate"] for row in declared.json()["claim_types"]]
-
-    missing = client.get(f"/api/v1/{instance_id}/playbill/claim-types/no.such.predicate")
-    assert missing.status_code == 404, missing.text
-    body = missing.json()
-    assert body["error_code"] == "playbill.claim_type_not_found"
-    assert body["context"]["predicate"] == "no.such.predicate"
-    assert body["repair"]["operation"] == "playbill.claim-type.list"
-
-    if predicates:
-        typo = predicates[0][:-1]
-        near = client.get(f"/api/v1/{instance_id}/playbill/claim-types/{typo}")
-        assert near.status_code == 404, near.text
-        assert predicates[0] in near.json()["context"]["nearest"]
-        assert predicates[0] in near.json()["message"]
+    assert "PlaybillQueryRequestV1" not in response.text
 
 
 def test_nearest_predicates_cover_typos_and_bare_leaf_names() -> None:

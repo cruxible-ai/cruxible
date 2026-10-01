@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -10,7 +10,7 @@ import pytest
 from cruxible_client.contracts.captures import DirectForeignSourceSelectionV1
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
-from cruxible_core.service.discovery import search as playbill_search
+from cruxible_core.service.discovery import claim_status as playbill_search
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from tests.core_support._candidate_support import submit_query_definition_candidate
 from tests.core_support._knowledge_loop_support import (
@@ -22,7 +22,8 @@ from tests.core_support._knowledge_loop_support import (
     service_propose_playbill_claim,
     work_item_query,
 )
-from tests.test_integration.test_playbill_search import EVALUATION_TIME
+
+EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
 
 
 def _derive(instance, *, when=EVALUATION_TIME, fresh: bool):

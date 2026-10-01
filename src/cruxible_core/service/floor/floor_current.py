@@ -667,8 +667,8 @@ def claim_verdicts(
     a function of accepted state rather than of the moment of export.
     """
 
+    from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
     from cruxible_core.service.discovery.read_flags import unsure_holds
-    from cruxible_core.service.discovery.search import claim_resolution_statuses
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext as Context
 
     if not claims:

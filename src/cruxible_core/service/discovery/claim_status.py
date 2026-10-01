@@ -1,12 +1,20 @@
-"""Deterministic search/list/orient over accepted Claims and Procedures."""
+"""Each accepted Claim's resolution status, derived once per slot and remembered.
+
+A Claim's status says how resolution placed it in its slot: ``accepted`` (it
+answers the slot), ``conflicted`` (resolution left its contenders unresolved),
+``overturned`` (an accepted rival won), ``refused`` (its own ClaimType's
+admission failed) or ``retired``. ``read_flags``, ``next``, the floor, orient's
+status counts, projection sync and activation all read statuses here, from one
+memoized derivation over the slots they touch.
+"""
 
 from __future__ import annotations
 
-from collections import Counter, OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Literal
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_path
@@ -16,32 +24,8 @@ from cruxible_client.contracts.claims import (
     SubjectClaimObject,
     claim_path,
 )
-from cruxible_client.contracts.discovery import DiscoveryMatchBasisV1
-from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
-from cruxible_client.contracts.semantic import SemanticAddress, SemanticSelector
 from cruxible_core.claims.claim_slots import ClaimSlotClassification, classify_claim_slot
 from cruxible_core.derived.memo import memo_get, memo_put
-from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
-from cruxible_core.query.search import (
-    SEARCH_KINDS,
-    PlaybillSearchCountV1,
-    PlaybillSearchFollowUpV1,
-    PlaybillSearchKindAvailabilityV1,
-    PlaybillSearchOrientationV1,
-    PlaybillSearchRequestV1,
-    PlaybillSearchResultV1,
-    PlaybillSearchRowV1,
-    SearchKind,
-    SearchStatus,
-    build_playbill_search_cursor,
-    build_playbill_search_result,
-    playbill_search_result_bytes,
-    playbill_search_selection_basis_digest,
-)
-from cruxible_core.query.semantic_discovery import (
-    MATCH_BASIS_PRIORITY,
-    discovery_tokens,
-)
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.claims import (
@@ -64,25 +48,8 @@ from cruxible_core.service.evidence.evidence import (
     body_fingerprints_hold,
 )
 
-
-class PlaybillSearchError(PlaybillError):
-    """A search cursor, budget, or accepted coordinate cannot be honored."""
-
-
-class DemandSearchProviderProtocol(Protocol):
-    """Closed seam populated only after the accepted demand-policy wire lands."""
-
-    def rows(
-        self,
-        instance: PlaybillInstance,
-        request: PlaybillSearchRequestV1,
-    ) -> tuple[PlaybillSearchRowV1, ...]: ...
-
-
-def _accepted_coordinate(request: PlaybillSearchRequestV1) -> PlaybillAcceptedCoordinate:
-    return PlaybillAcceptedCoordinate.model_validate(
-        request.accepted_coordinate.model_dump(mode="json")
-    )
+#: How resolution placed one accepted Claim in its slot, or ``retired``.
+ClaimStatus = Literal["accepted", "conflicted", "overturned", "refused", "retired"]
 
 
 # Bounded, per-process, and keyed on every input the derivation reads. See
@@ -93,7 +60,7 @@ def _accepted_coordinate(request: PlaybillSearchRequestV1) -> PlaybillAcceptedCo
 # a body rewritten in place.
 _RESOLUTION_MEMO: (
     "OrderedDict[tuple[str, str, str, str], "
-    "tuple[dict[str, SearchStatus], dict[str, ClaimVerdictResultAny], "
+    "tuple[dict[str, ClaimStatus], dict[str, ClaimVerdictResultAny], "
     "tuple[datetime | None, datetime | None], BodyFingerprints]]"
 ) = OrderedDict()
 
@@ -112,7 +79,7 @@ class _RememberedSlot:
     reads: VerdictReads
     observed: dict[tuple[str, ...], object]
     interval: tuple[datetime | None, datetime | None]
-    statuses: dict[str, SearchStatus]
+    statuses: dict[str, ClaimStatus]
     verdicts: dict[str, ClaimVerdictResultAny]
 
 
@@ -154,7 +121,7 @@ def remembered_resolution_statuses(
     identities: tuple[str, ...],
     at: PlaybillAcceptedCoordinate,
     evaluation_time: datetime,
-) -> dict[str, SearchStatus] | None:
+) -> dict[str, ClaimStatus] | None:
     """A still-valid remembered answer for exactly these Claims, without reading them."""
 
     input_fingerprint = verdict_input_fingerprint(instance)
@@ -183,7 +150,7 @@ def claim_resolution_statuses(
     evaluation_time: datetime,
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     read_context: ClaimVerdictReadContext | None = None,
-) -> dict[str, SearchStatus]:
+) -> dict[str, ClaimStatus]:
     """Derive each Claim's resolution status at one accepted coordinate.
 
     ``verdicts_by_identity`` lets one request share Claim verdicts with another
@@ -238,7 +205,7 @@ def claim_resolution_statuses(
         {} if verdicts_by_identity is None else verdicts_by_identity
     )
     live_groups: dict[bytes, list[ClaimArtifactAny]] = defaultdict(list)
-    statuses: dict[str, SearchStatus] = {}
+    statuses: dict[str, ClaimStatus] = {}
     for claim in claims:
         if claim.lifecycle.state == "retired":
             statuses[claim.identity.name] = "retired"
@@ -315,7 +282,7 @@ def claim_resolution_statuses(
     for claim in live:
         read_context.claim(claim.identity.qualified)
     read_context.prefetch_law_evidence(tuple(claim_path(claim.identity.name) for claim in live))
-    derived: dict[bytes, tuple[VerdictReads, set[datetime], dict[str, SearchStatus]]] = {}
+    derived: dict[bytes, tuple[VerdictReads, set[datetime], dict[str, ClaimStatus]]] = {}
     for slot_key, group in pending.items():
         first = group[0]
         group_boundaries: set[datetime] = set()
@@ -344,7 +311,7 @@ def claim_resolution_statuses(
             for classification in (classify_claim_slot(members),)
             for claim in members
         }
-        group_statuses: dict[str, SearchStatus] = {}
+        group_statuses: dict[str, ClaimStatus] = {}
         _apply_resolution_statuses(resolution, group_statuses, slots=slots)
         statuses.update(group_statuses)
         if reads is not None and reads.inconsistent:
@@ -411,14 +378,14 @@ def _slot_members(group: list[ClaimArtifactAny]) -> tuple[str, ...]:
 
 def _apply_resolution_statuses(
     resolution: PlaybillClaimGroupResolution,
-    statuses: dict[str, SearchStatus],
+    statuses: dict[str, ClaimStatus],
     *,
     slots: Mapping[str, ClaimSlotClassification],
 ) -> None:
     selected = {item.removeprefix("Claim:") for item in resolution.selected_claim_identities}
     for claim, verdict in zip(resolution.claims, resolution.verdicts, strict=True):
         if verdict.verdict not in {"supported", "uncovered"}:
-            status: SearchStatus = "refused"
+            status: ClaimStatus = "refused"
         elif resolution.status == "unresolved":
             status = (
                 "conflicted"
@@ -438,375 +405,9 @@ def _apply_resolution_statuses(
         statuses[claim.identity.name] = status
 
 
-def _claim_rows(
-    instance: PlaybillInstance,
-    *,
-    request: PlaybillSearchRequestV1,
-) -> tuple[PlaybillSearchRowV1, ...]:
-    if "claim" not in request.kinds:
-        return ()
-    coordinate = _resolve_coordinate(instance, _accepted_coordinate(request))
-    if request.mode == "orient" and request.subject is None:
-        remembered = _remembered_orientation_rows(instance, coordinate, request=request)
-        if remembered is not None:
-            return remembered
-    read_context = ClaimVerdictReadContext(instance, coordinate)
-    # Discovery needs Claim envelopes and current status, not the full fact
-    # projection (including provenance/explanation payloads) for every row.
-    # Resolution groups are keyed by subject and predicate, so a subject filter
-    # keeps every contender group whole: read and evaluate only those groups.
-    claims = read_context.claims(subject=request.subject)
-    statuses = claim_resolution_statuses(
-        instance,
-        claims=claims,
-        at=_accepted_coordinate(request),
-        evaluation_time=request.evaluation_time,
-        read_context=read_context,
-    )
-    rows: list[PlaybillSearchRowV1] = []
-    for claim in claims:
-        kind: SearchKind = "claim"
-        if kind not in request.kinds:
-            continue
-        rows.append(
-            PlaybillSearchRowV1(
-                kind=kind,
-                identity=claim.identity.name,
-                address=SemanticAddress.claim_statement(claim_path(claim.identity.name)),
-                status=statuses[claim.identity.name],
-                subject=claim.statement.subject,
-                predicate=claim.statement.predicate,
-                title=claim.statement.predicate,
-            )
-        )
-    return tuple(rows)
-
-
-def _remembered_orientation_rows(
-    instance: PlaybillInstance,
-    coordinate: AcceptedProjectionCoordinate,
-    *,
-    request: PlaybillSearchRequestV1,
-) -> tuple[PlaybillSearchRowV1, ...] | None:
-    """Orientation only counts rows, so a remembered answer needs no Claim bytes.
-
-    The indexed Claim rows at this exact coordinate name the same Claim set a
-    full read would; when their statuses are remembered and still valid, rows
-    are built from the index alone. Any miss takes the ordinary read.
-    """
-
-    with instance.bind_accepted_projection(coordinate) as projection:
-        indexed = projection.typed.connection.execute(
-            "SELECT identity,subject_path,subject_selector_scheme,subject_selector_value,"
-            "predicate FROM claims ORDER BY identity"
-        ).fetchall()
-    identities = tuple(row[0] for row in indexed)
-    statuses = remembered_resolution_statuses(
-        instance,
-        identities=identities,
-        at=_accepted_coordinate(request),
-        evaluation_time=request.evaluation_time,
-    )
-    if statuses is None or set(statuses) != {i.removeprefix("Claim:") for i in identities}:
-        return None
-    return tuple(
-        PlaybillSearchRowV1(
-            kind="claim",
-            identity=identity.removeprefix("Claim:"),
-            address=SemanticAddress.claim_statement(claim_path(identity.removeprefix("Claim:"))),
-            status=statuses[identity.removeprefix("Claim:")],
-            subject=SemanticAddress(
-                artifact_path=subject_path,
-                selector=SemanticSelector(scheme=scheme, value=value),
-            ),
-            predicate=predicate,
-            title=predicate,
-        )
-        for identity, subject_path, scheme, value, predicate in indexed
-    )
-
-
-def _procedure_rows(
-    instance: PlaybillInstance,
-    *,
-    coordinate: AcceptedProjectionCoordinate,
-    request: PlaybillSearchRequestV1,
-) -> tuple[PlaybillSearchRowV1, ...]:
-    if "procedure" not in request.kinds:
-        return ()
-    with instance.bind_accepted_projection(coordinate) as projection:
-        inventory = projection.typed.procedure_inventory()
-    return tuple(
-        PlaybillSearchRowV1(
-            kind="procedure",
-            identity=procedure.identity.removeprefix("Procedure:"),
-            address=SemanticAddress.whole_artifact(procedure.path),
-            status="accepted" if procedure.lifecycle == "live" else "retired",
-            title=procedure.identity.removeprefix("Procedure:"),
-            summary=("directly_runnable" if procedure.directly_runnable else "binding_required"),
-        )
-        for procedure in inventory
-    )
-
-
-def _match_basis(row: PlaybillSearchRowV1, query: str) -> tuple[DiscoveryMatchBasisV1, ...]:
-    bases: list[DiscoveryMatchBasisV1] = []
-    exact_terms = {
-        row.identity.casefold(),
-        row.address.artifact_path.casefold(),
-        f"{row.kind}:{row.identity}".casefold(),
-    }
-    if query in exact_terms:
-        bases.append(DiscoveryMatchBasisV1(basis="exact_address", matched_text=query))
-    query_tokens = set(discovery_tokens(query))
-    searchable = " ".join(
-        item
-        for item in (
-            row.identity,
-            row.title,
-            row.summary,
-            row.predicate,
-            None if row.subject is None else row.subject.artifact_path,
-        )
-        if item is not None
-    )
-    if query_tokens and query_tokens.issubset(set(discovery_tokens(searchable))):
-        bases.append(DiscoveryMatchBasisV1(basis="lexical", matched_text=query))
-    return tuple(
-        sorted(
-            set(bases),
-            key=lambda item: (
-                MATCH_BASIS_PRIORITY[item.basis],
-                (item.matched_text or "").encode("utf-8"),
-            ),
-        )
-    )
-
-
-def _row_priority(row: PlaybillSearchRowV1, mode: str) -> int:
-    if mode != "search":
-        return 0
-    return min(MATCH_BASIS_PRIORITY[item.basis] for item in row.match_basis)
-
-
-def _filtered_rows(
-    rows: tuple[PlaybillSearchRowV1, ...],
-    *,
-    request: PlaybillSearchRequestV1,
-) -> tuple[PlaybillSearchRowV1, ...]:
-    selected: list[PlaybillSearchRowV1] = []
-    for row in rows:
-        if request.subject is not None and row.subject != request.subject:
-            continue
-        if request.statuses and row.status not in request.statuses:
-            continue
-        if request.mode == "search":
-            assert request.query is not None
-            bases = _match_basis(row, request.query)
-            if not bases:
-                continue
-            row = row.model_copy(update={"match_basis": bases})
-        selected.append(row)
-    return tuple(
-        sorted(
-            selected,
-            key=lambda item: (
-                _row_priority(item, request.mode),
-                item.kind.encode("utf-8"),
-                item.identity.encode("utf-8"),
-            ),
-        )
-    )
-
-
-def _availability(
-    demand_provider: DemandSearchProviderProtocol | None,
-) -> tuple[PlaybillSearchKindAvailabilityV1, ...]:
-    return tuple(
-        PlaybillSearchKindAvailabilityV1(
-            kind=kind,
-            availability=(
-                "not_installed" if kind == "demand" and demand_provider is None else "installed"
-            ),
-        )
-        for kind in SEARCH_KINDS
-    )
-
-
-def _orientation(
-    instance: PlaybillInstance,
-    *,
-    request: PlaybillSearchRequestV1,
-    rows: tuple[PlaybillSearchRowV1, ...],
-    demand_provider: DemandSearchProviderProtocol | None,
-) -> PlaybillSearchOrientationV1:
-    kinds = Counter(row.kind for row in rows)
-    statuses = Counter(row.status for row in rows)
-    availability = _availability(demand_provider)
-    generation = next(
-        item.sequence
-        for item in instance.accepted_history()
-        if item.oid == request.accepted_coordinate.git_oid
-    )
-    return PlaybillSearchOrientationV1(
-        coordinate=request.accepted_coordinate,
-        generation=generation,
-        counts_by_kind=tuple(
-            PlaybillSearchCountV1(key=kind, count=kinds.get(kind, 0)) for kind in request.kinds
-        ),
-        counts_by_status=tuple(
-            PlaybillSearchCountV1(key=status, count=statuses[status])
-            for status in sorted(statuses, key=lambda item: item.encode("utf-8"))
-        ),
-        conflicted_count=sum(row.status == "conflicted" for row in rows),
-        decommissioned=instance.is_decommissioned,
-        mirror_url=instance.ledger_mirror_url(),
-        available_kinds=tuple(
-            item.kind for item in availability if item.availability == "installed"
-        ),
-        kind_availability=availability,
-        truncated=False,
-        follow_ups=(
-            PlaybillSearchFollowUpV1(
-                mode="list",
-                kinds=request.kinds,
-                statuses=request.statuses,
-                subject=request.subject,
-            ),
-            PlaybillSearchFollowUpV1(
-                mode="search",
-                kinds=request.kinds,
-                statuses=request.statuses,
-                subject=request.subject,
-            ),
-        ),
-    )
-
-
-def _page_result(
-    *,
-    request: PlaybillSearchRequestV1,
-    rows: tuple[PlaybillSearchRowV1, ...],
-    selection_basis_digest: str,
-) -> PlaybillSearchResultV1:
-    start = 0
-    if request.cursor is not None:
-        cursor = request.cursor
-        if (
-            cursor.selection_basis_digest != selection_basis_digest
-            or cursor.coordinate != request.accepted_coordinate
-            or cursor.budgets != request.budgets
-        ):
-            raise PlaybillSearchError("search cursor belongs to a different request coordinate")
-        cursor_key = (
-            cursor.last_match_priority,
-            cursor.last_kind.encode("utf-8"),
-            cursor.last_identity.encode("utf-8"),
-        )
-        keys = tuple(
-            (
-                _row_priority(row, request.mode),
-                row.kind.encode("utf-8"),
-                row.identity.encode("utf-8"),
-            )
-            for row in rows
-        )
-        if cursor_key not in keys:
-            raise PlaybillSearchError("search cursor boundary is absent from its bound result")
-        start = keys.index(cursor_key) + 1
-
-    page = list(rows[start : start + request.budgets.max_rows])
-    while True:
-        more = start + len(page) < len(rows)
-        next_cursor = (
-            None
-            if not more or not page
-            else build_playbill_search_cursor(
-                selection_basis_digest=selection_basis_digest,
-                coordinate=request.accepted_coordinate,
-                last_match_priority=_row_priority(page[-1], request.mode),
-                last_kind=page[-1].kind,
-                last_identity=page[-1].identity,
-                budgets=request.budgets,
-            )
-        )
-        result = build_playbill_search_result(
-            mode=request.mode,
-            coordinate=request.accepted_coordinate,
-            evaluation_time=request.evaluation_time,
-            rows=tuple(page),
-            orientation=None,
-            selection_basis_digest=selection_basis_digest,
-            next_cursor=next_cursor,
-            truncated=more,
-        )
-        if len(playbill_search_result_bytes(result)) <= request.budgets.max_result_bytes:
-            return result
-        if not page:
-            raise PlaybillSearchError("search result byte budget cannot fit its envelope")
-        page.pop()
-
-
-def service_search_playbill(
-    instance: PlaybillInstance,
-    *,
-    request: PlaybillSearchRequestV1,
-    demand_provider: DemandSearchProviderProtocol | None = None,
-) -> PlaybillSearchResultV1:
-    """Return one byte-deterministic discovery answer without writing daemon state."""
-
-    try:
-        coordinate = instance.resolve_accepted_coordinate(
-            git_oid=request.accepted_coordinate.git_oid,
-            semantic_root=request.accepted_coordinate.semantic_root,
-            generation_root=request.accepted_coordinate.generation_root,
-            compiler_digest=request.accepted_coordinate.compiler_digest,
-        )
-    except PlaybillError:
-        raise
-    except Exception as exc:  # pragma: no cover - backend normalization boundary
-        raise ProposalIntegrityError("search requires a verified accepted coordinate") from exc
-    rows = (
-        *_claim_rows(instance, request=request),
-        *_procedure_rows(instance, coordinate=coordinate, request=request),
-    )
-    if demand_provider is not None and "demand" in request.kinds:
-        demand_rows = demand_provider.rows(instance, request)
-        if any(row.kind != "demand" for row in demand_rows):
-            raise PlaybillSearchError("demand provider returned a non-demand row")
-        rows = (*rows, *demand_rows)
-    filtered = _filtered_rows(rows, request=request)
-    selection_basis_digest = playbill_search_selection_basis_digest(request)
-    if request.mode == "orient":
-        orientation = _orientation(
-            instance,
-            request=request,
-            rows=filtered,
-            demand_provider=demand_provider,
-        )
-        result = build_playbill_search_result(
-            mode="orient",
-            coordinate=request.accepted_coordinate,
-            evaluation_time=request.evaluation_time,
-            rows=(),
-            orientation=orientation,
-            selection_basis_digest=selection_basis_digest,
-            next_cursor=None,
-            truncated=False,
-        )
-        if len(playbill_search_result_bytes(result)) > request.budgets.max_result_bytes:
-            raise PlaybillSearchError("orientation byte budget cannot fit its complete summary")
-        return result
-    return _page_result(
-        request=request,
-        rows=filtered,
-        selection_basis_digest=selection_basis_digest,
-    )
-
-
 __all__ = [
-    "DemandSearchProviderProtocol",
-    "PlaybillSearchError",
+    "ClaimStatus",
     "claim_resolution_statuses",
-    "service_search_playbill",
+    "remembered_resolution_statuses",
+    "reset_claim_resolution_memo",
 ]

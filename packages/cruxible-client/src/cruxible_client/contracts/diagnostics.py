@@ -15,8 +15,7 @@ DiagnosticSeverity = Literal["info", "warning", "error"]
 GovernedOperation = Literal[
     "check",
     "compile",
-    "discover",
-    "expand",
+    "get",
     "open_source",
     "propose",
 ]

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import signal
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -250,10 +253,15 @@ def test_spec_query_pins_claim_types_at_the_coordinate(instance: Any) -> None:
 
 
 def test_flags_come_from_the_verdict_machinery(instance: Any, monkeypatch: Any) -> None:
-    def flagged(*_args: Any, identities: Any, **_kwargs: Any) -> dict[str, tuple[str, ...]]:
-        return {identity: ("stale", "unsure_hold") for identity in identities}
+    from cruxible_core.service.discovery.read_flags import ClaimRead
 
-    monkeypatch.setattr(compact_module, "claim_flags", flagged)
+    def flagged(*_args: Any, identities: Any, **_kwargs: Any) -> dict[str, ClaimRead]:
+        return {
+            identity: ClaimRead(flags=("stale", "unsure_hold"), verdict="stale", status="accepted")
+            for identity in identities
+        }
+
+    monkeypatch.setattr(compact_module, "claim_reads", flagged)
     result = _query(instance, kind=SUBJECT_KIND, select=["status"])
 
     assert [row["flags"] for row in result.rows] == [
@@ -500,6 +508,82 @@ def test_a_continuation_refuses_a_different_evaluation_time(instance: Any) -> No
             cursor=first.next_cursor,
             evaluation_time=WHEN + timedelta(days=1),
         )
+
+
+@contextmanager
+def _finishes_within(seconds: int) -> Iterator[None]:
+    """Turn a hang into a failure: the cursor encoder once looped forever."""
+
+    def expired(_signum: int, _frame: object) -> None:
+        raise TimeoutError(f"did not finish within {seconds}s")
+
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def test_a_cursor_pins_an_evaluation_time_before_1970(instance: Any) -> None:
+    before_epoch = datetime(1969, 12, 31, tzinfo=UTC)
+
+    with _finishes_within(20):
+        first = _query(instance, kind=SUBJECT_KIND, limit=1, evaluation_time=before_epoch)
+        assert first.truncated is True and first.next_cursor is not None
+        second = _query(
+            instance, kind=SUBJECT_KIND, limit=1, cursor=first.next_cursor, evaluation_time=None
+        )
+
+    assert _ids(first) + _ids(second) == ["wi-42", "wi-43"]
+    assert second.receipt.evaluation_time == before_epoch
+
+
+@pytest.mark.parametrize(
+    "outside",
+    [
+        # Year one local time, an hour before year one in UTC.
+        datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=1))),
+        # The last local microsecond of 9999, an hour past it in UTC: a cursor
+        # minted for it could not be continued.
+        datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=timezone(timedelta(hours=-1))),
+    ],
+)
+def test_an_instant_outside_the_utc_range_refuses_typed(instance: Any, outside: datetime) -> None:
+    with pytest.raises(ReadRefusalError) as refused:
+        _query(instance, kind=SUBJECT_KIND, limit=1, evaluation_time=outside)
+    assert refused.value.error_code == "playbill.query.evaluation_time_invalid"
+
+
+def test_a_cursor_pins_the_last_utc_instant(instance: Any) -> None:
+    last = datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
+    first = _query(instance, kind=SUBJECT_KIND, limit=1, evaluation_time=last)
+    second = _query(
+        instance, kind=SUBJECT_KIND, limit=1, cursor=first.next_cursor, evaluation_time=None
+    )
+    assert _ids(first) + _ids(second) == ["wi-42", "wi-43"]
+    assert second.receipt.evaluation_time == last
+
+
+@pytest.mark.parametrize(
+    ("part", "forged"),
+    [
+        (2, "z" * 50),  # an instant past any datetime: int() once overflowed timedelta
+        (2, "z" * 12),  # in length, but still past the last representable instant
+        (5, "\u00b2"),  # a superscript two: str.isdigit() admits it, int() refuses
+        (5, "1" * 20),  # an offset longer than any answer
+    ],
+)
+def test_a_malformed_cursor_refuses_as_a_typed_mismatch(
+    instance: Any, part: int, forged: str
+) -> None:
+    first = _query(instance, kind=SUBJECT_KIND, limit=1)
+    parts = first.next_cursor.split(".")
+    parts[part] = forged
+
+    with pytest.raises(PlaybillListCursorMismatch, match="not a query cursor"):
+        _query(instance, kind=SUBJECT_KIND, limit=1, cursor=".".join(parts))
 
 
 def test_a_column_named_like_row_metadata_keeps_its_values(instance: Any) -> None:

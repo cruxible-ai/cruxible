@@ -279,7 +279,7 @@ def _principal_claim_refusal(request: Request) -> PrincipalRefusedError | None:
         f"the configured principal ID {raw.strip()!r} is not a canonical lowercase "
         "identifier (a letter, then up to 127 of a-z 0-9 . _ -); repair: set "
         f"{PRINCIPAL_ID_ENV} or --principal-id to a registered principal ID",
-        repair=RepairOperationV1(operation="playbill.principal.list"),
+        repair=RepairOperationV1(operation="playbill.orient", arguments={"section": "principals"}),
     )
 
 

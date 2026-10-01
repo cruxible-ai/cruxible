@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Literal, get_args
 
+import click
 import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
@@ -768,12 +769,12 @@ def test_propose_help_names_the_sanctioned_proposal_paths() -> None:
     assert "Deprecated" not in claim_type.output
     removed = runner.invoke(cli, ["playbill", "subject", "propose"])
     assert removed.exit_code != 0
-    assert "No such command 'propose'" in removed.output
+    assert "No such command 'subject'" in removed.output
     # `playbill query KIND` answers a query itself, so `propose` is read as a
-    # kind there; what matters is that no propose subcommand exists.
+    # kind there; what matters is that query has no subcommands at all.
     from cruxible_core.cli.commands.playbill import query_group
 
-    assert "propose" not in query_group.commands
+    assert not isinstance(query_group, click.Group)
 
 
 @pytest.mark.parametrize(

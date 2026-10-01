@@ -20,6 +20,7 @@ from cruxible_client.authoring.compact_query import (
     parse_where,
 )
 from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+from tests.test_client._read_fakes import ClaimTypeListing
 from tests.test_client.test_playbill_sdk_world import (
     _COORDINATE,
     SEVERITY,
@@ -42,6 +43,9 @@ class _QueryClient(_WorldClient):
     def query_playbill(
         self, _instance_id: str, *, request: PlaybillQueryRequestV1
     ) -> api.PlaybillQueryResult:
+        if "retired" in request.status:
+            # The World's own Subject listing, served as the base fake serves it.
+            return super().query_playbill(_instance_id, request=request)
         self.requests.append(request)
         second = request.cursor == "page-2"
         subject_id = "cve-2" if second else "cve-1"
@@ -253,11 +257,9 @@ _ESCAPED_LEAVES = ("self", "class", "status", "status__ne", "note_")
 class _ReservedLeafClient(_QueryClient):
     """A kind whose predicate leaves collide with `self`, keywords and suffixes."""
 
-    def list_playbill_claim_types(
-        self, _instance_id: str, *, at: Any = None
-    ) -> api.PlaybillClaimTypeList:
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
         self.claim_type_list_calls += 1
-        return api.PlaybillClaimTypeList(
+        return ClaimTypeListing(
             coordinate=at or self.coordinate,
             claim_types=[_claim_type(f"sec.vulnerability.{leaf}") for leaf in _ESCAPED_LEAVES],
         )

@@ -58,7 +58,6 @@ from cruxible_core.evidence.claim_attestation_store import (
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
-from cruxible_core.query.search import PlaybillSearchRequestV1
 from cruxible_core.runtime import host_api
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.claims.claims import (
@@ -67,18 +66,17 @@ from cruxible_core.service.claims.claims import (
     service_list_playbill_claims,
 )
 from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
+from cruxible_core.service.discovery import claim_status as search_service
 from cruxible_core.service.discovery import next as next_service
-from cruxible_core.service.discovery import search as search_service
+from cruxible_core.service.discovery.claim_status import (
+    reset_claim_resolution_memo,
+)
 from cruxible_core.service.discovery.next import (
     PlaybillNextItemV1,
     PlaybillNextRequestV1,
     service_playbill_next,
 )
 from cruxible_core.service.discovery.query import build_accepted_query_facts
-from cruxible_core.service.discovery.search import (
-    reset_claim_resolution_memo,
-    service_search_playbill,
-)
 from cruxible_core.service.evidence.evidence import service_evaluate_playbill_claim_verdict
 from cruxible_core.service.proposals.publications import (
     registered_projection_blocks,
@@ -720,19 +718,19 @@ def _orient(
     at: AcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
 ) -> Any:
-    """One real `orient`, stamped the way the served route stamps it."""
+    """One real `orient`, stamped the way the served route stamps it.
 
-    return service_search_playbill(
+    Its Claim status counts fold every accepted Claim's resolution status.
+    """
+
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    return service_playbill_orient(
         instance,
-        request=PlaybillSearchRequestV1(
-            mode="orient",
-            accepted_coordinate=at
-            or AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-            # The served route calls `utc_now()` per request. A test that pinned
-            # one instant here would prove nothing about the surface.
-            evaluation_time=evaluation_time or datetime.now(UTC),
-            access_profile=CoverageAccessProfileV1(profile_id="resolution-memo"),
-        ),
+        at=at,
+        # The served route calls `utc_now()` per request. A test that pinned
+        # one instant here would prove nothing about the surface.
+        evaluation_time=evaluation_time or datetime.now(UTC),
     )
 
 
@@ -781,8 +779,7 @@ def test_the_resolution_memo_hits_on_the_surfaces_and_misses_when_its_inputs_mov
     # the back door.
     second = _orient(instance)
     assert counted[0] == evaluated
-    assert second.rows == first.rows
-    assert second.orientation == first.orientation
+    assert second.artifacts.claims == first.artifacts.claims
 
     # `next` reads the same derivation, so the warm entry serves it too, and a
     # second `next` likewise evaluates nothing.

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 import stat
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -177,12 +178,11 @@ def local_attestation_signer_from_environment(
         )
     try:
         whoami = client.playbill_whoami(instance_id)
-        listed = client.list_playbill_principals(instance_id)
         principal = next(
             (
-                PrincipalRecord.model_validate(item)
-                for item in listed.principals
-                if item.get("principal_id") == whoami.actor_id
+                item
+                for item in principal_records(client, instance_id)
+                if item.principal_id == whoami.actor_id
             ),
             None,
         )
@@ -210,6 +210,60 @@ def local_attestation_signer_from_environment(
         raise LocalClaimAttestationKeyUnavailable(
             f"{LocalClaimAttestationKeyUnavailable.error_code}: {exc}"
         ) from exc
+
+
+def principal_records(client: Any, instance_id: str) -> tuple[PrincipalRecord, ...]:
+    """The accepted principal registry at the head, through orient's principals section."""
+
+    from cruxible_client.contracts.orient import PLAYBILL_ORIENT_MAX_LIMIT
+
+    records: list[PrincipalRecord] = []
+    cursor: str | None = None
+    while True:
+        page = client.orient_playbill(
+            instance_id, section="principals", limit=PLAYBILL_ORIENT_MAX_LIMIT, cursor=cursor
+        )
+        records.extend(
+            PrincipalRecord.model_validate(item.model_dump(mode="json"))
+            for item in page.principals or ()
+        )
+        if not page.truncated or page.next_cursor is None:
+            return tuple(records)
+        cursor = page.next_cursor
+
+
+def accepted_proof(
+    client: Any,
+    instance_id: str,
+    ref: str,
+    *,
+    at: Any = None,
+    evaluation_time: datetime | None = None,
+) -> dict[str, Any]:
+    """One accepted artifact's full envelope and facts through ``get(detail="proof")``."""
+
+    from cruxible_client.contracts import PlaybillAcceptedCoordinate
+    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+
+    result = client.playbill_get(
+        instance_id,
+        request=PlaybillGetRequestV1(
+            ref=ref,
+            detail="proof",
+            at=(
+                None
+                if at is None
+                else PlaybillAcceptedCoordinate.model_validate(
+                    at.model_dump(mode="json") if hasattr(at, "model_dump") else dict(at)
+                )
+            ),
+            evaluation_time=evaluation_time,
+            surface="sdk",
+        ),
+    )
+    if result.proof is None:  # pragma: no cover - proof always answers an artifact
+        raise ValueError(f"{ref} answered no proof")
+    return dict(result.proof)
 
 
 def _claim_from_public_view(view: Any) -> ClaimArtifactAny:
@@ -262,10 +316,7 @@ def prepare_claim_attestation(
     """Bind and sign an exact accepted Claim without appending or accepting it."""
 
     whoami = client.playbill_whoami(instance_id)
-    principals = tuple(
-        PrincipalRecord.model_validate(item)
-        for item in client.list_playbill_principals(instance_id).principals
-    )
+    principals = principal_records(client, instance_id)
     principal = next(
         (item for item in principals if item.principal_id == whoami.actor_id),
         None,
@@ -274,11 +325,16 @@ def prepare_claim_attestation(
         raise ValueError("Claim attestations require the active ordinary caller principal")
     if signer.signer != whoami.actor_id or signer.signing_key_id != principal.public_key_digest:
         raise ValueError("Claim attestation signer differs from the authenticated caller")
-    view = client.get_playbill_claim(
-        instance_id,
-        prepared.claim_id,
-        at=prepared.referent_coordinate,
-        evaluation_time=prepared.attested_at.isoformat(),
+    from cruxible_client.contracts import PlaybillClaimViewV2
+
+    view = PlaybillClaimViewV2.model_validate(
+        accepted_proof(
+            client,
+            instance_id,
+            prepared.claim_id,
+            at=prepared.referent_coordinate,
+            evaluation_time=prepared.attested_at,
+        )
     )
     claim = _claim_from_public_view(view)
 
@@ -287,14 +343,11 @@ def prepare_claim_attestation(
         prefix = "subjects/"
         if not path.startswith(prefix) or not path.endswith(".json"):
             raise ValueError("Claim subject address has no canonical Subject path")
-        kind, subject_id = path[len(prefix) : -len(".json")].split("/", maxsplit=1)
-        subject = client.get_playbill_subject(
-            instance_id,
-            kind,
-            subject_id,
-            at=view.coordinate,
+        subject = accepted_proof(
+            client, instance_id, path[len(prefix) : -len(".json")], at=view.coordinate
         )
-        digest = subject.envelope.get("artifact_digest")
+        envelope = subject.get("envelope")
+        digest = envelope.get("artifact_digest") if isinstance(envelope, Mapping) else None
         if not isinstance(digest, str):
             raise ValueError("Subject read lacks its exact artifact digest")
         return digest

@@ -780,10 +780,12 @@ def test_http_list_routes_bound_their_page_size(
     client, instance_id, _private_key = playbill_http
 
     proposals = client.get(f"/api/v1/{instance_id}/playbill/proposals", params={"limit": 1})
-    policies = client.get(f"/api/v1/{instance_id}/playbill/policies", params={"limit": 1})
+    policies = client.get(
+        f"/api/v1/{instance_id}/playbill/orient", params={"section": "policies", "limit": 1}
+    )
     oversized = client.get(
-        f"/api/v1/{instance_id}/playbill/policies",
-        params={"limit": contracts.PLAYBILL_POLICY_LIST_MAX_LIMIT + 1},
+        f"/api/v1/{instance_id}/playbill/orient",
+        params={"section": "policies", "limit": contracts.PLAYBILL_ORIENT_MAX_LIMIT + 1},
     )
     foreign = client.get(
         f"/api/v1/{instance_id}/playbill/proposals",

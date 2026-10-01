@@ -238,7 +238,7 @@ def service_read_claim_values(
 
     from cruxible_client.contracts.claim_reads import MAX_CLAIM_VALUE_ROWS
     from cruxible_client.contracts.errors import PlaybillFormatError as ValuesFormatError
-    from cruxible_core.service.discovery.search import claim_resolution_statuses
+    from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
     coordinate = _resolve_coordinate(

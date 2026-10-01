@@ -7,7 +7,7 @@ import json
 import os
 import re
 import time
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -67,6 +67,7 @@ from cruxible_client.authoring.sdk_types import (
     RefKind,
     SourceMapEntry,
     SourceRef,
+    SourceSelectionError,
     SubjectRef,
     TypedRef,
 )
@@ -178,9 +179,11 @@ from cruxible_client.contracts.claims import (
     SubjectClaimObject,
 )
 from cruxible_client.contracts.compact_query import (
+    QueryClaimStatus,
     QueryFilterV1,
     QueryFollowDirection,
     QueryFollowV1,
+    QueryReceiptDetail,
 )
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV2,
@@ -188,8 +191,10 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.get_reads import (
+    GET_BATCH_MAX_REFS,
     PlaybillByteRangeV1,
     PlaybillExactContentRefV1,
+    PlaybillGetBatchRequestV1,
     PlaybillGetDetail,
     PlaybillGetProcedureCardV1,
     PlaybillGetProcedureTrackRecordV1,
@@ -547,17 +552,6 @@ class KnowledgeCard:
         if constructor is None:
             raise ReferenceKindError(f"{self.kind.value} cards do not mint references")
         return cast(TypedRef, constructor(address=self.identity, coordinate=self.coordinate))
-
-
-@dataclass(frozen=True)
-class SearchPage:
-    coordinate: AcceptedCoordinate
-    evaluation_time: str
-    rows: tuple[dict[str, object], ...]
-    result_digest: str
-    cursor: dict[str, object] | None
-    truncated: bool
-    orientation: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -2109,13 +2103,15 @@ class Playbill:
         *,
         client: CruxibleClient,
         instance_id: str,
-        workspace: Path,
+        workspace: Path | None,
         access_profile: AccessProfile,
         clock: Any,
     ) -> None:
         self._client = client
         self._instance_id = instance_id
-        self._workspace = workspace.expanduser().resolve()
+        # None: a connection with no workspace. Reads serve; orient reports no
+        # floor; the members that read or write workspace files refuse.
+        self._workspace = None if workspace is None else workspace.expanduser().resolve()
         self._workspace_sources: WorkspaceSources | None = None
         self._access_profile = access_profile
         self._clock = clock
@@ -2232,7 +2228,7 @@ class Playbill:
         client: CruxibleClient,
         *,
         instance_id: str,
-        workspace: Path,
+        workspace: Path | None,
         access_profile: AccessProfile | None = None,
         clock: Any = None,
     ) -> Playbill:
@@ -2275,6 +2271,17 @@ class Playbill:
         self.close()
 
     @property
+    def _workspace_root(self) -> Path:
+        """This connection's workspace, or a typed refusal when it was opened without one."""
+
+        if self._workspace is None:
+            raise SourceSelectionError(
+                f"{SourceSelectionError.code}: this connection has no workspace; "
+                "connect with workspace= to read or write workspace files"
+            )
+        return self._workspace
+
+    @property
     def _sources(self) -> WorkspaceSources:
         """Resolve the workspace source catalog the first time one is needed.
 
@@ -2285,7 +2292,7 @@ class Playbill:
         """
 
         if self._workspace_sources is None:
-            self._workspace_sources = WorkspaceSources(self._workspace)
+            self._workspace_sources = WorkspaceSources(self._workspace_root)
         return self._workspace_sources
 
     @property
@@ -2359,14 +2366,15 @@ class Playbill:
         The wire read returns a fact array keyed by schema id, so answering
         "what does this Claim say, and is it believed" means walking that array
         by hand every time. This is that walk, once.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
 
         identity = _address(claim, RefKind.CLAIM) if isinstance(claim, ClaimRef) else claim
-        requested = self._read_at(claim.coordinate if isinstance(claim, ClaimRef) else None)
-        view = self._client.get_playbill_claim(
-            self._instance_id, identity, at=requested, evaluation_time=self._evaluation_time()
-        )
-        self._observe_read(_coordinate(view.coordinate), expected=requested)
+        proof = self._get(
+            identity, "proof", None, claim.coordinate if isinstance(claim, ClaimRef) else None
+        ).proof
+        view = api.PlaybillClaimViewV2.model_validate(proof)
         return self._with_exact_text(
             self._typed_claim_view(view, identity), _coordinate(view.coordinate)
         )
@@ -2478,6 +2486,8 @@ class Playbill:
 
         The complete batch preserves input order and all single-view fields.
         Use explicit batches for larger selections; no population read is implied.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
         from cruxible_client.contracts.claim_reads import ClaimReadBatchRequestV1
 
@@ -2657,7 +2667,7 @@ class Playbill:
 
         coordinate = api.PlaybillAcceptedCoordinate.model_validate(at.model_dump(mode="json"))
         return refresh_workspace_floor(
-            self._client, self._instance_id, workspace=self._workspace, at=coordinate
+            self._client, self._instance_id, workspace=self._workspace_root, at=coordinate
         )
 
     def activate(
@@ -2682,7 +2692,7 @@ class Playbill:
             self._client,
             self._instance_id,
             proposal_id,
-            workspace=self._workspace,
+            workspace=self._workspace_root,
             sync=not no_sync,
         )
         if result.status == "accepted" and result.accepted_coordinate is not None:
@@ -2715,16 +2725,17 @@ class Playbill:
         )
         return self._client.upgrade_playbill_claim_types(self._instance_id, request)
 
-    def refresh(self) -> SearchPage:
-        page = self._search(
-            mode="orient",
-            query=None,
-            kinds=("claim", "demand", "procedure"),
-            statuses=(),
-            at_active_coordinate=self._pinned,
-        )
-        self._coordinate = page.coordinate
-        return page
+    def refresh(self) -> api.PlaybillHeadV1:
+        """Re-read the accepted head (a pinned context re-reads its own coordinate).
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
+
+        requested = self._read_at() if self._pinned else None
+        head = self._client.playbill_head(self._instance_id, at=requested)
+        self._observe_read(_coordinate(head.coordinate.model_dump(mode="json")), expected=requested)
+        self._coordinate = _coordinate(head.coordinate.model_dump(mode="json"))
+        return head
 
     def file(self, path: str | Path) -> FileSelector:
         """Select text from a catalogued workspace file, to cite as evidence.
@@ -2790,6 +2801,11 @@ class Playbill:
         evidence_freshness: Duration | None,
         attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = None,
     ) -> ClaimTypeDraft:
+        """Draft a ClaimType, reading its accepted definition through get.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
+
         kind = _enum(object_kind, ClaimObjectKind, label="claim-type object kind")
         arity = _enum(cardinality, Cardinality, label="claim-type cardinality")
         sensitivity = _enum(
@@ -2827,12 +2843,11 @@ class Playbill:
         )
         lifecycle = ArtifactLifecycle()
         if isinstance(predicate, ClaimTypeRef):
-            predecessor = self._client.get_playbill_claim_type(
-                self._instance_id,
-                name,
-                at=_api_coordinate(predicate.coordinate),
+            predecessor = self._get(f"ClaimType:{name}", "proof", None, predicate.coordinate)
+            assert predecessor.proof is not None
+            lifecycle = ArtifactLifecycle(
+                predecessor_digest=str(predecessor.proof["artifact_digest"])
             )
-            lifecycle = ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest)
         definition = ClaimType(
             artifact_format="playbill-claim-type-v5",
             identity=ArtifactIdentity(kind="ClaimType", name=name),
@@ -2876,18 +2891,52 @@ class Playbill:
         takes neither a kind filter nor a cursor; a world with a thousand
         Subjects therefore costs the vocabulary at `world()` and that one list
         the first time any Subject is named.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
 
         from cruxible_client.authoring.world import build_world
 
         requested = self._read_at()
-        listing = self._client.list_playbill_claim_types(self._instance_id, at=requested)
-        coordinate = _coordinate(listing.coordinate)
+        names: list[str] = []
+        cursor: str | None = None
+        coordinate: AcceptedCoordinate | None = None
+        while True:
+            page = self._client.orient_playbill(
+                self._instance_id,
+                section="claim_types",
+                limit=api.PLAYBILL_ORIENT_MAX_LIMIT,
+                cursor=cursor,
+                at=requested if coordinate is None else _api_coordinate(coordinate),
+                surface="sdk",
+            )
+            coordinate = _coordinate(page.coordinate.model_dump(mode="json"))
+            names.extend(f"ClaimType:{item.predicate}" for item in page.claim_types or ())
+            if not page.truncated or page.next_cursor is None:
+                break
+            cursor = page.next_cursor
+        assert coordinate is not None
         self._observe_read(coordinate, expected=requested)
+        envelopes: list[Mapping[str, object]] = []
+        for start in range(0, len(names), GET_BATCH_MAX_REFS):
+            batch = self._client.playbill_get_batch(
+                self._instance_id,
+                request=PlaybillGetBatchRequestV1(
+                    refs=tuple(names[start : start + GET_BATCH_MAX_REFS]),
+                    at=_api_coordinate(coordinate),
+                    evaluation_time=datetime.fromisoformat(self._evaluation_time()),
+                ),
+            )
+            if _coordinate(batch.coordinate) != coordinate:
+                raise ValueError("the ClaimType read returned a different accepted coordinate")
+            envelopes.extend(
+                cast(Mapping[str, object], (result.proof or {})["envelope"])
+                for result in batch.results
+            )
         return build_world(
             self.at(coordinate),
             coordinate=coordinate,
-            claim_type_envelopes=tuple(view.envelope for view in listing.claim_types),
+            claim_type_envelopes=tuple(envelopes),
         )
 
     @overload
@@ -2945,7 +2994,7 @@ class Playbill:
         """Send one write and answer its outcome, or raise its refusal."""
 
         request = request.model_copy(
-            update={"changes": observe_changes(request.changes, workspace=self._workspace)}
+            update={"changes": observe_changes(request.changes, workspace=self._workspace_root)}
         )
         outcome = self._client.playbill_write(self._instance_id, request=request)
         return self._written(outcome)
@@ -3017,7 +3066,7 @@ class Playbill:
             full_coordinate=True,
         )
         if request.evidence is not None:
-            (change,) = observe_changes((request.change(),), workspace=self._workspace)
+            (change,) = observe_changes((request.change(),), workspace=self._workspace_root)
             request = request.model_copy(update={"evidence": cast(SetChange, change).evidence})
         return self._written(self._client.playbill_set(self._instance_id, request=request))
 
@@ -3436,11 +3485,9 @@ class Playbill:
         key = (predicate_name, coordinate.git_oid)
         envelope = self._claim_type_envelopes.get(key)
         if envelope is None:
-            envelope = self._client.get_playbill_claim_type(
-                self._instance_id,
-                predicate_name,
-                at=_api_coordinate(coordinate),
-            ).envelope
+            proof = self._get(f"ClaimType:{predicate_name}", "proof", None, coordinate).proof
+            assert proof is not None
+            envelope = proof["envelope"]
             self._claim_type_envelopes[key] = envelope
         return envelope
 
@@ -3571,26 +3618,22 @@ class Playbill:
 
         Discovery never installs a provider or authorizes its execution. Multiple
         implementations require an explicit selection rather than an arbitrary default.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
         identity = (
             interface
             if interface.startswith("ProviderInterface:")
             else "ProviderInterface:" + interface
         )
-        inventory = self._client.discover_playbill(
-            self._instance_id,
-            profile="interfaces",
-            at=self._read_at(None),
-        )
-        if not isinstance(inventory, api.PlaybillInterfaceInventory):
-            raise ValueError("Provider interface discovery returned no inventory")
-        matches = [entry for entry in inventory.interfaces if entry.identity == identity]
-        if len(matches) != 1:
-            raise ValueError(f"No unique accepted provider interface {identity!r}")
-        return ProviderBinding.from_interface(matches[0], provider=provider).model_copy(
+        read = self._get(identity, "proof", None, None)
+        if read.proof is None or read.accepted_coordinate is None:
+            raise ValueError(f"No accepted provider interface {identity!r}")
+        entry = api.PlaybillProviderInterfaceEntry.model_validate(read.proof["entry"])
+        return ProviderBinding.from_interface(entry, provider=provider).model_copy(
             update={
                 "coordinate": AcceptedCoordinate.model_validate(
-                    inventory.coordinate.model_dump(mode="json")
+                    read.accepted_coordinate.model_dump(mode="json")
                 )
             },
             deep=True,
@@ -3698,12 +3741,19 @@ class Playbill:
         )
 
     def query_binding(self, query: str | QueryRef) -> QueryBinding:
-        """Read an exact query and its parameter types through accepted discovery."""
+        """Read an exact query and its parameter types through accepted discovery.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
         name = _address(query, RefKind.QUERY)
-        requested = self._read_at(query.coordinate if isinstance(query, QueryRef) else None)
-        view = self._client.get_playbill_query_definition(self._instance_id, name, at=requested)
+        proof = self._get(
+            f"query:{name}",
+            "proof",
+            None,
+            query.coordinate if isinstance(query, QueryRef) else None,
+        ).proof
+        view = api.PlaybillQueryDefinitionView.model_validate(proof)
         coordinate = _coordinate(view.coordinate)
-        self._observe_read(coordinate, expected=requested)
         return QueryBinding(
             QueryRef(view.name, coordinate),
             QueryDefinitionV1.model_validate(view.envelope),
@@ -3717,7 +3767,10 @@ class Playbill:
         parameters: Mapping[str, object] | None = None,
         budgets: QueryBudgetsV1 | None = None,
     ) -> api.PlaybillQueryRun:
-        """Run a named query at this SDK view's coordinate with a replay receipt."""
+        """Run a named query at this SDK view's coordinate with a replay receipt.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
         if isinstance(query, QueryBinding):
             if parameters is not None and not isinstance(parameters, Record):
                 raise TypeError("a QueryBinding requires parameters made by binding.parameters")
@@ -3725,13 +3778,37 @@ class Playbill:
             query = query.ref
         name = _address(query, RefKind.QUERY)
         requested = self._read_at(query.coordinate if isinstance(query, QueryRef) else None)
-        return self._client.run_playbill_query(
+        # The named query's full receipt is the run: its replayable result and
+        # execution receipt; one rendered row is enough beside it.
+        page = self._client.query_playbill(
             self._instance_id,
-            name,
-            evaluation_time=self._evaluation_time(),
-            parameters=None if parameters is None else dict(parameters),
-            at=requested,
-            budgets=None if budgets is None else budgets.model_dump(mode="json"),
+            request=api.PlaybillQueryRequestV1.model_validate(
+                {
+                    "name": name,
+                    "params": None if parameters is None else dict(parameters),
+                    "budgets": budgets,
+                    "receipt": "full",
+                    "limit": 1,
+                    "at": None if requested is None else requested.model_dump(mode="json"),
+                    "evaluation_time": self._evaluation_time(),
+                }
+            ),
+        )
+        self._observe_read(
+            _coordinate(page.receipt.coordinate.model_dump(mode="json")), expected=requested
+        )
+        replay = page.receipt.replay
+        if replay is None:  # pragma: no cover - a full receipt always carries its replay
+            raise ValueError("the named query answered no replay receipt")
+        return api.PlaybillQueryRun(
+            coordinate=api.PlaybillAcceptedCoordinate.model_validate(
+                page.receipt.coordinate.model_dump(mode="json")
+            ),
+            name=name,
+            definition_path=replay.definition_path,
+            definition_digest=page.receipt.spec_digest,
+            result=replay.result,
+            receipt=replay.execution,
         )
 
     def query(
@@ -3756,6 +3833,10 @@ class Playbill:
         params: Mapping[str, object] | None = None,
         at: AcceptedCoordinate | str | None = None,
         evaluation_time: datetime | str | None = None,
+        status: Sequence[QueryClaimStatus] = ("live",),
+        claims: bool = False,
+        budgets: QueryBudgetsV1 | None = None,
+        receipt: QueryReceiptDetail = "compact",
     ) -> QueryResult:
         """Answer any question over accepted state: one page of values with flags.
 
@@ -3798,6 +3879,10 @@ class Playbill:
                 "spec": spec,
                 "name": None if name is None else _address(name, RefKind.QUERY),
                 "params": None if params is None else dict(params),
+                "status": tuple(status),
+                "claims": claims,
+                "budgets": budgets,
+                "receipt": receipt,
             }
         )
         return self._run_query_request(request, at=at, evaluation_time=evaluation_time)
@@ -4110,23 +4195,6 @@ class Playbill:
             matches[0],
         )
 
-    def search(
-        self,
-        *,
-        query: str,
-        kinds: Collection[str],
-        statuses: Collection[str],
-    ) -> SearchPage:
-        return self._search(mode="search", query=query, kinds=kinds, statuses=statuses)
-
-    def list(
-        self,
-        *,
-        kinds: Collection[str],
-        statuses: Collection[str],
-    ) -> SearchPage:
-        return self._search(mode="list", query=None, kinds=kinds, statuses=statuses)
-
     def orient(
         self,
         *,
@@ -4169,66 +4237,10 @@ class Playbill:
             result.coordinate,
             expected=requested if cursor is None else None,
         )
-        return workspace_floor_freshness(self._workspace, result)
-
-    def _search(
-        self,
-        *,
-        mode: Literal["search", "list", "orient"],
-        query: str | None,
-        kinds: Collection[str],
-        statuses: Collection[str],
-        subject: Mapping[str, object] | None = None,
-        cursor: Mapping[str, object] | None = None,
-        at_active_coordinate: bool = True,
-    ) -> SearchPage:
-        result = self._client.search_playbill(
-            self._instance_id,
-            mode=mode,
-            query=query,
-            kinds=tuple(kinds),
-            statuses=tuple(statuses),
-            subject=None if subject is None else dict(subject),
-            cursor=None if cursor is None else dict(cursor),
-            at=(None if not at_active_coordinate else self._read_at()),
-            evaluation_time=self._evaluation_time(),
-        )
-        self._observe_read(
-            _coordinate(result.coordinate),
-            expected=self._read_at() if at_active_coordinate else None,
-        )
-        return SearchPage(
-            coordinate=_coordinate(result.coordinate),
-            evaluation_time=result.evaluation_time,
-            rows=tuple(cast(dict[str, object], row) for row in result.rows),
-            result_digest=result.result_digest,
-            cursor=cast(dict[str, object] | None, result.next_cursor),
-            truncated=result.truncated,
-            orientation=cast(dict[str, object] | None, result.orientation),
-        )
-
-    def explain(self, ref: str | TypedRef) -> object:
-        if isinstance(ref, ClaimRef) or (
-            isinstance(ref, str) and ref.removeprefix("Claim:").startswith("CLM-")
-        ):
-            identity = ref.address if isinstance(ref, ClaimRef) else ref
-            requested = self._read_at(ref.coordinate if isinstance(ref, ClaimRef) else None)
-            result = self._client.explain_playbill_claim(
-                self._instance_id,
-                identity,
-                at=requested,
-                evaluation_time=self._evaluation_time(),
-            )
-            self._observe_read(_coordinate(result.coordinate), expected=requested)
+        if self._workspace is None:
+            # No workspace, no floor to compare: the floor is unknown, not stale.
             return result
-        if isinstance(ref, SubjectRef):
-            self._read_at(ref.coordinate)
-            return self._client.explain_playbill_subject(
-                self._instance_id,
-                subject=_subject_address(ref.address).model_dump(mode="json"),
-                at=_api_coordinate(ref.coordinate),
-            )
-        raise ReferenceKindError("explain requires a ClaimRef or SubjectRef in G6")
+        return workspace_floor_freshness(self._workspace, result)
 
     def _append_attestation(
         self,
@@ -4310,8 +4322,8 @@ class Playbill:
         observation, scanned_coordinate = observe_playbill_next_workspace_with_coverage(
             self._client,
             self._instance_id,
-            self._workspace,
-            observation=observe_playbill_next_workspace(self._workspace),
+            self._workspace_root,
+            observation=observe_playbill_next_workspace(self._workspace_root),
             coordinate=requested_coordinate,
             access_profile=access_profile,
             # Only procedure-projection-only workspaces need a separate head
@@ -4396,8 +4408,8 @@ class Playbill:
         observation, _coordinate = observe_playbill_next_workspace_with_coverage(
             self._client,
             self._instance_id,
-            self._workspace,
-            observation=observe_playbill_next_workspace(self._workspace),
+            self._workspace_root,
+            observation=observe_playbill_next_workspace(self._workspace_root),
             access_profile=access_profile,
         )
         return self._client.list_playbill_curation(
@@ -4548,6 +4560,8 @@ class ProjectionBlocks:
 
         Compact markers are the default: digest references with local manifests. Subsequent
         repins preserve that format.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
         source_id = _address(source, RefKind.SOURCE)
         if isinstance(source, SourceRef):
@@ -4569,7 +4583,7 @@ class ProjectionBlocks:
         return repin_projection_block(
             self._playbill._client,
             self._playbill._instance_id,
-            workspace=self._playbill._workspace,
+            workspace=self._playbill._workspace_root,
             source_id=source_id,
             block_id=block_id,
             claims=claim_refs if claims is not None else None,
@@ -4598,7 +4612,7 @@ class ProjectionBlocks:
         return sync_projection_blocks(
             self._playbill._client,
             self._playbill._instance_id,
-            workspace=self._playbill._workspace,
+            workspace=self._playbill._workspace_root,
             paths=paths,
             all_sources=all,
             check=check,
@@ -5050,7 +5064,6 @@ __all__ = [
     "QueryDraft",
     "Publication",
     "SDK_CONTRACT_SNAPSHOT_DIGEST",
-    "SearchPage",
     "SubjectDraft",
     "carry",
     "re_author",

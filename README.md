@@ -144,7 +144,7 @@ uv run cruxible playbill init \
   --key-dir /tmp/cruxible-playbill-owner \
   --principal-id me
 export CRUXIBLE_PRINCIPAL_ID=me
-uv run cruxible playbill document list
+uv run cruxible playbill orient
 ~~~
 
 The init command prints each generated private-key path and sends only public

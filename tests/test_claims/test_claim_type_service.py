@@ -12,7 +12,6 @@ from cruxible_client.contracts.errors import ClaimNotFoundError
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.claim_types import (
     service_get_playbill_claim_type,
-    service_list_playbill_claim_types,
     service_propose_playbill_claim_type,
 )
 from tests.core_support._knowledge_loop_support import (
@@ -38,18 +37,6 @@ def test_accepted_claim_type_reads_back_at_its_accepted_coordinate(tmp_path: Pat
     claim_type_pin = next(pin for pin in work_item_query().pins if pin.role == "claim-type")
     assert view.artifact_digest == claim_type_pin.artifact_digest
     assert view.envelope["artifact_format"] == "playbill-claim-type-v1"
-
-
-def test_claim_type_listing_is_the_byte_sorted_accepted_inventory(tmp_path: Path) -> None:
-    instance, _owner = seed_claims(tmp_path)
-
-    listing = service_list_playbill_claim_types(instance)
-
-    paths = tuple(item.path for item in listing.claim_types)
-    assert paths == tuple(sorted(paths, key=lambda item: item.encode("utf-8")))
-    assert claim_type_path(PREDICATE) in paths
-    assert listing.coordinate.git_oid == instance.accepted_coordinate().git_oid
-    assert service_get_playbill_claim_type(instance, predicate=PREDICATE) in listing.claim_types
 
 
 def test_absent_predicate_is_refused_rather_than_returned_empty(tmp_path: Path) -> None:

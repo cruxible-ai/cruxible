@@ -410,7 +410,7 @@ def _subject_address(shorthand: str, *, field_path: str) -> SemanticAddress:
             "playbill.authoring.input_subject_invalid",
             field_path,
             "Subject must use canonical <subject-kind>/<subject-id> shorthand.",
-            "Replace it with a subject shown by playbill subject list.",
+            "Replace it with a subject shown by playbill query KIND.",
         )
     return SemanticAddress.whole_artifact(subject_path(match["kind"], match["id"]))
 

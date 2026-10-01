@@ -36,6 +36,7 @@ _TABLES = {
     "line": ("lines", ""),
     "resolution_contract": ("resolution_contracts", ""),
     "mandate": ("procedure_mandates", ""),
+    "provider_interface": ("provider_interfaces", ""),
 }
 _REF_FORMS = {
     "claim": lambda identity: identity.removeprefix("Claim:"),
@@ -48,6 +49,7 @@ _REF_FORMS = {
     "line": lambda identity: identity,
     "resolution_contract": lambda identity: identity,
     "mandate": lambda identity: "Mandate:" + identity.removeprefix("ProcedureMandate:"),
+    "provider_interface": lambda identity: identity,
 }
 
 
@@ -62,6 +64,10 @@ def _refs(instance: Any) -> dict[str, str]:
         capture = connection.execute("SELECT capture_digest FROM captures").fetchone()
         if capture is not None:
             found["capture"] = f"Capture:{capture[0]}"
+    principals = instance.accepted_history()[-1].principals.principals
+    if principals:
+        found["principal"] = f"Principal:{principals[0].principal_id}"
+    found["approval_policy"] = "ApprovalPolicy:instance"
     runs = service_playbill_orient(instance, section="runs").runs or ()
     if runs:
         found["procedure_run"] = f"ProcedureRun:{runs[0].run}"
@@ -84,8 +90,35 @@ def refs(world, credential_world, prediction_world, run_world):  # type: ignore[
     return by_kind
 
 
+# Read over its own world below: accepting an interface needs a patched fixture.
+_OWN_WORLD = frozenset({"provider_interface"})
+
+
 def test_every_get_kind_has_a_reference_in_the_matrix(refs) -> None:  # type: ignore[no-untyped-def]
-    assert set(refs) == set(GET_DETAILS_BY_KIND)
+    assert set(refs) | _OWN_WORLD == set(GET_DETAILS_BY_KIND)
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_every_provider_interface_detail_answers_or_refuses_coded(  # type: ignore[no-untyped-def]
+    tmp_path, monkeypatch, historical
+) -> None:
+    from tests.test_service.test_playbill_orient import _accept_interfaces
+
+    instance = _accept_interfaces(tmp_path, monkeypatch)
+    history = instance.accepted_history()
+    at = history[-2].oid if historical else None
+    for detail in GET_DETAILS_BY_KIND["provider_interface"]:
+        try:
+            result = service_playbill_get(
+                instance,
+                request=PlaybillGetRequestV1(
+                    ref="ProviderInterface:demo.interface", detail=detail, at=at
+                ),
+                access=_ACCESS,
+            )
+        except (CoreError, ClientCoreError):
+            continue
+        assert (result.kind, result.detail) == ("provider_interface", detail)
 
 
 @pytest.mark.parametrize(
@@ -94,6 +127,8 @@ def test_every_get_kind_has_a_reference_in_the_matrix(refs) -> None:  # type: ig
 )
 @pytest.mark.parametrize("historical", [False, True])
 def test_every_kind_and_detail_answers_or_refuses_coded(refs, kind, detail, historical) -> None:  # type: ignore[no-untyped-def]
+    if kind in _OWN_WORLD:
+        return
     instance, ref = refs[kind]
     history = instance.accepted_history()
     at = history[-2].oid if historical and len(history) > 1 else None

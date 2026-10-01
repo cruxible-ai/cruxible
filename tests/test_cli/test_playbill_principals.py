@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from click.testing import CliRunner
 
 from cruxible_client import contracts
+from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.cli.main import cli
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
@@ -32,9 +34,9 @@ def test_cli_principal_add_keeps_private_key_client_side_and_proposes_public_rec
     submitted: list[dict[str, Any]] = []
 
     class StubClient:
-        def list_playbill_principals(self, instance_id: str) -> contracts.PlaybillPrincipalList:
-            assert instance_id == "inst_principals"
-            return contracts.PlaybillPrincipalList(coordinate=COORDINATE, principals=[])
+        def orient_playbill(self, instance_id: str, **values: Any) -> Any:
+            assert instance_id == "inst_principals" and values["section"] == "principals"
+            return SimpleNamespace(principals=(), truncated=False, next_cursor=None)
 
         def propose_playbill_principal_change(
             self,
@@ -96,11 +98,12 @@ def test_cli_principal_add_rejects_existing_identity_before_generating_keys(
     custody = tmp_path / "reviewer-custody"
 
     class StubClient:
-        def list_playbill_principals(self, instance_id: str) -> contracts.PlaybillPrincipalList:
-            return contracts.PlaybillPrincipalList(
-                coordinate=COORDINATE,
-                principals=[{"principal_id": "reviewer"}],
+        def orient_playbill(self, instance_id: str, **values: Any) -> Any:
+            assert values["section"] == "principals"
+            reviewer = PrincipalRecord(
+                principal_id="reviewer", public_key="ab" * 32, kind="ordinary"
             )
+            return SimpleNamespace(principals=(reviewer,), truncated=False, next_cursor=None)
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = CliRunner().invoke(

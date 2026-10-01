@@ -38,10 +38,13 @@ from cruxible_client.contracts.orient import (
     PLAYBILL_ORIENT_DEFAULT_LIMIT,
     PLAYBILL_ORIENT_DEFAULT_QUERIES,
     PLAYBILL_ORIENT_SAMPLE_SUBJECTS,
+    PlaybillHeadV1,
     PlaybillOrientArmsV1,
     PlaybillOrientArtifactCountsV1,
     PlaybillOrientAttentionV1,
+    PlaybillOrientClaimCountsV1,
     PlaybillOrientDocumentV1,
+    PlaybillOrientInterfaceProviderV1,
     PlaybillOrientInterfaceV1,
     PlaybillOrientKindDetailV1,
     PlaybillOrientKindV1,
@@ -53,8 +56,11 @@ from cruxible_client.contracts.orient import (
     PlaybillOrientSurface,
     PlaybillOrientYouV1,
 )
+from cruxible_client.contracts.policy_rows import PlaybillPolicyInForce
+from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.exhaust.journal_index import RunPageInvalidated
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -194,7 +200,7 @@ def _first_sentence(text: str) -> str | None:
     return head + "." if separator else text
 
 
-def _interface_row(item: AcceptedProviderInterface) -> PlaybillOrientInterfaceV1:
+def interface_row(item: AcceptedProviderInterface) -> PlaybillOrientInterfaceV1:
     registration = item.registration
     definition = json.loads(bytes.fromhex(registration.interface_bytes_hex))
     vocabulary = json.loads(bytes.fromhex(registration.vocabulary_bytes_hex))
@@ -211,9 +217,18 @@ def _interface_row(item: AcceptedProviderInterface) -> PlaybillOrientInterfaceV1
         output=_contract_fields(sides.get("output"), stub=stub),
         effect=registration.effect_class,
         providers=tuple(
-            dict.fromkeys(
-                provider.provider_identity.removeprefix("Provider:")
-                for provider in item.entry.providers
+            PlaybillOrientInterfaceProviderV1(
+                provider=provider.provider_identity.removeprefix("Provider:"),
+                implementation_digest=provider.implementation_digest,
+            )
+            for provider in item.entry.providers
+        ),
+        interface_digest=item.entry.interface_digest,
+        operation_contract=(
+            None
+            if item.entry.operation_contract is None
+            else ProviderOperationContractV1.model_validate(
+                item.entry.operation_contract.model_dump(mode="json")
             )
         ),
     )
@@ -276,7 +291,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         documents=documents,
         queries=tuple(sorted(queries, key=lambda item: item.name)),
         interfaces=tuple(
-            _interface_row(item) for item in accepted_provider_interfaces(instance, coordinate)
+            interface_row(item) for item in accepted_provider_interfaces(instance, coordinate)
         ),
     )
 
@@ -740,6 +755,27 @@ def _page(
 # -- the verb -------------------------------------------------------------------
 
 
+def _generation(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate) -> int:
+    return next(
+        item.sequence for item in instance.accepted_history() if item.oid == coordinate.git_oid
+    )
+
+
+def service_playbill_head(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedCoordinate | str | None = None,
+) -> PlaybillHeadV1:
+    """The accepted head (or ``at``) as a coordinate and its generation; nothing else."""
+
+    coordinate = resolve_read_coordinate(instance, at)
+    return PlaybillHeadV1(
+        instance=instance.descriptor.instance_id,
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
+        generation=_generation(instance, coordinate),
+    )
+
+
 def service_playbill_orient(
     instance: PlaybillInstance,
     *,
@@ -779,9 +815,7 @@ def service_playbill_orient(
     base: dict[str, Any] = {
         "instance": instance.descriptor.instance_id,
         "coordinate": served,
-        "generation": next(
-            item.sequence for item in instance.accepted_history() if item.oid == coordinate.git_oid
-        ),
+        "generation": _generation(instance, coordinate),
         "accepted_at": instance.accepted_evaluation_time(coordinate.git_oid),
         "evaluation_time": moment,
         "mirror_url": instance.ledger_mirror_url(),
@@ -844,13 +878,16 @@ def service_playbill_orient(
         rows, keys, first_ref = (
             _operational_rows(instance, coordinate, section, evaluation_time=moment)
             if section in _OPERATIONAL_SECTIONS
+            else _governance_rows(instance, coordinate, section)
+            if section in _GOVERNANCE_SECTIONS
             else _section_rows(state, section)
         )
         page, next_cursor = _page(
             rows, keys, view=view, served=served, continuation=continuation, limit=limit
         )
-        if page and first_ref is not None:
-            calls.append(_Call("get", (("ref", first_ref(page[0])),)))
+        first = None if not page or first_ref is None else first_ref(page[0])
+        if first is not None:
+            calls.append(_Call("get", (("ref", first),)))
         if next_cursor is not None:
             calls.append(_Call("orient", (("section", section), ("cursor", next_cursor))))
         base[section] = page
@@ -945,6 +982,7 @@ def service_playbill_orient(
             queries=len(state.queries),
             interfaces=len(state.interfaces),
             **counts,
+            claims=_claim_counts(instance, coordinate, evaluation_time=moment),
         ),
         queries=state.queries[:PLAYBILL_ORIENT_DEFAULT_QUERIES],
         attention=attention,
@@ -963,6 +1001,55 @@ _LIVE_SECTIONS: dict[str, tuple[str, ...]] = {
 _OPERATIONAL_SECTIONS: frozenset[str] = frozenset(
     {"lines", "capture_contracts", "predictions", "mandates"}
 )
+
+
+def _claim_counts(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    *,
+    evaluation_time: datetime,
+) -> PlaybillOrientClaimCountsV1:
+    """Every accepted Claim counted by status, from the remembered resolution when it holds.
+
+    The ``next`` fold just derived the same statuses at this coordinate, so a
+    warm memo answers from the index alone; a miss derives them once.
+    """
+
+    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.discovery.claim_status import (
+        claim_resolution_statuses,
+        remembered_resolution_statuses,
+    )
+    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        identities = tuple(
+            str(row[0])
+            for row in projection.typed.connection.execute(
+                "SELECT identity FROM claims ORDER BY identity"
+            )
+        )
+    at = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    statuses = remembered_resolution_statuses(
+        instance, identities=identities, at=at, evaluation_time=evaluation_time
+    )
+    if statuses is None or len(statuses) != len(identities):
+        context = ClaimVerdictReadContext(instance, coordinate)
+        statuses = claim_resolution_statuses(
+            instance,
+            claims=context.claims(),
+            at=at,
+            evaluation_time=evaluation_time,
+            read_context=context,
+        )
+    counts = Counter(statuses.values())
+    return PlaybillOrientClaimCountsV1(
+        accepted=counts["accepted"],
+        conflicted=counts["conflicted"],
+        overturned=counts["overturned"],
+        refused=counts["refused"],
+        retired=counts["retired"],
+    )
 
 
 def _operational_counts(
@@ -989,6 +1076,61 @@ def _operational_counts(
         }
     counts["runs"], counts["running"] = run_counts(instance)
     return counts
+
+
+_GOVERNANCE_SECTIONS: frozenset[str] = frozenset({"principals", "policies"})
+# Declaring artifacts ``get`` resolves by their identity, for a policy row's next call.
+_GETTABLE_POLICY_DECLARERS = (
+    "ApprovalPolicy:",
+    "ClaimType:",
+    "CaptureContract:",
+    "QueryDefinition:",
+    "document:",
+    "Procedure:",
+    "Line:",
+)
+
+
+def _governance_rows(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    section: str,
+) -> tuple[tuple[Any, ...], list[str], Any]:
+    """The principal registry, or every live governed policy, at the coordinate."""
+
+    if section == "principals":
+        generation = next(
+            item for item in instance.accepted_history() if item.oid == coordinate.git_oid
+        )
+        principals = tuple(
+            PrincipalRecord.model_validate(item.model_dump(mode="json"))
+            for item in generation.principals.principals
+        )
+        return (
+            principals,
+            [row.principal_id for row in principals],
+            lambda row: f"Principal:{row.principal_id}",
+        )
+    from cruxible_core.service.claims.policies import service_playbill_policies_in_force
+
+    policies = tuple(
+        PlaybillPolicyInForce.model_validate(row.model_dump(mode="json"))
+        for row in service_playbill_policies_in_force(
+            instance,
+            at=contracts.PlaybillAcceptedCoordinate.model_validate(
+                AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+            ),
+        ).policies
+    )
+    return (
+        policies,
+        [f"{row.path}#{row.field_path}" for row in policies],
+        lambda row: (
+            row.declaring_artifact_identity
+            if row.declaring_artifact_identity.startswith(_GETTABLE_POLICY_DECLARERS)
+            else None
+        ),
+    )
 
 
 def _operational_rows(
@@ -1253,8 +1395,11 @@ def _section_rows(
             lambda row: f"query:{row.name}",
         )
     if section == "interfaces":
-        # get reads no interface; the rows are the whole answer.
-        return state.interfaces, [item.name for item in state.interfaces], None
+        return (
+            state.interfaces,
+            [item.name for item in state.interfaces],
+            lambda row: f"ProviderInterface:{row.name}",
+        )
     accepted = {item.predicate for item in state.claim_types}
     rows = tuple(
         _descriptor(
@@ -1275,6 +1420,8 @@ def _section_rows(
 
 __all__ = [
     "OrientCaller",
+    "interface_row",
     "render_orient_call",
+    "service_playbill_head",
     "service_playbill_orient",
 ]

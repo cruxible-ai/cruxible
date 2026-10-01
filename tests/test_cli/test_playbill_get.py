@@ -131,6 +131,7 @@ def test_body_takes_a_byte_range_and_prints_the_bytes(monkeypatch: pytest.Monkey
                 document="design",
                 media_type="text/markdown",
                 size=100,
+                body_digest="sha256:" + "a" * 64,
                 range=PlaybillByteRangeV1(start=0, end=10),
                 text="# Design\n\n",
             ),
@@ -392,3 +393,57 @@ def test_cli_value_width_boundary_and_evidence_objects_are_not_silently_cut(
     assert result.exit_code == 0, result.output
     assert "value: " + json.dumps(value) in result.output
     assert "--detail evidence for all" not in result.output
+
+
+class _RangedBodyClient:
+    """Answers each body range from one binary body, as the daemon would."""
+
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+        self.requests: list[PlaybillGetRequestV1] = []
+
+    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequestV1) -> Any:
+        import base64
+
+        self.requests.append(request)
+        assert request.range is not None
+        end = min(request.range.end, len(self.content))
+        chunk = self.content[request.range.start : end]
+        return _result(
+            "document",
+            detail="body",
+            body=PlaybillGetBodyV1(
+                document="blob",
+                media_type="application/octet-stream",
+                size=len(self.content),
+                body_digest="sha256:" + "b" * 64,
+                range=PlaybillByteRangeV1(start=request.range.start, end=end),
+                content_base64=base64.b64encode(chunk).decode("ascii"),
+            ),
+        )
+
+
+def test_output_writes_a_whole_binary_body_across_ranges(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from cruxible_client.contracts.get_reads import GET_BODY_RANGE_MAX_BYTES
+
+    content = bytes(range(256)) * ((GET_BODY_RANGE_MAX_BYTES // 256) + 3)
+    client = _RangedBodyClient(content)
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    target = tmp_path / "blob.bin"
+
+    result = CliRunner().invoke(
+        cli,
+        [*PREFIX, "playbill", "get", "Document:blob", "--detail", "body", "--output", str(target)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert target.read_bytes() == content
+    assert len(client.requests) == 2
+    # Every range after the first is read at the first read's coordinate.
+    assert client.requests[1].at == COORDINATE.git_oid
+    refused = CliRunner().invoke(
+        cli, [*PREFIX, "playbill", "get", "Document:blob", "--output", str(tmp_path / "x")]
+    )
+    assert refused.exit_code != 0 and "--detail body" in refused.output

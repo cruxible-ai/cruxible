@@ -27,6 +27,10 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._knowledge_loop_support import EVALUATION_TIME, SUBJECT_KIND, seed_claims
+from tests.core_support._mcp_budget import (
+    DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS,
+    model_visible_tokens,
+)
 
 WHERE = [{"field": "status", "ne": "blocked"}]
 
@@ -201,9 +205,14 @@ def test_the_mcp_tool_is_read_only_and_fully_typed(monkeypatch: pytest.MonkeyPat
     assert free_form == []
     follow = schema["$defs"]["QueryFollowV1"]["properties"]["direction"]
     assert follow["enum"] == ["forward", "reverse"] and follow["default"] == "forward"
-    # Spec mode is its own full-profile tool, so the default query tool stays small.
+    # Spec mode is its own full-profile tool, so the default query tool stays small:
+    # at most a quarter of the default profile's approved model-visible budget
+    # (input schemas plus descriptions), which the curation test guards whole.
     assert "spec" not in schema["properties"]
-    assert len(json.dumps(schema, separators=(",", ":"))) < 8_000
+    assert (
+        model_visible_tokens(tools["cruxible_playbill_query"])
+        <= DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS / 4
+    )
 
     spec_schema = tools["cruxible_playbill_query_spec"].inputSchema
     assert PERMISSION_REQUIREMENTS["cruxible_playbill_query_spec"] is PermissionMode.READ_ONLY

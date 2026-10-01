@@ -73,7 +73,7 @@ def test_live_calls_follow_head_and_remember_observation_without_extra_lookup(
     connection, operation
 ):
     pb, client, clock = connection
-    searches = len(client.searches)
+    heads = len(client.head_reads)
     procedure = pb.accepted_procedure("daily-summary")
     getattr(procedure, operation)(measurements=["b", "a", "b"])
     client.coordinate = _MOVED_COORDINATE
@@ -83,7 +83,7 @@ def test_live_calls_follow_head_and_remember_observation_without_extra_lookup(
     assert client.requests[0].measurement_names == ("a", "b")
     assert client.requests[1].evaluation_time == clock[0]
     assert pb.coordinate == NEW
-    assert len(client.searches) == searches
+    assert len(client.head_reads) == heads
 
 
 @pytest.mark.parametrize("operation", ["measure", "readings"])
