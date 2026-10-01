@@ -199,20 +199,77 @@ def _payload(instance: PlaybillInstance, digest: str) -> object:
     return parse_journal_payload(instance.body_store().read(digest, access=_ACCESS))
 
 
+def _admission(instance: PlaybillInstance, run_id: str) -> object | None:
+    """One journaled run's admission, or ``None`` when the journal holds no such run."""
+
+    journal = procedure_run_journal(instance)
+    if journal is None:
+        return None
+    locators, _more = journal.index.run_locators(_stream(instance), limit=1, run_id=run_id)
+    if not locators:
+        return None
+    return parse_admission_payload(
+        _payload(instance, locators[0].admission_payload_digest)
+    ).admission
+
+
+def _arming_run(instance: PlaybillInstance, run_id: str, admission: object) -> str | None:
+    """The run Line dispatch admitted for ``run_id``: itself, or a nested run's root.
+
+    A nested run inherits its parent's Line and actor, but dispatch records
+    only the root run it admitted. The root is reached through each
+    ``parent_binding``, verified against the parent's own admission digest,
+    never through a caller's ancestry claim. ``None`` when that chain does not
+    verify, so nothing is attributed to an arm it cannot be traced to.
+    """
+
+    from cruxible_core.procedures.execution import (
+        ProcedureRunAdmissionV2,
+        ProcedureRunAdmissionV8,
+    )
+
+    current_id, current = run_id, admission
+    seen = {run_id}
+    while isinstance(current, ProcedureRunAdmissionV8):
+        binding = current.parent_binding
+        if binding.parent_run_id in seen:
+            return None
+        seen.add(binding.parent_run_id)
+        parent = _admission(instance, binding.parent_run_id)
+        if (
+            not isinstance(parent, ProcedureRunAdmissionV2)
+            or parent.admission_binding_digest != binding.parent_admission_digest
+        ):
+            return None
+        current_id, current = binding.parent_run_id, parent
+    return current_id
+
+
 def _run_trigger(
     instance: PlaybillInstance,
     run_id: str,
-    line: ArtifactIdentity | None,
-    occurrence: str | None,
+    admission: object,
     viewer: OperationalViewer | None,
 ) -> PlaybillGetRunTriggerV1 | None:
     """The Line, occurrence and arm that admitted a Line run; ``None`` for a direct run.
 
     Who armed it is shown only to a reader who may see that arming credential.
+    A nested run answers for the arm that admitted its root (``_arming_run``);
+    one whose parent chain does not verify is withheld from all but an admin.
     """
 
-    if line is None:
+    candidate = getattr(admission, "line_identity", None)
+    if not isinstance(candidate, ArtifactIdentity):
         return None
+    line = candidate.qualified
+    occurrence = getattr(admission, "occurrence_id", None)
+    arming = _arming_run(instance, run_id, admission)
+    if arming is None:
+        return PlaybillGetRunTriggerV1(
+            line=line,
+            occurrence=occurrence,
+            armed_by_withheld=viewer is None or not viewer.admin,
+        )
     from cruxible_client.contracts.line_dispatch import LineArmPrincipalV1
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 
@@ -222,7 +279,7 @@ def _run_trigger(
             row = conn.execute(
                 "SELECT s.payload FROM pending p JOIN sessions s ON s.session_id=p.session_id "
                 "WHERE p.run_id=? LIMIT 1",
-                (run_id,),
+                (arming,),
             ).fetchone()
         if row is not None:
             data = json.loads(row[0])
@@ -236,7 +293,7 @@ def _run_trigger(
                     fields["armed_by"] = principal.label
                 else:
                     fields["armed_by_withheld"] = True
-    return PlaybillGetRunTriggerV1(line=line.qualified, occurrence=occurrence, **fields)  # type: ignore[arg-type]
+    return PlaybillGetRunTriggerV1(line=line, occurrence=occurrence, **fields)  # type: ignore[arg-type]
 
 
 def procedure_run_card(
@@ -325,13 +382,7 @@ def procedure_run_card(
         if isinstance(wall, int) and wall >= 0:
             elapsed, basis = wall, "measured_wall_clock"
     line = getattr(bound, "line_identity", None)
-    trigger = _run_trigger(
-        instance,
-        run_id,
-        line if isinstance(line, ArtifactIdentity) else None,
-        bound.occurrence_id,
-        viewer,
-    )
+    trigger = _run_trigger(instance, run_id, bound, viewer)
     # An armed run acts as its arming credential's label; that label is the
     # arming credential's to see, as on the Line card.
     actor = (
@@ -368,21 +419,14 @@ def run_arming_withheld(
 
     The Line and run cards' rule (``OperationalViewer.may_see``): a runtime
     arming credential is shown only to an admin, that credential, or another
-    credential bound to the same principal. A direct run has no arm.
+    credential bound to the same principal. A direct run has no arm; a nested
+    run answers for its root's.
     """
 
-    records = procedure_run_journal(instance)
-    if records is None:
+    admission = _admission(instance, run_id)
+    if admission is None:
         return False
-    locators, _more = records.index.run_locators(_stream(instance), limit=1, run_id=run_id)
-    if not locators:
-        return False
-    admission = parse_admission_payload(
-        _payload(instance, locators[0].admission_payload_digest)
-    ).admission
-    candidate = getattr(admission, "line_identity", None)
-    line = candidate if isinstance(candidate, ArtifactIdentity) else None
-    trigger = _run_trigger(instance, run_id, line, admission.occurrence_id, viewer)
+    trigger = _run_trigger(instance, run_id, admission, viewer)
     return trigger is not None and bool(trigger.armed_by_withheld)
 
 
