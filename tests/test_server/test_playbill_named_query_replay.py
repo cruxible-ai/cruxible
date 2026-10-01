@@ -20,7 +20,7 @@ from cruxible_client import CruxibleClient, Playbill
 from cruxible_client.authoring.blocks import _query_backing
 from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1, PlaybillQueryResult
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1, QueryDefinitionV1
 from cruxible_client.contracts.query.grammar import (
     QueryClaimValueRefV1,
     QueryComparisonFilterV1,
@@ -45,6 +45,7 @@ from tests.core_support._knowledge_loop_support import (
 )
 
 BY_STATUS = "project.work_items_by_status"
+BARE = "project.work_items_bare"
 WHEN = datetime.fromisoformat(EVALUATION_TIME)
 
 
@@ -70,6 +71,15 @@ def _by_status_query() -> QueryDefinitionV1:
     )
 
 
+def _bare_query() -> QueryDefinitionV1:
+    """The work-item read with no projection: rows render the Subjects' own cells."""
+
+    declared = work_item_query(BARE)
+    return declared.model_validate(
+        {**declared.model_dump(mode="json"), "projection": None, "pins": []}
+    )
+
+
 @pytest.fixture
 def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CruxibleClient, str, Any]:
     monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
@@ -81,7 +91,7 @@ def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CruxibleCli
     playbill_api.get_playbill_manager().clear()
     http = TestClient(create_app())
     instance, owner = seed_claims(tmp_path)
-    for query in (work_item_query(), _by_status_query()):
+    for query in (work_item_query(), _by_status_query(), _bare_query()):
         accept_proposal(
             instance,
             owner,
@@ -272,3 +282,39 @@ def test_a_block_backing_repins_a_query_past_the_surface_ceiling(
     uncapped = backing()
     monkeypatch.setattr(compact_module, "COMPACT_QUERY_MAX_RESULTS", 1)
     assert backing() == uncapped
+
+
+# -- F-007: a page without a projection still records the Claims it served -----
+
+
+@pytest.mark.parametrize("mode", ["named", "spec"])
+def test_a_query_without_a_projection_records_the_claims_its_cells_served(
+    served: tuple[CruxibleClient, str, Any], monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    client, instance_id, _instance = served
+    monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "on")
+    recorded: list[tuple[str, tuple[str, ...]]] = []
+
+    def spy(
+        _instance: Any, *, context: Any, operation: str, coordinate: Any, artifacts: Any
+    ) -> tuple[()]:
+        recorded.append((operation, tuple(identity.qualified for identity, _ in artifacts)))
+        return ()
+
+    monkeypatch.setattr(playbill_api, "record_consumption", spy)
+    body: dict[str, Any] = {"claims": False, "evaluation_time": EVALUATION_TIME}
+    if mode == "named":
+        body["name"] = BARE
+    else:
+        body["spec"] = QueryDefinitionSpecV1.model_validate(
+            {**_bare_query().model_dump(mode="json"), "pins": []}
+        ).model_dump(mode="json")
+    response = client._client.post(f"/api/v1/{instance_id}/playbill/query", json=body)
+    assert response.status_code == 200, response.text
+    page = PlaybillQueryResult.model_validate(response.json())
+    assert [row["status"] for row in page.rows] == ["ready", "blocked"]
+    assert all("claims" not in row for row in page.rows)
+
+    claims = [names for operation, names in recorded if operation == "playbill.claim.get"]
+    assert len(claims) == 1 and len(claims[0]) == 2
+    assert all(name.startswith("Claim:CLM-") for name in claims[0])

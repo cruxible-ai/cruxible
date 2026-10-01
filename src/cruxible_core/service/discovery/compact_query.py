@@ -1977,6 +1977,9 @@ def _engine_answer(
             if any(projected.state == "conflict" for projected in row.fields):
                 marks.add("contested")
         rendered = renderer.render(bound, extra_flags=extra)
+        # And the Claims behind every cell the renderer showed: a definition
+        # without a projection renders its Subjects' value cells itself.
+        served.update(renderer.served)
         for out, row in zip(rendered, rows, strict=True):
             flags = out.pop("flags")
             for projected in row.fields:
