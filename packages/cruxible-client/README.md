@@ -823,7 +823,7 @@ adds `receipt.replay`: `definition_path`, `result` (`ClaimQueryResultV1`) and
 | `spec` / `name` / `params` | `None` | The spec and named modes. |
 | `at` | `None` | A coordinate or git oid; the connection's otherwise. |
 | `evaluation_time` | `None` | The instant flags are evaluated at; the connection's clock otherwise. |
-| `status` | `("live",)` | Which Claims cells show: `live` (each slot's answer), plus opt-in `overturned`, `refused` or `retired`. |
+| `status` | `("live",)` | Which Claims cells show: `live` (each slot's answer), plus opt-in `overturned`, `refused` or `retired`. Rows list live Subjects; `retired` also lists retired Subjects, each row then stating `lifecycle`. |
 | `claims` | `False` | Also answer each cell's Claims as `rows[].claims[column]`. |
 | `budgets` | `None` | Named query only: `QueryBudgetsV1`, up to the definition's maximum; its own default otherwise. |
 | `receipt` | `"compact"` | `"full"` adds a named query's replay receipt as `receipt.replay`. |

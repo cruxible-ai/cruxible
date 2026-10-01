@@ -43,6 +43,9 @@ class _QueryClient(_WorldClient):
     def query_playbill(
         self, _instance_id: str, *, request: PlaybillQueryRequestV1
     ) -> api.PlaybillQueryResult:
+        if "retired" in request.status:
+            # The World's own Subject listing, served as the base fake serves it.
+            return super().query_playbill(_instance_id, request=request)
         self.requests.append(request)
         second = request.cursor == "page-2"
         subject_id = "cve-2" if second else "cve-1"

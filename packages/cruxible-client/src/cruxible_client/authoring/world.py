@@ -1096,16 +1096,44 @@ class World:
         return self._subject_cache.get(subject_kind, {})
 
     def _load_subjects(self) -> None:
+        """Read every live Subject of every kind, complete, at this World's coordinate.
 
+        One value-free ``query`` per kind lists Subjects ordered by ID, and
+        asks for retired ones too (marked by ``lifecycle``) so every listed
+        row is one the evaluator bound. A page continues by its cursor; an
+        answer the server capped continues as a new window after the last ID
+        it listed. Anything else that stops short -- a truncated answer with
+        neither a cursor nor a cap, a cursor or window that does not advance,
+        a row without its lifecycle -- refuses, and nothing is cached: a
+        partial inventory would call an accepted Subject absent.
+        """
+
+        loaded: dict[str, dict[str, WorldSubject]] = {}
+        for subject_kind in self._kind_paths():
+            loaded[subject_kind] = {
+                subject_id: WorldSubject(
+                    address=f"{subject_kind}/{subject_id}",
+                    coordinate=self._coordinate,
+                    _world=self,
+                )
+                for subject_id in self._live_subject_ids(subject_kind)
+            }
+        for subject_kind, subjects in loaded.items():
+            if subjects:
+                self._subject_cache[subject_kind] = subjects
+        self._subjects_loaded = True
+
+    def _live_subject_ids(self, subject_kind: str) -> list[str]:
         from cruxible_client.contracts.compact_query import (
             PLAYBILL_QUERY_MAX_LIMIT,
             PlaybillQueryRequestV1,
         )
 
         playbill = self._playbill
-        # Only which Subjects exist is needed here: one value-free query per
-        # kind, every page, pinned to this World's coordinate.
-        for subject_kind in self._kind_paths():
+        live: list[str] = []
+        after: str | None = None
+        while True:
+            last: str | None = None
             cursor: str | None = None
             while True:
                 page = playbill._client.query_playbill(
@@ -1114,6 +1142,11 @@ class World:
                         {
                             "kind": subject_kind,
                             "select": ("subject_id",),
+                            "where": ()
+                            if after is None
+                            else ({"field": "subject_id", "gt": after},),
+                            "order_by": ("subject_id",),
+                            "status": ("live", "retired"),
                             "limit": PLAYBILL_QUERY_MAX_LIMIT,
                             "cursor": cursor,
                             "at": None
@@ -1129,16 +1162,36 @@ class World:
                         "Subject listing returned a different accepted coordinate"
                     )
                 for row in page.rows:
-                    subject_id = str(row["subject_id"])
-                    self._subject_cache.setdefault(subject_kind, {})[subject_id] = WorldSubject(
-                        address=f"{subject_kind}/{subject_id}",
-                        coordinate=self._coordinate,
-                        _world=self,
-                    )
-                if not page.truncated or page.next_cursor is None:
+                    lifecycle = row.get("lifecycle")
+                    if lifecycle not in ("live", "retired"):
+                        raise WorldStructureError(
+                            f"the {subject_kind} Subject listing did not state each "
+                            "Subject's lifecycle"
+                        )
+                    last = str(row["subject_id"])
+                    if lifecycle == "live":
+                        live.append(last)
+                if page.next_cursor is None:
                     break
+                if not page.rows or page.next_cursor == cursor:
+                    raise WorldStructureError(
+                        f"the {subject_kind} Subject listing is truncated and its cursor "
+                        "does not advance; no Subjects were cached"
+                    )
                 cursor = page.next_cursor
-        self._subjects_loaded = True
+            if not page.truncated:
+                return live
+            if not page.capped:
+                raise WorldStructureError(
+                    f"the {subject_kind} Subject listing is truncated with no cursor to "
+                    "continue it; no Subjects were cached"
+                )
+            if last is None or (after is not None and last <= after):
+                raise WorldStructureError(
+                    f"the {subject_kind} Subject listing hit the server cap "
+                    f"({', '.join(page.capped)}) without advancing; no Subjects were cached"
+                )
+            after = last
 
     def prefetch(
         self,

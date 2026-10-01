@@ -60,6 +60,21 @@ def subject_labels(connection: sqlite3.Connection, paths: Iterable[str]) -> dict
     return labels
 
 
+def subject_lifecycles(connection: sqlite3.Connection, paths: Iterable[str]) -> dict[str, str]:
+    """Map Subject paths to their lifecycle, ``live`` or ``retired``."""
+
+    wanted = sorted(set(paths))
+    lifecycles: dict[str, str] = {}
+    for chunk in _chunks(wanted):
+        marks = ",".join("?" for _ in chunk)
+        for path, lifecycle in connection.execute(
+            f"SELECT path, lifecycle FROM subjects WHERE path IN ({marks})",
+            tuple(chunk),
+        ):
+            lifecycles[str(path)] = "retired" if lifecycle == "retired" else "live"
+    return lifecycles
+
+
 def subjects_of_kind(connection: sqlite3.Connection, kind: str) -> dict[str, str]:
     return {
         str(path): f"{kind}/{subject_id}"
@@ -257,5 +272,6 @@ __all__ = [
     "ensure_values",
     "read_live_values",
     "subject_labels",
+    "subject_lifecycles",
     "subjects_of_kind",
 ]

@@ -214,7 +214,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Claim value; kind ClaimType or Procedure lists definitions. Or pass a query name "
         "with params (budgets, receipt=full for its replay receipt). Rows lead with values "
         "and carry flags (stale, contested, contradicted, uncovered, unsure_hold); status "
-        "adds overturned, refused or retired Claims and claims=true names each cell's Claims. "
+        "adds overturned, refused or retired Claims (retired also lists retired Subjects) "
+        "and claims=true names each cell's Claims. "
         "When truncated, pass next_cursor back as cursor. A wrong name refuses with the "
         "nearest valid names."
     ),

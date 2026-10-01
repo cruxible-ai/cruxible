@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-10-01:cut-a",
-    "surface_digest": "sha256:af80f3b957028f2388726756d3e81b0bb5d2d77400b3fa0d24594556642af504"
+    "surface_digest": "sha256:3622312840670be10dfa65f9e08b4103c3b6220487b062399d16a5568b13e208"
   },
   "surface": {
     "cli_leaves": [
@@ -1782,7 +1782,7 @@
         "method": "POST",
         "path": "/api/v1/{instance_id}/playbill/query",
         "request_model": "cruxible_client.contracts.compact_query.PlaybillQueryRequestV1",
-        "request_schema_digest": "sha256:31363a1f5a64e2bdb6fbae5374d02c6d8153976fbbbeca4a854843d5bf8a018e",
+        "request_schema_digest": "sha256:ee5751da8d2edd144aade839708afd8331392bf2ff32b4d8f9c952cd90c4f4b6",
         "response_model": "cruxible_client.contracts.compact_query.PlaybillQueryResult",
         "response_schema_digest": "sha256:7145b957bf9b6dd53ece295e2cde83d5fbc84c91046157b8f71988bb139f0669"
       },

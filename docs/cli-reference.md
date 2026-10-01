@@ -869,7 +869,9 @@ Claims are read through `playbill query`, `playbill get` and `playbill orient`.
 cell names its Claims with their ID, value, verdict, resolution status and
 role, for every Subject of `KIND` (narrow with `--where 'subject_id in a,b'`);
 `--status overturned --status refused --status retired` adds the Claims
-resolution set aside or that were retired. `cruxible playbill get CLM-...`
+resolution set aside or that were retired. A query lists a kind's live Subjects;
+`--status retired` also lists its retired Subjects, and every row then states its
+Subject's `lifecycle` (`live` or `retired`). `cruxible playbill get CLM-...`
 reads one Claim's card; `--detail why` its verdict with the law evidence and
 source handles it was computed from, `--detail history` its revisions, and
 `--detail proof` its full envelope and facts. `orient` counts Claims by status

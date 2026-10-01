@@ -66,7 +66,8 @@ QueryFlag = Literal["stale", "contested", "contradicted", "uncovered", "unsure_h
 #: Which Claims a compact query's cells show. ``live`` is each slot's answer as
 #: ``get`` shows it: its accepted and conflicted Claims, or, when resolution
 #: accepted none, every live Claim. ``overturned`` and ``refused`` add live
-#: Claims resolution set aside; ``retired`` adds withdrawn ones.
+#: Claims resolution set aside; ``retired`` adds withdrawn ones, and also lists
+#: retired Subjects, each row then stating its Subject's ``lifecycle``.
 QueryClaimStatus = Literal["live", "overturned", "refused", "retired"]
 #: One Claim's own status: how resolution placed it in its slot, or ``retired``.
 QueryCellClaimStatus = Literal["accepted", "conflicted", "overturned", "refused", "retired"]
@@ -288,7 +289,8 @@ class PlaybillQueryRequestV1(BaseModel):
         max_length=4,
         description=(
             "Which Claims cells show: live (each slot's answer, the default), and opt-in "
-            "overturned, refused or retired."
+            "overturned, refused or retired; retired also lists retired Subjects, each row "
+            "then stating lifecycle (live or retired)."
         ),
     )
     claims: bool = Field(

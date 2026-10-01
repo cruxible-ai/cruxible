@@ -106,6 +106,7 @@ from cruxible_core.service.discovery.query_values import (
     ensure_values,
     read_live_values,
     subject_labels,
+    subject_lifecycles,
 )
 from cruxible_core.service.discovery.query_vocabulary import (
     ORDERABLE_TYPES,
@@ -293,16 +294,17 @@ class _InlineFilter:
     value: object
 
 
-ROW_METADATA = frozenset({"subject", "subject_id", "flags", "claims"})
+ROW_METADATA = frozenset({"subject", "subject_id", "flags", "claims", "lifecycle"})
 
 
 def _out(name: str) -> str:
     """The row key a column's values are served under.
 
     ``subject``, ``subject_id`` and ``flags`` are row metadata on every Subject
-    row, and ``claims`` when a query asks for each cell's Claims. A column named
-    like one of them keeps its values under ``value.<name>`` instead of
-    overwriting the metadata or losing its values.
+    row, ``claims`` when a query asks for each cell's Claims, and ``lifecycle``
+    when its ``status`` admits retired Subjects. A column named like one of them
+    keeps its values under ``value.<name>`` instead of overwriting the metadata
+    or losing its values.
     ``_column_keys`` then makes the keys unique across the whole column set; a
     projection needs no more, since its field names are distinct identifiers.
     """
@@ -885,6 +887,9 @@ class _RowRenderer:
     status: tuple[QueryClaimStatus, ...] = _LIVE_ONLY
     claims: bool = False
     retired: ValueIndex = field(default_factory=ValueIndex)
+    # Rows also state their Subject's lifecycle: a compact query whose status
+    # admits retired Subjects lists them beside the live ones.
+    lifecycle: bool = False
 
     def _shown(
         self, path: str, predicate: str, reads: Mapping[str, ClaimRead]
@@ -955,6 +960,14 @@ class _RowRenderer:
                 )
         with self.instance.bind_accepted_projection(self.coordinate) as projection:
             labels = subject_labels(projection.typed.connection, paths)
+            lifecycles = (
+                subject_lifecycles(
+                    projection.typed.connection,
+                    {path for row in rows if (path := row.get(ROOT)) is not None},
+                )
+                if self.lifecycle
+                else {}
+            )
         slot_members: list[LiveValue] = []
         for row in rows:
             for column in self.columns:
@@ -976,6 +989,8 @@ class _RowRenderer:
                 "subject": label,
                 "subject_id": label.split("/", 1)[1] if "/" in label else label,
             }
+            if self.lifecycle:
+                out["lifecycle"] = lifecycles.get(root or "", "live")
             row_flags: set[QueryFlag] = set(extra_flags[position]) if extra_flags else set()
             cell_claims: dict[str, list[dict[str, Any]]] = {}
             for column in self.columns:
@@ -1213,6 +1228,16 @@ def _compact_subject_query(
     capped, cap_notes = _capped(result)
     bindings = (ROOT, *(follow.alias for follow in follows))
     candidates, _keys = _bound_rows(result.rows, bindings)
+    with_retired = "retired" in request.status
+    if not with_retired:
+        # A retired Subject is not part of the kind's live state (orient counts
+        # and samples live Subjects only); status "retired" lists it, marked.
+        with instance.bind_accepted_projection(coordinate) as projection:
+            lifecycles = subject_lifecycles(
+                projection.typed.connection,
+                {bound for row in candidates if (bound := row.get(ROOT)) is not None},
+            )
+        candidates = [row for row in candidates if lifecycles.get(row.get(ROOT) or "") != "retired"]
     renderer = _RowRenderer(
         instance=instance,
         coordinate=coordinate,
@@ -1222,6 +1247,7 @@ def _compact_subject_query(
         content=content,
         status=request.status,
         claims=request.claims,
+        lifecycle=with_retired,
     )
     if inline or request.contains is not None:
         candidates = _apply_inline(

@@ -120,6 +120,8 @@ class _WorldClient:
         self.severity_overrides: dict[str, Any] = {}
         self.claim_type_reads: list[str] = []
         self.subject_queries: list[str] = []
+        # Replaces the Subject listing's answer, to serve pages a real daemon could.
+        self.subject_pages: Any = None
         self.head_reads: list[Any] = []
         self.batch_requests: list[Any] = []
 
@@ -278,21 +280,35 @@ class _WorldClient:
     def query_playbill(self, instance_id: str, *, request: Any) -> api.PlaybillQueryResult:
         assert request.kind is not None
         self.subject_queries.append(request.kind)
-        # A served query binds live Subjects only.
+        if self.subject_pages is not None:
+            return self.subject_pages(request)
+        # As the served query does: the evaluator binds every Subject shell; a
+        # status naming "retired" lists retired ones too, each row stating its
+        # lifecycle, and otherwise only live ones are listed.
+        with_retired = "retired" in request.status
         return api.PlaybillQueryResult(
             kind=request.kind,
             columns=(),
             rows=tuple(
-                {"subject": f"{kind}/{subject_id}", "subject_id": subject_id}
-                for kind, subject_id, lifecycle in self._subject_index()
-                if kind == request.kind and lifecycle == "live"
+                {
+                    "subject": f"{kind}/{subject_id}",
+                    "subject_id": subject_id,
+                    **({"lifecycle": lifecycle} if with_retired else {}),
+                }
+                for kind, subject_id, lifecycle in sorted(
+                    self._subject_index(), key=lambda row: row[1]
+                )
+                if kind == request.kind and (with_retired or lifecycle == "live")
             ),
-            receipt=api.PlaybillQueryReceiptV1(
-                mode="inline",
-                spec_digest=_DIGEST,
-                coordinate=request.at or _projection(self.coordinate),
-                evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
-            ),
+            receipt=self._receipt(request),
+        )
+
+    def _receipt(self, request: Any) -> api.PlaybillQueryReceiptV1:
+        return api.PlaybillQueryReceiptV1(
+            mode="inline",
+            spec_digest=_DIGEST,
+            coordinate=request.at or _projection(self.coordinate),
+            evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
         )
 
     def _claims_of(self, subject_path: str) -> list[str]:
@@ -491,6 +507,62 @@ def test_a_kind_loads_its_subjects_only_when_one_is_first_asked_for(
     assert world.dev.batch.subject_ids == ("p2c",)
     with pytest.raises(AbsentSubject):
         world.dev.batch["retired_batch"]
+
+
+@pytest.mark.parametrize(
+    ("truncated", "capped", "cursor", "refusal"),
+    [
+        (True, (), None, "no cursor to continue it"),
+        (True, ("max_results=1",), None, "without advancing"),
+        (True, (), "same-cursor", "does not advance"),
+    ],
+)
+def test_an_incomplete_subject_listing_refuses_and_caches_nothing(
+    connection: tuple[Playbill, _WorldClient],
+    truncated: bool,
+    capped: tuple[str, ...],
+    cursor: str | None,
+    refusal: str,
+) -> None:
+    """A partial inventory would call an accepted Subject absent, so none is installed."""
+
+    playbill, client = connection
+
+    def stuck(request: Any) -> api.PlaybillQueryResult:
+        # The same short page every time: a cap that never advances, a
+        # truncated answer with nothing to continue it, or a cursor handed back.
+        return api.PlaybillQueryResult(
+            kind=request.kind,
+            columns=(),
+            rows=({"subject": f"{request.kind}/a", "subject_id": "a", "lifecycle": "live"},)
+            if capped or cursor
+            else (),
+            truncated=truncated,
+            capped=capped,
+            next_cursor=cursor,
+            receipt=client._receipt(request),
+        )
+
+    client.subject_pages = stuck
+    world = playbill.world()
+    with pytest.raises(WorldStructureError, match=refusal):
+        world.sec.package["a"]
+    assert world._subjects_loaded is False
+    assert world._subject_cache == {}
+
+
+def test_a_subject_listing_row_must_state_its_lifecycle(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    playbill, client = connection
+    client.subject_pages = lambda request: api.PlaybillQueryResult(
+        kind=request.kind,
+        columns=(),
+        rows=({"subject": f"{request.kind}/a", "subject_id": "a"},),
+        receipt=client._receipt(request),
+    )
+    with pytest.raises(WorldStructureError, match="lifecycle"):
+        playbill.world().sec.package["a"]
 
 
 def test_the_facade_remains_pinned_when_the_live_orientation_moves(

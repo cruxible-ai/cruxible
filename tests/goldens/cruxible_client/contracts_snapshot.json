@@ -61099,7 +61099,7 @@
             "default": [
               "live"
             ],
-            "description": "Which Claims cells show: live (each slot's answer, the default), and opt-in overturned, refused or retired.",
+            "description": "Which Claims cells show: live (each slot's answer, the default), and opt-in overturned, refused or retired; retired also lists retired Subjects, each row then stating lifecycle (live or retired).",
             "items": {
               "enum": [
                 "live",
@@ -63180,7 +63180,7 @@
             "default": [
               "live"
             ],
-            "description": "Which Claims cells show: live (each slot's answer, the default), and opt-in overturned, refused or retired.",
+            "description": "Which Claims cells show: live (each slot's answer, the default), and opt-in overturned, refused or retired; retired also lists retired Subjects, each row then stating lifecycle (live or retired).",
             "items": {
               "enum": [
                 "live",
