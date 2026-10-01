@@ -8,7 +8,9 @@ left out. Every accepted Document is a source too, cited or not, so the
 client can bind its workspace files to them (``projections/INDEX``).
 
 Captures are read by digest from the body store, so what a Capture says about
-its source is fixed by its digest (the accepted-body retention invariant).
+its source is fixed by its digest (the accepted-body retention invariant). A
+cited Capture whose envelope is not retained refuses the render rather than
+dropping its source.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claims import ClaimArtifactAny
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
 from cruxible_client.contracts.source_references import (
     CasSourceReferenceV1,
     ExternalSourceReferenceV1,
@@ -77,7 +79,11 @@ _CACHE_LOCK = threading.Lock()
 def capture_sources(
     instance: PlaybillInstance, digests: Iterable[str]
 ) -> dict[str, CaptureSource | None]:
-    """Each Capture's source, read once per digest; ``None`` when the body is gone."""
+    """Each Capture's source, read once per digest.
+
+    A Capture an accepted Claim cites is retained with it; one that is not
+    refuses the render with a projection integrity failure.
+    """
 
     digests = tuple(dict.fromkeys(digests))
     with _CACHE_LOCK:
@@ -89,11 +95,10 @@ def capture_sources(
     for digest in wanted:
         try:
             envelope = parse_capture_envelope(store.read(digest, access=_ACCESS))
-        except (PlaybillError, OSError, ValueError):
-            # A lost body says nothing about its source; it is not cached, so a
-            # restored one is read again.
-            known[digest] = None
-            continue
+        except (PlaybillError, OSError, ValueError) as exc:
+            raise ProjectionIntegrityError(
+                f"floor cannot render sources/INDEX: the cited Capture {digest} is not retained"
+            ) from exc
         fresh[digest] = _describe(envelope.capture_contract_digest, envelope.source)
     if fresh:
         with _CACHE_LOCK:

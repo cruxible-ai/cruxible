@@ -55,7 +55,7 @@ from cruxible_client.contracts.claims import (
     ExactContentClaimObject,
     SubjectClaimObject,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.exact_content import ExactContentReader
@@ -258,9 +258,9 @@ class ValueRenderer:
     Accepted-body retention invariant: the body of an accepted exact-content
     Claim is retained for as long as the Claim is in accepted history. The text
     is then a pure function of the content digest, so a floor rendered at any
-    time agrees with one rendered at any other. A lost body renders as
-    ``{exact_content: unavailable, ...}`` in a fresh render; that is an integrity
-    incident ``orient`` and ``next`` report, never a change of accepted state.
+    time agrees with one rendered at any other. A body that is nevertheless
+    lost refuses the render with a projection integrity failure: the floor is
+    never published differently for the same accepted inputs.
     """
 
     def __init__(self, instance: PlaybillInstance) -> None:
@@ -275,6 +275,11 @@ class ValueRenderer:
             return _Shown(yaml_scalar(other), None, note, plain=other)
         if isinstance(obj, ExactContentClaimObject):
             value = self._content.of(obj)
+            if not isinstance(value, str) and value.exact_content == "unavailable":
+                raise ProjectionIntegrityError(
+                    f"floor cannot render {claim.identity.name}: its accepted exact-content "
+                    f"body {obj.content_digest} is not retained"
+                )
             if not isinstance(value, str):
                 size = "null" if value.length is None else str(value.length)
                 marker = f"{{exact_content: {value.exact_content}, bytes: {size}}}"

@@ -1892,8 +1892,11 @@ def refresh_workspace_floor(
             delta = client.playbill_floor_delta(
                 instance_id, at=at, base_generation=generation, base_renderer=renderer
             )
-            # A pinned request refuses a mismatched answer before anything is written.
-            if at is not None and delta.head.git_oid != at.git_oid:
+            # A pinned request refuses a mismatched answer before anything is written:
+            # the whole coordinate, not only its Git OID.
+            if at is not None and delta.head.coordinate().model_dump(mode="json") != at.model_dump(
+                mode="json"
+            ):
                 raise PlaybillWorkspaceError("floor delta differs from requested coordinate")
             return delta
 

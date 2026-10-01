@@ -627,12 +627,14 @@ def _outcome(export: Any) -> Any:
 
 
 @pytest.mark.parametrize("target", ["ruling", "long-ruling"])
-def test_a_lost_body_is_an_incident_a_fresh_render_names(tmp_path: Any, target: str) -> None:
+def test_a_lost_body_refuses_a_fresh_render(tmp_path: Any, target: str) -> None:
     """Accepted-body retention: the floor renders exact content by digest.
 
-    A body lost anyway renders as a typed unavailable marker in a fresh render;
-    it is never a verdict, and it never refuses the floor.
+    A body lost anyway refuses a fresh render as an integrity failure; the
+    floor never publishes a marker, or any other bytes, in place of the text.
     """
+
+    from cruxible_client.contracts.errors import ProjectionIntegrityError
 
     instance, _owner = seed_write_surface(tmp_path)
     written = _write(instance, _set(WI1, "ruling", RULING), _set(WI3, "ruling", LONG_RULING))
@@ -643,10 +645,8 @@ def test_a_lost_body_is_an_incident_a_fresh_render_names(tmp_path: Any, target: 
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         digest = projection.typed.source(f"Claim:{claim_id}").statement.object.content_digest
     _spoil(instance, digest, "erase")
-    fresh = _cold(instance, access=BODY_READER)
-    current = fresh[f"current/{KIND}/{field.rsplit('/', 1)[-1]}.yaml"].decode()
-    assert "ruling: {exact_content: unavailable" in current
-    assert "flags" not in current
+    with pytest.raises(ProjectionIntegrityError, match="not retained"):
+        _cold(instance, access=BODY_READER)
 
 
 def test_kept_discovery_cards_agree_with_cold_ones_after_a_capture_is_erased(

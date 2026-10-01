@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-10-01:floor-delta",
-    "surface_digest": "sha256:2d230cacde68b7574063c389fe41ea8a1aaf9789367a1d454b202f5979dad113"
+    "surface_digest": "sha256:6c85846279f69a8676577af0a534f7b6816f7d213385ade7a541f14ba30ae3ca"
   },
   "surface": {
     "cli_leaves": [
@@ -1222,7 +1222,7 @@
         "request_model": "cruxible_core.server.playbill_request_models.PlaybillFloorDeltaRequest",
         "request_schema_digest": "sha256:c44deed734f2868b6ef3c47affbf712e2da51abfbf34b1cf5e73e8766dd04415",
         "response_model": "cruxible_client.contracts.floor.PlaybillFloorDeltaV1",
-        "response_schema_digest": "sha256:61e46b1531b25a41b892b3f2e140215b48488b84324f98240dd7fa70da8d5a1d"
+        "response_schema_digest": "sha256:a54a5c56ab4093a3b718a689a16d594d2e7f0b66b038ed6888c92421ba6cfeb8"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.export_floor",

@@ -94,15 +94,11 @@ from cruxible_core.service.discovery.discovery import (
     build_accepted_discovery_vocabulary,
 )
 from cruxible_core.service.discovery.query import _AcceptedQueryFactsRead
-from cruxible_core.service.floor.floor_content import (
-    change_path,
-    render_changes,
-)
 from cruxible_core.service.floor.floor_current import (
     bodies_unchanged,
     body_available,
 )
-from cruxible_core.service.floor.floor_index import floor_render_at
+from cruxible_core.service.floor.floor_index import floor_render_at, floor_render_with_notes
 from cruxible_core.service.floor.renderer import floor_renderer
 from cruxible_core.storage.cas import BodyAccessContext
 
@@ -628,14 +624,11 @@ def service_export_playbill_floor(
         return result
 
     render = floor_render_at(instance, coordinate)
-    files = dict(render.files)
     if review_notes_oid is not None:
-        pinned = None if review_notes_oid == "absent" else review_notes_oid
-        with instance.accepted_history_reader() as history:
-            for sequence, content in render_changes(
-                instance, history, render.changes, pinned
-            ).items():
-                files[change_path(sequence)] = (content, sequence)
+        render = floor_render_with_notes(
+            instance, render, None if review_notes_oid == "absent" else review_notes_oid
+        )
+    files = dict(render.files)
     if "discovery" in parts:
         for path, content in _discovery_files(
             instance,
@@ -649,6 +642,7 @@ def service_export_playbill_floor(
         renderer=render.renderer,
         coordinate=render.inputs.coordinate,
         generation=render.generation,
+        notes_digest=render.notes_digest,
         files={
             path: (_content_digest(content), len(content), changed)
             for path, (content, changed) in files.items()

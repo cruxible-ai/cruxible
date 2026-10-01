@@ -16,6 +16,7 @@ from cruxible_client.contracts.floor import (
 )
 
 TEST_RENDERER = "sha256:" + "5" * 64
+TEST_NOTES = "sha256:" + "6" * 64
 
 
 def floor_v5_export(
@@ -24,6 +25,7 @@ def floor_v5_export(
     coordinate: contracts.PlaybillAcceptedCoordinate,
     generation: int = 1,
     changed_at: Mapping[str, int] | None = None,
+    notes_digest: str = TEST_NOTES,
 ) -> contracts.PlaybillFloorExport:
     """A full v5 floor export of ``files`` at ``coordinate``, as the daemon serves it."""
 
@@ -31,6 +33,7 @@ def floor_v5_export(
         renderer=TEST_RENDERER,
         coordinate=coordinate,
         generation=generation,
+        notes_digest=notes_digest,
         files={
             path: (
                 content_digest(content),
@@ -61,18 +64,21 @@ def floor_v5_delta(
     generation: int,
     base: tuple[int, Mapping[str, tuple[bytes, int]]] | None = None,
     renderer: str = TEST_RENDERER,
+    notes_digest: str = TEST_NOTES,
+    base_notes_digest: str | None = None,
 ) -> PlaybillFloorDeltaV1:
     """The delta the daemon would serve from ``base`` (or a full floor) to ``head``.
 
     Each map is ``path -> (bytes, changed_at)``.
     """
 
-    def manifest(files: Mapping[str, tuple[bytes, int]], at: int) -> str:
+    def manifest(files: Mapping[str, tuple[bytes, int]], at: int, notes: str) -> str:
         return floor_manifest_digest(
             build_floor_manifest(
                 renderer=renderer,
                 coordinate=coordinate,
                 generation=at,
+                notes_digest=notes,
                 files={
                     path: (content_digest(content), len(content), changed)
                     for path, (content, changed) in files.items()
@@ -92,8 +98,8 @@ def floor_v5_delta(
     head_coordinate.pop("tag", None)
     payload: dict[str, object] = {
         "renderer": renderer,
-        "head": {**head_coordinate, "generation": generation},
-        "head_manifest_digest": manifest(head, generation),
+        "head": {**head_coordinate, "generation": generation, "notes_digest": notes_digest},
+        "head_manifest_digest": manifest(head, generation, notes_digest),
     }
     ordered = sorted(head, key=lambda path: path.encode("utf-8"))
     if base is None:
@@ -110,7 +116,11 @@ def floor_v5_delta(
             **payload,
             "kind": "delta",
             "base_generation": base_generation,
-            "base_manifest_digest": manifest(base_files, base_generation),
+            "base_manifest_digest": manifest(
+                base_files,
+                base_generation,
+                notes_digest if base_notes_digest is None else base_notes_digest,
+            ),
             "files": [
                 item(path, *head[path]) for path in ordered if head[path][1] > base_generation
             ],
@@ -143,6 +153,7 @@ def delta_from_export(
         coordinate=export.coordinate,
         generation=manifest["generation"],
         renderer=manifest["renderer"],
+        notes_digest=manifest["notes_digest"],
     )
     if corrupt is None:
         return delta

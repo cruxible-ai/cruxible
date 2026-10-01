@@ -2137,10 +2137,10 @@ incoming:
   contradicted) is in the floor: verdicts move with time and evidence, which no
   coordinate fixes.
 - An exact-content value (a ruling) is its text, read by digest. Accepted
-  bodies are retained for as long as their Claim is in history, so that text
-  is fixed by the coordinate; a body lost anyway renders as
-  `{exact_content: unavailable, ...}`, an integrity incident, not a change of
-  accepted state. Bytes that are not UTF-8 text show as
+  bodies (and the Capture envelopes `sources/INDEX` reads) are retained for as
+  long as their Claim is in history, so the floor is fixed by the coordinate;
+  one lost anyway refuses a fresh render as an integrity failure rather than
+  publishing a different floor. Bytes that are not UTF-8 text show as
   `{exact_content: binary, bytes: N}`.
 
 ### Freshness and deltas
@@ -2153,12 +2153,20 @@ moved, so a floor at generation B lacks exactly the files stamped after B plus
 the paths dropped since. `orient` reports `floor: {at, generations_behind}`
 from the manifest alone.
 
+The manifest also names the review notes the change rationale was read from
+(`notes_digest`, the digest of every rationale `changes/` shows); a rationale
+revised after acceptance changes it, and a refresh then replaces the floor
+whole.
+
 The daemon keeps a rebuildable floor index on each instance and advances it by
 the ledger diff. `floor export` and every refresh send the generation and
 renderer of the floor the workspace holds to `POST /playbill/floor/delta`,
 which answers with a delta (or the whole floor, for a missing, newer or
-foreign base); one shared apply verifies the base and head manifest digests
-before writing anything, writes each file atomically, and writes
+foreign base). One shared apply verifies the base and head manifest digests
+and the bytes actually installed before writing anything (a hand-edited,
+missing or stray file makes it ask for the whole floor, which repairs it while
+keeping the client's own `projections/INDEX`), writes each file atomically
+through directory descriptors that never follow a link, and writes
 `manifest.json` last, so an interrupted refresh resumes cleanly.
 
 ### Writing the directory

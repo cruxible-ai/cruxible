@@ -4,194 +4,322 @@ Every surface that writes a floor (the CLI, the SDK, MCP, and the daemon's
 workspace-output delivery) writes it through ``apply_floor_delta``. It proves
 everything before it writes anything:
 
-1. every file in the delta decodes to its digest, and every path stays inside
-   the floor;
-2. for a delta, the directory's own ``manifest.json`` is the delta's base
-   (generation, renderer and manifest digest), else nothing is written and the
-   result is ``base_mismatch``, and the caller asks for a full floor;
-3. the manifest the delta brings it to -- the base manifest minus the
-   tombstones plus the delta's files, or the full floor's files -- has the
-   head manifest digest the delta names.
+1. the delta itself: every file decodes to its digest, and its paths, the
+   tombstones included, are safe, unreserved and distinct on a case- and
+   normalization-insensitive filesystem (the contract refuses the rest);
+2. the floor the delta builds -- the directory's manifest minus the tombstones
+   plus the delta's files, or the full floor's files -- has exactly the head
+   manifest digest the delta names (coordinate, generation, renderer, notes and
+   every file). A delta whose base the directory does not hold, and is not
+   already at the head of, is ``base_mismatch``: nothing is written and the
+   caller asks for a full floor;
+3. the bytes actually installed: every file the delta does not touch already
+   holds its head bytes, and nothing else is there. A delta that finds a
+   corrupted, missing or stray file is ``base_mismatch`` too; a full floor
+   repairs it, removing stale files but never the client's own
+   (``projections/INDEX``).
 
-Then each touched file is written atomically (a temporary file renamed over
-it), the tombstoned and stale paths are removed, and ``manifest.json`` is
-written last: it is the commit point. A crash after any single write leaves
-the base manifest in place, so applying the same delta again finishes the job;
-applying it to a floor already at its head writes nothing.
+Then each touched file is written atomically (a staged file renamed over it),
+the removed paths are unlinked, and ``manifest.json`` is written last: it is
+the commit point. A crash after any single write leaves the old manifest in
+place, so applying the same delta again finishes the job; a floor already at
+the head is written to only where its bytes differ.
+
+Every read and mutation goes through directory descriptors opened one
+component at a time without following links, so a directory swapped for a
+symlink mid-apply is refused rather than written through.
 """
 
 from __future__ import annotations
 
+import errno
+import hashlib
 import json
 import os
-import tempfile
-from collections.abc import Mapping
+import secrets
+import stat
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.floor import (
+    FLOOR_STAGING_NAME,
     PLAYBILL_FLOOR_LOCAL_PATHS,
     PLAYBILL_FLOOR_MANIFEST_PATH,
     PlaybillFloorApplyResultV1,
     PlaybillFloorDeltaV1,
     PlaybillFloorManifestV5,
     build_floor_manifest,
-    content_digest,
     floor_manifest_digest,
+    floor_path_key,
     render_floor_manifest,
-    safe_floor_path,
 )
+
+_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _CLOEXEC
+_READ = os.O_RDONLY | os.O_NOFOLLOW | _CLOEXEC
+_CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | _CLOEXEC
+_LOCAL_KEYS = frozenset(floor_path_key(path) for path in PLAYBILL_FLOOR_LOCAL_PATHS)
+_MANIFEST_KEY = floor_path_key(PLAYBILL_FLOOR_MANIFEST_PATH)
 
 
 class PlaybillFloorApplyError(PlaybillError, ValueError):
-    """A floor delta failed verification; nothing was written."""
+    """A floor delta failed verification, or the floor changed under it."""
 
     error_code = "playbill.floor.apply_refused"
+
+
+# -- descriptor-anchored access ----------------------------------------------------
+
+
+def _split(path: str) -> tuple[tuple[str, ...], str]:
+    parts = path.split("/")
+    return tuple(parts[:-1]), parts[-1]
+
+
+def _escape(parts: tuple[str, ...], exc: OSError) -> PlaybillFloorApplyError:
+    where = "/".join(parts) or "."
+    if exc.errno in {errno.ELOOP, errno.ENOTDIR, errno.EMLINK}:
+        return PlaybillFloorApplyError(
+            f"floor path escapes the floor directory through a link or a file: {where}"
+        )
+    return PlaybillFloorApplyError(f"floor directory {where} is unusable: {exc}")
+
+
+@contextmanager
+def _directory(root: int, parts: tuple[str, ...], *, create: bool) -> Iterator[int | None]:
+    """A descriptor for ``parts`` under ``root``, opened one component at a time.
+
+    No component is followed through a link: a symlink, or a file, where a
+    directory belongs refuses the apply. Yields None when a component is
+    missing and ``create`` is false.
+    """
+
+    current = os.dup(root)
+    try:
+        for index, name in enumerate(parts):
+            try:
+                child = os.open(name, _DIRECTORY, dir_fd=current)
+            except FileNotFoundError:
+                if not create:
+                    yield None
+                    return
+                try:
+                    os.mkdir(name, 0o755, dir_fd=current)
+                except FileExistsError:
+                    pass
+                try:
+                    child = os.open(name, _DIRECTORY, dir_fd=current)
+                except OSError as exc:
+                    raise _escape(parts[: index + 1], exc) from exc
+            except OSError as exc:
+                raise _escape(parts[: index + 1], exc) from exc
+            os.close(current)
+            current = child
+        yield current
+    finally:
+        os.close(current)
+
+
+def _read_at(directory: int, name: str) -> bytes:
+    handle = os.open(name, _READ, dir_fd=directory)
+    try:
+        chunks = []
+        while chunk := os.read(handle, 1 << 20):
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(handle)
+
+
+def _write_file(root: int, path: str, content: bytes) -> None:
+    """Write ``path`` atomically: a staged file in its own directory, renamed over it."""
+
+    parts, name = _split(path)
+    with _directory(root, parts, create=True) as directory:
+        assert directory is not None
+        staged = f".floor-{secrets.token_hex(8)}.tmp"
+        handle = os.open(staged, _CREATE, 0o644, dir_fd=directory)
+        try:
+            with os.fdopen(handle, "wb") as stream:
+                stream.write(content)
+            os.replace(staged, name, src_dir_fd=directory, dst_dir_fd=directory)
+        except BaseException:
+            try:
+                os.unlink(staged, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+            raise
+
+
+def _unlink_file(root: int, path: str) -> bool:
+    """Unlink ``path`` itself (a link is removed, never followed); missing is fine."""
+
+    parts, name = _split(path)
+    with _directory(root, parts, create=False) as directory:
+        if directory is None:
+            return False
+        try:
+            os.unlink(name, dir_fd=directory)
+        except FileNotFoundError:
+            return False
+        return True
+
+
+def _parents(paths: Iterable[str]) -> set[str]:
+    """Every directory the given paths live under, by their exact spelling."""
+
+    return {
+        "/".join(parts[:end])
+        for path in paths
+        for parts in (path.split("/"),)
+        for end in range(1, len(parts))
+    }
+
+
+def _remove_directories(root: int, directories: set[str]) -> None:
+    """Remove directories (emptied first by the removals), deepest first, via descriptors."""
+
+    for path in sorted(directories, key=lambda item: item.count("/"), reverse=True):
+        parts, name = _split(path)
+        with _directory(root, parts, create=False) as directory:
+            if directory is None:
+                continue
+            try:
+                os.rmdir(name, dir_fd=directory)
+            except FileNotFoundError:
+                continue
+
+
+def _prune(root: int, removed: set[str]) -> None:
+    """Remove the directories the removals emptied, deepest first, never the floor itself."""
+
+    parents = {
+        tuple(path.split("/")[:end]) for path in removed for end in range(1, path.count("/") + 1)
+    }
+    for parts in sorted(parents, key=len, reverse=True):
+        with _directory(root, parts[:-1], create=False) as directory:
+            if directory is None:
+                continue
+            try:
+                os.rmdir(parts[-1], dir_fd=directory)
+            except OSError:
+                continue
+
+
+@dataclass
+class _Installed:
+    """What the floor directory actually holds, read without following links."""
+
+    files: dict[str, str] = field(default_factory=dict)
+    # Anything that is neither a regular file nor a directory: links, fifos.
+    others: set[str] = field(default_factory=set)
+    # Debris a crash left: staged files no rename consumed.
+    staged: set[str] = field(default_factory=set)
+    directories: set[str] = field(default_factory=set)
+    # The client's own files, by the spelling they were found under.
+    local: set[str] = field(default_factory=set)
+    manifest: bytes | None = None
+
+
+def _walk(root: int) -> _Installed:
+    installed = _Installed()
+
+    def visit(directory: int, prefix: str) -> None:
+        for name in sorted(os.listdir(directory)):
+            path = f"{prefix}{name}"
+            mode = os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode
+            if FLOOR_STAGING_NAME.fullmatch(name):
+                installed.staged.add(path)
+            elif stat.S_ISDIR(mode):
+                installed.directories.add(path)
+                child = os.open(name, _DIRECTORY, dir_fd=directory)
+                try:
+                    visit(child, f"{path}/")
+                finally:
+                    os.close(child)
+            elif floor_path_key(path) in _LOCAL_KEYS:
+                # The client's own file, never the floor's to read or remove.
+                installed.local.add(path)
+            elif not stat.S_ISREG(mode):
+                installed.others.add(path)
+            elif path == PLAYBILL_FLOOR_MANIFEST_PATH:
+                installed.manifest = _read_at(directory, name)
+            elif floor_path_key(path) == _MANIFEST_KEY:
+                # The manifest under another spelling is not the manifest.
+                installed.others.add(path)
+            else:
+                content = _read_at(directory, name)
+                installed.files[path] = "sha256:" + hashlib.sha256(content).hexdigest()
+
+    visit(root, "")
+    return installed
+
+
+def _manifest(content: bytes | None) -> PlaybillFloorManifestV5 | None:
+    if content is None:
+        return None
+    try:
+        return PlaybillFloorManifestV5.model_validate(json.loads(content))
+    except ValueError:
+        return None
 
 
 def read_floor_manifest(floor_dir: Path) -> PlaybillFloorManifestV5 | None:
     """The directory's v5 manifest, or None when it holds no valid one."""
 
     try:
-        payload = json.loads((floor_dir / PLAYBILL_FLOOR_MANIFEST_PATH).read_bytes())
-        return PlaybillFloorManifestV5.model_validate(payload)
-    except (OSError, ValueError):
-        return None
-
-
-def _target(root: Path, path: str) -> Path:
-    safe_floor_path(path)
-    target = root / path
-    parent = target.parent.resolve()
-    if not parent.is_relative_to(root) or target.is_symlink():
-        raise PlaybillFloorApplyError(f"floor path escapes the floor directory: {path}")
-    return target
-
-
-def _holds(target: Path, digest: str) -> bool:
-    try:
-        return not target.is_symlink() and content_digest(target.read_bytes()) == digest
+        root = os.open(floor_dir, _DIRECTORY)
     except OSError:
-        return False
-
-
-def _write(target: Path, content: bytes) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    handle, staged = tempfile.mkstemp(prefix=".floor-", dir=target.parent)
+        return None
     try:
-        with os.fdopen(handle, "wb") as stream:
-            stream.write(content)
-        os.replace(staged, target)
+        return _manifest(_read_at(root, PLAYBILL_FLOOR_MANIFEST_PATH))
+    except OSError:
+        return None
     finally:
-        Path(staged).unlink(missing_ok=True)
+        os.close(root)
 
 
-def _on_disk(root: Path) -> set[str]:
-    found: set[str] = set()
-    for parent, _directories, names in os.walk(root, followlinks=False):
-        for name in names:
-            relative = (Path(parent) / name).relative_to(root).as_posix()
-            if relative != PLAYBILL_FLOOR_MANIFEST_PATH and relative not in (
-                PLAYBILL_FLOOR_LOCAL_PATHS
-            ):
-                found.add(relative)
-    return found
-
-
-def _prune(root: Path, removed: set[str]) -> None:
-    """Remove directories the removals emptied, deepest first, never the floor itself."""
-
-    parents = {
-        parent
-        for path in removed
-        for parent in (root / path).parents
-        if parent != root and parent.is_relative_to(root)
-    }
-    for directory in sorted(parents, key=lambda item: len(item.parts), reverse=True):
-        try:
-            directory.rmdir()
-        except OSError:
-            continue
-
-
-def apply_floor_delta(floor_dir: Path, delta: PlaybillFloorDeltaV1) -> PlaybillFloorApplyResultV1:
-    """Bring ``floor_dir`` to ``delta.head``; see the module docstring for the proof order."""
-
+@contextmanager
+def _floor_root(floor_dir: Path) -> Iterator[int]:
     floor_dir = Path(floor_dir)
     if floor_dir.is_symlink():
         raise PlaybillFloorApplyError("the floor directory may not be a symlink")
     floor_dir.mkdir(parents=True, exist_ok=True)
-    root = floor_dir.resolve()
     try:
-        decoded = {item.path: item.content() for item in delta.files}
-    except ValueError as exc:
-        raise PlaybillFloorApplyError(str(exc)) from exc
-    targets = {path: _target(root, path) for path in (*decoded, *delta.tombstones)}
-    local = read_floor_manifest(root)
-    head_files: dict[str, tuple[str, int, int]]
-    if delta.kind == "full":
-        head_files = {}
-    else:
-        if (
-            local is None
-            or local.generation != delta.base_generation
-            or local.renderer != delta.renderer
-            or floor_manifest_digest(local) != delta.base_manifest_digest
-        ):
-            if local is not None and floor_manifest_digest(local) == delta.head_manifest_digest:
-                return _unchanged(delta, local, decoded, targets)
-            return PlaybillFloorApplyResultV1(
-                status="base_mismatch",
-                kind=delta.kind,
-                generation=delta.head.generation,
-                message=(
-                    "the floor directory does not hold the delta's base "
-                    f"(generation {delta.base_generation}); ask for a full floor"
-                ),
-            )
-        tombstoned = set(delta.tombstones)
-        head_files = {
-            item.path: (item.content_digest, item.byte_length, item.changed_at)
-            for item in local.files
-            if item.path not in tombstoned
-        }
-    for item in delta.files:
-        head_files[item.path] = (item.sha256, len(decoded[item.path]), item.changed_at)
-    head = build_floor_manifest(
-        renderer=delta.renderer,
-        coordinate=delta.head.coordinate(),
-        generation=delta.head.generation,
-        files=head_files,
-    )
-    if floor_manifest_digest(head) != delta.head_manifest_digest:
-        raise PlaybillFloorApplyError(
-            "the floor this delta builds differs from its head manifest digest"
-        )
-    if local is not None and floor_manifest_digest(local) == delta.head_manifest_digest:
-        return _unchanged(delta, local, decoded, targets)
-    # Everything is proven; now write. The manifest is last: it is the commit point.
-    written = 0
-    for path, content in decoded.items():
-        if not _holds(targets[path], content_digest(content)):
-            _write(targets[path], content)
-            written += 1
-    if delta.kind == "full":
-        stale = _on_disk(root) - set(head_files)
-        for path in stale:
-            targets[path] = _target(root, path)
-    else:
-        stale = set(delta.tombstones)
-    removed = 0
-    for path in stale:
-        try:
-            targets[path].unlink()
-            removed += 1
-        except FileNotFoundError:
-            continue
-    _prune(root, stale)
-    _write(root / PLAYBILL_FLOOR_MANIFEST_PATH, render_floor_manifest(head))
+        root = os.open(floor_dir, _DIRECTORY)
+    except OSError as exc:
+        raise PlaybillFloorApplyError(f"the floor directory cannot be opened: {exc}") from exc
+    try:
+        yield root
+    finally:
+        os.close(root)
+
+
+# -- the apply ----------------------------------------------------------------------
+
+
+def _mismatch(delta: PlaybillFloorDeltaV1, message: str) -> PlaybillFloorApplyResultV1:
     return PlaybillFloorApplyResultV1(
-        status="applied",
+        status="base_mismatch",
+        kind=delta.kind,
+        generation=delta.head.generation,
+        message=f"{message}; ask for a full floor",
+    )
+
+
+def _result(
+    delta: PlaybillFloorDeltaV1,
+    head: PlaybillFloorManifestV5,
+    status: Literal["applied", "unchanged"],
+    written: int,
+    removed: int,
+) -> PlaybillFloorApplyResultV1:
+    return PlaybillFloorApplyResultV1(
+        status=status,
         kind=delta.kind,
         generation=head.generation,
         manifest_digest=delta.head_manifest_digest,
@@ -202,28 +330,129 @@ def apply_floor_delta(floor_dir: Path, delta: PlaybillFloorDeltaV1) -> PlaybillF
     )
 
 
-def _unchanged(
-    delta: PlaybillFloorDeltaV1,
-    local: PlaybillFloorManifestV5,
-    decoded: Mapping[str, bytes],
-    targets: Mapping[str, Path],
-) -> PlaybillFloorApplyResultV1:
-    """Already at the head: repair any delta file a hand edit changed, else write nothing."""
+def _head_files(
+    delta: PlaybillFloorDeltaV1, local: PlaybillFloorManifestV5 | None
+) -> dict[str, tuple[str, int, int]] | None:
+    """The head inventory the delta builds from this directory, or None for no base."""
 
-    written = 0
-    for path, content in decoded.items():
-        if not _holds(targets[path], content_digest(content)):
-            _write(targets[path], content)
-            written += 1
-    return PlaybillFloorApplyResultV1(
-        status="applied" if written else "unchanged",
-        kind=delta.kind,
-        generation=local.generation,
-        manifest_digest=delta.head_manifest_digest,
-        floor_digest=local.floor_digest,
-        written=written,
-        file_count=len(local.files),
+    if delta.kind == "full":
+        return {}
+    if local is None:
+        return None
+    local_digest = floor_manifest_digest(local)
+    holds_base = (
+        local.generation == delta.base_generation
+        and local.renderer == delta.renderer
+        and local_digest == delta.base_manifest_digest
     )
+    if not holds_base and local_digest != delta.head_manifest_digest:
+        return None
+    removed = set(delta.tombstones)
+    return {
+        item.path: (item.content_digest, item.byte_length, item.changed_at)
+        for item in local.files
+        if item.path not in removed
+    }
+
+
+def apply_floor_delta(floor_dir: Path, delta: PlaybillFloorDeltaV1) -> PlaybillFloorApplyResultV1:
+    """Bring ``floor_dir`` to ``delta.head``; see the module docstring for the proof order."""
+
+    try:
+        decoded = {item.path: item.content() for item in delta.files}
+    except ValueError as exc:
+        raise PlaybillFloorApplyError(str(exc)) from exc
+    with _floor_root(floor_dir) as root:
+        installed = _walk(root)
+        head_files = _head_files(delta, _manifest(installed.manifest))
+        if head_files is None:
+            return _mismatch(
+                delta,
+                "the floor directory holds neither the delta's base "
+                f"(generation {delta.base_generation}) nor its head",
+            )
+        for item in delta.files:
+            head_files[item.path] = (item.sha256, len(decoded[item.path]), item.changed_at)
+        try:
+            head = build_floor_manifest(
+                renderer=delta.renderer,
+                coordinate=delta.head.coordinate(),
+                generation=delta.head.generation,
+                notes_digest=delta.head.notes_digest,
+                files=head_files,
+            )
+        except ValueError as exc:
+            raise PlaybillFloorApplyError(f"the floor this delta builds is invalid: {exc}") from exc
+        # The floor the delta builds from this directory is exactly the head it
+        # names. At an installed head this proves every replayed file, every
+        # tombstone and the whole coordinate against the installed manifest.
+        if floor_manifest_digest(head) != delta.head_manifest_digest:
+            raise PlaybillFloorApplyError(
+                "the floor this delta builds differs from its head manifest digest"
+            )
+        wanted = {item.path: item.content_digest for item in head.files}
+        # Installed entries are matched to the floor by exact spelling only.
+        # Anything spelled otherwise -- a case or normalization alias of a floor
+        # file, the manifest or a directory -- is never taken for it: a delta
+        # refuses it, and a full floor removes it and writes the one spelling.
+        stray = {path for path in installed.files if path not in wanted} | installed.others
+        # The directories a floor needs: those its files (and the client's own)
+        # live under, by exact spelling. Any other is stale or an alias.
+        needed = _parents(wanted) | _parents(installed.local) | _parents(PLAYBILL_FLOOR_LOCAL_PATHS)
+        stale_directories: set[str] = set()
+        if delta.kind == "delta":
+            # Touched files may hold base or head bytes (a crash between them);
+            # every other file must already hold its head bytes, and nothing
+            # else may be there: no stray file or link, and no directory the
+            # base and head floors do not both account for.
+            stray -= set(delta.tombstones)
+            allowed = needed | _parents(delta.tombstones)
+            unexpected = sorted(installed.directories - allowed)
+            damaged = sorted(
+                path
+                for path, digest in wanted.items()
+                if path not in decoded and installed.files.get(path) != digest
+            )
+            if damaged or stray or unexpected:
+                named = (damaged or sorted(stray) or unexpected)[0]
+                return _mismatch(delta, f"the installed floor differs from its manifest at {named}")
+            removals = {
+                path
+                for path in delta.tombstones
+                if path in installed.files or path in installed.others
+            }
+        else:
+            removals = stray
+            # A full floor is exact: every directory it does not need goes, with
+            # all it holds (its files are strays already), deepest first.
+            stale_directories = installed.directories - needed
+        writes = {
+            path: content
+            for path, content in decoded.items()
+            if installed.files.get(path) != wanted[path]
+        }
+        manifest_bytes = render_floor_manifest(head)
+        if (
+            not writes
+            and not removals
+            and not stale_directories
+            and not installed.staged
+            and installed.manifest == manifest_bytes
+        ):
+            return _result(delta, head, "unchanged", 0, 0)
+        # Everything is proven; now write. The manifest is last: the commit point.
+        removed = 0
+        for path in sorted(removals | installed.staged):
+            if _unlink_file(root, path) and path not in installed.staged:
+                removed += 1
+        # A stale directory may stand where a head file goes: empty it first.
+        _prune(root, removals | installed.staged)
+        _remove_directories(root, stale_directories)
+        for path in sorted(writes):
+            _write_file(root, path, writes[path])
+        if installed.manifest != manifest_bytes:
+            _write_file(root, PLAYBILL_FLOOR_MANIFEST_PATH, manifest_bytes)
+        return _result(delta, head, "applied", len(writes), removed)
 
 
 __all__ = ["PlaybillFloorApplyError", "apply_floor_delta", "read_floor_manifest"]

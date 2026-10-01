@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import ProposalIntegrityError
@@ -24,10 +25,7 @@ from cruxible_core.proposals.proposal_notes import admission_bytes, evaluation_b
 from cruxible_core.runtime.instance import PlaybillInstance
 
 CHANGES_PREFIX = "changes/"
-# Read each accepted candidate's note at the notes ref as it stands. Notes on an
-# accepted candidate do not change after acceptance, so this reads what any
-# notes commit since then would.
-LIVE_NOTES = "live"
+NOTES_REF = "refs/notes/playbill-eval"
 
 FLOOR_README = """\
 # Playbill floor
@@ -81,10 +79,15 @@ Document's body is read with `get Document:<name> --detail body`.
 ## Retention
 
 A ruling or other exact-content value shows its text, read by digest from the
-body store. Accepted bodies are retained for as long as their Claim is in
-accepted history, so that text is fixed by the coordinate. A body that is
-nevertheless lost renders as `{exact_content: unavailable, ...}`: an integrity
-incident `orient` and `next` report, not a change of accepted state.
+body store, and `sources/INDEX` reads each cited Capture's envelope the same
+way. Accepted bodies and Captures are retained for as long as their Claim is in
+accepted history, so what the floor shows is fixed by the coordinate. One that
+is nevertheless lost refuses a fresh render as an integrity failure; the floor
+is never published differently for the same accepted state.
+
+`manifest.json` names the review notes the change rationale was read from
+(`notes_digest`); a rationale revised after acceptance makes a refresh replace
+the floor whole.
 
 ## Not for grep
 
@@ -126,7 +129,31 @@ def member_ref(path: str) -> str:
 
 
 def review_snapshot_oid(instance: PlaybillInstance) -> str | None:
-    return instance._ledger.mirror_refs().get("refs/notes/playbill-eval")
+    """The review notes commit the notes ref names now: one immutable snapshot."""
+
+    return instance._ledger._resolve_ref(NOTES_REF)
+
+
+def notes_changed_between(
+    instance: PlaybillInstance, before: str | None, after: str | None
+) -> frozenset[str] | None:
+    """The commits whose note differs between two notes snapshots; None for every one."""
+
+    if before == after:
+        return frozenset()
+    if before is None or after is None:
+        return None
+    return frozenset(
+        change.path.replace("/", "") for change in instance._ledger.changed_entries(before, after)
+    )
+
+
+@dataclass(frozen=True)
+class ChangeNote:
+    """What one accepted change's review notes say: its proposals' commits and rationale."""
+
+    commits: tuple[str, ...]
+    rationale: tuple[str, ...]
 
 
 def _candidate_commits(
@@ -157,22 +184,34 @@ def change_rationales(
     generations: Iterable[AcceptedGenerationLocation],
     notes_oid: str | None,
 ) -> dict[int, tuple[str, ...]]:
-    """Each accepted change's review rationale, read by path from one notes commit.
+    """Each accepted change's review rationale, read by path from one notes commit."""
+
+    return {
+        sequence: note.rationale
+        for sequence, note in change_notes(instance, generations, notes_oid).items()
+    }
+
+
+def change_notes(
+    instance: PlaybillInstance,
+    generations: Iterable[AcceptedGenerationLocation],
+    notes_oid: str | None,
+) -> dict[int, ChangeNote]:
+    """Each accepted change's review notes, read by path from one notes commit.
 
     A change's rationale is what the proposals that published its exact
     candidate, by its own actor, recorded. A missing note is missing rationale,
-    never invented. Notes on an accepted candidate do not change after
-    acceptance, so any notes commit at or after it reads the same prose.
+    never invented. ``notes_oid`` is one immutable notes commit, or None for no
+    notes at all.
     """
 
     wanted = [item for item in generations if item.candidate_digest is not None]
+    result: dict[int, ChangeNote] = {item.sequence: ChangeNote((), ()) for item in generations}
     if notes_oid is None or not wanted:
-        return {item.sequence: () for item in wanted}
+        return result
     commits = _candidate_commits(instance, (str(item.candidate_digest) for item in wanted))
     pairs = sorted({("evaluation", oid) for oids in commits.values() for oid in oids})
-    pinned = None if notes_oid == LIVE_NOTES else notes_oid
-    notes = instance.read_proposal_notes(pairs, notes_commit=pinned) if pairs else {}
-    result: dict[int, tuple[str, ...]] = {}
+    notes = instance.read_proposal_notes(pairs, notes_commit=notes_oid) if pairs else {}
     for generation in wanted:
         by_proposal: dict[str, str] = {}
         for oid in commits.get(str(generation.candidate_digest), ()):
@@ -200,8 +239,9 @@ def change_rationales(
                 ):
                     if admission.rationale:
                         by_proposal[admission.proposal_id] = admission.rationale
-        result[generation.sequence] = tuple(
-            dict.fromkeys(by_proposal[key] for key in sorted(by_proposal))
+        result[generation.sequence] = ChangeNote(
+            commits.get(str(generation.candidate_digest), ()),
+            tuple(dict.fromkeys(by_proposal[key] for key in sorted(by_proposal))),
         )
     return result
 
@@ -233,21 +273,19 @@ def change_path(sequence: int) -> str:
 def render_changes(
     instance: PlaybillInstance,
     history: HistoryReader,
-    sequences: Iterable[int],
-    notes_oid: str | None,
+    rationales: Mapping[int, tuple[str, ...]],
 ) -> dict[int, bytes]:
-    """Render the change files for ``sequences`` from the history index and notes.
+    """Render the change file of each sequence in ``rationales``, with its rationale.
 
     The members come from the history index and the time from the accepted
     commit (the ledger stamps it from the candidate's own timestamp), so no
     change-set record is re-read.
     """
 
-    wanted = sorted(set(sequences))
+    wanted = sorted(rationales)
     if not wanted:
         return {}
     generations = [history.generation(sequence) for sequence in wanted]
-    rationales = change_rationales(instance, generations, notes_oid)
     members = history.member_paths_by_sequence(wanted)
     files: dict[int, bytes] = {}
     for generation in generations:

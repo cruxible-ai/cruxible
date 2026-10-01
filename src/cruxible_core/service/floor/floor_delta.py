@@ -92,6 +92,7 @@ def service_playbill_floor_delta(
             semantic_root=accepted.semantic_root,
             generation_root=accepted.generation_root,
             compiler_digest=accepted.compiler_digest,
+            notes_digest=render.notes_digest,
         ).model_dump(mode="json"),
         "head_manifest_digest": floor_manifest_digest(render.manifest()),
     }

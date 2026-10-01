@@ -36,6 +36,7 @@ from cruxible_client.contracts.floor import (
     PlaybillFloorManifestV5,
     build_floor_manifest,
     content_digest,
+    floor_notes_digest,
 )
 from cruxible_client.contracts.subjects import SubjectShell, parse_subject
 from cruxible_core.derived.memo import memo_get, memo_put
@@ -45,9 +46,12 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.floor.floor_content import (
     FLOOR_README,
-    LIVE_NOTES,
+    ChangeNote,
+    change_notes,
     change_path,
+    notes_changed_between,
     render_changes,
+    review_snapshot_oid,
 )
 from cruxible_core.service.floor.floor_current import (
     IncomingEdge,
@@ -142,6 +146,11 @@ class FloorRender:
     changes: Mapping[int, bytes]
     files: Mapping[str, tuple[bytes, int]] = field(default_factory=dict)
     sources: tuple[int, bytes] | None = None
+    # The one immutable review-notes commit every change file was read from
+    # (None: no notes), what each change's notes said, and their identity.
+    notes: str | None = None
+    change_notes: Mapping[int, ChangeNote] = field(default_factory=dict)
+    notes_digest: str = ""
 
     @property
     def generation(self) -> int:
@@ -152,6 +161,7 @@ class FloorRender:
             renderer=self.renderer,
             coordinate=self.inputs.coordinate,
             generation=self.inputs.generation,
+            notes_digest=self.notes_digest,
             files={
                 path: (content_digest(content), len(content), changed)
                 for path, (content, changed) in self.files.items()
@@ -436,6 +446,9 @@ def _type_path(predicate: str) -> str | None:
 
 # -- rendering ------------------------------------------------------------------
 
+# The notes default: the commit the review-notes ref names when the render starts.
+LIVE = object()
+
 
 def render_floor(
     instance: PlaybillInstance,
@@ -443,12 +456,17 @@ def render_floor(
     inputs: FloorInputs,
     *,
     previous: FloorRender | None = None,
-    notes_oid: str | None = None,
+    notes: str | None | object = LIVE,
 ) -> FloorRender:
     """Render the floor at ``inputs``, reusing every file of ``previous`` whose stamp held.
 
     A file's bytes are a function of its inputs, and its stamp moves whenever
     any input does, so a kept render with the same stamp is the same bytes.
+
+    ``notes`` is the one immutable review-notes commit every change rationale
+    is read from: by default the commit the notes ref names now, resolved once.
+    A kept change keeps its rationale only while its own notes are unchanged
+    between the two snapshots, so a warm render equals a cold one.
     """
 
     renderer = floor_renderer(inputs.coordinate.compiler_digest)
@@ -526,18 +544,40 @@ def render_floor(
             and (sequence := inputs.latest.get(claim_file)) is not None
         }
     )
-    kept_changes = {} if previous is None else previous.changes
-    changes = {sequence: kept_changes[sequence] for sequence in wanted if sequence in kept_changes}
-    missing = [sequence for sequence in wanted if sequence not in changes]
-    if missing:
-        changes.update(
-            render_changes(
-                instance,
-                history,
-                missing,
-                LIVE_NOTES if notes_oid is None else notes_oid,
-            )
+    snapshot = review_snapshot_oid(instance) if notes is LIVE else notes
+    assert snapshot is None or isinstance(snapshot, str)
+    kept_notes: Mapping[int, ChangeNote] = {}
+    if previous is not None:
+        moved = notes_changed_between(instance, previous.notes, snapshot)
+        if moved is not None:
+            kept_notes = {
+                sequence: note
+                for sequence, note in previous.change_notes.items()
+                if not moved.intersection(note.commits)
+            }
+    noted = {sequence: kept_notes[sequence] for sequence in wanted if sequence in kept_notes}
+    noted.update(
+        change_notes(
+            instance,
+            [history.generation(sequence) for sequence in wanted if sequence not in noted],
+            snapshot,
         )
+    )
+    kept_changes = {} if previous is None else previous.changes
+    changes = {
+        sequence: kept_changes[sequence]
+        for sequence in wanted
+        if sequence in kept_changes
+        and previous is not None
+        and previous.change_notes.get(sequence) == noted[sequence]
+    }
+    changes.update(
+        render_changes(
+            instance,
+            history,
+            {sequence: noted[sequence].rationale for sequence in wanted if sequence not in changes},
+        )
+    )
     sources_changed = max(
         (sequence for path, sequence in inputs.latest.items() if path.startswith(_SOURCE_PREFIXES)),
         default=0,
@@ -576,7 +616,20 @@ def render_floor(
     for sequence, content in changes.items():
         files[change_path(sequence)] = (content, sequence)
     ordered = {path: files[path] for path in sorted(files, key=lambda item: item.encode())}
-    return FloorRender(inputs, renderer, subjects, indexes, changes, ordered, sources)
+    return FloorRender(
+        inputs,
+        renderer,
+        subjects,
+        indexes,
+        changes,
+        ordered,
+        sources,
+        notes=snapshot,
+        change_notes={sequence: noted[sequence] for sequence in wanted},
+        notes_digest=floor_notes_digest(
+            {sequence: noted[sequence].rationale for sequence in wanted}
+        ),
+    )
 
 
 # -- the index on the instance ------------------------------------------------------
@@ -613,14 +666,15 @@ def _render_at(
     history: HistoryReader,
     location: AcceptedGenerationLocation,
     kept: FloorRender | None,
+    notes: str | None,
 ) -> FloorRender:
     coordinate = instance.coordinate_for_oid(location.git_oid)
     renderer = floor_renderer(coordinate.compiler.rule_digest)
     if kept is None or kept.renderer != renderer:
         inputs = build_floor_inputs(instance, coordinate, history, location)
-        return render_floor(instance, history, inputs)
+        return render_floor(instance, history, inputs, notes=notes)
     inputs = patch_floor_inputs(instance, history, kept.inputs, location)
-    return render_floor(instance, history, inputs, previous=kept)
+    return render_floor(instance, history, inputs, previous=kept, notes=notes)
 
 
 def _location(
@@ -646,13 +700,15 @@ def advance_floor_index(
 
     target = instance.accepted_coordinate() if head is None else head
     with _lock(instance):
+        # One review-notes snapshot for the whole render, resolved once.
+        notes = review_snapshot_oid(instance)
         with instance.accepted_history_reader() as history:
             location = _location(history, target)
             kept = _usable(history, _kept(instance))
-            if kept is not None and kept.generation == location.sequence:
+            if kept is not None and kept.generation == location.sequence and kept.notes == notes:
                 return kept
-            render = _render_at(instance, history, location, kept)
-            if kept is None or render.generation > kept.generation:
+            render = _render_at(instance, history, location, kept, notes)
+            if kept is None or render.generation >= kept.generation:
                 memo_put(instance.floor_current_memo, _INDEX_KEY, render, capacity=1)
             return render
 
@@ -671,7 +727,11 @@ def floor_render_from(
     render: FloorRender,
     generation: int,
 ) -> FloorRender:
-    """The floor at another generation of the same history, patched from ``render``."""
+    """The floor at another generation of the same history, patched from ``render``.
+
+    It reads the same review-notes snapshot ``render`` did, so the two floors
+    differ only by what accepted history changed between them.
+    """
 
     with instance.accepted_history_reader() as history:
         location = history.generation(generation)
@@ -679,7 +739,18 @@ def floor_render_from(
         if floor_renderer(coordinate.compiler.rule_digest) != render.renderer:
             raise ProjectionIntegrityError("floor renderer differs between the two generations")
         inputs = patch_floor_inputs(instance, history, render.inputs, location)
-        return render_floor(instance, history, inputs, previous=render)
+        return render_floor(instance, history, inputs, previous=render, notes=render.notes)
+
+
+def floor_render_with_notes(
+    instance: PlaybillInstance, render: FloorRender, notes: str | None
+) -> FloorRender:
+    """``render`` with its change rationale read from another notes snapshot."""
+
+    if notes == render.notes:
+        return render
+    with instance.accepted_history_reader() as history:
+        return render_floor(instance, history, render.inputs, previous=render, notes=notes)
 
 
 __all__ = [
@@ -689,6 +760,7 @@ __all__ = [
     "build_floor_inputs",
     "floor_render_at",
     "floor_render_from",
+    "floor_render_with_notes",
     "patch_floor_inputs",
     "render_floor",
 ]

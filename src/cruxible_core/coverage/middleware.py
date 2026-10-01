@@ -368,10 +368,11 @@ class FloorFreshnessManifestV2(_StrictMiddlewareModel):
     format: Literal["playbill-floor-export-v2", "playbill-floor-export-v5"] = (
         "playbill-floor-export-v2"
     )
-    # v5 names its rendering rule and the coordinate's generation.
+    # v5 names its rendering rule, the coordinate's generation and its notes.
     renderer: str | None = None
     coordinate: AcceptedCoordinate
     generation: int | None = Field(default=None, ge=0)
+    notes_digest: str | None = None
     files: tuple[FloorManifestFileV1, ...]
     floor_digest: str
 
@@ -397,9 +398,11 @@ class FloorFreshnessManifestV2(_StrictMiddlewareModel):
             {"files": [item.model_dump(mode="json", exclude_none=True) for item in self.files]},
         ).tagged
         v5 = self.format == "playbill-floor-export-v5"
-        if v5 != (self.renderer is not None and self.generation is not None) or any(
-            (item.changed_at is not None) != v5 for item in self.files
-        ):
+        if v5 != (
+            self.renderer is not None
+            and self.generation is not None
+            and self.notes_digest is not None
+        ) or any((item.changed_at is not None) != v5 for item in self.files):
             raise ValueError("floor manifest fields differ from its format")
         if self.floor_digest != expected_digest:
             raise ValueError("floor manifest root digest differs from its inventory")
