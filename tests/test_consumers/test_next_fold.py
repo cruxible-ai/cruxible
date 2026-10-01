@@ -201,3 +201,14 @@ def test_lost_part_state_lags_until_that_part_rebuilds(tmp_path: Path, part: str
     assert health.detail[part] == {"state": "lagging", "initialized": False}
     drain(instance, now=EVALUATION_TIME)
     assert NEXT_QUEUE.health(instance, now=EVALUATION_TIME)[0].state == "running"
+
+
+def test_every_registered_internal_action_names_the_part_that_performs_it() -> None:
+    import sys
+
+    from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
+
+    for spec in INTERNAL_ACTIONS.values():
+        assert (spec.consumer, spec.effect) == (NEXT_QUEUE.name, NEXT_QUEUE.effect_class)
+        part = folded._PARTS[spec.part]
+        assert sys.modules[type(part).__module__].ACTION is spec

@@ -44,6 +44,7 @@ from cruxible_client.contracts.resolution_contracts import (
     ResolutionContractV1,
 )
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
+from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
 from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerRepair,
@@ -51,6 +52,9 @@ from cruxible_core.consumers.protocol import (
 )
 from cruxible_core.consumers.state import DisposableState
 from cruxible_core.triggers.journal import trigger_events
+
+#: The internal action this part performs; its registry entry names this part.
+ACTION = INTERNAL_ACTIONS["prediction.anchor_retry"]
 
 if TYPE_CHECKING:
     from cruxible_core.procedures.resolution import ResolutionContractActivationV3
@@ -396,7 +400,7 @@ class PredictionPart:
             resolution_stream, after=after, through=resolutions, limit=EVENT_BATCH
         )
         events = trigger_events(
-            instance, after=trigger_sequence, action="prediction.anchor_retry", limit=EVENT_BATCH
+            instance, after=trigger_sequence, action=ACTION.name, limit=EVENT_BATCH
         )
         mark = uuid4().hex
         with _STATE.open(instance) as connection:
@@ -849,7 +853,7 @@ class PredictionPart:
         with instance.accepted_history_reader() as history:
             behind = history.sequence - generation
         outstanding = trigger_events(
-            instance, after=retry_completed_sequence, action="prediction.anchor_retry", limit=2
+            instance, after=retry_completed_sequence, action=ACTION.name, limit=2
         )
         lagging = behind > GENERATION_BATCH or len(outstanding) > 1
         return (

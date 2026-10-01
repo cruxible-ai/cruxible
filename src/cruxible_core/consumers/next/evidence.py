@@ -39,6 +39,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
+from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
 from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerRepair,
@@ -46,6 +47,9 @@ from cruxible_core.consumers.protocol import (
 )
 from cruxible_core.consumers.state import DisposableState
 from cruxible_core.triggers.journal import trigger_events
+
+#: The internal action this part performs; its registry entry names this part.
+ACTION = INTERNAL_ACTIONS["evidence.sweep"]
 
 #: Captures one unit of work checks before yielding.
 CHECK_BATCH = 256
@@ -241,9 +245,7 @@ class EvidencePart:
         work = []
         if pending is not None:
             work.append(ConsumerWork(key="events", item="events"))
-        if row is not None and trigger_events(
-            instance, after=row[0], action="evidence.sweep", limit=1
-        ):
+        if row is not None and trigger_events(instance, after=row[0], action=ACTION.name, limit=1):
             work.append(ConsumerWork(key="sweep", item="sweep"))
         return tuple(work)
 
@@ -291,7 +293,7 @@ class EvidencePart:
             sequence, after = connection.execute(
                 "SELECT sweep_sequence,sweep_after FROM progress"
             ).fetchone()
-        events = trigger_events(instance, after=sequence, action="evidence.sweep", limit=1)
+        events = trigger_events(instance, after=sequence, action=ACTION.name, limit=1)
         if not events:
             return
         (event,) = events
@@ -370,7 +372,7 @@ class EvidencePart:
         failing = error is not None
         with instance.accepted_history_reader() as history:
             behind = history.sequence - generation
-        sweeps = trigger_events(instance, after=sequence, action="evidence.sweep", limit=2)
+        sweeps = trigger_events(instance, after=sequence, action=ACTION.name, limit=2)
         sweep_pending = bool(sweeps)
         lagging = behind > GENERATION_BATCH or len(sweeps) > 1
         return (
