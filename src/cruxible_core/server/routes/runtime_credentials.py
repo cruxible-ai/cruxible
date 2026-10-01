@@ -57,7 +57,7 @@ def _record_to_contract(
     "/{instance_id}/runtime/credentials",
     response_model=contracts.RuntimeCredentialResult,
 )
-async def create_runtime_credential(
+def create_runtime_credential(
     instance_id: str,
     req: RuntimeCredentialCreateRequest,
 ) -> contracts.RuntimeCredentialResult:
@@ -80,7 +80,7 @@ async def create_runtime_credential(
     "/{instance_id}/runtime/credentials",
     response_model=contracts.RuntimeCredentialListResult,
 )
-async def list_runtime_credentials(
+def list_runtime_credentials(
     instance_id: str,
 ) -> contracts.RuntimeCredentialListResult:
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
@@ -94,7 +94,7 @@ async def list_runtime_credentials(
     "/{instance_id}/runtime/credentials/{credential_id}/revoke",
     response_model=contracts.RuntimeCredentialResult,
 )
-async def revoke_runtime_credential(
+def revoke_runtime_credential(
     instance_id: str,
     credential_id: str,
 ) -> contracts.RuntimeCredentialResult:
@@ -112,7 +112,7 @@ async def revoke_runtime_credential(
     "/{instance_id}/runtime/credentials/{credential_id}/rotate",
     response_model=contracts.RuntimeCredentialResult,
 )
-async def rotate_runtime_credential(
+def rotate_runtime_credential(
     instance_id: str,
     credential_id: str,
     req: RuntimeCredentialRotateRequest | None = None,

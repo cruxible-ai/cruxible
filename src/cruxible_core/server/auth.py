@@ -45,7 +45,7 @@ from cruxible_core.server.credentials import (
     get_runtime_credential_store,
 )
 from cruxible_core.server.errors import ErrorResponse, error_to_response
-from cruxible_core.server.request_logging import log_runtime_request
+from cruxible_core.server.request_logging import log_runtime_request, mark_request_received
 from cruxible_core.server.route_paths import (
     HEALTH_PATH,
     PLAYBILL_HOST_CREATE_PATH,
@@ -388,6 +388,7 @@ async def token_auth_middleware(
     call_next: Callable[[Request], Awaitable[Any]],
 ) -> Any:
     """Resolve auth context and request-scoped permission mode for incoming requests."""
+    mark_request_received(request)
     # Reject browser-originated cross-origin API requests before any handler runs.
     # Programmatic clients send no Origin; this closes DNS-rebinding / malicious
     # webpage attacks against the loopback daemon without breaking CLI/SDK clients.

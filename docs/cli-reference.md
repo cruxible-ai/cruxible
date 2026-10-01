@@ -222,6 +222,11 @@ without auth is refused (`service_install.tcp_requires_auth`). Service files con
 no bearer or bootstrap secret, and auth-on installation requires an active
 durable runtime credential first.
 
+Every request line in `<state-root>/daemon/logs/server.log` carries
+`duration_ms`, the wall time from the request's arrival to its log line, so a
+slow request can be attributed to its route. Route handlers run in the
+daemon's threadpool, so one slow request does not hold up the others.
+
 `server status` answers an instance-scoped credential with its own host and
 identity (`"scope": "instance"`) instead of refusing; the daemon-wide view below
 needs the bootstrap secret. `server status` lists the daemon's exact current

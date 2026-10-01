@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, TextIO, cast
 
@@ -149,6 +150,18 @@ def configure_request_logging(
     return resolved_log_path
 
 
+def mark_request_received(request: Request) -> None:
+    """Stamp the request's arrival so its log line can carry ``duration_ms``."""
+    request.state.received_at = time.perf_counter()
+
+
+def _duration_ms(request: Request) -> float | None:
+    received_at = getattr(request.state, "received_at", None)
+    if not isinstance(received_at, float):
+        return None
+    return round((time.perf_counter() - received_at) * 1000, 1)
+
+
 def log_runtime_request(
     request: Request,
     *,
@@ -175,6 +188,11 @@ def log_runtime_request(
         fields["operation_id"] = str(resolved_operation_id)
     if error_type is not None:
         fields["error_type"] = error_type
+    # Wall time from the middleware's first look at the request to this line:
+    # auth, the handler (on the loop or in the threadpool) and serialization.
+    duration_ms = _duration_ms(request)
+    if duration_ms is not None:
+        fields["duration_ms"] = duration_ms
     _emit("runtime_request", fields)
 
 
