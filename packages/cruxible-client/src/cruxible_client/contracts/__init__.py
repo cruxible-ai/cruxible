@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -175,11 +175,13 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureChildInvocationV1,
     ProcedurePendingSuccessorV1,
     ProcedureRunAttributionV1,
+    ProcedureRunAttributionWithheldV1,
     ProcedureRunReceiptV2,
     ProcedureRunReceiptV3,
     ProcedureRunReceiptV4,
     ProcedureRunReceiptV5,
     ProcedureRunReceiptV6,
+    ProcedureRunReceiptWithheldV1,
     ProcedureSourceObservationV1,
     ProcedureTerminalEgressV1,
     ProcedureTerminalV1,
@@ -1323,7 +1325,15 @@ class PlaybillProcedureRunState(BaseModel):
     outcomes: list[dict[str, Any]]
     next_operation: dict[str, Any]
     result: Any = None
-    attribution: ProcedureRunAttributionV1 | None = None
+    #: Withheld (actor left out) from a reader who may not see the run's
+    #: arming credential, as on the run card.
+    attribution: (
+        Annotated[
+            ProcedureRunAttributionV1 | ProcedureRunAttributionWithheldV1,
+            Field(discriminator="tag"),
+        ]
+        | None
+    ) = None
     semantic_replay_key_digest: str | None = None
     semantic_result_digest: str | None = None
     receipt: (
@@ -1332,6 +1342,7 @@ class PlaybillProcedureRunState(BaseModel):
         | ProcedureRunReceiptV4
         | ProcedureRunReceiptV5
         | ProcedureRunReceiptV6
+        | ProcedureRunReceiptWithheldV1
         | None
     ) = None
     receipt_digest: str | None = None
@@ -1449,10 +1460,9 @@ class PlaybillNextStatus(BaseModel):
     compiler: PlaybillNextHealth
     line_dispatch: PlaybillNextHealth
     consumers: PlaybillNextHealth
+    #: Rows parked by a current ``unsure`` attestation. No row is left out for
+    #: the caller: one whose repair it cannot run keeps `repair_requires`.
     held: int = Field(default=0, ge=0)
-    #: Rows left out for this caller. None are: a row whose repair this caller
-    #: cannot run keeps its place with `repair_requires`, so this stays 0.
-    hidden: int = Field(default=0, ge=0)
 
 
 class PlaybillNextResult(BaseModel):

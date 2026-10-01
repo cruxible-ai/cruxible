@@ -273,8 +273,12 @@ def test_a_run_proof_reads_live_and_withholds_another_principals_credential(
     assert hidden.live.as_of.generation == instance.accepted_history()[-1].sequence
     dumped = str(hidden.proof)
     assert "line-operator" not in dumped and "cred-arm" not in dumped and "owner" not in dumped
-    assert hidden.proof["attribution"]["actor_id"] is None
-    assert hidden.proof["receipt"] == {"withheld": "names the arming credential"}
+    assert hidden.proof["attribution"]["tag"] == "playbill-procedure-run-attribution-withheld-v1"
+    assert "actor_id" not in hidden.proof["attribution"]
+    assert hidden.proof["receipt"] == {
+        "tag": "playbill-procedure-run-receipt-withheld-v1",
+        "withheld": "names_the_arming_credential",
+    }
     assert hidden.proof["receipt_digest"] is not None
 
     shown = _get(
@@ -313,3 +317,123 @@ def test_the_resolver_names_a_revoked_credentials_principal_on_this_instance_onl
     assert resolve("cred-arm") == "owner"
     assert resolve("cred-elsewhere") is None
     assert resolve("cred-missing") is None
+
+
+_STATUS_VIEWERS = [
+    (None, False),
+    (OperationalViewer(credential_id="cred-arm", admin=False), True),
+    (OperationalViewer(credential_id=None, admin=True), True),
+    (
+        OperationalViewer(
+            credential_id="cred-rotated",
+            admin=False,
+            principal_id="owner",
+            credential_principal=_resolver,
+        ),
+        True,
+    ),
+    (
+        OperationalViewer(
+            credential_id="cred-reviewer",
+            admin=False,
+            principal_id="reviewer",
+            credential_principal=_resolver,
+        ),
+        False,
+    ),
+    (
+        OperationalViewer(
+            credential_id="cred-unbound", admin=False, credential_principal=_resolver
+        ),
+        False,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("viewer", "visible"),
+    _STATUS_VIEWERS,
+    ids=["anonymous", "arming", "admin", "same_principal", "other_principal", "unbound"],
+)
+def test_run_status_withholds_the_run_actor_exactly_as_the_run_card_does(
+    credential_world,  # type: ignore[no-untyped-def]
+    viewer: OperationalViewer | None,
+    visible: bool,
+) -> None:
+    """`procedure_run_status` answered every caller the arming principal and its receipt.
+
+    It now applies the cards' rule: the attribution's actor and the receipt
+    (which carries it) are withheld from a non-admin caller unless its
+    credential is the arming one or is bound to the same principal.
+    """
+
+    from cruxible_client.contracts.procedures.results import (
+        ProcedureRunAttributionV1,
+        ProcedureRunAttributionWithheldV1,
+        ProcedureRunReceiptWithheldV1,
+    )
+    from cruxible_core.service.discovery.runs import procedure_run_status
+
+    instance, _line, run_id, _when = credential_world
+    state = procedure_run_status(instance, run_id, viewer=viewer)
+    card = _get(instance, f"ProcedureRun:{run_id}", viewer).card
+    assert isinstance(card, PlaybillGetProcedureRunCardV1)
+
+    assert state.receipt_digest is not None
+    if visible:
+        assert isinstance(state.attribution, ProcedureRunAttributionV1)
+        assert state.attribution.actor_id == card.actor == "owner"
+        assert not isinstance(state.receipt, ProcedureRunReceiptWithheldV1)
+    else:
+        assert isinstance(state.attribution, ProcedureRunAttributionWithheldV1)
+        assert isinstance(state.receipt, ProcedureRunReceiptWithheldV1)
+        assert card.actor is None
+        dumped = str(state.model_dump(mode="json"))
+        assert "owner" not in dumped and "cred-arm" not in dumped
+        assert "line-operator" not in dumped
+
+
+def test_the_runtime_run_status_passes_the_authenticated_viewer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_core.runtime import playbill_api
+    from cruxible_core.runtime.permissions import PermissionMode
+    from cruxible_core.server.auth import ResolvedAuthContext
+
+    seen: dict[str, Any] = {}
+
+    def status(instance: Any, run_id: str, **values: Any) -> Any:
+        seen.update(values, run_id=run_id)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr("cruxible_core.service.discovery.runs.procedure_run_status", status)
+    monkeypatch.setattr(playbill_api, "check_permission", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        playbill_api,
+        "get_playbill_manager",
+        lambda: type("M", (), {"get": lambda self, _i: None})(),
+    )
+    monkeypatch.setattr(
+        playbill_api,
+        "get_current_auth_context",
+        lambda: ResolvedAuthContext(
+            credential_id="cred-reader",
+            credential_label="reader",
+            principal_id="reader",
+            credential_type="runtime_credential",
+            instance_scope="inst",
+            role=None,
+            effective_permission_mode=PermissionMode.READ_ONLY,
+        ),
+    )
+    monkeypatch.setattr(playbill_api, "get_current_mode", lambda: PermissionMode.READ_ONLY)
+
+    with pytest.raises(RuntimeError):
+        playbill_api.playbill_procedure_run_status("inst", "RUN-x")
+
+    assert seen["run_id"] == "RUN-x"
+    viewer = seen["viewer"]
+    assert viewer == OperationalViewer(
+        credential_id="cred-reader", admin=False, principal_id="reader"
+    )
+    assert viewer.credential_principal is not None

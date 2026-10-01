@@ -77,7 +77,7 @@ def test_the_default_mcp_profile_keeps_a_stopped_arm_row_and_names_what_it_needs
         "profile": "full",
         "because": ["profile"],
     }
-    assert result.status.hidden == 0
+    assert "hidden" not in result.status.model_dump(mode="json")
 
     # The full profile runs it: same row, repair rendered as a tool call.
     full = service_playbill_next(

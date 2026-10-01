@@ -29,8 +29,8 @@
     `list_playbill_query_definitions`, `list_playbill_policies_in_force`,
     `get_playbill_query_definition`, `run_playbill_query`,
     `discover_playbill`, `search_playbill` and `expand_playbill`.
-  - SDK members: `Playbill.search`, `Playbill.list`, `Playbill.explain`, the
-    `SearchPage` type and `ProcedureRun.track_record`.
+  - SDK members: `Playbill.search`, `Playbill.list`, `Playbill.explain` and
+    the `SearchPage` type.
   - Contracts: `PlaybillSearchResult`, `PlaybillDiscoveryResult`,
     `PlaybillInterfaceInventory`, `PlaybillContextCapsule`,
     `PlaybillSubjectList`/`Index`/`IndexEntry`/`View`/`History`,
@@ -76,6 +76,66 @@
   tools, commands and methods (including `search`, `list`, `discover`,
   `expand`, `explain`, `subject get`/`history` and the incoming-relationship
   Subject profiles) are superseded by this one.
+
+- **The SDK is discoverable from Python itself.** `World.describe()` lists the
+  verbs (`pb.orient`, `pb.query`, `pb.get`, grepping the floor, the writes)
+  and every Subject kind with its fields; `w.kinds` and `w.predicates` work as
+  attributes and as calls; `dir(cruxible_client)` lists the lazily loaded
+  names; every public SDK member's docstring names the next call; `Playbill`,
+  `Intent` and `Proposal` print readable reprs (no I/O), and refs print short
+  (`SubjectRef('sec.package/click' @ 0123456789ab)`, `CaptureRef(CAP-... )`,
+  with `CaptureRef.handle`).
+
+- **One `CAP-` handle resolver for reads and writes.** `get`, `read_capture`
+  and the write verbs' `--capture` now resolve a handle or digest prefix through
+  the same bounded lookup: a Capture accepted Claims cite, or one the instance
+  holds that verifies at the coordinate. A handle the write path accepted for a
+  Capture nothing cites yet used to refuse `not_found` in `get` and
+  `read_capture`; it now opens there too. A prefix more Captures share than one
+  lookup examines refuses `playbill.capture.ref_scan_exhausted` on reads, as it
+  already refused `playbill.write.capture_scan_exhausted` on writes.
+
+- **Stale proposals stay their author's work, and leave once superseded.** A
+  `proposal_stale` row in `next` now shows only to the proposal's author (the
+  caller's principal; a read without one shows none), since only the author may
+  readmit. A readmission is linked exactly to its source (its target ref
+  recomputed from the source and the coordinate its evaluation names), so a
+  source whose readmission was accepted leaves the queue for good instead of
+  reappearing at the next head, and one whose readmission is still live yields
+  that readmission's row. `proposal readmit` now refuses
+  `playbill.proposal.readmit_already_accepted` (naming `accepted_as` when a
+  readmission carried the change) apart from
+  `playbill.proposal.readmit_not_stale`, where it used to say "only a settled
+  stale proposal may be readmitted" for both.
+
+- **`procedure_run_status` withholds another principal's arming credential.**
+  An armed run acts as its arming credential's principal, and the status read
+  returned that actor and the receipt carrying it to every caller. It now
+  applies the Line and run cards' rule: unless the caller is an admin, the
+  arming credential, or a credential bound to the same principal, the
+  attribution answers as `ProcedureRunAttributionWithheldV1` (everything but
+  the actor) and the receipt as `ProcedureRunReceiptWithheldV1`, with
+  `receipt_digest` still naming it. `get` with `detail="proof"` uses the same
+  two typed markers instead of a nulled actor and an untyped marker.
+
+- **The write verbs read `@kind/id` as a Subject.** `set`, `retire` and
+  `write` accept `@dev.roadmap_item/x` wherever they take a Subject: the
+  change's subject, a slot, a Subject-valued value and an `expect`. It used to
+  refuse `value_kind_not_admitted` with a repair naming the very kind it was
+  given. No Subject kind starts with `@`, so the sigil is unambiguous there; a
+  literal or exact-content value keeps its text as written.
+
+- **`get` on a Procedure shows its track record, and the SDK reads it.** The
+  Procedure card carries `track_record`: one entry per accepted promotion of
+  the Procedure's run exhaust (promotion name, record range, reducer output
+  and digests). `ProcedureRun.track_record` now reads it through `get` and
+  returns those entries; it used to look for a key search rows never carried,
+  so it always answered `None`.
+
+- **`next` no longer reports `status.hidden`.** The count was always 0: since
+  operational reads, a row whose repair the caller cannot run stays in the
+  queue with `repair_requires`. The field leaves `PlaybillNextStatus`, and the
+  SDK's `NextPage.hidden` property goes with it.
 
 - **The floor is the grep-first front door to accepted state.** `playbill floor
   export` now leads with `current/<kind>/<id>.yaml`: a one-line header (ref,

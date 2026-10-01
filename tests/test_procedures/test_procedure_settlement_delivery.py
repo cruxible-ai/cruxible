@@ -649,6 +649,8 @@ def _stale_row(instance, proposal_id: str):  # type: ignore[no-untyped-def]
                 profile_id="settle-stale", permitted_access_classes=("instance",)
             ),
         ),
+        # A stale-proposal row shows only to the proposal's author.
+        caller_principal_id=instance.proposal_evidence().read_admission(proposal_id).actor_id,
     )
     (row,) = [
         item

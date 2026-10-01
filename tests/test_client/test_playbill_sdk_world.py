@@ -1452,3 +1452,54 @@ def test_workspace_less_connection_reads_but_refuses_block_file_operations() -> 
         )
     with pytest.raises(SourceSelectionError, match="no workspace"):
         playbill.block.sync(all=True)
+
+
+def test_kinds_and_predicates_answer_as_attribute_and_as_call(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    """``w.kinds`` and ``w.kinds()`` are the same tuple, so neither spelling is wrong."""
+
+    playbill, _client = connection
+    world = playbill.world()
+
+    assert world.kinds == world.kinds() == ("dev.batch", "sec.package", "sec.vulnerability")
+    assert world.predicates == world.predicates() == (LANDED_AT, AFFECTS, SEVERITY)
+    assert isinstance(world.kinds(), tuple) and not callable(world.kinds())
+    assert "Next:" in (type(world.kinds).__doc__ or "")
+
+
+def test_describe_lists_the_verbs_and_every_kind_with_its_fields(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    playbill, _client = connection
+    world = playbill.world()
+
+    described = world.describe()
+
+    assert described.startswith(f"World at {'a' * 12}: 3 Subject kinds, 3 predicates.")
+    for verb in ("pb.orient()", 'pb.query("<kind>"', 'pb.get("<ref>")', ".playbill/floor/current/"):
+        assert verb in described
+    # Only the read verbs that survive the surface cut are named.
+    for cut in ("search(", "explain(", "run_query(", "claim_values"):
+        assert cut not in described
+    vocabulary = described.split("Vocabulary:\n", 1)[1].splitlines()
+    assert vocabulary == [
+        "  dev.batch",
+        "    landed_at: literal, one",
+        "  sec.package",
+        "  sec.vulnerability",
+        "    affects_package: -> sec.package, one",
+        "    severity: literal, one [high, low]",
+    ]
+
+
+def test_world_subjects_and_predicates_repr_short(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    playbill, _client = connection
+    world = playbill.world()
+
+    assert repr(world.sec.package.cryptography) == (
+        f"WorldSubject('sec.package/cryptography' @ {'a' * 12})"
+    )
+    assert repr(world.sec.vuln.severity) == f"WorldClaimType('sec.vuln.severity' @ {'a' * 12})"

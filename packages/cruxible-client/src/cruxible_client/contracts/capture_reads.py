@@ -13,7 +13,8 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.source_references import SourceDereferenceResultV1
 
 #: A Capture named by the handle a card prints (``CAP-`` plus 12+ hex) or a
-#: digest prefix of 12+ hex; the daemon resolves it among accepted Captures.
+#: digest prefix of 12+ hex; the daemon resolves it as the write verbs do: among
+#: Captures accepted Claims cite and retained ones that verify.
 _CAPTURE_PREFIX = re.compile(r"^(?:CAP-|sha256:)[0-9a-f]{12,63}$")
 
 

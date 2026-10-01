@@ -70,6 +70,7 @@ from cruxible_client.contracts.get_reads import (
     PlaybillGetHistoryV1,
     PlaybillGetPrincipalCardV1,
     PlaybillGetProcedureCardV1,
+    PlaybillGetProcedureTrackRecordV1,
     PlaybillGetProposalCardV1,
     PlaybillGetProposalChangeV1,
     PlaybillGetProviderInterfaceCardV1,
@@ -89,6 +90,7 @@ from cruxible_client.contracts.get_reads import (
 )
 from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRuleV3
+from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -511,8 +513,10 @@ def _resolve_capture(
 ) -> ResolvedRef:
     """``CAP-<12+ hex>``, ``Capture:<digest>`` or a unique digest prefix, to one Capture.
 
-    Cited Captures resolve through the accepted index, by prefix; a Capture no
-    accepted Claim cites resolves by its full digest from the store.
+    A full digest names itself: cited, or held in the store uncited. A prefix
+    resolves as every verb resolves one (``resolve_capture_handle``): among
+    Captures cited at the coordinate and retained ones that verify there, so a
+    handle the write verbs accepted opens here too.
     """
 
     hex_digits = capture_hex(value)
@@ -529,17 +533,28 @@ def _resolve_capture(
             ),
             context={"ref": ref},
         )
-    with instance.bind_accepted_projection(coordinate) as projection:
-        matches = captures_with_prefix(
-            projection.typed.connection, hex_digits, limit=_MAX_CANDIDATES + 1
-        )
-    if len(matches) > 1:
-        raise _ambiguous(ref, [_display("capture", item) for item in matches])
-    if matches:
-        return ResolvedRef("capture", matches[0], _display("capture", matches[0]))
-    digest = "sha256:" + hex_digits
-    if len(hex_digits) == 64 and uncited_capture_present(instance, digest):
-        return ResolvedRef("capture", digest, _display("capture", digest))
+    if len(hex_digits) == 64:
+        digest = "sha256:" + hex_digits
+        with instance.bind_accepted_projection(coordinate) as projection:
+            cited = captures_with_prefix(projection.typed.connection, hex_digits, limit=1)
+        if cited or uncited_capture_present(instance, digest):
+            return ResolvedRef("capture", digest, _display("capture", digest))
+        raise _not_found("Capture", ref, (), surface=surface, section="captures")
+    from cruxible_core.service.evidence.capture_reads import (
+        CaptureHandleAmbiguous,
+        CaptureHandleExhausted,
+        CaptureHandleResolved,
+        capture_handle_exhausted,
+        resolve_capture_handle,
+    )
+
+    resolution = resolve_capture_handle(instance, coordinate, hex_digits)
+    if isinstance(resolution, CaptureHandleResolved):
+        return ResolvedRef("capture", resolution.digest, _display("capture", resolution.digest))
+    if isinstance(resolution, CaptureHandleAmbiguous):
+        raise _ambiguous(ref, [_display("capture", item) for item in resolution.candidates])
+    if isinstance(resolution, CaptureHandleExhausted):
+        raise capture_handle_exhausted(ref, field="ref")
     raise _not_found("Capture", ref, (), surface=surface, section="captures")
 
 
@@ -1252,6 +1267,10 @@ def _procedure_card(
         inputs["parameters"] = _pin_name(definition.parameter_contract)
     if definition.pin_slots:
         inputs["slots"] = [slot.slot_name for slot in definition.pin_slots]
+    with instance.bind_accepted_projection(coordinate) as projection:
+        promoted = projection.typed.facts(
+            "playbill.procedure.track_record", identity=resolved.identity
+        )
     return PlaybillGetProcedureCardV1(
         procedure=_name(resolved.identity),
         description=definition.description,
@@ -1259,7 +1278,30 @@ def _procedure_card(
         readiness=readiness.state,
         required_slots=readiness.required_slots,
         unsupported_nodes=len(readiness.unsupported_nodes),
+        track_record=tuple(
+            _track_record_entry(fact)
+            for fact in sorted(promoted, key=lambda item: item.fact_key.encode("utf-8"))
+        ),
         next=(_render_get(surface, resolved.display, "proof"),),
+    )
+
+
+def _track_record_entry(fact: ProjectionFact) -> PlaybillGetProcedureTrackRecordV1:
+    """One ``playbill.procedure.track_record`` fact, as the Procedure card shows it."""
+
+    value = cast(Mapping[str, Any], fact.value)
+
+    def digest(name: str) -> str:
+        tagged = value[name]
+        return str(tagged["$digest"] if isinstance(tagged, Mapping) else tagged)
+
+    return PlaybillGetProcedureTrackRecordV1(
+        promotion=fact.fact_key,
+        first_sequence=value["first_sequence"],
+        last_sequence=value["last_sequence"],
+        output=value["output"],
+        output_digest=digest("output_digest"),
+        promotion_digest=digest("promotion_digest"),
     )
 
 

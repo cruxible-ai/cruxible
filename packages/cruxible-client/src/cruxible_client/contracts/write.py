@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts import PlaybillAcceptedCoordinate
 from cruxible_client.contracts.authoring.models import WorkingSelectionObservationV1
@@ -38,11 +38,31 @@ CAPTURE_REF_PATTERN = r"^(?:sha256:[0-9a-f]{64}|CAP-[0-9a-f]{12,64})$"
 FILE_ANCHOR_PATTERN = r"^[^#]+#.+$"
 _GIT_OID = re.compile(r"^[0-9a-f]{1,64}$")
 
+_SUBJECT_REF = re.compile(SUBJECT_REF_PATTERN)
+
+
+def subject_reference(value: object) -> object:
+    """``@kind/id`` names the same Subject as ``kind/id``; anything else is unchanged.
+
+    Scripts mark a Subject with a leading ``@`` to tell it from a string. No
+    Subject kind starts with ``@``, so wherever a Subject is expected the sigil
+    is unambiguous: one is dropped when what follows is a Subject reference.
+    """
+
+    if isinstance(value, str) and value.startswith("@") and _SUBJECT_REF.fullmatch(value[1:]):
+        return value[1:]
+    return value
+
+
 SubjectRef = Annotated[
     str,
+    BeforeValidator(subject_reference),
     Field(
         pattern=SUBJECT_REF_PATTERN,
-        description="A Subject as kind/id, for example 'dev.roadmap_item/tidy-cli'.",
+        description=(
+            "A Subject as kind/id, for example 'dev.roadmap_item/tidy-cli'; "
+            "'@kind/id' names the same Subject."
+        ),
     ),
 ]
 ClaimId = Annotated[
@@ -61,8 +81,8 @@ FieldName = Annotated[
     ),
 ]
 ClaimValue = bool | int | float | str
-"""A scalar value. A Subject-valued field takes the Subject as kind/id; an
-exact-content field takes the text itself."""
+"""A scalar value. A Subject-valued field takes the Subject as kind/id (or
+``@kind/id``); an exact-content field takes the text itself."""
 
 ExpectedValue = ClaimValue | tuple[ClaimValue, ...]
 """What a field must hold for a write to go ahead: one value, or every live
@@ -549,6 +569,7 @@ __all__ = [
     "AddChange",
     "SlotRef",
     "SubjectRef",
+    "subject_reference",
     "VerdictNotSupportedWarning",
     "WriteAccept",
     "WriteOp",

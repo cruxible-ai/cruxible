@@ -3795,6 +3795,16 @@ receipt: str | None
 coordinate: AcceptedCoordinate
 ```
 
+<a id="api-procedurerun-track-record"></a>
+
+### `ProcedureRun.track_record`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+track_record: tuple[PlaybillGetProcedureTrackRecordV1, ...]
+```
+
 <a id="api-procedurerun-refresh"></a>
 
 ### `ProcedureRun.refresh`

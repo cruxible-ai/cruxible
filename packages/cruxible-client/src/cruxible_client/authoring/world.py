@@ -98,6 +98,22 @@ class WorldStructureError(PlaybillSdkError):
     code = "playbill.sdk.world_structure_refused"
 
 
+class Names(tuple[str, ...]):
+    """A byte-sorted tuple of names that also answers when called.
+
+    ``w.kinds`` and ``w.kinds()`` are the same tuple, so neither spelling is a
+    wrong guess. Next: ``w.kind(name)`` or ``w.claim_type(name)`` for one of
+    them, or ``w.describe()`` for the whole vocabulary.
+    """
+
+    __slots__ = ()
+
+    def __call__(self) -> tuple[str, ...]:
+        """Return the names themselves. Next: ``w.kind(name)`` for one of them."""
+
+        return tuple(self)
+
+
 def _is_identifier(value: str) -> bool:
     """Return whether this ID can be spelled as a Python attribute."""
 
@@ -273,7 +289,7 @@ class _Meaning:
     revision_evidence: RevisionEvidence = "accumulate"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class WorldClaimType(ClaimTypeRef):
     """One accepted predicate, carrying its structure and its admissible values.
 
@@ -305,11 +321,16 @@ class WorldClaimType(ClaimTypeRef):
 
     @property
     def predicate(self) -> str:
+        """The full dotted predicate. Next: ``pb.query(kind, select=[leaf])`` for its values."""
+
         return self.address
 
     @property
     def members(self) -> tuple[str, ...]:
-        """Return the enum members this predicate's literal schema names."""
+        """Return the enum members this predicate's literal schema names.
+
+        Next: ``claim_type.<member>`` or ``claim_type("<member>")`` for a typed value.
+        """
 
         return literal_schema_members(self.literal_schema)
 
@@ -320,6 +341,8 @@ class WorldClaimType(ClaimTypeRef):
         A ClaimType wins attribute access over a Subject kind of the same dotted
         name, which would otherwise leave `define()` and `subject_ids`
         unreachable. This is that escape.
+
+        Next: ``claim_type.as_kind["<id>"]``.
         """
 
         self._world._assert_current()
@@ -346,7 +369,10 @@ class WorldClaimType(ClaimTypeRef):
         )
 
     def value(self, **fields: object) -> LiteralValue:
-        """Construct a structured literal using this accepted ClaimType's fields."""
+        """Construct a structured literal using this accepted ClaimType's fields.
+
+        Next: pass it as ``value=`` to a write.
+        """
         if self.literal_schema is None:
             raise WorldStructureError(f"{self.address!r} has no declared record schema")
         record = RecordConstructor.from_json_schema(self.literal_schema)(**fields)
@@ -392,7 +418,7 @@ class WorldClaimType(ClaimTypeRef):
         return sorted({*super().__dir__(), *self._node.children, *reachable})
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class WorldSubject(SubjectRef):
     """One accepted Subject, readable through the verbs that already serve it.
 
@@ -409,15 +435,22 @@ class WorldSubject(SubjectRef):
 
     @property
     def subject_kind(self) -> str:
+        """The Subject's kind. Next: ``w.kind(subject.subject_kind)``."""
+
         return self.address.split("/", 1)[0]
 
     @property
     def subject_id(self) -> str:
+        """The Subject's ID. Next: ``pb.get(subject)`` for its fields and flags."""
+
         return self.address.split("/", 1)[1]
 
     @property
     def claims(self) -> tuple[ClaimView, ...]:
-        """Every live Claim this Subject is the subject of."""
+        """Every live Claim this Subject is the subject of.
+
+        Next: ``pb.get(view.claim_id, detail="evidence")`` for what backs one.
+        """
 
         return self._world._claims_about(self.address)
 
@@ -449,6 +482,8 @@ class WorldSubject(SubjectRef):
         keyword takes one trailing underscore (``class_``). References from this
         World stay valid after it: the next write is checked from this World's
         coordinate plus its own writes, so only a slot someone else moved refuses.
+
+        Next: ``outcome.next`` for what is still needed; ``pb.get(subject)`` reads it back.
         """
 
         from cruxible_client.contracts.write import SetChange
@@ -482,6 +517,8 @@ class WorldSubject(SubjectRef):
 
         A value already there is answered as done; ``expect_absent=True`` refuses
         it instead (``playbill.write.value_already_present``).
+
+        Next: ``outcome.next`` for what is still needed.
         """
 
         from cruxible_client.contracts.write import AddChange
@@ -509,7 +546,10 @@ class WorldSubject(SubjectRef):
         dry_run: bool = False,
         accept: WriteAccept = "if_allowed",
     ) -> WriteOutcome:
-        """Retire the one live value of a field of this Subject."""
+        """Retire the one live value of a field of this Subject.
+
+        Next: ``outcome.next``; ``pb.get(subject)`` shows the field without it.
+        """
 
         from cruxible_client.contracts.write import RetireChange, SlotRef
 
@@ -565,6 +605,9 @@ class KindNamespace:
     world is for and a Subject named `severity` must not shadow the predicate.
     Index access always means a Subject ID, which is also how an ID that is not
     a Python identifier is spelled.
+
+    Next: ``kind["<id>"]`` for a Subject, ``kind.where(...)`` for a query,
+    ``kind.define("<id>")`` for a new one.
     """
 
     __slots__ = ("_node", "_world")
@@ -575,18 +618,27 @@ class KindNamespace:
 
     @property
     def subject_kind(self) -> str | None:
-        """Return this namespace's Subject kind, or None if it is only a prefix."""
+        """Return this namespace's Subject kind, or None if it is only a prefix.
+
+        Next: ``kind.subject_ids``.
+        """
 
         return self._node.path if self._node.subject_kind else None
 
     @property
     def subject_ids(self) -> tuple[str, ...]:
-        """Return every accepted Subject ID of this kind, loading them on first ask."""
+        """Return every accepted Subject ID of this kind, loading them on first ask.
+
+        Next: ``kind["<id>"]`` for one Subject.
+        """
 
         return tuple(self._subjects())
 
     def define(self, subject_id: str) -> SubjectDraft:
-        """Draft one new Subject of this kind for a changeset to define."""
+        """Draft one new Subject of this kind for a changeset to define.
+
+        Next: ``draft.submit()``; a write that names a new Subject of this kind adds it too.
+        """
 
         kind = self._require_kind()
         self._world._assert_current()
@@ -607,12 +659,17 @@ class KindNamespace:
         ``self``, a Python keyword, contains ``__`` or ends in ``_`` takes one
         trailing underscore before any suffix (``self_``, ``class___ne``).
         Names and enum values are checked against this World before the wire.
+
+        Next: ``.select(...)``, then ``.run()`` or iterate it.
         """
 
         return self._query().where(**filters)
 
     def select(self, *fields: str) -> CompactQuery:
-        """Start a compact query over this kind that shows only these columns."""
+        """Start a compact query over this kind that shows only these columns.
+
+        Next: ``.run()`` or iterate it.
+        """
 
         return self._query().select(*fields)
 
@@ -679,6 +736,32 @@ class KindNamespace:
         return f"<KindNamespace {self._node.path!r} ({shape})>"
 
 
+#: The verbs ``World.describe()`` names, as (call, what it does).
+_DESCRIBED_VERBS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    (
+        "Read:",
+        (
+            ("pb.orient()", "map accepted state; orient(kind=...) for one kind"),
+            ('pb.query("<kind>", where=[...])', "one page of values with verdict flags"),
+            ('pb.get("<ref>")', "one thing: kind/id, CLM-..., a predicate, CAP-..."),
+            ("grep -r <text> .playbill/floor/current/", "the exported floor, one file per Subject"),
+            ('w.<kind>["<id>"].<field>', "the live Claims under one field"),
+            ("w.<kind>.where(<field>=...)", "a compact query over one kind"),
+        ),
+    ),
+    (
+        "Write:",
+        (
+            ('w.<kind>["<id>"].set(<field>=...)', "replace a single value (because=...)"),
+            ('w.<kind>["<id>"].add(<field>=...)', "add to a many-valued field"),
+            ('w.<kind>["<id>"].retire("<field>")', "end the live value"),
+            ('pb.changes(because="...")', "several changes as one change set"),
+        ),
+    ),
+    ("Then:", (("pb.next(expiring_within=...)", "what needs attention"),)),
+)
+
+
 class World:
     """The accepted ontology of one instance, as objects rather than strings.
 
@@ -689,6 +772,9 @@ class World:
     `kind()` and `claim_type()` are the escapes for a dotted name attribute
     access cannot spell: a Python keyword segment, or a kind a predicate of the
     same name wins.
+
+    Next: ``print(w.describe())`` for every verb and field, ``w.kinds`` for the kinds,
+    ``w.<kind>["<id>"]`` for one Subject.
     """
 
     __slots__ = (
@@ -727,21 +813,85 @@ class World:
 
     @property
     def coordinate(self) -> AcceptedCoordinate:
+        """The accepted coordinate every name in this World answers at.
+
+        Next: ``pb.at(w.coordinate)`` for other reads at the same state.
+        """
+
         return self._coordinate
 
     @property
-    def kinds(self) -> tuple[str, ...]:
-        """Every accepted Subject kind this world knows, byte-sorted."""
+    def kinds(self) -> Names:
+        """Every accepted Subject kind this world knows, byte-sorted.
+
+        An attribute and a call alike: ``w.kinds`` or ``w.kinds()``. Next:
+        ``w.kind("dev.batch")`` (or ``w.dev.batch``) for one kind, or
+        ``pb.orient(kind=...)`` for its counts and sample Subjects.
+        """
 
         self._assert_current()
-        return self._kind_paths()
+        return Names(self._kind_paths())
 
     @property
-    def predicates(self) -> tuple[str, ...]:
-        """Every accepted predicate this world knows, byte-sorted."""
+    def predicates(self) -> Names:
+        """Every accepted predicate this world knows, byte-sorted.
+
+        An attribute and a call alike: ``w.predicates`` or ``w.predicates()``.
+        Next: ``w.claim_type(predicate)`` for one predicate's structure.
+        """
 
         self._assert_current()
-        return self._predicate_paths()
+        return Names(self._predicate_paths())
+
+    def describe(self) -> str:
+        """Name the verbs that act on this world, then its vocabulary, as text to read.
+
+        Each Subject kind is listed with its fields: the leaf a Subject answers
+        by attribute, then what the field holds (``literal``, ``-> kind`` for
+        a Subject, ``exact_content``), its cardinality, enum members and
+        description. Next: ``print(w.describe())``, then one of the verbs it
+        lists -- ``pb.query(kind, ...)`` to read values, ``pb.get(ref)`` for
+        one thing, ``w.<kind>[id].set(...)`` to write.
+        """
+
+        self._assert_current()
+        lines = [
+            f"World at {self._coordinate.git_oid[:12]}: "
+            f"{len(self._kind_paths())} Subject kinds, {len(self._predicate_paths())} predicates.",
+        ]
+        for heading, verbs in _DESCRIBED_VERBS:
+            lines.append(heading)
+            lines.extend(f"  {call:<40} {what}" for call, what in verbs)
+        lines.append("Vocabulary:")
+        for kind in self._kind_paths():
+            lines.append(f"  {kind}")
+            for leaf, names in sorted(self._leaf_map(kind).items()):
+                # A leaf two predicates share is reachable only by full name.
+                for name in names:
+                    label = leaf if len(names) == 1 else name
+                    lines.append("    " + self._describe_field(label, name))
+        if self.unstructured_predicates:
+            lines.append("  unreadable by this client: " + ", ".join(self.unstructured_predicates))
+        return "\n".join(lines)
+
+    def _describe_field(self, label: str, predicate: str) -> str:
+        """One field line of ``describe()``: what it holds, how many, and what it means."""
+
+        node = self._node_at(predicate)
+        assert node is not None and node.structure is not None
+        structure = node.structure
+        held = (
+            "-> " + " | ".join(structure.allowed_object_subject_kinds)
+            if structure.object_kind == "subject"
+            else structure.object_kind
+        )
+        parts = [f"{label}: {held}, {structure.cardinality}"]
+        members = literal_schema_members(structure.literal_schema)
+        if members:
+            parts.append("[" + ", ".join(members) + "]")
+        if node.meaning is not None and node.meaning.description:
+            parts.append("-- " + node.meaning.description.splitlines()[0])
+        return " ".join(parts)
 
     def _kind_paths(self) -> tuple[str, ...]:
         return tuple(sorted(self._walk(lambda node: node.subject_kind)))
@@ -750,7 +900,10 @@ class World:
         return tuple(sorted(self._walk(lambda node: node.structure is not None)))
 
     def stub(self) -> str:
-        """Render this world as a `.pyi` module stub."""
+        """Render this world as a `.pyi` module stub.
+
+        Next: write it beside your script as a ``.pyi`` so an editor checks every name.
+        """
 
         from cruxible_client.authoring.world_stub import render_world_stub
 
@@ -863,7 +1016,11 @@ class World:
         return node
 
     def claim_type(self, predicate: str) -> WorldClaimType:
-        """Read one accepted predicate by its full dotted name."""
+        """Read one accepted predicate by its full dotted name.
+
+        Next: its ``members``, ``cardinality`` and ``description``; ``pb.query(kind,
+        select=[...])`` for its values.
+        """
 
         node = self._node_at(predicate)
         if node is None or node.structure is None:
@@ -878,6 +1035,8 @@ class World:
         The escape for a kind whose segments attribute access cannot spell -- a
         Python keyword such as `dev.class` -- and for one a predicate of the same
         dotted name wins, exactly as `claim_type` is the escape for a predicate.
+
+        Next: ``kind["<id>"]`` for one Subject, ``kind.where(...)`` to query it.
         """
 
         node = self._node_at(subject_kind)
@@ -1336,6 +1495,7 @@ def build_world(
 __all__ = [
     "CLAIM_TYPE_MEMBERS",
     "KindNamespace",
+    "Names",
     "SUBJECT_MEMBERS",
     "World",
     "WorldClaimType",

@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 
@@ -217,17 +217,18 @@ def _request(
     )
 
 
-def _row(instance, reason: str, request: PlaybillNextRequestV1):  # type: ignore[no-untyped-def]
+def _row(instance, reason: str, request: PlaybillNextRequestV1, **caller: Any):  # type: ignore[no-untyped-def]
     return next(
         item
-        for item in service_playbill_next(instance, request=request).items
+        for item in service_playbill_next(instance, request=request, **caller).items
         if item.reason == reason
     )
 
 
-def _assert_gone(instance, reason: str, request: PlaybillNextRequestV1) -> None:  # type: ignore[no-untyped-def]
+def _assert_gone(instance, reason: str, request: PlaybillNextRequestV1, **caller: Any) -> None:  # type: ignore[no-untyped-def]
     assert all(
-        item.reason != reason for item in service_playbill_next(instance, request=request).items
+        item.reason != reason
+        for item in service_playbill_next(instance, request=request, **caller).items
     )
 
 
@@ -1247,17 +1248,21 @@ def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         timestamp="2026-08-24T17:00:01.000000Z",
     )
     stale_id = overtaken.proposal.admission.proposal_id
+    author = {"caller_principal_id": "owner"}
     assert all(
         item.reason != "proposal_stale"
-        for item in service_playbill_next(instance, request=_request(instance)).items
+        for item in service_playbill_next(instance, request=_request(instance), **author).items
     )
     _accept(instance, owner, first)
 
-    row = _row(instance, "proposal_stale", _request(instance))
+    row = _row(instance, "proposal_stale", _request(instance), **author)
     assert row.subject_identity == stale_id
     assert row.repair.operation == EXPECTED_OPERATIONS["proposal_stale"]
     assert row.repair.command == f"cruxible playbill proposal readmit {stale_id}"
     assert row.detail["actor_id"] == "owner"
+    # Only the author may readmit, so only the author's queue carries the row.
+    _assert_gone(instance, "proposal_stale", _request(instance), caller_principal_id="reviewer")
+    _assert_gone(instance, "proposal_stale", _request(instance))
     hidden = PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
@@ -1267,12 +1272,12 @@ def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert all(
         item.reason != "proposal_stale"
-        for item in service_playbill_next(instance, request=hidden).items
+        for item in service_playbill_next(instance, request=hidden, **author).items
     )
 
     readmitted = service_readmit_playbill_proposal(instance, proposal_id=stale_id, actor_id="owner")
     assert readmitted.proposal.proposal.evaluation.verdict == "candidate"
-    _assert_gone(instance, "proposal_stale", _request(instance))
+    _assert_gone(instance, "proposal_stale", _request(instance), **author)
 
 
 def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1693,7 +1698,6 @@ def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_pa
     (row,) = settle_rows(governed)
     bound = row.detail["bound_contract_id"]
     assert row.repair.command == f"cruxible playbill settle {bound}"
-    assert governed.status.hidden == 0
     assert "hidden" not in governed.status.model_dump(mode="json")
 
     read_only = service_playbill_next(instance, request=request, caller_rung=0)
@@ -1701,7 +1705,6 @@ def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_pa
     assert withheld.repair is None
     assert withheld.repair_requires.tool == "cruxible_playbill_settle"
     assert withheld.repair_requires.because == ("tier",)
-    assert read_only.status.hidden == 0
 
     mcp = request.model_copy(
         update={
@@ -1716,4 +1719,5 @@ def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_pa
     profiled = service_playbill_next(instance, request=default_profile, caller_rung=1)
     (kept,) = settle_rows(profiled)
     assert kept.repair is None and kept.repair_requires.because == ("profile",)
-    assert kept.repair_requires.profile == "full" and profiled.status.hidden == 0
+    assert kept.repair_requires.profile == "full"
+    assert profiled.total_items == governed.total_items

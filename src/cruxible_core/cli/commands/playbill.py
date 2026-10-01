@@ -5308,8 +5308,6 @@ def _echo_next_status(status: contracts.PlaybillNextStatus) -> None:
             f"Status: line arms stalled={arms.get('stalled', 0)} stopped={arms.get('stopped', 0)}"
             "  next=cruxible playbill orient --section lines"
         )
-    if status.hidden:
-        click.echo(f"Hidden: {status.hidden} rows")
 
 
 @playbill_group.group("curation")

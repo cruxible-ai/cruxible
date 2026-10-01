@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, get_args
 
+from cruxible_client.contracts import PlaybillProcedureRunState
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.operational_reads import (
     OPERATIONAL_CARD_LIST_LIMIT,
@@ -26,7 +27,12 @@ from cruxible_client.contracts.operational_reads import (
     PlaybillRunRowV1,
     PlaybillRunStatus,
 )
-from cruxible_client.contracts.procedures.results import ProcedureOperationalFailureCodeV1
+from cruxible_client.contracts.procedures.results import (
+    ProcedureOperationalFailureCodeV1,
+    ProcedureRunAttributionV1,
+    ProcedureRunAttributionWithheldV1,
+    ProcedureRunReceiptWithheldV1,
+)
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_core.exhaust import LocalJournalBackend
 from cruxible_core.exhaust.journal_index import RunLocator, RunLocatorKey
@@ -193,20 +199,77 @@ def _payload(instance: PlaybillInstance, digest: str) -> object:
     return parse_journal_payload(instance.body_store().read(digest, access=_ACCESS))
 
 
+def _admission(instance: PlaybillInstance, run_id: str) -> object | None:
+    """One journaled run's admission, or ``None`` when the journal holds no such run."""
+
+    journal = procedure_run_journal(instance)
+    if journal is None:
+        return None
+    locators, _more = journal.index.run_locators(_stream(instance), limit=1, run_id=run_id)
+    if not locators:
+        return None
+    return parse_admission_payload(
+        _payload(instance, locators[0].admission_payload_digest)
+    ).admission
+
+
+def _arming_run(instance: PlaybillInstance, run_id: str, admission: object) -> str | None:
+    """The run Line dispatch admitted for ``run_id``: itself, or a nested run's root.
+
+    A nested run inherits its parent's Line and actor, but dispatch records
+    only the root run it admitted. The root is reached through each
+    ``parent_binding``, verified against the parent's own admission digest,
+    never through a caller's ancestry claim. ``None`` when that chain does not
+    verify, so nothing is attributed to an arm it cannot be traced to.
+    """
+
+    from cruxible_core.procedures.execution import (
+        ProcedureRunAdmissionV2,
+        ProcedureRunAdmissionV8,
+    )
+
+    current_id, current = run_id, admission
+    seen = {run_id}
+    while isinstance(current, ProcedureRunAdmissionV8):
+        binding = current.parent_binding
+        if binding.parent_run_id in seen:
+            return None
+        seen.add(binding.parent_run_id)
+        parent = _admission(instance, binding.parent_run_id)
+        if (
+            not isinstance(parent, ProcedureRunAdmissionV2)
+            or parent.admission_binding_digest != binding.parent_admission_digest
+        ):
+            return None
+        current_id, current = binding.parent_run_id, parent
+    return current_id
+
+
 def _run_trigger(
     instance: PlaybillInstance,
     run_id: str,
-    line: ArtifactIdentity | None,
-    occurrence: str | None,
+    admission: object,
     viewer: OperationalViewer | None,
 ) -> PlaybillGetRunTriggerV1 | None:
     """The Line, occurrence and arm that admitted a Line run; ``None`` for a direct run.
 
     Who armed it is shown only to a reader who may see that arming credential.
+    A nested run answers for the arm that admitted its root (``_arming_run``);
+    one whose parent chain does not verify is withheld from all but an admin.
     """
 
-    if line is None:
+    candidate = getattr(admission, "line_identity", None)
+    if not isinstance(candidate, ArtifactIdentity):
         return None
+    line = candidate.qualified
+    occurrence = getattr(admission, "occurrence_id", None)
+    arming = _arming_run(instance, run_id, admission)
+    if arming is None:
+        return PlaybillGetRunTriggerV1(
+            line=line,
+            occurrence=occurrence,
+            armed_by_withheld=viewer is None or not viewer.admin,
+        )
     from cruxible_client.contracts.line_dispatch import LineArmPrincipalV1
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 
@@ -216,7 +279,7 @@ def _run_trigger(
             row = conn.execute(
                 "SELECT s.payload FROM pending p JOIN sessions s ON s.session_id=p.session_id "
                 "WHERE p.run_id=? LIMIT 1",
-                (run_id,),
+                (arming,),
             ).fetchone()
         if row is not None:
             data = json.loads(row[0])
@@ -230,7 +293,7 @@ def _run_trigger(
                     fields["armed_by"] = principal.label
                 else:
                     fields["armed_by_withheld"] = True
-    return PlaybillGetRunTriggerV1(line=line.qualified, occurrence=occurrence, **fields)  # type: ignore[arg-type]
+    return PlaybillGetRunTriggerV1(line=line, occurrence=occurrence, **fields)  # type: ignore[arg-type]
 
 
 def procedure_run_card(
@@ -319,13 +382,7 @@ def procedure_run_card(
         if isinstance(wall, int) and wall >= 0:
             elapsed, basis = wall, "measured_wall_clock"
     line = getattr(bound, "line_identity", None)
-    trigger = _run_trigger(
-        instance,
-        run_id,
-        line if isinstance(line, ArtifactIdentity) else None,
-        bound.occurrence_id,
-        viewer,
-    )
+    trigger = _run_trigger(instance, run_id, bound, viewer)
     # An armed run acts as its arming credential's label; that label is the
     # arming credential's to see, as on the Line card.
     actor = (
@@ -355,16 +412,61 @@ def procedure_run_card(
     )
 
 
+def run_arming_withheld(
+    instance: PlaybillInstance, run_id: str, *, viewer: OperationalViewer | None
+) -> bool:
+    """Whether this run acts as an arming credential ``viewer`` may not see.
+
+    The Line and run cards' rule (``OperationalViewer.may_see``): a runtime
+    arming credential is shown only to an admin, that credential, or another
+    credential bound to the same principal. A direct run has no arm; a nested
+    run answers for its root's.
+    """
+
+    admission = _admission(instance, run_id)
+    if admission is None:
+        return False
+    trigger = _run_trigger(instance, run_id, admission, viewer)
+    return trigger is not None and bool(trigger.armed_by_withheld)
+
+
+def procedure_run_status(
+    instance: PlaybillInstance, run_id: str, *, viewer: OperationalViewer | None
+) -> PlaybillProcedureRunState:
+    """A run's served state, with its arming credential withheld as on the card.
+
+    An armed run acts as its arming credential's principal, which the state's
+    attribution and receipt both carry. For a reader who may not see that
+    credential the attribution answers without its actor and the receipt as a
+    withheld marker; ``receipt_digest`` still names the exact receipt.
+    """
+
+    from cruxible_core.service.procedures.procedure_runs import (
+        service_get_playbill_procedure_run,
+    )
+
+    state = PlaybillProcedureRunState.model_validate(
+        service_get_playbill_procedure_run(instance, run_id=run_id).model_dump(mode="json")
+    )
+    if not run_arming_withheld(instance, run_id, viewer=viewer):
+        return state
+    attribution = state.attribution
+    return state.model_copy(
+        update={
+            "attribution": (
+                ProcedureRunAttributionWithheldV1.of(attribution)
+                if isinstance(attribution, ProcedureRunAttributionV1)
+                else attribution
+            ),
+            "receipt": None if state.receipt is None else ProcedureRunReceiptWithheldV1(),
+        }
+    )
+
+
 def procedure_run_proof(
     instance: PlaybillInstance, run_id: str, *, viewer: OperationalViewer | None
 ) -> dict[str, object]:
-    """A run's full served state, with its arming credential withheld as on the card.
-
-    An armed run acts as its arming credential's label, which the state's
-    attribution and receipt both carry. For a reader who may not see that
-    credential the attribution's actor is withheld and the receipt is replaced
-    by a marker; ``receipt_digest`` still names the exact receipt.
-    """
+    """A run's full served state, under ``procedure_run_status``'s withholding."""
 
     from cruxible_core.service.procedures.procedure_runs import (
         service_get_playbill_procedure_run,
@@ -372,23 +474,13 @@ def procedure_run_proof(
 
     state = service_get_playbill_procedure_run(instance, run_id=run_id)
     proof: dict[str, object] = state.model_dump(mode="json")
-    line = None
-    records = procedure_run_journal(instance)
-    if records is not None:
-        locators, _more = records.index.run_locators(_stream(instance), limit=1, run_id=run_id)
-        if locators:
-            admission = parse_admission_payload(
-                _payload(instance, locators[0].admission_payload_digest)
-            ).admission
-            candidate = getattr(admission, "line_identity", None)
-            line = candidate if isinstance(candidate, ArtifactIdentity) else None
-            trigger = _run_trigger(instance, run_id, line, admission.occurrence_id, viewer)
-            if trigger is not None and trigger.armed_by_withheld:
-                attribution = proof.get("attribution")
-                if isinstance(attribution, dict):
-                    proof["attribution"] = {**attribution, "actor_id": None}
-                if proof.get("receipt") is not None:
-                    proof["receipt"] = {"withheld": "names the arming credential"}
+    if run_arming_withheld(instance, run_id, viewer=viewer):
+        if state.attribution is not None:
+            proof["attribution"] = ProcedureRunAttributionWithheldV1.of(
+                state.attribution
+            ).model_dump(mode="json")
+        if state.receipt is not None:
+            proof["receipt"] = ProcedureRunReceiptWithheldV1().model_dump(mode="json")
     return proof
 
 
@@ -436,6 +528,8 @@ __all__ = [
     "procedure_run_card",
     "procedure_run_journal",
     "procedure_run_proof",
+    "procedure_run_status",
+    "run_arming_withheld",
     "run_counts",
     "run_ids_with_prefix",
     "run_row",

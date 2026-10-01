@@ -22,9 +22,11 @@ from cruxible_client.contracts.canonical import (
     ProposalDigest,
     Sha256Value,
     canonical_bytes,
+    typed_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.policies import ClaimAdmissionEvaluationAccountV1
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -371,6 +373,41 @@ class ProposalSettleSubmissionV1(_StrictProposalModel):
         return self
 
 
+class ProposalReadmissionLinkV1(_StrictProposalModel):
+    """The stale proposal a readmission re-admits, and the coordinate it did so at.
+
+    Only the readmit service writes it. Its ``operation_digest`` is the one
+    readmission of the source that coordinate admits, and the admission's
+    ``source_compilation_digest`` -- part of the proposal-id preimage -- must
+    equal it, so the link is bound to the readmission's own identity: no ref
+    spelling, and no evaluation head that moved after the readmission was
+    named, can forge or lose it.
+    """
+
+    tag: Literal["playbill-proposal-readmission-link-v1"] = "playbill-proposal-readmission-link-v1"
+    source_proposal_id: str
+    coordinate: AcceptedCoordinate
+
+    @field_validator("source_proposal_id")
+    @classmethod
+    def _source_proposal_id(cls, value: str) -> str:
+        ProposalDigest.from_tagged(value)
+        return value
+
+    @property
+    def operation_digest(self) -> str:
+        """The readmission operation this link names: source and coordinate, digested."""
+
+        return typed_digest(
+            Sha256Value,
+            "playbill-proposal-readmit-v1",
+            {
+                "source_proposal_id": self.source_proposal_id,
+                "current_accepted_coordinate": self.coordinate.model_dump(mode="json"),
+            },
+        ).tagged
+
+
 class ProposalAdmissionRecord(_StrictProposalModel):
     tag: Literal["playbill-proposal-admission-v1"] = "playbill-proposal-admission-v1"
     proposal_id: str
@@ -391,6 +428,11 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     # A settle terminal's submission mode; absent, like `rationale`, for every
     # other proposal, so admissions already on disk keep their bytes.
     settle_submission: ProposalSettleSubmissionV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # A readmission's source; absent, like `settle_submission`, for every other
+    # proposal, so admissions already on disk keep their bytes.
+    readmits: ProposalReadmissionLinkV1 | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 
@@ -440,6 +482,11 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     def _namespace_binding(self) -> "ProposalAdmissionRecord":
         if self.target_ref.split("/")[2] != self.actor_id:
             raise ValueError("admission target namespace differs from authenticated actor")
+        if (
+            self.readmits is not None
+            and self.source_compilation_digest != self.readmits.operation_digest
+        ):
+            raise ValueError("a readmission's source compilation digest is its operation digest")
         if (
             len(
                 {
@@ -562,6 +609,7 @@ class ProposalTransportProtocol(Protocol):
 __all__ = [
     "AuthenticatedActor",
     "ProposalAdmissionRecord",
+    "ProposalReadmissionLinkV1",
     "ProposalSettleSubmissionV1",
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",

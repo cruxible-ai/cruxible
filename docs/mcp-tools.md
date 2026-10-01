@@ -167,7 +167,7 @@ names the whole body's `body_digest`.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_read_capture` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among accepted Captures | `GOVERNED_WRITE` |
+| `cruxible_playbill_read_capture` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among the Captures the write verbs resolve (cited, or retained and verifying) | `GOVERNED_WRITE` |
 
 ## Sources
 
@@ -258,7 +258,7 @@ exactly one may omit it.
 | `cruxible_playbill_procedure_readiness` | Report exact binding requirements or run readiness | `READ_ONLY` |
 | `cruxible_playbill_procedure_bind` | Attach accepted input-plane bindings through a same-identity successor | `GOVERNED_WRITE` |
 | `cruxible_playbill_procedure_run` | Execute a ready Procedure -- accepted-state reads, deterministic computation, and graph-v4 `source` reads through an accepted Provider -- at an explicit coordinate and time | `READ_ONLY` |
-| `cruxible_playbill_procedure_run_status` | Read one finalized Procedure run and its receipt | `READ_ONLY` |
+| `cruxible_playbill_procedure_run_status` | Read one finalized Procedure run and its receipt; for an armed run, the run actor and the receipt are withheld (`playbill-procedure-run-attribution-withheld-v1`, `playbill-procedure-run-receipt-withheld-v1`) unless the caller is an admin, the arming credential, or a credential bound to the same principal | `READ_ONLY` |
 | `cruxible_playbill_procedure_measure` | Evaluate due Procedure measurements from real evidence, persist the resolution, and credit one run's exact grain | `GOVERNED_WRITE` |
 | `cruxible_playbill_procedure_readings` | Inspect measurement standing and retained exact-grain readings (read-only, paginated) | `READ_ONLY` |
 | `cruxible_playbill_line_check` | Read trigger eligibility, exact matches, and admitted occurrences without queuing or running. | `READ_ONLY` |
@@ -352,7 +352,7 @@ A row or nested finding whose repair the session cannot perform -- its profile
 does not advertise the tool that performs it, or its tier is too low -- stays in
 the queue with `repair: null` and `repair_requires: {tool, tier, because,
 profile?}` naming what running it needs, so `orient` attention and the queue
-count it for every caller and `status.hidden` stays 0. A status facet keeps its
+count it for every caller. A status facet keeps its
 state either way, but drops a repair the session cannot perform and says
 `repair_hidden: true` with the same `repair_requires`. The `default` profile
 advertises neither `cruxible_playbill_settle` nor the Line tools, for example:

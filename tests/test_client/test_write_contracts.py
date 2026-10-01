@@ -274,3 +274,21 @@ def test_the_outcome_schema_discriminates_warnings_by_code() -> None:
     assert "verdict" in verdict["required"] and "capture" not in verdict["properties"]
     assert "capture" in newer["required"] and "verdict" not in newer["properties"]
     assert verdict["additionalProperties"] is False and newer["additionalProperties"] is False
+
+
+def test_an_at_sign_subject_is_the_same_subject_reference() -> None:
+    """``@kind/id`` validates as ``kind/id`` wherever a Subject is named."""
+
+    from cruxible_client.contracts.write import subject_reference
+
+    assert subject_reference("@dev.roadmap_item/x") == "dev.roadmap_item/x"
+    assert subject_reference("dev.roadmap_item/x") == "dev.roadmap_item/x"
+    # Only a Subject reference loses the sigil; any other text is left alone.
+    assert subject_reference("@not a subject") == "@not a subject"
+    assert subject_reference("@@dev.roadmap_item/x") == "@@dev.roadmap_item/x"
+    assert SetChange(subject="@dev.roadmap_item/x", field="title", value="t").subject == (
+        "dev.roadmap_item/x"
+    )
+    assert SlotRef(subject="@dev.roadmap_item/x", field="title").subject == "dev.roadmap_item/x"
+    with pytest.raises(ValidationError):
+        SetChange(subject="@@dev.roadmap_item/x", field="title", value="t")

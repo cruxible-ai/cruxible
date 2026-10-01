@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Literal
 
@@ -106,28 +106,26 @@ _MAX_PREFIX_CANDIDATES = 10
 def _full_capture_digest(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, value: str
 ) -> str:
-    """A full Capture digest; a ``CAP-`` handle or digest prefix resolves among accepted Captures.
+    """A full Capture digest; a ``CAP-`` handle or digest prefix resolves as every verb does.
 
-    A prefix must name exactly one Capture accepted Claims cite at the read
-    coordinate; an ambiguous or unknown one refuses with the candidates and the
-    orient section that lists Captures.
+    ``resolve_capture_handle`` names the Capture: cited at the read coordinate,
+    or retained and verifying there. An ambiguous, unknown or unboundedly
+    crowded prefix refuses with the candidates and the repair.
     """
 
-    from cruxible_core.service.discovery.operational import capture_hex, captures_with_prefix
+    from cruxible_core.service.discovery.operational import capture_hex
 
     hex_digits = capture_hex(value)
     if hex_digits is None or len(hex_digits) == 64:
         return value if hex_digits is None else "sha256:" + hex_digits
-    with instance.bind_accepted_projection(coordinate) as projection:
-        matches = captures_with_prefix(
-            projection.typed.connection, hex_digits, limit=_MAX_PREFIX_CANDIDATES + 1
-        )
-    if len(matches) == 1:
-        return matches[0]
-    if matches:
+    resolution = resolve_capture_handle(instance, coordinate, hex_digits)
+    if isinstance(resolution, CaptureHandleResolved):
+        return resolution.digest
+    if isinstance(resolution, CaptureHandleAmbiguous):
+        matches = resolution.candidates
         raise ReadRefusalError(
             "playbill.capture.ref_ambiguous",
-            f"{value!r} is a prefix of {len(matches)} accepted Captures",
+            f"{value!r} is a prefix of {len(matches)} Captures",
             http_status=409,
             candidates=matches[:_MAX_PREFIX_CANDIDATES],
             repair=RepairOperationV1(
@@ -136,13 +134,28 @@ def _full_capture_digest(
             repair_line="Pass one of them in full",
             context={"capture_digest": value},
         )
+    if isinstance(resolution, CaptureHandleExhausted):
+        raise capture_handle_exhausted(value, field="capture_digest")
     raise ReadRefusalError(
         "playbill.capture.not_found",
-        f"no accepted Capture has a digest starting with {hex_digits}",
+        f"no Capture this instance holds has a digest starting with {hex_digits}",
         http_status=404,
         repair=RepairOperationV1(operation="playbill.orient", arguments={"section": "captures"}),
         repair_line='Run orient(section="captures") to list them, or pass a full digest',
         context={"capture_digest": value},
+    )
+
+
+def capture_handle_exhausted(value: str, *, field: str) -> ReadRefusalError:
+    """A read refusal for a handle the bounded lookup could not resolve uniquely."""
+
+    return ReadRefusalError(
+        "playbill.capture.ref_scan_exhausted",
+        f"{value!r} was not resolved: more Captures share its prefix than one lookup examines",
+        http_status=409,
+        repair=RepairOperationV1(operation="playbill.orient", arguments={"section": "captures"}),
+        repair_line="Pass a longer handle, or the full sha256 digest",
+        context={field: value},
     )
 
 
@@ -312,6 +325,104 @@ def retained_captures(
 
 
 _INVENTORY_ACCESS = BodyAccessContext(principal_id="playbill-capture-inventory", can_read_body=True)
+
+#: How many stored objects one handle lookup examines in its shard.
+CAPTURE_HANDLE_SCAN_BUDGET = 65_536
+#: How many retained Captures sharing a handle's prefix are verified before giving up.
+CAPTURE_HANDLE_MAX_VERIFIED = 64
+
+
+@dataclass(frozen=True)
+class CaptureHandleResolved:
+    """The handle names exactly one Capture."""
+
+    digest: str
+
+
+@dataclass(frozen=True)
+class CaptureHandleAmbiguous:
+    """The handle is a prefix of more than one Capture, in digest order."""
+
+    candidates: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CaptureHandleNotFound:
+    """No Capture has the handle; ``nearest`` are stored digests the scan saw near it."""
+
+    nearest: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CaptureHandleExhausted:
+    """The bounded lookup could not see every Capture under the handle, so it names none."""
+
+    reason: Literal["scan_budget", "verify_limit"]
+
+
+CaptureHandleResolution = (
+    CaptureHandleResolved | CaptureHandleAmbiguous | CaptureHandleNotFound | CaptureHandleExhausted
+)
+
+
+def resolve_capture_handle(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    hex_prefix: str,
+    *,
+    verified: Callable[[str], bool] | None = None,
+    nearest: int = 0,
+) -> CaptureHandleResolution:
+    """Resolve a ``CAP-`` handle (a digest prefix) to one Capture, for every verb alike.
+
+    A Capture at ``coordinate`` is one an accepted Claim cites there (the
+    accepted index), or one the instance retains that verifies against its
+    contract accepted there -- citing a Capture for the first time is the
+    common write. ``get``, ``read_capture`` and the write verbs all resolve
+    through here, so a handle one accepts the others open.
+
+    The lookup is bounded. When the store holds more objects under the prefix
+    than one lookup examines, or more retained Captures than it verifies, it
+    answers ``CaptureHandleExhausted`` rather than call a partial answer unique.
+    ``verified`` replaces the default verification (a caller's memo of the
+    same check); ``nearest`` asks the scan for that many near digests.
+    """
+
+    from cruxible_core.service.discovery.operational import captures_with_prefix
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        cited = set(
+            captures_with_prefix(
+                projection.typed.connection, hex_prefix, limit=CAPTURE_HANDLE_MAX_VERIFIED + 1
+            )
+        )
+    inventory = retained_captures(
+        instance, budget=CAPTURE_HANDLE_SCAN_BUDGET, hex_prefix=hex_prefix, nearest=nearest
+    )
+    if not inventory.complete:
+        return CaptureHandleExhausted("scan_budget")
+    if len(inventory.captures) > CAPTURE_HANDLE_MAX_VERIFIED:
+        return CaptureHandleExhausted("verify_limit")
+    uncited = [item.digest for item in inventory.captures if item.digest not in cited]
+    check = verified or (lambda digest: _verifies(instance, coordinate, digest))
+    found = sorted(cited | {digest for digest in uncited if check(digest)})
+    if len(found) == 1:
+        return CaptureHandleResolved(found[0])
+    if found:
+        return CaptureHandleAmbiguous(tuple(found))
+    return CaptureHandleNotFound(inventory.nearest)
+
+
+def _verifies(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate, digest: str
+) -> bool:
+    """Whether a retained Capture verifies against its contract accepted at ``coordinate``."""
+
+    try:
+        verified = verify_accepted_capture(instance, coordinate, digest, access=_INVENTORY_ACCESS)
+    except (CaptureReadInvalid, ReadRefusalError, PlaybillError, ValueError):
+        return False
+    return not isinstance(verified, str)
 
 
 def service_read_playbill_capture(

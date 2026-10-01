@@ -203,6 +203,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRecord,
     ProposalAdmissionRequest,
     ProposalEvaluationRecord,
+    ProposalReadmissionLinkV1,
     ProposalReceiveLimits,
     ProposalResult,
     ProposalSettleSubmissionV1,
@@ -4599,6 +4600,7 @@ class ProposalService:
         prepared: PreparedEvaluationScope | None = None,
         settle_submission: ProposalSettleSubmissionV1 | None = None,
         expected_candidate: tuple[str, str] | None = None,
+        readmits: ProposalReadmissionLinkV1 | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
 
@@ -4631,6 +4633,11 @@ class ProposalService:
         mandate's delegated authority, so it carries no approval requirement and
         only activation under the same mandate can reproduce it; a `fallback`
         is evaluated as an ordinary proposal. No public door passes it.
+
+        `readmits` is the readmit service's alone, and is retained on the
+        admission: the stale proposal this one re-admits. The record refuses it
+        unless the request's `source_compilation_digest` is exactly its
+        operation digest. No public door passes it either.
         """
         self._require_writable()
         delegated_mandate_digest = (
@@ -4639,6 +4646,10 @@ class ProposalService:
             else None
         )
         validate_candidate_timestamp(timestamp)
+        if readmits is not None and request.source_compilation_digest != readmits.operation_digest:
+            raise ProposalAdmissionError(
+                "a readmission's source compilation digest must be its operation digest"
+            )
         if "propose" not in actor.capabilities:
             raise ProposalAdmissionError("authenticated actor lacks the propose capability")
         current = self._current_coordinate()
@@ -4828,6 +4839,7 @@ class ProposalService:
                 admitted_at=timestamp,
                 rationale=request.rationale,
                 settle_submission=settle_submission,
+                readmits=readmits,
             )
             candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
             try:

@@ -485,9 +485,12 @@ cruxible playbill capture read CAPTURE_DIGEST [--max-bytes BYTES]
 Verify a retained Capture and return its evidence metadata and bounded material as JSON.
 CAPTURE_DIGEST is the full digest, the `CAP-<12 hex>` handle `get --detail
 evidence` and Capture cards print, or a `sha256:` prefix of 12+ hex; a handle
-or prefix must name one Capture accepted Claims cite
+or prefix must name one Capture, resolved exactly as the write verbs resolve
+`--capture`: one accepted Claims cite, or one the instance holds that verifies
 (`playbill.capture.ref_ambiguous` lists the candidates,
-`playbill.capture.not_found` points at `orient --section captures`).
+`playbill.capture.not_found` points at `orient --section captures`, and
+`playbill.capture.ref_scan_exhausted` asks for a longer handle when more share
+the prefix than one bounded lookup examines).
 Uses body-read permission and never refetches the external source. The SDK equivalent
 is `pb.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
 
@@ -1725,8 +1728,7 @@ profile does not advertise it; `profile: "full"` does; or `authoring` when the
 caller cannot author on the instance at all, with `authoring_refusal` carrying
 the code, detail and repair `whoami` reports). The text output prints
 `repair withheld: <tool> needs the <tier> tier`, led by the identity repair
-when authoring gates it. Nothing is left out, so
-`status.hidden` stays 0. A status facet (the compiler, floor, ledger mirror and
+when authoring gates it. Nothing is left out. A status facet (the compiler, floor, ledger mirror and
 so on) always reports its state; when its repair is one the caller cannot
 perform, the repair is dropped and the facet carries `repair_hidden: true` and
 `repair_requires` instead. Each repair's `command`
@@ -1764,8 +1766,12 @@ is `stale`: a candidate neither accepted, refused nor withdrawn whose parent is
 no longer the coordinate's semantic root, so it cannot activate. The row names
 the proposal's author in `detail.actor_id`; its repair is
 `cruxible playbill proposal readmit PROPOSAL_ID`, which only that author may
-run, and `proposal withdraw` is the alternative when the change is no longer
-wanted. A readmission at the same coordinate, or a withdrawal, closes the row.
+run, so only the author's queue shows the row (the principal `whoami` reports;
+a read with no principal shows none). `proposal withdraw` is the alternative
+when the change is no longer wanted. A readmission at the same coordinate, or a
+withdrawal, closes the row; so does a readmission that still carries the
+change: an accepted one supersedes the source for good, and a live one that went
+stale shows as its own row instead.
 A proposal a settle terminal made carries `detail.settle_submission` (`mode`
 and `mandate_digest`). A `delegated` settle that went stale is automation that
 did not finish: readmitting it re-evaluates it as an ordinary proposal that
@@ -1859,8 +1865,9 @@ replaces the live value: the Claim it revises is found for you. A Subject of a
 known kind that does not exist yet is added in the same change set; a
 Subject-valued VALUE must already exist. FIELD is a field of the kind as
 `orient` names it, or the full predicate. VALUE is text: an enum member, a
-number or `true`/`false` for such fields, a Subject as `kind/id`, or the text
-itself for exact content (which is also its own evidence). The default evidence
+number or `true`/`false` for such fields, a Subject as `kind/id` (`@kind/id`
+names the same Subject, in SUBJECT too), or the text itself for exact content
+(which is also its own evidence). The default evidence
 is `--because` as self evidence; `--evidence-file` cites text found once in a
 catalogued workspace file, read on this side, and `--capture` an existing
 Capture by its sha256 digest or its handle `CAP-<12+ hex>` (a digest prefix
@@ -2290,7 +2297,10 @@ names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
 `proposal readmit` replays a stale proposal's authored content through the current
 governed rebase and returns a fresh, idempotent proposal without changing the old
-proposal evidence. A stale generated ClaimType dependency-closure migration is not
+proposal evidence. It refuses `playbill.proposal.readmit_already_accepted` when
+the change is in accepted state -- the proposal itself was accepted, or its
+readmission was (`context.accepted_as`) -- and `playbill.proposal.readmit_not_stale`
+for an open or refused proposal. A stale generated ClaimType dependency-closure migration is not
 byte-rebased because its dependent inventory may have changed; rerun ClaimType
 migration preflight and submit at the current head instead.
 

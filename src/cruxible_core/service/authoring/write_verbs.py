@@ -116,6 +116,7 @@ from cruxible_client.contracts.write import (
     WriteStatus,
     WriteWarning,
     capture_handle,
+    subject_reference,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import ComputedPreflight
@@ -146,10 +147,6 @@ _MAX_CANDIDATES = 8
 # How many of a contract's Captures about the Subject, newest first, are tried
 # for the newest one that verifies.
 _MAX_CONTRACT_CAPTURES = 32
-# How many Captures sharing a handle's prefix are verified before giving up.
-_MAX_HANDLE_SCAN = 64
-# How many stored objects one handle lookup examines in its shard.
-_CAPTURE_SCAN_BUDGET = 65_536
 # How many stored objects one contract lookup examines for its Captures.
 _CONTRACT_SCAN_BUDGET = 16_384
 _CONTRACT_QUALIFIER = "CaptureContract:"
@@ -573,9 +570,12 @@ class _Planner:
                     info, item, index=index, field_name=field_name, path=path
                 ).value
             elif isinstance(item, str) and item:
-                # A Subject as kind/id, or exact content as its text: compared as
-                # written, so a value no Claim holds is simply not what it holds.
-                shown = item
+                # A Subject as kind/id (``@kind/id`` names the same one), or exact
+                # content as its text: compared as written, so a value no Claim
+                # holds is simply not what it holds.
+                shown = (
+                    subject_reference(item) if info.claim_type.object_kind == "subject" else item
+                )
             else:
                 taken = (
                     "a Subject as kind/id" if info.claim_type.object_kind == "subject" else "text"
@@ -786,6 +786,7 @@ class _Planner:
     ) -> tuple[SubjectClaimObject, str]:
         path = f"changes[{index}].value"
         allowed = tuple(info.claim_type.allowed_object_subject_kinds)
+        value = subject_reference(value)
         kind, _, subject_id = str(value).partition("/") if isinstance(value, str) else ("", "", "")
         if not kind or not subject_id:
             raise _refuse(
@@ -967,31 +968,41 @@ class _Planner:
         return found[:_MAX_CANDIDATES]
 
     def capture_by_handle(self, handle: str, *, index: int, path: str) -> str:
-        """Resolve ``CAP-<hex>`` by unique digest prefix among the verified Captures held.
+        """Resolve ``CAP-<hex>`` to one Capture at the head, as ``get`` and ``read_capture`` do.
 
-        Every Capture the instance holds counts, cited or not -- citing one for the
-        first time is the common case -- as long as it verifies against its
-        contract accepted at the head. The lookup is bounded: when the store
-        holds more under the prefix than one lookup examines, it refuses rather
-        than call a partial answer unique.
+        ``resolve_capture_handle`` is the one resolver: a Capture an accepted
+        Claim cites, or one the instance holds that verifies against its
+        contract accepted at the head -- citing one for the first time is the
+        common case. The lookup is bounded: when the store holds more under the
+        prefix than one lookup examines, it refuses rather than call a partial
+        answer unique.
         """
 
-        from cruxible_core.service.evidence.capture_reads import retained_captures
+        from cruxible_core.service.evidence.capture_reads import (
+            CAPTURE_HANDLE_MAX_VERIFIED,
+            CaptureHandleAmbiguous,
+            CaptureHandleExhausted,
+            CaptureHandleResolved,
+            resolve_capture_handle,
+        )
 
         hex_prefix = handle.removeprefix("CAP-")
-        inventory = retained_captures(
+        resolution = resolve_capture_handle(
             self.instance,
-            budget=_CAPTURE_SCAN_BUDGET,
-            hex_prefix=hex_prefix,
+            self.head,
+            hex_prefix,
+            verified=self._verified_capture,
             nearest=_MAX_CANDIDATES,
         )
-        if not inventory.complete or len(inventory.captures) > _MAX_HANDLE_SCAN:
+        if isinstance(resolution, CaptureHandleResolved):
+            return resolution.digest
+        if isinstance(resolution, CaptureHandleExhausted):
             # Out of budget, a Capture past the limit could match too: the scan
             # never calls what it verified so far unique.
             what = (
                 "objects under it than one lookup examines"
-                if not inventory.complete
-                else f"more than {_MAX_HANDLE_SCAN} Captures under it to verify"
+                if resolution.reason == "scan_budget"
+                else f"more than {CAPTURE_HANDLE_MAX_VERIFIED} Captures under it to verify"
             )
             raise _refuse(
                 "playbill.write.capture_scan_exhausted",
@@ -1000,24 +1011,21 @@ class _Planner:
                 repair="Pass a longer handle, or the full sha256 digest",
                 field_path=path,
             )
-        found = [item.digest for item in inventory.captures if self._verified_capture(item.digest)]
-        if len(found) == 1:
-            return found[0]
-        if found:
+        if isinstance(resolution, CaptureHandleAmbiguous):
             raise _refuse(
                 "playbill.write.capture_ambiguous",
-                f"{handle} is the prefix of more than one verified Capture",
+                f"{handle} is the prefix of more than one Capture",
                 change=index,
-                candidates=_distinct_handles(found, at_least=len(hex_prefix) + 1),
+                candidates=_distinct_handles(resolution.candidates, at_least=len(hex_prefix) + 1),
                 repair="Pass a longer handle, or the full sha256 digest",
                 field_path=path,
             )
         raise _refuse(
             "playbill.write.capture_not_found",
-            f"no verified Capture this instance holds has the handle {handle}",
+            f"no Capture this instance holds has the handle {handle}",
             change=index,
             candidates=_distinct_handles(
-                self._nearest_captures(inventory.nearest, hex_prefix), at_least=12
+                self._nearest_captures(resolution.nearest, hex_prefix), at_least=12
             ),
             repair=(
                 "Name a Capture by the CAP- handle a run, a capture or get with "
