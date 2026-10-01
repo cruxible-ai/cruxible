@@ -36,8 +36,6 @@ def test_the_grammar_is_five_numeric_fields_with_ranges_steps_and_lists() -> Non
     ):
         with pytest.raises(CronExpressionError, match=reason):
             parse_cron(expression)
-    with pytest.raises(CronExpressionError, match="IANA timezone"):
-        parse_cron("0 9 * * *", "Mars/Olympus")
 
 
 def test_instants_respect_boundaries_both_ways() -> None:
@@ -57,21 +55,36 @@ def test_instants_respect_boundaries_both_ways() -> None:
     assert either.next_after(datetime(2026, 10, 1, tzinfo=UTC)) == datetime(2026, 10, 5, tzinfo=UTC)
 
 
-def test_instants_are_wall_clock_times_in_the_schedules_timezone() -> None:
-    spec = parse_cron("0 9 * * *", "America/New_York")
-    # 09:00 in New York is 13:00 UTC in September (EDT) and 14:00 UTC in December (EST).
-    assert spec.next_after(MONDAY) == MONDAY.replace(hour=13)
-    december = datetime(2026, 12, 7, tzinfo=UTC)
-    assert spec.next_after(december) == december.replace(hour=14)
-    # A wall time the spring-forward skips never fires; one fall-back repeats fires once.
-    skipped = parse_cron("30 2 * * *", "America/New_York")
-    spring = datetime(2026, 3, 8, tzinfo=UTC)
-    assert skipped.next_after(spring) == datetime(2026, 3, 9, 6, 30, tzinfo=UTC)
-    repeated = parse_cron("30 1 * * *", "America/New_York")
-    autumn = datetime(2026, 11, 1, 4, tzinfo=UTC)
-    first = repeated.next_after(autumn)
-    assert first == datetime(2026, 11, 1, 5, 30, tzinfo=UTC)
-    assert repeated.next_after(first) == datetime(2026, 11, 2, 6, 30, tzinfo=UTC)
+def test_cron_is_utc_and_never_reads_a_host_timezone_database(tmp_path: Path) -> None:
+    import zoneinfo
+
+    from pydantic import ValidationError
+    from tests.support.lines import action_trigger
+
+    from cruxible_client.contracts.triggers import evaluate_trigger_law, trigger_path
+
+    calendar = action_trigger(
+        "calendar", action="evidence.sweep", schedule=CronScheduleV1(expression="0 9 * * 1-5")
+    )
+
+    def judged() -> tuple[str, datetime | None]:
+        parse_cron.cache_clear()
+        law = evaluate_trigger_law(calendar, path=trigger_path("calendar"), predecessor=None)
+        return law.verdict, parse_cron("0 9 * * 1-5").next_after(MONDAY)
+
+    with_database = judged()
+    original = zoneinfo.TZPATH
+    try:
+        zoneinfo.reset_tzpath([str(tmp_path)])
+        zoneinfo.ZoneInfo.clear_cache()
+        assert judged() == with_database == ("accepted", MONDAY.replace(hour=9))
+    finally:
+        zoneinfo.reset_tzpath(original)
+        zoneinfo.ZoneInfo.clear_cache()
+        parse_cron.cache_clear()
+    # There is no timezone to name.
+    with pytest.raises(ValidationError, match="timezone"):
+        CronScheduleV1.model_validate({"expression": "0 9 * * *", "timezone": "UTC"})
 
 
 def test_a_cron_schedule_is_due_once_after_downtime_and_never_before_its_floor() -> None:
@@ -103,10 +116,9 @@ def test_an_internal_cron_trigger_fires_at_its_instants_and_once_after_downtime(
         InternalTrigger(
             "Trigger:nightly-sweep",
             "evidence.sweep",
-            CronScheduleV1(expression="0 2 * * *", timezone="Europe/Amsterdam"),
+            CronScheduleV1(expression="0 0 * * *"),
         ),
     )
-    # 02:00 in Amsterdam is 00:00 UTC in September (CEST).
     (first,) = evaluate_triggers(world, now=MONDAY.replace(hour=1), triggers=nightly)
     assert first.due_at == MONDAY and first.event is None
     assert evaluate_triggers(world, now=MONDAY.replace(hour=23), triggers=nightly) == ()

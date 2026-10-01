@@ -1200,10 +1200,10 @@ When a Line runs is not the Line's own: a `trigger` input authors a Trigger
 target is one Line (`line_name`) or one registered internal action (`action`).
 A `cron` schedule is a standard five-field expression (`minute hour
 day-of-month month day-of-week`; numbers, `*`, ranges, steps and lists, with
-day-of-week 0-7 and Sunday both 0 and 7; no names or `@` macros) read in an IANA
-`timezone`, default `UTC`. A wall time a DST change skips never fires and one it
-repeats fires once; the Trigger law refuses an expression or timezone outside
-this grammar (`playbill.trigger.cron_invalid`). A Line can
+day-of-week 0-7 and Sunday both 0 and 7; no names or `@` macros) read in UTC.
+Schedules are UTC only, so an instant never depends on a host's timezone
+database; the Trigger law refuses an expression outside this grammar
+(`playbill.trigger.cron_invalid`). A Line can
 have several Triggers; one with none runs only when run explicitly, and `run`
 of a Line with Triggers names the Trigger it fires on (`--trigger`). Retiring
 a Line with live Triggers aimed at it refuses unless they are retired or

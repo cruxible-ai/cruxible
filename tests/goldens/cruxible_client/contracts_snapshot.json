@@ -1026,26 +1026,11 @@
             "title": "Kind",
             "type": "string"
           }
-        },
-        "timezone": {
-          "default": "UTC",
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "timezone",
-          "required": false,
-          "schema": {
-            "default": "UTC",
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Timezone",
-            "type": "string"
-          }
         }
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "Fire at each instant a standard five-field cron expression names.\n\n``minute hour day-of-month month day-of-week``, read as wall-clock time in\n``timezone`` (an IANA name). Like a cadence it fires once after downtime,\nnever back-filling the instants it missed, and an armed Line fires only on\ninstants from its arm forward. The Trigger law refuses an expression or\ntimezone the grammar does not admit; see ``cruxible_client.contracts.cron``.",
+        "description": "Fire at each instant a standard five-field cron expression names, in UTC.\n\n``minute hour day-of-month month day-of-week``, read as UTC: no host\ntimezone database enters an instant. The Trigger law refuses an expression\nthe grammar does not admit; see ``cruxible_client.contracts.cron``.",
         "properties": {
           "expression": {
             "examples": [
@@ -1060,13 +1045,6 @@
             "const": "cron",
             "default": "cron",
             "title": "Kind",
-            "type": "string"
-          },
-          "timezone": {
-            "default": "UTC",
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Timezone",
             "type": "string"
           }
         },
@@ -9347,7 +9325,7 @@
           },
           "CronScheduleV1": {
             "additionalProperties": false,
-            "description": "Fire at each instant a standard five-field cron expression names.\n\n``minute hour day-of-month month day-of-week``, read as wall-clock time in\n``timezone`` (an IANA name). Like a cadence it fires once after downtime,\nnever back-filling the instants it missed, and an armed Line fires only on\ninstants from its arm forward. The Trigger law refuses an expression or\ntimezone the grammar does not admit; see ``cruxible_client.contracts.cron``.",
+            "description": "Fire at each instant a standard five-field cron expression names, in UTC.\n\n``minute hour day-of-month month day-of-week``, read as UTC: no host\ntimezone database enters an instant. The Trigger law refuses an expression\nthe grammar does not admit; see ``cruxible_client.contracts.cron``.",
             "properties": {
               "expression": {
                 "examples": [
@@ -9362,13 +9340,6 @@
                 "const": "cron",
                 "default": "cron",
                 "title": "Kind",
-                "type": "string"
-              },
-              "timezone": {
-                "default": "UTC",
-                "maxLength": 64,
-                "minLength": 1,
-                "title": "Timezone",
                 "type": "string"
               }
             },
@@ -89696,7 +89667,7 @@
           },
           "CronScheduleV1": {
             "additionalProperties": false,
-            "description": "Fire at each instant a standard five-field cron expression names.\n\n``minute hour day-of-month month day-of-week``, read as wall-clock time in\n``timezone`` (an IANA name). Like a cadence it fires once after downtime,\nnever back-filling the instants it missed, and an armed Line fires only on\ninstants from its arm forward. The Trigger law refuses an expression or\ntimezone the grammar does not admit; see ``cruxible_client.contracts.cron``.",
+            "description": "Fire at each instant a standard five-field cron expression names, in UTC.\n\n``minute hour day-of-month month day-of-week``, read as UTC: no host\ntimezone database enters an instant. The Trigger law refuses an expression\nthe grammar does not admit; see ``cruxible_client.contracts.cron``.",
             "properties": {
               "expression": {
                 "examples": [
@@ -89711,13 +89682,6 @@
                 "const": "cron",
                 "default": "cron",
                 "title": "Kind",
-                "type": "string"
-              },
-              "timezone": {
-                "default": "UTC",
-                "maxLength": 64,
-                "minLength": 1,
-                "title": "Timezone",
                 "type": "string"
               }
             },

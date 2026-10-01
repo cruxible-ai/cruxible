@@ -276,7 +276,7 @@ def trigger_example() -> TriggerInput:
 
     Name `line_name` or `action` (a registered internal action such as
     `evidence.sweep`), never both. A schedule is `cadence` (`interval_seconds`),
-    `cron` (a five-field `expression` and an IANA `timezone`, default UTC),
+    `cron` (a five-field UTC `expression`),
     `capture_landing` (an exact CaptureContract `event`), or `window_close` (a
     `window`). Any kind serves a target that needs no event; a Line that binds
     its triggering Capture needs one that fires on that exact event.

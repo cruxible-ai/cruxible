@@ -73,18 +73,15 @@ class CadenceScheduleV1(_StrictTriggerModel):
 
 
 class CronScheduleV1(_StrictTriggerModel):
-    """Fire at each instant a standard five-field cron expression names.
+    """Fire at each instant a standard five-field cron expression names, in UTC.
 
-    ``minute hour day-of-month month day-of-week``, read as wall-clock time in
-    ``timezone`` (an IANA name). Like a cadence it fires once after downtime,
-    never back-filling the instants it missed, and an armed Line fires only on
-    instants from its arm forward. The Trigger law refuses an expression or
-    timezone the grammar does not admit; see ``cruxible_client.contracts.cron``.
+    ``minute hour day-of-month month day-of-week``, read as UTC: no host
+    timezone database enters an instant. The Trigger law refuses an expression
+    the grammar does not admit; see ``cruxible_client.contracts.cron``.
     """
 
     kind: Literal["cron"] = "cron"
     expression: str = Field(min_length=1, max_length=128, examples=["0 9 * * 1-5"])
-    timezone: str = Field(default="UTC", min_length=1, max_length=64)
 
 
 class CaptureLandingScheduleV1(_StrictTriggerModel):
@@ -429,13 +426,12 @@ def evaluate_trigger_law(
     if trigger.lifecycle.state == "live":
         if isinstance(trigger.schedule, CronScheduleV1):
             try:
-                parse_cron(trigger.schedule.expression, trigger.schedule.timezone)
+                parse_cron(trigger.schedule.expression)
             except CronExpressionError as exc:
                 return _refusal(
                     "playbill.trigger.cron_invalid",
-                    f"Cron schedule is not valid: {exc}. Use five fields (minute hour "
-                    "day-of-month month day-of-week) of numbers, ranges, steps or lists, and "
-                    "an IANA timezone.",
+                    f"Cron schedule is not valid: {exc}. Use five UTC fields (minute hour "
+                    "day-of-month month day-of-week) of numbers, ranges, steps or lists.",
                     path=path,
                 )
         if isinstance(trigger.target, ActionTargetV1):

@@ -43,7 +43,7 @@ def cron_due(
     refuses at acceptance.
     """
 
-    spec = parse_cron(schedule.expression, schedule.timezone)
+    spec = parse_cron(schedule.expression)
     candidates = []
     if last is not None:
         candidates.append(spec.next_after(last))

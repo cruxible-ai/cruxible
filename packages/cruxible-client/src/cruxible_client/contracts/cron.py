@@ -1,4 +1,4 @@
-"""Standard five-field cron, evaluated in one explicit IANA timezone.
+"""Standard five-field cron, evaluated in UTC.
 
 The grammar is the classic one and nothing more: ``minute hour day-of-month
 month day-of-week``, each field ``*``, a number, a range ``a-b``, a step
@@ -8,10 +8,10 @@ and 7 meaning Sunday. Names (``MON``, ``JAN``), ``?``, ``L``, ``W``, ``#`` and
 reader. As in classic cron, when both day fields are restricted a day matches
 if either does.
 
-Instants are wall-clock times in the schedule's timezone. A wall time a DST
-change skips never fires; a wall time a DST change repeats fires once, at its
-first occurrence. Schedules are minute-resolution: every instant is on a whole
-minute.
+Instants are UTC times, on whole minutes. Governed schedules are UTC only:
+an instant is a pure function of the expression, never of a host's timezone
+database, so every daemon and reader agrees on it. Named timezones would need a
+bundled, versioned ruleset of their own.
 
 No dependency: the matcher walks calendar days and only the hours and minutes
 the expression names, which keeps a search to a handful of candidates for any
@@ -24,7 +24,6 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from functools import lru_cache
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 #: How far a search walks before concluding an expression never fires. A
 #: weekday-restricted 29 February recurs within 28 years except across a
@@ -41,7 +40,7 @@ _FIELDS = (
 
 
 class CronExpressionError(ValueError):
-    """A cron expression or timezone is not valid under the supported grammar."""
+    """A cron expression is not valid under the supported grammar."""
 
 
 @dataclass(frozen=True)
@@ -55,7 +54,6 @@ class CronSpec:
     weekdays: frozenset[int]
     days_restricted: bool
     weekdays_restricted: bool
-    zone: ZoneInfo
 
     def _day_matches(self, day: date) -> bool:
         if day.month not in self.months:
@@ -72,16 +70,12 @@ class CronSpec:
         for hour in hours:
             minutes = reversed(self.minutes) if reverse else iter(self.minutes)
             for minute in minutes:
-                local = datetime.combine(day, time(hour, minute), tzinfo=self.zone)
-                instant = local.astimezone(UTC)
-                # A skipped wall time does not survive the round trip.
-                if instant.astimezone(self.zone).replace(tzinfo=None) == local.replace(tzinfo=None):
-                    yield instant
+                yield datetime.combine(day, time(hour, minute), tzinfo=UTC)
 
     def next_after(self, moment: datetime) -> datetime | None:
         """The first instant strictly after ``moment``."""
 
-        start = moment.astimezone(self.zone).date() - timedelta(days=1)
+        start = moment.astimezone(UTC).date()
         for offset in range(_HORIZON_DAYS):
             day = start + timedelta(days=offset)
             if self._day_matches(day):
@@ -93,7 +87,7 @@ class CronSpec:
     def latest_at_or_before(self, moment: datetime) -> datetime | None:
         """The last instant at or before ``moment``."""
 
-        start = moment.astimezone(self.zone).date() + timedelta(days=1)
+        start = moment.astimezone(UTC).date()
         for offset in range(_HORIZON_DAYS):
             day = start - timedelta(days=offset)
             if self._day_matches(day):
@@ -129,8 +123,8 @@ def _field(text: str, name: str, low: int, high: int) -> frozenset[int]:
 
 
 @lru_cache(maxsize=256)
-def parse_cron(expression: str, timezone: str = "UTC") -> CronSpec:
-    """Parse one five-field expression in one timezone, refusing anything else."""
+def parse_cron(expression: str) -> CronSpec:
+    """Parse one five-field UTC expression, refusing anything else."""
 
     parts = expression.split()
     if len(parts) != 5 or " ".join(parts) != expression:
@@ -138,10 +132,6 @@ def parse_cron(expression: str, timezone: str = "UTC") -> CronSpec:
             "a cron expression is exactly five single-space-separated fields: "
             "minute hour day-of-month month day-of-week"
         )
-    try:
-        zone = ZoneInfo(timezone)
-    except (ZoneInfoNotFoundError, ValueError) as exc:
-        raise CronExpressionError(f"timezone {timezone!r} is not an IANA timezone") from exc
     minutes, hours, days, months, weekdays = (
         _field(text, name, low, high)
         for text, (name, low, high) in zip(parts, _FIELDS, strict=True)
@@ -154,7 +144,6 @@ def parse_cron(expression: str, timezone: str = "UTC") -> CronSpec:
         weekdays=frozenset(value % 7 for value in weekdays),
         days_restricted=not parts[2].startswith("*"),
         weekdays_restricted=not parts[4].startswith("*"),
-        zone=zone,
     )
     if spec.next_after(datetime(2000, 1, 1, tzinfo=UTC)) is None:
         raise CronExpressionError(f"cron expression {expression!r} never fires")
