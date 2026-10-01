@@ -24,7 +24,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow, ParsedProjectionTree
-from cruxible_core.derived.memo import memo_get, memo_put
+from cruxible_core.derived.memo import memo_clear, memo_get, memo_put
 from cruxible_core.documents.projection_documents import (
     DocumentProjectionView,
     document_projection_view,
@@ -298,7 +298,7 @@ def reset_projection_verification_memo() -> None:
     needs an explicit reset to make the next bind pay the full check again.
     """
 
-    _VERIFIED_PIECES.clear()
+    memo_clear(_VERIFIED_PIECES)
     with _TRUSTED_STAMPS_LOCK:
         _TRUSTED_STAMPS.clear()
 

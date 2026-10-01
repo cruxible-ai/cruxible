@@ -27,6 +27,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
 )
+from cruxible_core.derived.memo import memo_clear, memo_get, memo_put
 
 NODE_DIGEST_MEMO_CAPACITY = 256
 
@@ -50,19 +51,16 @@ def cached_node_digests(
 ) -> Mapping[str, ProcedureNodeDigestsV3]:
     """Return the node digest vector for one exact accepted definition digest."""
 
-    cached = _memo.get(definition_digest)
+    cached = memo_get(_memo, definition_digest)
     if cached is not None:
-        _memo.move_to_end(definition_digest)
         return cached
     computed = compute_node_digests(definition)
-    _memo[definition_digest] = computed
-    while len(_memo) > NODE_DIGEST_MEMO_CAPACITY:
-        _memo.popitem(last=False)
+    memo_put(_memo, definition_digest, computed, capacity=NODE_DIGEST_MEMO_CAPACITY)
     return computed
 
 
 def clear_node_digest_memo() -> None:
-    _memo.clear()
+    memo_clear(_memo)
 
 
 __all__ = [

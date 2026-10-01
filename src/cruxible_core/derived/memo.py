@@ -10,7 +10,7 @@ otherwise valid read; an insert that trims to capacity can find the memo emptied
 under it and ``popitem`` an empty dict. Neither corrupts anything, but both
 surface as a server error where a cold read was the correct answer.
 
-The two helpers here make each memo access one critical section, so a lost race
+The helpers here make each memo access one critical section, so a lost race
 reads as a miss and the caller simply does the work again. One process-wide lock
 serves every memo: the operations under it are O(1) dictionary moves, and the
 memos they guard are read a few dozen times per request.
@@ -60,4 +60,18 @@ def memo_put(
                 return
 
 
-__all__ = ["memo_get", "memo_put"]
+def memo_discard(memo: "OrderedDict[KeyT, ValueT]", key: KeyT) -> None:
+    """Forget one entry if it is still there."""
+
+    with _MEMO_LOCK:
+        memo.pop(key, None)
+
+
+def memo_clear(memo: "OrderedDict[KeyT, ValueT]") -> None:
+    """Forget every entry."""
+
+    with _MEMO_LOCK:
+        memo.clear()
+
+
+__all__ = ["memo_clear", "memo_discard", "memo_get", "memo_put"]
