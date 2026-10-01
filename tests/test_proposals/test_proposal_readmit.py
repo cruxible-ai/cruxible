@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,8 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
+    ProposalReadmitAlreadyAccepted,
+    ProposalReadmitNotStale,
     ProposalReadmitRequiresResubmission,
 )
 from cruxible_core.claims.claim_type_migrations import (
@@ -144,12 +147,14 @@ def test_readmit_cleanly_rebases_and_response_loss_retry_returns_one_admission(
         instance.proposal_evidence().read_admission(source_id).model_dump_json(),
         instance.proposal_evidence().read_evaluation(source_id).model_dump_json(),
     ) == source_bytes
-    with pytest.raises(ProposalAdmissionError, match="settled stale"):
+    with pytest.raises(ProposalReadmitNotStale) as open_refusal:
         service_readmit_playbill_proposal(
             instance,
             proposal_id=first.proposal.proposal.admission.proposal_id,
             actor_id="owner",
         )
+    assert open_refusal.value.status == "open"
+    assert open_refusal.value.error_code == "playbill.proposal.readmit_not_stale"
 
 
 def test_readmit_returns_a_typed_refused_proposal_when_content_no_longer_preflights(
@@ -269,3 +274,116 @@ def test_readmit_archived_stale_candidate_survives_gc(tmp_path: Path) -> None:
     assert result.proposal.proposal.evaluation.verdict == "candidate"
     assert result.proposal.proposal.evaluation.rebased
     assert len(service_list_playbill_proposals(reopened).entries) == len(before.entries) + 1
+
+
+def _propose(instance, name: str):  # type: ignore[no-untyped-def]
+    body = service_store_playbill_body(instance, content=name.encode()).digest
+    return service_propose_playbill_document(
+        instance,
+        shell=_shell(name, body, title=name),
+        actor_id="owner",
+        proposal_name=name,
+        timestamp=TIMESTAMP,
+    )
+
+
+def _stale_ids(instance, *, actor_id: str | None = "owner") -> list[str]:  # type: ignore[no-untyped-def]
+    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.proposals.proposals import stale_unreadmitted_proposals
+
+    head = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    return [
+        item.proposal_id for item in stale_unreadmitted_proposals(instance, head, actor_id=actor_id)
+    ]
+
+
+def test_readmit_refuses_an_accepted_proposal_as_accepted_not_as_unstale(
+    tmp_path: Path,
+) -> None:
+    """An accepted proposal used to refuse "only a settled stale proposal may be readmitted"."""
+
+    instance, owner = initialize_local(tmp_path)
+    accepted = _propose(instance, "accepted")
+    _accept(instance, owner, accepted)
+    proposal_id = accepted.proposal.admission.proposal_id
+
+    with pytest.raises(ProposalReadmitAlreadyAccepted) as refusal:
+        service_readmit_playbill_proposal(instance, proposal_id=proposal_id, actor_id="owner")
+
+    assert refusal.value.accepted_as is None
+    assert refusal.value.error_code == "playbill.proposal.readmit_already_accepted"
+    assert "was accepted" in str(refusal.value)
+
+
+def test_an_accepted_readmission_supersedes_its_source(tmp_path: Path) -> None:
+    """Once its readmission is accepted, a stale source is no one's work.
+
+    The source stays `stale` in the inventory -- its own tree never activated --
+    but the readmission link says another proposal carried its change: it
+    leaves the stale set and its author's queue, and readmitting it again
+    refuses as already accepted, naming the proposal that was. Before that, a
+    live readmission that went stale itself is the row, not its source.
+    """
+
+    from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
+    from cruxible_core.service.proposals.proposals import (
+        proposal_readmission,
+        service_withdraw_playbill_proposal,
+    )
+
+    def stale_rows() -> list[str]:
+        queue = service_playbill_next(
+            instance,
+            request=PlaybillNextRequestV1(
+                evaluation_time=datetime(2026, 8, 22, 12, tzinfo=UTC),
+                access_profile=CoverageAccessProfileV1(
+                    profile_id="readmit", permitted_access_classes=("instance",)
+                ),
+            ),
+            caller_principal_id="owner",
+        )
+        return [item.subject_identity for item in queue.items if item.reason == "proposal_stale"]
+
+    def head() -> PlaybillAcceptedCoordinate:
+        return PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+
+    instance, owner = initialize_local(tmp_path)
+    first, source = _propose(instance, "first"), _propose(instance, "source")
+    source_id = source.proposal.admission.proposal_id
+    _accept(instance, owner, first)
+    assert _stale_ids(instance) == stale_rows() == [source_id]
+    assert _stale_ids(instance, actor_id="reviewer") == []
+
+    stalled = service_readmit_playbill_proposal(instance, proposal_id=source_id, actor_id="owner")
+    stalled_id = stalled.proposal.proposal.admission.proposal_id
+    # Head moves before the readmission activates: it is stale itself, and it
+    # -- not its source -- is the row that asks to be readmitted or withdrawn.
+    _accept(instance, owner, _propose(instance, "interloper"))
+    assert _stale_ids(instance) == stale_rows() == [stalled_id]
+    carried = proposal_readmission(instance, head(), source_id)
+    assert carried is not None and (carried.proposal_id, carried.accepted) == (stalled_id, False)
+
+    # Withdrawn, it carries nothing: the source is the author's work again.
+    service_withdraw_playbill_proposal(
+        instance,
+        proposal_id=stalled_id,
+        actor_id="owner",
+        reason="readmit the source at the new head",
+        withdrawn_at=TIMESTAMP,
+    )
+    assert proposal_readmission(instance, head(), source_id) is None
+    assert stale_rows() == [source_id]
+
+    landed = service_readmit_playbill_proposal(instance, proposal_id=source_id, actor_id="owner")
+    landed_id = landed.proposal.proposal.admission.proposal_id
+    _accept(instance, owner, landed.proposal)
+
+    assert _stale_ids(instance) == stale_rows() == []
+    carried = proposal_readmission(instance, head(), source_id)
+    assert carried is not None and (carried.proposal_id, carried.accepted) == (landed_id, True)
+    with pytest.raises(ProposalReadmitAlreadyAccepted) as refusal:
+        service_readmit_playbill_proposal(instance, proposal_id=source_id, actor_id="owner")
+    assert refusal.value.accepted_as == landed_id
+    assert f"its readmission {landed_id} was accepted" in str(refusal.value)

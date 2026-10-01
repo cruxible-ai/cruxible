@@ -1778,8 +1778,12 @@ is `stale`: a candidate neither accepted, refused nor withdrawn whose parent is
 no longer the coordinate's semantic root, so it cannot activate. The row names
 the proposal's author in `detail.actor_id`; its repair is
 `cruxible playbill proposal readmit PROPOSAL_ID`, which only that author may
-run, and `proposal withdraw` is the alternative when the change is no longer
-wanted. A readmission at the same coordinate, or a withdrawal, closes the row.
+run, so only the author's queue shows the row (the principal `whoami` reports;
+a read with no principal shows none). `proposal withdraw` is the alternative
+when the change is no longer wanted. A readmission at the same coordinate, or a
+withdrawal, closes the row; so does a readmission that still carries the
+change: an accepted one supersedes the source for good, and a live one that went
+stale shows as its own row instead.
 A proposal a settle terminal made carries `detail.settle_submission` (`mode`
 and `mandate_digest`). A `delegated` settle that went stale is automation that
 did not finish: readmitting it re-evaluates it as an ordinary proposal that
@@ -2333,7 +2337,10 @@ names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
 `proposal readmit` replays a stale proposal's authored content through the current
 governed rebase and returns a fresh, idempotent proposal without changing the old
-proposal evidence. A stale generated ClaimType dependency-closure migration is not
+proposal evidence. It refuses `playbill.proposal.readmit_already_accepted` when
+the change is in accepted state -- the proposal itself was accepted, or its
+readmission was (`context.accepted_as`) -- and `playbill.proposal.readmit_not_stale`
+for an open or refused proposal. A stale generated ClaimType dependency-closure migration is not
 byte-rebased because its dependent inventory may have changed; rerun ClaimType
 migration preflight and submit at the current head instead.
 

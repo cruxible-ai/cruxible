@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Stale proposals stay their author's work, and leave once superseded.** A
+  `proposal_stale` row in `next` now shows only to the proposal's author (the
+  caller's principal; a read without one shows none), since only the author may
+  readmit. A readmission is linked exactly to its source (its target ref
+  recomputed from the source and the coordinate its evaluation names), so a
+  source whose readmission was accepted leaves the queue for good instead of
+  reappearing at the next head, and one whose readmission is still live yields
+  that readmission's row. `proposal readmit` now refuses
+  `playbill.proposal.readmit_already_accepted` (naming `accepted_as` when a
+  readmission carried the change) apart from
+  `playbill.proposal.readmit_not_stale`, where it used to say "only a settled
+  stale proposal may be readmitted" for both.
+
 - **`procedure_run_status` withholds another principal's arming credential.**
   An armed run acts as its arming credential's principal, and the status read
   returned that actor and the receipt carrying it to every caller. It now

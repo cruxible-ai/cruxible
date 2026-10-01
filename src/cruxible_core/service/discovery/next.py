@@ -4109,6 +4109,7 @@ def _proposal_items(
     instance: PlaybillInstance,
     *,
     coordinate: PlaybillAcceptedCoordinate,
+    caller_principal_id: str | None,
     access_profile: CoverageAccessProfileV1,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Stale proposals: admitted work that can no longer activate where it stands.
@@ -4116,14 +4117,23 @@ def _proposal_items(
     Activation settles a candidate only onto the state it was evaluated
     against, so a proposal whose parent head has moved past waits on its
     author: readmit rebases the same tree onto the current head, and withdraw
-    says it will never be settled. Either one closes the row.
+    says it will never be settled. Either one closes the row, and so does a
+    readmission that carries the change: once it is accepted the source is
+    superseded, not stale work.
+
+    Only the author may readmit, so a row shows only to its author: the
+    daemon's authenticated caller, never a request field. A queue read
+    without one -- library mode, or an unattributed request -- has no rows
+    here, as with approvals.
     """
 
-    if not access_profile.permits("instance"):
+    if caller_principal_id is None or not access_profile.permits("instance"):
         return ()
     evidence = instance.proposal_evidence()
     items: list[PlaybillNextItemV1] = []
-    for proposal in stale_unreadmitted_proposals(instance, coordinate):
+    for proposal in stale_unreadmitted_proposals(
+        instance, coordinate, actor_id=caller_principal_id
+    ):
         detail: dict[str, object] = {
             "actor_id": proposal.actor_id,
             "admitted_at": proposal.admitted_at,
@@ -4945,6 +4955,7 @@ def _next_queue(
         *_proposal_items(
             instance,
             coordinate=public_coordinate,
+            caller_principal_id=caller_principal_id,
             access_profile=request.access_profile,
         ),
         *_approval_items(
@@ -5209,7 +5220,7 @@ def service_playbill_next(
 # scoped to the instance and access profile that produced them: a delta names
 # removed rows, so diffing against a queue read with wider access would hand
 # this caller rows its own read withholds. The caller's principal is in the
-# scope too, since approval rows are that principal's alone.
+# scope too, since approval and stale-proposal rows are that principal's alone.
 _QUEUE_MEMO: OrderedDict[tuple[str, str], tuple[PlaybillNextItemV1, ...]] = OrderedDict()
 _QUEUE_MEMO_LIMIT = 32
 _QUEUE_MEMO_LOCK = RLock()
