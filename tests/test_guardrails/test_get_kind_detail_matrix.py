@@ -62,6 +62,10 @@ def _refs(instance: Any) -> dict[str, str]:
         capture = connection.execute("SELECT capture_digest FROM captures").fetchone()
         if capture is not None:
             found["capture"] = f"Capture:{capture[0]}"
+    principals = instance.accepted_history()[-1].principals.principals
+    if principals:
+        found["principal"] = f"Principal:{principals[0].principal_id}"
+    found["approval_policy"] = "ApprovalPolicy:instance"
     runs = service_playbill_orient(instance, section="runs").runs or ()
     if runs:
         found["procedure_run"] = f"ProcedureRun:{runs[0].run}"

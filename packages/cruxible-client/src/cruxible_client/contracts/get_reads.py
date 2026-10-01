@@ -45,6 +45,8 @@ PlaybillGetRefKind = Literal[
     "resolution_contract",
     "mandate",
     "procedure_run",
+    "principal",
+    "approval_policy",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
 # never re-adjudicated here.
@@ -80,6 +82,8 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "resolution_contract": ("summary", "history", "proof"),
     "mandate": ("summary", "history", "proof"),
     "procedure_run": ("summary", "proof"),
+    "principal": ("summary", "proof"),
+    "approval_policy": ("summary", "history", "proof"),
 }
 
 
@@ -354,6 +358,25 @@ class PlaybillGetProposalCardV1(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class PlaybillGetPrincipalCardV1(_StrictGetModel):
+    """One registered principal: who it is, what kind, and whether it is active."""
+
+    principal: str
+    kind: str
+    status: Literal["active", "revoked"]
+    algorithm: str
+    public_key: str
+    next: tuple[str, ...] = ()
+
+
+class PlaybillGetApprovalPolicyCardV1(_StrictGetModel):
+    """The instance's approval policy: whether a proposer may approve its own change."""
+
+    policy: str
+    mode: Literal["self_approval_allowed", "independent_approval_required"]
+    next: tuple[str, ...] = ()
+
+
 PlaybillGetCardV1 = (
     PlaybillGetClaimCardV1
     | PlaybillGetSubjectCardV1
@@ -368,6 +391,8 @@ PlaybillGetCardV1 = (
     | PlaybillGetResolutionContractCardV1
     | PlaybillGetMandateCardV1
     | PlaybillGetProcedureRunCardV1
+    | PlaybillGetPrincipalCardV1
+    | PlaybillGetApprovalPolicyCardV1
 )
 
 
@@ -473,6 +498,7 @@ __all__ = [
     "GET_SUMMARY_TEXT_MAX_CHARS",
     "PlaybillByteRangeV1",
     "PlaybillExactContentRefV1",
+    "PlaybillGetApprovalPolicyCardV1",
     "PlaybillGetAttestationEvidenceV1",
     "PlaybillGetBodyV1",
     "PlaybillGetCaptureContractCardV1",
@@ -487,6 +513,7 @@ __all__ = [
     "PlaybillGetDocumentCardV1",
     "PlaybillGetEvidenceV1",
     "PlaybillGetHistoryV1",
+    "PlaybillGetPrincipalCardV1",
     "PlaybillGetProcedureCardV1",
     "PlaybillGetProposalCardV1",
     "PlaybillGetProposalChangeV1",

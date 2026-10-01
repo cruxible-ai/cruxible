@@ -54,8 +54,10 @@ from cruxible_client.contracts.orient import (
     PlaybillOrientSurface,
     PlaybillOrientYouV1,
 )
+from cruxible_client.contracts.policy_rows import PlaybillPolicyInForce
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.exhaust.journal_index import RunPageInvalidated
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -864,13 +866,16 @@ def service_playbill_orient(
         rows, keys, first_ref = (
             _operational_rows(instance, coordinate, section, evaluation_time=moment)
             if section in _OPERATIONAL_SECTIONS
+            else _governance_rows(instance, coordinate, section)
+            if section in _GOVERNANCE_SECTIONS
             else _section_rows(state, section)
         )
         page, next_cursor = _page(
             rows, keys, view=view, served=served, continuation=continuation, limit=limit
         )
-        if page and first_ref is not None:
-            calls.append(_Call("get", (("ref", first_ref(page[0])),)))
+        first = None if not page or first_ref is None else first_ref(page[0])
+        if first is not None:
+            calls.append(_Call("get", (("ref", first),)))
         if next_cursor is not None:
             calls.append(_Call("orient", (("section", section), ("cursor", next_cursor))))
         base[section] = page
@@ -1009,6 +1014,61 @@ def _operational_counts(
         }
     counts["runs"], counts["running"] = run_counts(instance)
     return counts
+
+
+_GOVERNANCE_SECTIONS: frozenset[str] = frozenset({"principals", "policies"})
+# Declaring artifacts ``get`` resolves by their identity, for a policy row's next call.
+_GETTABLE_POLICY_DECLARERS = (
+    "ApprovalPolicy:",
+    "ClaimType:",
+    "CaptureContract:",
+    "QueryDefinition:",
+    "document:",
+    "Procedure:",
+    "Line:",
+)
+
+
+def _governance_rows(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    section: str,
+) -> tuple[tuple[Any, ...], list[str], Any]:
+    """The principal registry, or every live governed policy, at the coordinate."""
+
+    if section == "principals":
+        generation = next(
+            item for item in instance.accepted_history() if item.oid == coordinate.git_oid
+        )
+        principals = tuple(
+            PrincipalRecord.model_validate(item.model_dump(mode="json"))
+            for item in generation.principals.principals
+        )
+        return (
+            principals,
+            [row.principal_id for row in principals],
+            lambda row: f"Principal:{row.principal_id}",
+        )
+    from cruxible_core.service.claims.policies import list_playbill_policies_in_force
+
+    policies = tuple(
+        PlaybillPolicyInForce.model_validate(row.model_dump(mode="json"))
+        for row in list_playbill_policies_in_force(
+            instance,
+            at=contracts.PlaybillAcceptedCoordinate.model_validate(
+                AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
+            ),
+        ).policies
+    )
+    return (
+        policies,
+        [f"{row.path}#{row.field_path}" for row in policies],
+        lambda row: (
+            row.declaring_artifact_identity
+            if row.declaring_artifact_identity.startswith(_GETTABLE_POLICY_DECLARERS)
+            else None
+        ),
+    )
 
 
 def _operational_rows(

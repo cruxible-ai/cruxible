@@ -36,8 +36,10 @@ from cruxible_client.contracts.operational_reads import (
     PlaybillOrientPredictionV1,
     PlaybillRunRowV1,
 )
+from cruxible_client.contracts.policy_rows import PlaybillPolicyInForce
 from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.types import PrincipalRecord
 
 PlaybillOrientSection: TypeAlias = Literal[
     "documents",
@@ -52,6 +54,8 @@ PlaybillOrientSection: TypeAlias = Literal[
     "capture_contracts",
     "predictions",
     "mandates",
+    "principals",
+    "policies",
 ]
 #: The surface a caller renders ``next`` for: tool calls, commands, or SDK calls.
 PlaybillOrientSurface: TypeAlias = Literal["mcp", "cli", "sdk"]
@@ -284,7 +288,8 @@ class PlaybillOrientResultV1(_StrictOrientModel):
     - ``section``: that section's rows (``documents``, ``procedures``,
       ``claim_types``, ``queries``, ``interfaces``, or an operational family:
       ``runs``, ``running``, ``lines``, ``captures``, ``capture_contracts``,
-      ``predictions``, ``mandates``), paged. The default map counts the
+      ``predictions``, ``mandates``), the principal registry (``principals``)
+      or the governed policies in force (``policies``), paged. The default map counts the
       operational families under ``artifacts`` and never inlines their rows.
 
     ``next`` is rendered for the requesting surface.
@@ -332,6 +337,12 @@ class PlaybillOrientResultV1(_StrictOrientModel):
         default=None, exclude_if=_is_none
     )
     mandates: tuple[PlaybillOrientMandateV1, ...] | None = Field(default=None, exclude_if=_is_none)
+    # The principal registry at the coordinate: every public record, active or
+    # revoked. ``get("Principal:<id>")`` reads one.
+    principals: tuple[PrincipalRecord, ...] | None = Field(default=None, exclude_if=_is_none)
+    # Every live governed policy, standalone or embedded in its declaring
+    # artifact; ``get`` reads the declaring artifact (``ApprovalPolicy:instance``).
+    policies: tuple[PlaybillPolicyInForce, ...] | None = Field(default=None, exclude_if=_is_none)
     truncated: bool = False
     next_cursor: str | None = Field(default=None, exclude_if=_is_none)
     # Present when part of the answer is operational state -- runs, Line arms and
