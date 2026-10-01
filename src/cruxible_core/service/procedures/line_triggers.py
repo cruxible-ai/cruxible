@@ -191,6 +191,11 @@ def service_check_line_trigger(
                         record_digest=stored.record_digest,
                     )
                     event_time = capture_event_time(instance, selector, event, now=now)
+                    if event_time <= trigger_accepted_at(instance, trigger):
+                        # No Trigger fires retroactively: an event at or before its
+                        # version's acceptance is not one it fires on, however it
+                        # reached this range (a position scan ignores time bounds).
+                        continue
                     if window is None:
                         bindings.append(
                             (trigger, trigger_binding_for(trigger, event=event), event_time)
@@ -205,9 +210,10 @@ def service_check_line_trigger(
                     break
             elif window is not None:
                 bound = bind_window(instance, window, None, now=now)
-                bindings.append(
-                    (trigger, trigger_binding_for(trigger, window=bound), bound.ends_at)
-                )
+                if bound.ends_at > trigger_accepted_at(instance, trigger):
+                    bindings.append(
+                        (trigger, trigger_binding_for(trigger, window=bound), bound.ends_at)
+                    )
             elif schedule_is_timed(schedule):
                 binding = trigger_binding_for(trigger)
                 _, due = _line_occurrence(

@@ -1020,6 +1020,7 @@ def service_dispatch_line(
                                 refusal = result.terminal
                                 detail = refusal.message
                                 if refusal.code in {
+                                    "trigger_event_precedes_acceptance",
                                     "trigger_capture_stale",
                                     "trigger_capture_over_budget",
                                     "trigger_capture_unavailable",

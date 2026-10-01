@@ -4075,6 +4075,8 @@ def _run_playbill_line(
         )
     schedule = None if trigger is None else trigger.trigger.schedule
     trigger_binding = None
+    # The event, or the fixed window's close, this occurrence fires on.
+    anchor: datetime | None = None
     try:
         if trigger is not None and schedule is not None and schedule_is_timed(schedule):
             trigger_binding = trigger_binding_for(trigger)
@@ -4090,7 +4092,9 @@ def _run_playbill_line(
                     message="The Trigger is waiting for a matching retained capture event.",
                     details={"repair": "Supply the retained capture event when it arrives."},
                 )
-            capture_event_time(instance, schedule.event, request.trigger_event, now=evaluation_time)
+            anchor = capture_event_time(
+                instance, schedule.event, request.trigger_event, now=evaluation_time
+            )
             trigger_binding = trigger_binding_for(trigger, event=request.trigger_event)
         elif trigger is not None and isinstance(schedule, WindowCloseScheduleV1):
             if isinstance(schedule.window, CaptureEventWindowV1) and request.trigger_event is None:
@@ -4112,8 +4116,35 @@ def _run_playbill_line(
                 line_event = None
             window = bind_window(instance, schedule.window, line_event, now=evaluation_time)
             trigger_binding = trigger_binding_for(trigger, window=window)
+            anchor = (
+                window.starts_at
+                if isinstance(schedule.window, CaptureEventWindowV1)
+                else window.ends_at
+            )
         elif request.trigger_event is not None and request.resolution_contract is None:
             raise PlaybillExecutionError("this Line occurrence does not accept a capture event")
+        if (
+            trigger is not None
+            and anchor is not None
+            and anchor <= trigger_accepted_at(instance, trigger)
+        ):
+            # No Trigger fires retroactively, whoever asks: matching skips such
+            # events, and admission refuses one supplied or queued anyway.
+            return _line_refusal_state(
+                accepted,
+                accepted_line,
+                coordinate=coordinate,
+                head_at_admission=head_at_admission,
+                evaluation_time=evaluation_time,
+                code="trigger_event_precedes_acceptance",
+                message=(
+                    "The Trigger fires only on events and windows after its version was "
+                    "accepted; this one is at or before that acceptance."
+                ),
+                details={
+                    "trigger_accepted_at": format_datetime(trigger_accepted_at(instance, trigger))
+                },
+            )
         investigation = (
             None
             if request.resolution_contract is None

@@ -525,7 +525,7 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
         )
     )
     _accept_tree(
-        instance, owner, tree, timestamp="2026-08-28T15:02:00.000000Z", proposal_name="second-line"
+        instance, owner, tree, timestamp="2026-08-24T15:30:00.000000Z", proposal_name="second-line"
     )
     actor = _actor(instance)
     for line in (first, second):
@@ -668,7 +668,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
             instance,
             owner,
             tree,
-            timestamp="2026-08-28T15:02:00.000000Z",
+            timestamp="2026-08-24T15:30:00.000000Z",
             proposal_name="rebind-pending",
         )
 
@@ -788,13 +788,13 @@ def test_restoring_a_schedule_rebinds_an_occurrence_its_change_superseded(tmp_pa
             window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=1)
         ),
     )
-    accept(windowed, "to-window", "2026-08-28T15:02:00.000000Z")
+    accept(windowed, "to-window", "2026-08-24T15:30:00.000000Z")
     superseded = dispatch(now)
     assert [item.status for item in superseded.items] == ["superseded"]
 
     # The schedule comes back through another accepted successor: the same event
     # derives the same occurrence, which was closed but never admitted.
-    accept(successor(windowed, schedule=landing.schedule), "back", "2026-08-28T15:03:00.000000Z")
+    accept(successor(windowed, schedule=landing.schedule), "back", "2026-08-24T15:40:00.000000Z")
     later = now + timedelta(seconds=2)
     (again,) = evaluate(later).occurrences
     assert again.occurrence_id == occurrence.occurrence_id
@@ -1016,3 +1016,117 @@ def test_a_timer_trigger_never_ticks_before_its_acceptance_and_a_successor_resta
     assert due(friday + timedelta(hours=2)) == []
     monday = datetime(2026, 8, 31, tzinfo=UTC)
     assert due(monday + timedelta(seconds=1)) == [monday]
+
+
+#: When line_world accepts its Line and the Trigger aimed at it.
+TRIGGER_ACCEPTED = READ_TIME - timedelta(hours=1)
+
+
+def _event(stored):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
+
+    return TriggerEventReferenceV1(
+        run_id=stored.record.run_id,
+        partition_id=stored.record.partition_id,
+        sequence=stored.record.sequence,
+        record_digest=stored.record_digest,
+    )
+
+
+@pytest.mark.parametrize("windowed", [False, True])
+def test_a_capture_at_or_before_the_triggers_acceptance_never_fires_it(tmp_path, windowed):
+    from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+
+    schedule = (
+        WindowCloseScheduleV1(window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=60))
+        if windowed
+        else CaptureLandingScheduleV1(event=SELECTOR)
+    )
+    instance, line, procedure = line_world(tmp_path, schedule)
+    stored = {
+        name: capture(instance, procedure, at=at, partition=f"run:{name}")
+        for name, at in (
+            ("before", TRIGGER_ACCEPTED - timedelta(minutes=1)),
+            ("at", TRIGGER_ACCEPTED),
+            ("after", TRIGGER_ACCEPTED + timedelta(seconds=1)),
+        )
+    }
+    checked = service_check_line_trigger(
+        instance, line.identity.name, LineTriggerCheckRequestV1(), now=READ_TIME
+    )
+    # Strictly after acceptance only: the equal instant is not after it.
+    assert [item.binding.event for item in checked.occurrences] == [_event(stored["after"])]
+
+    # Admission refuses the same events supplied explicitly, never running them.
+    for name in ("before", "at"):
+        run = service_run_playbill_line(
+            instance,
+            path_identity_digest=line.identity.name,
+            request=LineRunRequestV1(
+                line=line.identity.name, trigger=TRIGGER, trigger_event=_event(stored[name])
+            ),
+            actor_context=_actor(instance),
+            caller_rung=3,
+            daemon_clock=SimpleNamespace(now=lambda: READ_TIME),
+        )
+        assert run.status == "admission_refused", run
+        assert run.terminal.code == "trigger_event_precedes_acceptance"
+    journal, _ = _journal(instance)
+    assert journal.select_records(_stream(instance), event_kind="admission_bound") == ()
+
+
+@pytest.mark.parametrize(("closes_after", "fires"), [(0, False), (1, True)])
+def test_a_fixed_window_fires_only_when_it_closes_after_the_triggers_acceptance(
+    tmp_path, closes_after, fires
+):
+    from cruxible_client.contracts.procedures.windows import FixedWindowV1
+
+    window = FixedWindowV1(
+        starts_at=TRIGGER_ACCEPTED - timedelta(hours=1), duration_seconds=3600 + closes_after
+    )
+    instance, line, _procedure = line_world(tmp_path, WindowCloseScheduleV1(window=window))
+    checked = service_check_line_trigger(
+        instance, line.identity.name, LineTriggerCheckRequestV1(), now=READ_TIME
+    )
+    assert len(checked.occurrences) == (1 if fires else 0)
+    run = service_run_playbill_line(
+        instance,
+        path_identity_digest=line.identity.name,
+        request=LineRunRequestV1(line=line.identity.name, trigger=TRIGGER),
+        actor_context=_actor(instance),
+        caller_rung=3,
+        daemon_clock=SimpleNamespace(now=lambda: READ_TIME),
+    )
+    if not fires:
+        assert run.terminal.code == "trigger_event_precedes_acceptance"
+
+
+def test_an_armed_line_never_admits_a_later_append_stamped_before_acceptance(tmp_path):
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    actor = _actor(instance)
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL_OPERATOR,
+        actor=actor,
+        now=READ_TIME,
+        daemon_id="daemon",
+    )
+    # Appended while the arm listens, but stamped before the Trigger's acceptance:
+    # the arm's position scan ignores time bounds, the acceptance floor does not.
+    capture(instance, procedure, at=TRIGGER_ACCEPTED - timedelta(minutes=5), partition="run:late")
+    capture(instance, procedure, at=TRIGGER_ACCEPTED, partition="run:boundary")
+    service_match_listening_lines(
+        instance, actor=actor, now=READ_TIME + timedelta(seconds=1), daemon_id="daemon"
+    )
+    dispatched = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequestV1(),
+        actor=actor,
+        now=READ_TIME + timedelta(seconds=2),
+        caller_rung=3,
+    )
+    assert dispatched.items == ()
+    journal, _ = _journal(instance)
+    assert journal.select_records(_stream(instance), event_kind="admission_bound") == ()

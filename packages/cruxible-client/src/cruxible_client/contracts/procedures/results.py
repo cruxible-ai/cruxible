@@ -61,6 +61,7 @@ ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
     "trigger_capture_forbidden",
     "trigger_capture_invalid",
     "trigger_capture_not_yet_observed",
+    "trigger_event_precedes_acceptance",
     "line_binding_superseded",
 ]
 #: Codes retained runs were refused with before authority was served as verbs.

@@ -1209,7 +1209,10 @@ of a Line with Triggers names the Trigger it fires on (`--trigger`). Retiring
 a Line with live Triggers aimed at it refuses unless they are retired or
 retargeted in the same change set. `authoring create --example trigger` prints
 an hourly cron Trigger for the `--example line` Line, and `get Trigger:NAME` reads
-one.
+one. A Trigger never fires retroactively: it matches only Captures recorded
+strictly after its version was accepted and fixed windows that close strictly
+after it, and admission refuses an earlier one supplied or queued anyway
+(`trigger_event_precedes_acceptance`).
 
 `check` is read-only: it evaluates every live Trigger aimed at the Line and
 returns `met`, `not_met`, or `incomplete`, exact matching events/windows (each
