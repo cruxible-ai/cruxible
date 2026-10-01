@@ -26,7 +26,12 @@ from cruxible_core.indexes.projection import (
     ProjectionManifest,
     projection_manifest_name,
 )
-from cruxible_core.indexes.sqlite import ProjectionHandle, bind_projection
+from cruxible_core.indexes.sqlite import (
+    ProjectionHandle,
+    bind_projection,
+    retain_serving_head_stamp_locked,
+    stamp_ring_guard,
+)
 
 SERVING_MANIFEST_FILE = "serving.json"
 _MANIFEST_RE = re.compile(r"^projection-[0-9a-f]{64}\.json$")
@@ -152,19 +157,23 @@ def publish_serving_manifest(
     final = directory / SERVING_MANIFEST_FILE
     if crash_hook is not None:
         crash_hook("before:serving.publication")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
-    try:
-        view = memoryview(content)
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:
-                raise ProjectionPublicationError("serving manifest write made no progress")
-            view = view[written:]
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    os.replace(temporary, final)
-    _fsync_directory(directory)
+    # Under the stamp-ring guard, so no stamp write merged against the previous
+    # pointer can land after this one and drop the new head's stamp.
+    with stamp_ring_guard(directory):
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+        try:
+            view = memoryview(content)
+            while view:
+                written = os.write(descriptor, view)
+                if written <= 0:
+                    raise ProjectionPublicationError("serving manifest write made no progress")
+                view = view[written:]
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, final)
+        _fsync_directory(directory)
+        retain_serving_head_stamp_locked(directory)
     if crash_hook is not None:
         crash_hook("after:serving.publication")
     return manifest

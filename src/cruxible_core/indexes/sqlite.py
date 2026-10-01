@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -12,7 +13,8 @@ import stat
 import sys
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -182,6 +184,27 @@ def _trusted_stamps(directory: Path) -> list[dict[str, object]]:
         return list(trusted)
 
 
+@contextmanager
+def stamp_ring_guard(directory: Path) -> Iterator[None]:
+    """Serialize stamp-ring rewrites with serving publication in ``directory``.
+
+    A stamp write reads the serving pointer and the on-disk ring, merges, and
+    replaces the ring. Unserialized, a historical read that read both before an
+    activation could replace the ring after it, dropping the stamp the
+    activation just recorded for the new head. An exclusive ``flock`` on the
+    directory itself covers every thread and process that writes here; it is
+    per open file description, so it is not reentrant -- callers holding it use
+    the ``_locked`` helpers.
+    """
+
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def _serving_head(directory: Path) -> tuple[list[object], str] | None:
     """The coordinate and logical digest the serving pointer here names, if any."""
 
@@ -205,6 +228,20 @@ def _serving_head(directory: Path) -> tuple[list[object], str] | None:
     )
 
 
+def _head_stamp(
+    stamps: list[dict[str, object]], head: tuple[list[object], str]
+) -> dict[str, object] | None:
+    coordinate, logical_digest = head
+    return next(
+        (
+            item
+            for item in stamps
+            if item.get("coordinate") == coordinate and item.get("logical_digest") == logical_digest
+        ),
+        None,
+    )
+
+
 def _retain_stamps(
     stamps: list[dict[str, object]],
     limit: int,
@@ -221,15 +258,7 @@ def _retain_stamps(
     retained = stamps[:limit]
     if head is None:
         return retained
-    coordinate, logical_digest = head
-    head_stamp = next(
-        (
-            item
-            for item in stamps
-            if item.get("coordinate") == coordinate and item.get("logical_digest") == logical_digest
-        ),
-        None,
-    )
+    head_stamp = _head_stamp(stamps, head)
     if head_stamp is None or head_stamp in retained:
         return retained
     return retained[: limit - 1] + [head_stamp]
@@ -248,18 +277,8 @@ def _trust_stamp(
             trusted[:] = _retain_stamps([stamp, *trusted], _TRUSTED_STAMPS_RETAINED, head)
 
 
-def _record_authentication_stamp(
-    directory: Path, accepted: Any, manifest: ProjectionManifest
-) -> None:
-    stamp = _authentication_stamp(accepted, manifest)
-    head = _serving_head(directory)
-    _trust_stamp(directory, stamp, head=head)
-    retained = _retain_stamps(
-        [stamp] + [item for item in _authentication_stamps(directory) if item != stamp],
-        _SOURCE_AUTHENTICATION_STAMPS_RETAINED,
-        head,
-    )
-    body = canonical_bytes(retained) + b"\n"
+def _write_stamp_ring_locked(directory: Path, stamps: list[dict[str, object]]) -> None:
+    body = canonical_bytes(stamps) + b"\n"
     temporary = directory / f".{SOURCE_AUTHENTICATION_STAMPS}.{secrets.token_hex(8)}.tmp"
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
@@ -272,6 +291,47 @@ def _record_authentication_stamp(
         os.close(descriptor)
     os.replace(temporary, directory / SOURCE_AUTHENTICATION_STAMPS)
     _fsync_directory(directory)
+
+
+def _record_authentication_stamp(
+    directory: Path, accepted: Any, manifest: ProjectionManifest
+) -> None:
+    stamp = _authentication_stamp(accepted, manifest)
+    with stamp_ring_guard(directory):
+        # Read the pointer and the ring under the guard, so the ring written
+        # here is merged from the latest of both.
+        head = _serving_head(directory)
+        _trust_stamp(directory, stamp, head=head)
+        retained = _retain_stamps(
+            [stamp] + [item for item in _authentication_stamps(directory) if item != stamp],
+            _SOURCE_AUTHENTICATION_STAMPS_RETAINED,
+            head,
+        )
+        _write_stamp_ring_locked(directory, retained)
+
+
+def retain_serving_head_stamp_locked(directory: Path) -> None:
+    """Put the newly served head's stamp back on disk if older reads pushed it out.
+
+    Called by serving publication while it holds ``stamp_ring_guard``. The
+    assembler stamps a build before activation publishes it, and stamp writes
+    before publication protected the previous head. Only a stamp this process
+    already trusts -- one it recorded or loaded at first bind -- is restored.
+    """
+
+    head = _serving_head(directory)
+    if head is None:
+        return
+    on_disk = _authentication_stamps(directory)
+    if _head_stamp(on_disk, head) is not None:
+        return
+    head_stamp = _head_stamp(_trusted_stamps(directory), head)
+    if head_stamp is None:
+        return
+    _write_stamp_ring_locked(
+        directory,
+        _retain_stamps([*on_disk, head_stamp], _SOURCE_AUTHENTICATION_STAMPS_RETAINED, head),
+    )
 
 
 def record_source_built_piece(path: Path, *, accepted: Any, manifest: ProjectionManifest) -> None:
