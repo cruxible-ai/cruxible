@@ -6,10 +6,12 @@ off: a Line, named by identity so an ordinary Line successor never strands it,
 or one internal action from the code's action registry. Triggers are changed
 and retired through ordinary proposals; a Line no longer embeds its own.
 
-What a Trigger may fire on is decided by what its target needs, never by a
-per-target rule: a Line that binds its triggering Capture, and an internal action
-that declares a Capture input, each need a schedule that fires on that event;
-a target that needs no event takes any schedule.
+What a Trigger may fire on is decided by what its target needs: a Line that
+binds its triggering Capture, and an internal action that declares a Capture
+input, each need a schedule that fires on that event; a target that needs no
+event takes any schedule the target admits. In v1 an internal action admits time
+schedules (cadence, cron) only; event schedules for actions come later, by
+admitting them here and in the trigger journal, with the input rule unchanged.
 """
 
 from __future__ import annotations
@@ -441,6 +443,14 @@ def evaluate_trigger_law(
                     "playbill.trigger.action_unknown",
                     f"Internal action {trigger.target.action!r} is not registered; a Trigger "
                     "may fire one of: " + ", ".join(sorted(actions)) + ".",
+                    path=path,
+                )
+            if not schedule_is_timed(trigger.schedule):
+                return _refusal(
+                    "playbill.trigger.schedule_unsupported_for_action",
+                    f"Internal action {spec.name!r} takes a cadence or cron schedule in this "
+                    f"version; a {trigger.schedule.kind} schedule for an internal action is "
+                    "not supported yet.",
                     path=path,
                 )
             target, required = f"Internal action {spec.name!r}", spec.input

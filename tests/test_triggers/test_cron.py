@@ -123,7 +123,7 @@ def test_a_new_weekly_cron_fires_nothing_before_its_next_instant(tmp_path: Path)
         assert evaluate_triggers(world, now=at, listening_since=since, triggers=weekly) == ()
     next_monday = MONDAY + timedelta(days=7, hours=9)
     (fired,) = evaluate_triggers(world, now=next_monday, listening_since=since, triggers=weekly)
-    assert fired.due_at == next_monday and fired.event is None
+    assert fired.due_at == next_monday
 
 
 def test_an_internal_cron_trigger_skips_the_instants_a_downtime_missed(tmp_path: Path) -> None:

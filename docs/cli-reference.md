@@ -233,14 +233,15 @@ identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 The daemon's internal schedules are governed Trigger artifacts
 (`triggers/<name>.json`) aimed at an internal action, not daemon-local
 configuration. Internal actions are registered in code (`evidence.sweep`,
-`prediction.anchor_retry`); each declares the input it needs, and a Trigger
-aimed at one takes any schedule that supplies it. Neither of today's actions
-needs an input, so any schedule kind serves; an action name that is not
-registered is refused at acceptance (`playbill.trigger.action_unknown`). A new
+`prediction.anchor_retry`); a Trigger aimed at one takes a `cadence` or `cron`
+schedule. Capture-landing and window-close schedules for internal actions are
+not supported yet (`playbill.trigger.schedule_unsupported_for_action`), and an
+action name that is not registered is refused at acceptance
+(`playbill.trigger.action_unknown`). A new
 instance is initialized with `evidence-sweep` (daily) and
 `prediction-anchor-retry` (hourly); change a schedule, add a Trigger, or retire
 one through an ordinary proposal. `playbill next` reports any internal action
-no live Trigger schedules, and a Trigger whose Capture read failed (`stalled`).
+no live Trigger schedules.
 
 No Trigger fires retroactively. A timer fires each of its instants once, all of
 them after the acceptance of its Trigger version: a new cadence first fires one
@@ -248,18 +249,10 @@ interval after its acceptance (never on sight), a cron schedule at its first
 calendar instant after acceptance, and a changed schedule starts again from the
 successor's acceptance. Instants that pass while no daemon is running are
 skipped when it restarts, never fired late as a catch-up; a retired Trigger
-stops. A fixed `window_close` is such an instant: it fires once when it
-closes, if that is after its acceptance and while a daemon listens. A
-`capture_landing` or event-anchored `window_close` Trigger reads Captures that
-land after its acceptance and fires once per event (a window when it closes).
-It checkpoints on the last Capture record it consumed, so an event read late,
-even after the Capture index is rebuilt, is still delivered exactly once; a
-read that fails or is incomplete consumes nothing and leaves the Trigger
-`stalled` in `playbill next` until a later read succeeds. Fires, which record the Trigger, the action and any Capture event
-fired on, and pending one-shot deadlines are retained under each instance's
-`exhaust/triggers.sqlite3`; this append-only event log is not disposable worker
-state. Workers follow fires by action, may ignore an event they do not need,
-and resume from its sequences. Library mode fires no triggers.
+stops. Fires, which record the Trigger and the action, and pending one-shot
+deadlines are retained under each instance's `exhaust/triggers.sqlite3`; this
+append-only event log is not disposable worker state. Workers follow fires by
+action and resume from its sequences. Library mode fires no triggers.
 
 ### Proposal receive operational configuration
 
@@ -1203,7 +1196,8 @@ acquisition-policy` a policy for a Source Procedure's Line.
 When a Line runs is not the Line's own: a `trigger` input authors a Trigger
 (`triggers/<name>.json`) whose `schedule` is a `cadence`, a `cron`, a
 `capture_landing` on one exact CaptureContract, or a `window_close`, and whose
-target is one Line (`line_name`) or one registered internal action (`action`).
+target is one Line (`line_name`) or one registered internal action (`action`,
+which takes a `cadence` or `cron` schedule).
 A `cron` schedule is a standard five-field expression (`minute hour
 day-of-month month day-of-week`; numbers, `*`, ranges, steps and lists, with
 day-of-week 0-7 and Sunday both 0 and 7; no names or `@` macros) read in UTC.

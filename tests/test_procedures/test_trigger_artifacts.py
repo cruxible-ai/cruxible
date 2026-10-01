@@ -121,19 +121,21 @@ def test_a_trigger_round_trips_and_pins_exactly_the_contract_its_schedule_names(
 def test_the_trigger_law_judges_targets_actions_and_accepted_events() -> None:
     sweep = action_trigger("sweep", action="evidence.sweep", interval_seconds=86400)
     assert _law(sweep).verdict == "accepted"
-    # An action that needs no input takes any schedule kind.
-    windowed = action_trigger(
-        "sweep",
-        action="evidence.sweep",
-        schedule=WindowCloseScheduleV1(
+    nightly = action_trigger(
+        "sweep", action="evidence.sweep", schedule=CronScheduleV1(expression="0 0 * * *")
+    )
+    assert _law(nightly).verdict == "accepted"
+    # In v1 an internal action takes a time schedule only, whatever its input.
+    for schedule in (
+        WindowCloseScheduleV1(
             window=FixedWindowV1(starts_at="2026-09-30T00:00:00Z", duration_seconds=60)
         ),
-    )
-    assert _law(windowed).verdict == "accepted"
-    landing_sweep = action_trigger(
-        "sweep", action="evidence.sweep", schedule=CaptureLandingScheduleV1(event=SELECTOR)
-    )
-    assert _law(landing_sweep).verdict == "accepted"
+        WindowCloseScheduleV1(window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=60)),
+        CaptureLandingScheduleV1(event=SELECTOR),
+    ):
+        refused = _law(action_trigger("sweep", action="evidence.sweep", schedule=schedule))
+        assert _code(refused) == "playbill.trigger.schedule_unsupported_for_action"
+        assert "not supported yet" in refused.diagnostics[0].message
 
     landing = line_trigger(
         "on-landing", line="triage", schedule=CaptureLandingScheduleV1(event=SELECTOR)
@@ -171,9 +173,10 @@ def test_the_trigger_law_judges_targets_actions_and_accepted_events() -> None:
     assert _law(event_window, target_line_live=True, target_line_input=exact).verdict == "accepted"
 
 
-def test_an_action_takes_any_schedule_that_supplies_its_declared_input() -> None:
+def test_an_action_is_held_to_its_declared_input_by_the_line_event_rule() -> None:
     # A test-only action that needs a Capture event, judged by the same rule a
-    # Line's accepted event is.
+    # Line's accepted event is. No v1 schedule an action admits supplies one, so
+    # the input rule refuses a time schedule and the v1 limit any event schedule.
     needs_capture = InternalActionSpec(
         name="test.on_capture",
         input=CaptureEventInputV1(),
@@ -186,12 +189,14 @@ def test_an_action_takes_any_schedule_that_supplies_its_declared_input() -> None
     refused = _law(ticking, actions=actions)
     assert _code(refused) == "playbill.trigger.event_not_accepted"
     assert "needs a Capture event" in refused.diagnostics[0].message
-    for schedule in (
-        CaptureLandingScheduleV1(event=SELECTOR),
-        WindowCloseScheduleV1(window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=60)),
-    ):
-        fires_on_event = action_trigger("probe", action="test.on_capture", schedule=schedule)
-        assert _law(fires_on_event, actions=actions).verdict == "accepted"
+    fires_on_event = action_trigger(
+        "probe", action="test.on_capture", schedule=CaptureLandingScheduleV1(event=SELECTOR)
+    )
+    assert (
+        _code(_law(fires_on_event, actions=actions))
+        == "playbill.trigger.schedule_unsupported_for_action"
+    )
+    assert schedule_satisfies_input(fires_on_event.schedule, needs_capture.input)
     # Without the entry, the name is simply unknown.
     assert _code(_law(ticking)) == "playbill.trigger.action_unknown"
     # Needing no input, an action is satisfied by every schedule kind.
@@ -359,7 +364,9 @@ def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_trig
     landing_sweep = action_trigger(
         "landing-sweep", action="evidence.sweep", schedule=CaptureLandingScheduleV1(event=SELECTOR)
     )
-    assert _submit(instance, trigger_members(landing_sweep), "landing-sweep").candidate is not None
+    assert _refused(_submit(instance, trigger_members(landing_sweep), "landing-sweep")) == (
+        "playbill.trigger.schedule_unsupported_for_action",
+    )
 
     hourly = line_trigger(
         "hourly", line=line.identity.name, schedule=CadenceScheduleV1(interval_seconds=3600)

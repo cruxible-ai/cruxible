@@ -373,17 +373,11 @@ class JournalIndex:
         cursor: tuple[str, str, int] | None = None,
         after: dict[str, Any] | None = None,
         through: dict[str, Any] | None = None,
-        ascending: bool = False,
     ) -> tuple[tuple[StoredProcedureJournalRecordV1, ...], tuple[str, str, int] | None, bool]:
         """Project new capture selectors once, then verify only selected bodies.
 
         Metadata catch-up is bounded independently of the result page. A caller
-        must not report absence while selector coverage is incomplete. Pages run
-        newest first, the cursor bounding them from above; ``ascending`` runs
-        them oldest first from a cursor below, so a reader can checkpoint on the
-        last record it consumed: a record's ``(recorded_at, partition_id,
-        sequence)`` survives an index rebuild where the index's own ordinals do
-        not.
+        must not report absence while selector coverage is incomplete.
         """
         from cruxible_core.exhaust.records import parse_journal_payload
         from cruxible_core.storage.cas import BodyAccessContext
@@ -448,18 +442,12 @@ class JournalIndex:
                 where.append("r.recorded_at>=?")
                 args.append(format_datetime(since))
             if cursor is not None:
-                where.append(
-                    "(r.recorded_at,r.partition_id,r.sequence)"
-                    + (">" if ascending else "<")
-                    + "(?,?,?)"
-                )
+                where.append("(r.recorded_at,r.partition_id,r.sequence)<(?,?,?)")
                 args.extend(cursor)
-            order = "ASC" if ascending else "DESC"
             rows = conn.execute(
                 "SELECT r.* FROM capture_selectors c JOIN records r ON r.id=c.record_id WHERE "
                 + " AND ".join(where)
-                + f" ORDER BY r.recorded_at {order},r.partition_id {order},r.sequence {order} "
-                "LIMIT ?",
+                + " ORDER BY r.recorded_at DESC,r.partition_id DESC,r.sequence DESC LIMIT ?",
                 (*args, limit + 1),
             ).fetchall()
             selected = tuple(self.read_row(row) for row in rows[:limit])

@@ -4966,7 +4966,7 @@ _NEXT_STATUS_ATTENTION = {
     "compiler": {"upgrade_available"},
     "line_dispatch": {"due"},
     "consumers": {"lagging"},
-    "triggers": {"unscheduled", "stalled"},
+    "triggers": {"unscheduled"},
 }
 
 

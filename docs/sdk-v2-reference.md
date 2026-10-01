@@ -1501,7 +1501,8 @@ accepts: the Source's CaptureContract. A Line runs on the Triggers aimed at it;
 `ChangeSetDraft.trigger(name=..., schedule=..., line=...)` defines one; its
 `schedule` is a `CadenceScheduleV1`, `CronScheduleV1(expression=...)` (UTC),
 `CaptureLandingScheduleV1` or `WindowCloseScheduleV1`, and
-`action=` aims it at a registered internal action instead of a Line. Every
+`action=` aims it at a registered internal action (cadence or cron schedules
+only) instead of a Line. Every
 Trigger aimed at a `trigger_input` Line must fire on that event, as a
 capture-arrival schedule or an event-relative window. Cadence, cron and
 fixed-window Triggers cannot provide this input.

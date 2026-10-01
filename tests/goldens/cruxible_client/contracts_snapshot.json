@@ -12104,7 +12104,7 @@
           },
           "TriggerInput": {
             "additionalProperties": false,
-            "description": "One Trigger: a schedule aimed at exactly one Line or internal action.\n\nA Line target names an accepted or same-set Line; an internal action names a\nregistered action (`evidence.sweep`, `prediction.anchor_retry`). Any schedule\nthat supplies the target's input will do. A Trigger is changed or retired\n(`retire`) through a successor, like any definition.",
+            "description": "One Trigger: a schedule aimed at exactly one Line or internal action.\n\nA Line target names an accepted or same-set Line; an internal action names a\nregistered action (`evidence.sweep`, `prediction.anchor_retry`), which takes\na cadence or cron schedule. A Line takes any schedule that supplies its\ninput. A Trigger is changed or retired (`retire`) through a successor, like\nany definition.",
             "properties": {
               "action": {
                 "anyOf": [

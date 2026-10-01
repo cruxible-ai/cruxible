@@ -333,9 +333,10 @@ class TriggerInput(_StrictInputModel):
     """One Trigger: a schedule aimed at exactly one Line or internal action.
 
     A Line target names an accepted or same-set Line; an internal action names a
-    registered action (`evidence.sweep`, `prediction.anchor_retry`). Any schedule
-    that supplies the target's input will do. A Trigger is changed or retired
-    (`retire`) through a successor, like any definition.
+    registered action (`evidence.sweep`, `prediction.anchor_retry`), which takes
+    a cadence or cron schedule. A Line takes any schedule that supplies its
+    input. A Trigger is changed or retired (`retire`) through a successor, like
+    any definition.
     """
 
     kind: Literal["trigger"]
