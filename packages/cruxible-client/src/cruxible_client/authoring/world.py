@@ -422,7 +422,10 @@ class WorldSubject(SubjectRef):
         return self._world._claims_about(self.address)
 
     def explain(self) -> object:
-        """Read this Subject's governance and provenance context."""
+        """Read this Subject's governance and provenance context.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
 
         self._world._assert_current()
         return self._world._playbill._get(self.address, "why", None, self.coordinate).why
@@ -992,6 +995,8 @@ class World:
         Every live contender is retained. If the explicit budget is exceeded,
         no partial attribute cache is installed and the caller can narrow the
         selection or increase ``max_claims``.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
         from datetime import datetime
 
@@ -1087,6 +1092,8 @@ class World:
         ``query`` per Subject kind asks for each cell's Claims, including those
         resolution overturned or refused. Strings are subject kind/id addresses
         or paths and fully qualified predicates.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
         from cruxible_client.contracts.compact_query import (
             PLAYBILL_QUERY_MAX_LIMIT,

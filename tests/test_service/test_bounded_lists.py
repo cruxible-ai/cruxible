@@ -12,7 +12,7 @@ from cruxible_client.contracts.claims import LiteralClaimObject, parse_claim, re
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.service.claims.policies import list_playbill_policies_in_force
+from cruxible_core.service.claims.policies import service_playbill_policies_in_force
 from cruxible_core.service.discovery.curation import (
     PlaybillCurationListRequestV1,
     service_list_playbill_curation,
@@ -107,16 +107,16 @@ def test_withdrawing_an_unseen_proposal_between_pages_makes_the_cursor_stale(
 
 def test_policy_pages_walk_the_whole_inventory(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
-    whole = list_playbill_policies_in_force(instance)
+    whole = service_playbill_policies_in_force(instance)
     assert len(whole.policies) >= 3
     assert whole.truncated is False
 
-    first = list_playbill_policies_in_force(instance, limit=2)
+    first = service_playbill_policies_in_force(instance, limit=2)
     walked = list(first.policies)
     cursor = first.next_cursor
     assert first.truncated is True and cursor is not None
     while cursor is not None:
-        page = list_playbill_policies_in_force(instance, limit=2, cursor=cursor)
+        page = service_playbill_policies_in_force(instance, limit=2, cursor=cursor)
         walked.extend(page.policies)
         cursor = page.next_cursor
     assert walked == list(whole.policies)
@@ -128,7 +128,7 @@ def test_policy_pages_walk_the_whole_inventory(tmp_path: Path) -> None:
         compiler_digest="sha256:" + "4" * 64,
     )
     with pytest.raises(PlaybillListCursorMismatch, match="different coordinate"):
-        list_playbill_policies_in_force(instance, at=other, cursor=first.next_cursor)
+        service_playbill_policies_in_force(instance, at=other, cursor=first.next_cursor)
     with pytest.raises(PlaybillListCursorMismatch, match="policies-in-force"):
         service_list_playbill_proposals(instance, cursor=first.next_cursor)
 

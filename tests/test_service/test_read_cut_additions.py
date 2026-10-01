@@ -78,13 +78,13 @@ def test_orient_pages_policies_in_force_and_get_reads_the_approval_policy(
     world: PlaybillInstance,
 ) -> None:
     from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
-    from cruxible_core.service.claims.policies import list_playbill_policies_in_force
+    from cruxible_core.service.claims.policies import service_playbill_policies_in_force
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.service.discovery.orient import service_playbill_orient
 
     result = service_playbill_orient(world, section="policies", limit=500)
     rows = result.policies or ()
-    expected = list_playbill_policies_in_force(world).policies
+    expected = service_playbill_policies_in_force(world).policies
     assert [row.model_dump(mode="json") for row in rows] == [
         row.model_dump(mode="json") for row in expected
     ]

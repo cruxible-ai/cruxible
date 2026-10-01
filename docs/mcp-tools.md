@@ -402,3 +402,8 @@ allocation, initialization, and principal changes require admin.
 The daemon capability ceiling and bearer credential tier both apply. A
 Playbill principal signature is an additional governance condition, not a
 replacement for transport authorization.
+
+Workspace source tools take `root_aliases` as a list of `{alias, path}` records.
+Coverage takes `bindings` as a list of `{path, source_id}` records. Duplicate aliases
+or paths are refused. Named-query `params` and Procedure `input` use the vocabulary
+and input contracts declared in accepted state, which the daemon validates.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -22,7 +22,8 @@ from tests.core_support._knowledge_loop_support import (
     service_propose_playbill_claim,
     work_item_query,
 )
-from tests.test_integration.test_playbill_search import EVALUATION_TIME
+
+EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
 
 
 def _derive(instance, *, when=EVALUATION_TIME, fresh: bool):

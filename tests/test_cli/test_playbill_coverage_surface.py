@@ -411,7 +411,7 @@ def test_cli_delivers_exact_then_relocated_exact_then_drifted_for_a_foreign_sour
     # The daemon fetched nothing, and the accepted law evidence says so: every
     # Capture behind this Claim is graded self-asserted, including the one that
     # names a logical source.
-    explained = cruxible.json("playbill", "claim", "explain", claim_identity)
+    explained = cruxible.json("playbill", "get", claim_identity, "--detail", "why")["why"]
     assert {item["provenance_grade"] for item in explained["law_evidence"]["verdict_captures"]} == {
         "self-asserted"
     }

@@ -354,7 +354,7 @@ def test_claim_type_policy_and_query_readers_skip_unrelated_owners(
     )
     from cruxible_core.proposals.proposals import _accepted_query
     from cruxible_core.service.claims.claim_types import service_get_playbill_claim_type
-    from cruxible_core.service.claims.policies import list_playbill_policies_in_force
+    from cruxible_core.service.claims.policies import service_playbill_policies_in_force
     from cruxible_core.service.evidence.source_catalog import service_playbill_source_context
     from tests.test_query.test_query_definitions import active_work_query, claim_type
 
@@ -378,7 +378,7 @@ def test_claim_type_policy_and_query_readers_skip_unrelated_owners(
     assert listed.identity == definition.identity.qualified
     assert reads == [type_path]
     reads.clear()
-    policies = list_playbill_policies_in_force(instance)
+    policies = service_playbill_policies_in_force(instance)
     assert any(row.policy_kind == "claim_admission_policy" for row in policies.policies)
     assert set(reads) == {type_path, query_path, capture_contract_path(contract.identity.name)}
     reads.clear()

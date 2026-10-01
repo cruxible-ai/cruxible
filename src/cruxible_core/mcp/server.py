@@ -49,9 +49,11 @@ as rows of values with verdict flags: a Subject kind with where/select/follow,
 contains for text in values, or a named query. cruxible_playbill_get reads one
 thing by any reference you have seen (CLM-..., kind/id, ClaimType:,
 Document:, query:, Principal:, ...) at a detail: summary, evidence, why,
-history, proof or body. To find something by name, grep the floor
-(.playbill/floor/, which `cruxible playbill floor export` writes) and get the ref
-a hit names. cruxible_playbill_next lists what needs attention.
+history, proof or body. To find something by name or text, grep the floor
+that `cruxible playbill floor export` writes: .playbill/floor/current/<kind>/<id>.yaml
+holds one Subject per file, its first line names its ref, and get reads that ref
+live. Without a shell, query with contains instead. cruxible_playbill_next lists
+what needs attention.
 
 Write with cruxible_playbill_set, retire or write; each proposes one change set
 and accepts it when policy lets you. A proposal is not accepted state, an

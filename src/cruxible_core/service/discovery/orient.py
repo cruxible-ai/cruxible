@@ -1111,11 +1111,11 @@ def _governance_rows(
             [row.principal_id for row in principals],
             lambda row: f"Principal:{row.principal_id}",
         )
-    from cruxible_core.service.claims.policies import list_playbill_policies_in_force
+    from cruxible_core.service.claims.policies import service_playbill_policies_in_force
 
     policies = tuple(
         PlaybillPolicyInForce.model_validate(row.model_dump(mode="json"))
-        for row in list_playbill_policies_in_force(
+        for row in service_playbill_policies_in_force(
             instance,
             at=contracts.PlaybillAcceptedCoordinate.model_validate(
                 AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")

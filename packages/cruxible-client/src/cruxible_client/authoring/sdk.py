@@ -2045,6 +2045,8 @@ class Playbill:
         The wire read returns a fact array keyed by schema id, so answering
         "what does this Claim say, and is it believed" means walking that array
         by hand every time. This is that walk, once.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
 
         identity = _address(claim, RefKind.CLAIM) if isinstance(claim, ClaimRef) else claim
@@ -2158,6 +2160,8 @@ class Playbill:
 
         The complete batch preserves input order and all single-view fields.
         Use explicit batches for larger selections; no population read is implied.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
         from cruxible_client.contracts.claim_reads import ClaimReadBatchRequestV1
 
@@ -2374,7 +2378,10 @@ class Playbill:
         return self._client.upgrade_playbill_claim_types(self._instance_id, request)
 
     def refresh(self) -> api.PlaybillHeadV1:
-        """Re-read the accepted head (a pinned context re-reads its own coordinate)."""
+        """Re-read the accepted head (a pinned context re-reads its own coordinate).
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
 
         requested = self._read_at() if self._pinned else None
         head = self._client.playbill_head(self._instance_id, at=requested)
@@ -2433,6 +2440,11 @@ class Playbill:
         evidence_freshness: Duration | None,
         attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = None,
     ) -> ClaimTypeDraft:
+        """Draft a ClaimType, reading its accepted definition through get.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
+
         kind = _enum(object_kind, ClaimObjectKind, label="claim-type object kind")
         arity = _enum(cardinality, Cardinality, label="claim-type cardinality")
         sensitivity = _enum(
@@ -2518,6 +2530,8 @@ class Playbill:
         takes neither a kind filter nor a cursor; a world with a thousand
         Subjects therefore costs the vocabulary at `world()` and that one list
         the first time any Subject is named.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
 
         from cruxible_client.authoring.world import build_world
@@ -3220,6 +3234,8 @@ class Playbill:
 
         Discovery never installs a provider or authorizes its execution. Multiple
         implementations require an explicit selection rather than an arbitrary default.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
         identity = (
             interface
@@ -3338,7 +3354,10 @@ class Playbill:
         )
 
     def query_binding(self, query: str | QueryRef) -> QueryBinding:
-        """Read an exact query and its parameter types through accepted discovery."""
+        """Read an exact query and its parameter types through accepted discovery.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
         name = _address(query, RefKind.QUERY)
         proof = self._get(
             f"query:{name}",
@@ -3361,7 +3380,10 @@ class Playbill:
         parameters: Mapping[str, object] | None = None,
         budgets: QueryBudgetsV1 | None = None,
     ) -> api.PlaybillQueryRun:
-        """Run a named query at this SDK view's coordinate with a replay receipt."""
+        """Run a named query at this SDK view's coordinate with a replay receipt.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
         if isinstance(query, QueryBinding):
             if parameters is not None and not isinstance(parameters, Record):
                 raise TypeError("a QueryBinding requires parameters made by binding.parameters")
@@ -4069,6 +4091,8 @@ class ProjectionBlocks:
 
         Compact markers are the default: digest references with local manifests. Subsequent
         repins preserve that format.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
         source_id = _address(source, RefKind.SOURCE)
         if isinstance(source, SourceRef):
@@ -4090,7 +4114,7 @@ class ProjectionBlocks:
         return repin_projection_block(
             self._playbill._client,
             self._playbill._instance_id,
-            workspace=self._playbill._workspace,
+            workspace=self._playbill._workspace_root,
             source_id=source_id,
             block_id=block_id,
             claims=claim_refs if claims is not None else None,
@@ -4116,7 +4140,7 @@ class ProjectionBlocks:
         return sync_projection_blocks(
             self._playbill._client,
             self._playbill._instance_id,
-            workspace=self._playbill._workspace,
+            workspace=self._playbill._workspace_root,
             paths=paths,
             all_sources=all,
             check=check,

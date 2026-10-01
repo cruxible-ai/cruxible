@@ -1434,3 +1434,21 @@ def test_a_segment_spelling_the_separator_does_not_claim_another_names_class(
     assert len(declared) == len(set(declared)), declared
     assert "class _W_sec__package:" in rendered
     assert "class _W_sec__package_" in rendered
+
+
+def test_workspace_less_connection_reads_but_refuses_block_file_operations() -> None:
+    from cruxible_client.authoring.sdk_types import SourceSelectionError
+
+    playbill = Playbill._from_client(  # type: ignore[arg-type]
+        _WorldClient(),
+        instance_id="inst_world",
+        workspace=None,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    assert playbill.world().kinds == ("dev.batch", "sec.package", "sec.vulnerability")
+    with pytest.raises(SourceSelectionError, match="no workspace"):
+        playbill.block.repin(
+            "workspace.notes", "status", evaluation_time=datetime(2026, 9, 7, 12, tzinfo=UTC)
+        )
+    with pytest.raises(SourceSelectionError, match="no workspace"):
+        playbill.block.sync(all=True)

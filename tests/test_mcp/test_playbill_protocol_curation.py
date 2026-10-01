@@ -182,3 +182,14 @@ def test_unwrapped_curation_seams_fail_startup() -> None:
 
     with pytest.raises(ConfigError, match="tools/call is not curated"):
         validate_runtime_tools(server)
+
+
+def test_default_input_schema_catalog_stays_within_agent_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    monkeypatch.delenv("CRUXIBLE_MCP_PROFILE", raising=False)
+    tools = _run(create_server().list_tools())
+    estimate = sum(len(json.dumps(tool.inputSchema)) for tool in tools) / 4
+    assert estimate <= 10_000, f"default input schemas cost about {estimate:.0f} tokens"

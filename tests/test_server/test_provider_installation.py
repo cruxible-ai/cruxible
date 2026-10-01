@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -10,6 +11,19 @@ from cruxible_client.provider_installation import install_provider_package
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.runtime.provider_runtime import PROVIDER_RUNTIME_CONFIG_PATH
+
+
+def interface_entry(client: CruxibleClient, instance_id: str, name: str) -> dict[str, Any]:
+    """The accepted inventory entry of one live provider interface, as ``get`` proves it."""
+
+    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+
+    proof = client.playbill_get(
+        instance_id,
+        request=PlaybillGetRequestV1(ref=f"ProviderInterface:{name}", detail="proof"),
+    ).proof
+    assert proof is not None
+    return dict(proof["entry"])
 
 
 @pytest.fixture
@@ -82,11 +96,8 @@ def _run_call(
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
     from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
-    inventory = client.discover_playbill(instance_id, profile="interfaces")
-    interface = next(
-        row for row in inventory.interfaces if row.identity == f"ProviderInterface:{interface_id}"
-    )
-    provider = interface.providers[0]
+    interface = interface_entry(client, instance_id, interface_id)
+    provider = interface["providers"][0]
 
     def carried(name, role):
         return {"kind": "carried_contract", "name": name, "role": role}
@@ -107,15 +118,15 @@ def _run_call(
                 "provider": {
                     "kind": "accepted",
                     "role": "provider",
-                    "target": provider.provider_identity,
+                    "target": provider["provider_identity"],
                 },
                 "interface": {
                     "kind": "accepted",
                     "role": "provider-interface",
-                    "target": interface.identity,
+                    "target": interface["identity"],
                 },
-                "interface_digest": interface.interface_digest,
-                "implementation_digest": provider.implementation_digest,
+                "interface_digest": interface["interface_digest"],
+                "implementation_digest": provider["implementation_digest"],
                 "contract_in": carried("request", "contract-in"),
                 "contract_out": carried("result", "contract-out"),
             }
@@ -328,11 +339,8 @@ def test_unpublished_local_call_installs_runs_and_preserves_old_deployment(
         client, instance_id, wheel=second, lock=second_lock, dependency_wheels=(runtime,)
     )
     assert shared.status == "ready"
-    inventory = client.discover_playbill(instance_id, profile="interfaces")
-    interface = next(
-        row for row in inventory.interfaces if row.identity == "ProviderInterface:local.increment"
-    )
-    assert len(interface.providers) == 2
+    interface = interface_entry(client, instance_id, "local.increment")
+    assert len(interface["providers"]) == 2
     old = dict(operator.deployments)
     updated, lock = build_local_call(tmp_path, repository, increment=2)
     result2 = install_provider_package(
@@ -405,11 +413,8 @@ def test_installed_web_source_fetches_local_http_and_retains_capture(installer_h
     assert not prepared.refused, prepared.diagnostics
     prepared.submit()
     _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
-    inventory = client.discover_playbill(instance_id, profile="interfaces")
-    interface = next(
-        row for row in inventory.interfaces if row.identity == "ProviderInterface:web.fetch"
-    )
-    provider = interface.providers[0]
+    interface = interface_entry(client, instance_id, "web.fetch")
+    provider = interface["providers"][0]
 
     class Origin(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -444,10 +449,10 @@ def test_installed_web_source_fetches_local_http_and_retains_capture(installer_h
                     "as": "observation",
                     "next": "shape",
                     "capture_contract": accepted("capture-contract", contract.identity.qualified),
-                    "provider": accepted("provider", provider.provider_identity),
-                    "interface": accepted("provider-interface", interface.identity),
-                    "interface_digest": interface.interface_digest,
-                    "implementation_digest": provider.implementation_digest,
+                    "provider": accepted("provider", provider["provider_identity"]),
+                    "interface": accepted("provider-interface", interface["identity"]),
+                    "interface_digest": interface["interface_digest"],
+                    "implementation_digest": provider["implementation_digest"],
                     "request": {
                         "url": f"http://127.0.0.1:{server.server_port}/state.json",
                         "expected_format": "json",

@@ -201,3 +201,28 @@ def test_audit_schema_uses_the_central_budget_calibration() -> None:
         AUDIT_BUDGET_MIN_MAX_BYTES,
         AUDIT_BUDGET_MAX_MAX_BYTES,
     )
+
+
+def test_tool_parameters_use_declared_types_except_instance_defined_query_parameters() -> None:
+    import ast
+    from pathlib import Path
+
+    from cruxible_core.mcp import tools
+
+    tree = ast.parse(Path(tools.__file__).read_text())
+    offenders: list[str] = []
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef) or not function.name.startswith("cruxible_"):
+            continue
+        for parameter in (*function.args.args, *function.args.kwonlyargs):
+            if (function.name, parameter.arg) == ("cruxible_playbill_query", "params"):
+                continue  # Its accepted QueryDefinition declares the names and scalar types.
+            annotation = parameter.annotation
+            names = (
+                {node.id for node in ast.walk(annotation) if isinstance(node, ast.Name)}
+                if annotation is not None
+                else set()
+            )
+            if annotation is None or names & {"dict", "object", "Any"}:
+                offenders.append(f"{function.name}.{parameter.arg}")
+    assert offenders == [], f"untyped MCP parameters: {offenders}"
