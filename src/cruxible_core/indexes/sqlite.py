@@ -182,22 +182,84 @@ def _trusted_stamps(directory: Path) -> list[dict[str, object]]:
         return list(trusted)
 
 
-def _trust_stamp(directory: Path, stamp: dict[str, object]) -> None:
+def _serving_head(directory: Path) -> tuple[list[object], str] | None:
+    """The coordinate and logical digest the serving pointer here names, if any."""
+
+    from cruxible_core.indexes.serving import load_serving_manifest
+
+    try:
+        serving = load_serving_manifest(directory)
+    except (OSError, ProjectionIntegrityError):
+        return None
+    return (
+        [
+            serving.instance_id,
+            serving.git_object_format,
+            serving.git_oid,
+            serving.semantic_root,
+            serving.generation_root,
+            serving.compiler_digest,
+            serving.schema_version,
+        ],
+        serving.logical_digest,
+    )
+
+
+def _retain_stamps(
+    stamps: list[dict[str, object]],
+    limit: int,
+    head: tuple[list[object], str] | None,
+) -> list[dict[str, object]]:
+    """Keep the newest ``limit`` stamps, never dropping the serving head's.
+
+    Pinned reads of older coordinates each land a stamp; without this, enough
+    of them push the head's out and the next process to bind the head re-derives
+    every typed row from source. Retention decides only what is kept, never what
+    is trusted: trust still comes from the records on disk at first bind.
+    """
+
+    retained = stamps[:limit]
+    if head is None:
+        return retained
+    coordinate, logical_digest = head
+    head_stamp = next(
+        (
+            item
+            for item in stamps
+            if item.get("coordinate") == coordinate and item.get("logical_digest") == logical_digest
+        ),
+        None,
+    )
+    if head_stamp is None or head_stamp in retained:
+        return retained
+    return retained[: limit - 1] + [head_stamp]
+
+
+def _trust_stamp(
+    directory: Path,
+    stamp: dict[str, object],
+    *,
+    head: tuple[list[object], str] | None = None,
+) -> None:
     _trusted_stamps(directory)
     with _TRUSTED_STAMPS_LOCK:
         trusted = _TRUSTED_STAMPS[_stamp_key(directory)]
         if stamp not in trusted:
-            trusted.insert(0, stamp)
-            del trusted[_TRUSTED_STAMPS_RETAINED:]
+            trusted[:] = _retain_stamps([stamp, *trusted], _TRUSTED_STAMPS_RETAINED, head)
 
 
 def _record_authentication_stamp(
     directory: Path, accepted: Any, manifest: ProjectionManifest
 ) -> None:
     stamp = _authentication_stamp(accepted, manifest)
-    _trust_stamp(directory, stamp)
-    retained = [stamp] + [item for item in _authentication_stamps(directory) if item != stamp]
-    body = canonical_bytes(retained[:_SOURCE_AUTHENTICATION_STAMPS_RETAINED]) + b"\n"
+    head = _serving_head(directory)
+    _trust_stamp(directory, stamp, head=head)
+    retained = _retain_stamps(
+        [stamp] + [item for item in _authentication_stamps(directory) if item != stamp],
+        _SOURCE_AUTHENTICATION_STAMPS_RETAINED,
+        head,
+    )
+    body = canonical_bytes(retained) + b"\n"
     temporary = directory / f".{SOURCE_AUTHENTICATION_STAMPS}.{secrets.token_hex(8)}.tmp"
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
