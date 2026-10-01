@@ -536,10 +536,9 @@ def test_one_next_request_reads_each_workers_health_once(
 def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_repair(
     tmp_path: Path,
 ) -> None:
-    from datetime import timedelta
 
     from cruxible_client.contracts.triggers import CadenceScheduleV1
-    from cruxible_core.triggers.journal import internal_trigger_cadences
+    from cruxible_core.triggers.journal import internal_triggers
     from tests.support.lines import action_trigger, successor, trigger_members
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
@@ -566,8 +565,8 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
         instance, owner, tree, timestamp="2026-09-30T12:00:00.000000Z", proposal_name="retime"
     )
     # The daemon's cadences are whatever the accepted Triggers say, per generation.
-    assert [(item.action, item.interval) for item in internal_trigger_cadences(instance)] == [
-        ("evidence.sweep", timedelta(minutes=10))
+    assert [(item.action, item.schedule) for item in internal_triggers(instance)] == [
+        ("evidence.sweep", CadenceScheduleV1(interval_seconds=600))
     ]
     unscheduled = _status(instance, _request(instance))
     facet = unscheduled.triggers

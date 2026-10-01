@@ -22,7 +22,6 @@ from cruxible_client.contracts.triggers import (
     TRIGGER_LINE_REF_ROLE,
     ActionTargetV1,
     CadenceScheduleV1,
-    InternalAction,
     LineTargetV1,
     TriggerScheduleV1,
     TriggerV1,
@@ -106,16 +105,21 @@ def line_trigger(
 def action_trigger(
     name: str,
     *,
-    action: InternalAction,
-    interval_seconds: int,
+    action: str,
+    interval_seconds: int | None = None,
+    schedule: TriggerScheduleV1 | None = None,
     lifecycle: ArtifactLifecycle | None = None,
 ) -> TriggerV1:
-    """A Trigger that fires one internal action on a cadence."""
+    """A Trigger that fires one internal action, on a cadence unless given a schedule."""
 
+    if schedule is None:
+        assert interval_seconds is not None
+        schedule = CadenceScheduleV1(interval_seconds=interval_seconds)
     return TriggerV1(
         identity=ArtifactIdentity(kind="Trigger", name=name),
-        schedule=CadenceScheduleV1(interval_seconds=interval_seconds),
+        schedule=schedule,
         target=ActionTargetV1(action=action),
+        pins=trigger_schedule_pins(schedule),
         lifecycle=lifecycle or ArtifactLifecycle(),
     )
 

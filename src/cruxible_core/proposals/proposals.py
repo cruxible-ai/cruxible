@@ -259,6 +259,8 @@ from cruxible_client.contracts.subjects import (
 )
 from cruxible_client.contracts.triggers import (
     AcceptedTriggerV1,
+    CaptureEventInputV1,
+    TriggerInputV1,
     evaluate_trigger_law,
     parse_trigger,
     schedule_capture_selector,
@@ -2294,8 +2296,7 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
             path=context.path, trigger=previous, artifact_digest=trigger_digest(previous).tagged
         )
     line_live: bool | None = None
-    accepted_event = None
-    binds_event = False
+    line_input: TriggerInputV1 | None = None
     if trigger.line is not None:
         target = context.resolved.lines.get(trigger.line.qualified)
         line_live = (
@@ -2303,16 +2304,19 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
             and isinstance(target.line, LineSpecV6)
             and target.line.lifecycle.state == "live"
         )
-        if target is not None and isinstance(target.line, LineSpecV6):
-            binds_event = target.line.trigger_input is not None
-            accepted_event = target.line.trigger_event
+        if (
+            target is not None
+            and isinstance(target.line, LineSpecV6)
+            and target.line.trigger_input is not None
+        ):
+            # A Line that binds its triggering Capture accepts exactly its event.
+            line_input = CaptureEventInputV1(event=target.line.trigger_event)
     law = evaluate_trigger_law(
         trigger,
         path=context.path,
         predecessor=predecessor,
         target_line_live=line_live,
-        accepted_event=accepted_event,
-        target_line_binds_event=binds_event,
+        target_line_input=line_input,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))

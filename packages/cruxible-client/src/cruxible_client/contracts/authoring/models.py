@@ -71,7 +71,7 @@ from cruxible_client.contracts.resolution_contracts import ResolutionContractV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
-from cruxible_client.contracts.triggers import InternalAction, TriggerScheduleV1
+from cruxible_client.contracts.triggers import InternalActionName, TriggerScheduleV1
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -100,7 +100,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:51c85db53343b6399bd6a93a2bbdaefb20978e898b2103f111a1b7ae43e06b21"
+    "sha256:326f3e0bcf840863e0c1bbb7cba03cbad9a14f3b49a96439657daa5e94f96fdf"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -1026,7 +1026,7 @@ class TriggerAuthoringPayloadV1(_StrictAuthoringModel):
     name: str
     schedule: TriggerScheduleV1
     line_name: str | None = None
-    action: InternalAction | None = None
+    action: InternalActionName | None = None
     retire: bool = False
 
     @field_validator("name", "line_name")

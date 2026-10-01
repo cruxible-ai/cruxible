@@ -12012,15 +12012,18 @@
           },
           "TriggerInput": {
             "additionalProperties": false,
-            "description": "One Trigger: a schedule aimed at exactly one Line or internal action.\n\nA Line target names an accepted or same-set Line; an internal action\n(`evidence.sweep`, `prediction.anchor_retry`) takes a cadence only. A Trigger\nis changed or retired (`retire`) through a successor, like any definition.",
+            "description": "One Trigger: a schedule aimed at exactly one Line or internal action.\n\nA Line target names an accepted or same-set Line; an internal action names a\nregistered action (`evidence.sweep`, `prediction.anchor_retry`). Any schedule\nthat supplies the target's input will do. A Trigger is changed or retired\n(`retire`) through a successor, like any definition.",
             "properties": {
               "action": {
                 "anyOf": [
                   {
-                    "enum": [
+                    "description": "A registered internal action: evidence.sweep, prediction.anchor_retry.",
+                    "examples": [
                       "evidence.sweep",
                       "prediction.anchor_retry"
                     ],
+                    "maxLength": 128,
+                    "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
                     "type": "string"
                   },
                   {
@@ -89360,10 +89363,13 @@
             "description": "Fire one internal action; the worker that owns it follows its fires.",
             "properties": {
               "action": {
-                "enum": [
+                "description": "A registered internal action: evidence.sweep, prediction.anchor_retry.",
+                "examples": [
                   "evidence.sweep",
                   "prediction.anchor_retry"
                 ],
+                "maxLength": 128,
+                "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
                 "title": "Action",
                 "type": "string"
               },

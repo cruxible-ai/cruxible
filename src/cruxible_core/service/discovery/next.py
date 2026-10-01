@@ -3684,7 +3684,7 @@ def _triggers_health(
     with instance.bind_accepted_projection(coordinate) as projection:
         rows = projection.typed.connection.execute(
             "SELECT target,identity FROM triggers WHERE target_kind='action' "
-            "AND schedule_kind='cadence' AND lifecycle='live' ORDER BY target,identity"
+            "AND lifecycle='live' ORDER BY target,identity"
         ).fetchall()
     scheduled: dict[str, list[str]] = {}
     for action, identity in rows:

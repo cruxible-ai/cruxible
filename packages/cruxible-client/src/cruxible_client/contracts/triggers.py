@@ -3,17 +3,22 @@
 Every trigger has one governed home. A Trigger holds when something happens
 (a cadence, a Capture landing, an observation window closing) and what it sets
 off: a Line, named by identity so an ordinary Line successor never strands it,
-or one internal action from a closed registry. Triggers are changed and
-retired through ordinary proposals; a Line no longer embeds its own.
+or one internal action from the code's action registry. Triggers are changed
+and retired through ordinary proposals; a Line no longer embeds its own.
 
-An internal action takes a cadence only: the daemon's own maintenance runs on
-time, never on a Capture it would then have to interpret.
+What a Trigger may fire on is decided by what its target needs, never by a
+per-target rule: a Line that binds its triggering Capture, and an internal action
+that declares a Capture input, each need a schedule that fires on that event;
+a target that needs no event takes any schedule.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Annotated, Final, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -44,11 +49,6 @@ from cruxible_client.contracts.procedures.windows import (
 from cruxible_client.contracts.semantic import SemanticAddress
 
 _TRIGGER_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
-
-#: The internal actions a Trigger may aim at. Closed: a worker follows fires
-#: of one of these actions, and an unknown action would fire into nothing.
-InternalAction: TypeAlias = Literal["evidence.sweep", "prediction.anchor_retry"]
-INTERNAL_ACTIONS: Final[tuple[InternalAction, ...]] = ("evidence.sweep", "prediction.anchor_retry")
 
 #: The role a Trigger's Line reference carries.
 TRIGGER_LINE_REF_ROLE: Final = "line"
@@ -91,6 +91,84 @@ TriggerScheduleV1: TypeAlias = Annotated[
 ]
 
 
+class NoTriggerInputV1(_StrictTriggerModel):
+    """The target needs no event, so every schedule satisfies it."""
+
+    kind: Literal["none"] = "none"
+
+
+class CaptureEventInputV1(_StrictTriggerModel):
+    """The target needs a Capture event: its Trigger's schedule must fire on one.
+
+    ``event`` names the exact event when only that one is acceptable, as for a
+    Line that binds its triggering Capture to a Source input.
+    """
+
+    kind: Literal["capture_event"] = "capture_event"
+    event: CaptureEventSelectorV1 | None = None
+
+
+TriggerInputV1: TypeAlias = Annotated[
+    NoTriggerInputV1 | CaptureEventInputV1,
+    Field(discriminator="kind"),
+]
+
+
+@dataclass(frozen=True)
+class InternalActionSpec:
+    """One internal action a Trigger may fire, and the worker that performs it.
+
+    Adding an action is one entry here and the consumer part that follows its
+    fires in the trigger journal; the Trigger law, authoring and the next
+    status read this registry, never a list of names of their own.
+    """
+
+    name: str
+    #: The event a fire must carry; the Trigger law checks the schedule supplies it.
+    input: TriggerInputV1
+    #: What performing the action may change: findings only, never governed state.
+    effect: Literal["findings"]
+    #: The consumer kind and part that follow this action's fires.
+    consumer: str
+    part: str
+
+
+INTERNAL_ACTIONS: Final[Mapping[str, InternalActionSpec]] = MappingProxyType(
+    {
+        spec.name: spec
+        for spec in (
+            InternalActionSpec(
+                name="evidence.sweep",
+                input=NoTriggerInputV1(),
+                effect="findings",
+                consumer="next",
+                part="evidence",
+            ),
+            InternalActionSpec(
+                name="prediction.anchor_retry",
+                input=NoTriggerInputV1(),
+                effect="findings",
+                consumer="next",
+                part="prediction",
+            ),
+        )
+    }
+)
+
+#: An internal action named by a Trigger. Its shape is checked here; whether it
+#: is registered is the Trigger law's to judge, so an unknown name is a typed
+#: refusal at acceptance rather than an opaque format failure.
+InternalActionName: TypeAlias = Annotated[
+    str,
+    Field(
+        pattern=r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$",
+        max_length=128,
+        description="A registered internal action: " + ", ".join(INTERNAL_ACTIONS) + ".",
+        examples=list(INTERNAL_ACTIONS),
+    ),
+]
+
+
 class LineTargetV1(_StrictTriggerModel):
     """Run one Line, whatever version of it is accepted when the Trigger fires."""
 
@@ -108,7 +186,7 @@ class ActionTargetV1(_StrictTriggerModel):
     """Fire one internal action; the worker that owns it follows its fires."""
 
     kind: Literal["action"] = "action"
-    action: InternalAction
+    action: InternalActionName
 
 
 TriggerTargetV1: TypeAlias = Annotated[
@@ -127,6 +205,19 @@ def schedule_capture_selector(schedule: TriggerScheduleV1) -> CaptureEventSelect
     ):
         return schedule.window.event
     return None
+
+
+def schedule_satisfies_input(schedule: TriggerScheduleV1, required: TriggerInputV1) -> bool:
+    """Whether every fire of ``schedule`` carries the event ``required`` names.
+
+    The one rule for every target: a Line's accepted event and an internal
+    action's declared input are both judged here.
+    """
+
+    if isinstance(required, NoTriggerInputV1):
+        return True
+    selector = schedule_capture_selector(schedule)
+    return selector is not None and (required.event is None or selector == required.event)
 
 
 def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
@@ -177,7 +268,7 @@ class TriggerV1(_StrictTriggerModel):
         return self.target.line.target if isinstance(self.target, LineTargetV1) else None
 
     @property
-    def action(self) -> InternalAction | None:
+    def action(self) -> str | None:
         return self.target.action if isinstance(self.target, ActionTargetV1) else None
 
 
@@ -259,17 +350,19 @@ def evaluate_trigger_law(
     path: str,
     predecessor: AcceptedTriggerV1 | None,
     target_line_live: bool | None = None,
-    accepted_event: CaptureEventSelectorV1 | None = None,
-    target_line_binds_event: bool = False,
+    target_line_input: TriggerInputV1 | None = None,
+    actions: Mapping[str, InternalActionSpec] = INTERNAL_ACTIONS,
 ) -> TriggerLawResultV1:
-    """Judge one Trigger against its predecessor and the Line it aims at.
+    """Judge one Trigger against its predecessor and what it aims at.
 
     ``target_line_live`` is whether the named Line is live in the final
-    candidate (None when the target is an internal action). A Line that binds
-    its triggering Capture to a Source input (``target_line_binds_event``)
-    accepts exactly ``accepted_event``; a Trigger aimed at it must fire on that
-    event. A retiring Trigger is judged only for its succession: it sets off
-    nothing, so what it named no longer matters.
+    candidate (None when the target is an internal action), and
+    ``target_line_input`` the event that Line accepts: a Line that binds its
+    triggering Capture to a Source input accepts exactly its declared event.
+    An internal action must be registered in ``actions`` and takes the input its
+    entry declares. Either way the schedule must supply the target's input. A
+    retiring Trigger is judged only for its succession: it sets off nothing, so
+    what it named no longer matters.
     """
 
     if path != trigger_path(trigger.identity.name):
@@ -304,12 +397,15 @@ def evaluate_trigger_law(
             )
     if trigger.lifecycle.state == "live":
         if isinstance(trigger.target, ActionTargetV1):
-            if not isinstance(trigger.schedule, CadenceScheduleV1):
+            spec = actions.get(trigger.target.action)
+            if spec is None:
                 return _refusal(
-                    "playbill.trigger.action_schedule_unsupported",
-                    f"Internal action {trigger.target.action!r} runs on a cadence schedule only.",
+                    "playbill.trigger.action_unknown",
+                    f"Internal action {trigger.target.action!r} is not registered; a Trigger "
+                    "may fire one of: " + ", ".join(sorted(actions)) + ".",
                     path=path,
                 )
+            target, required = f"Internal action {spec.name!r}", spec.input
         else:
             if not target_line_live:
                 return _refusal(
@@ -319,16 +415,21 @@ def evaluate_trigger_law(
                     "ChangeSet.",
                     path=path,
                 )
-            if target_line_binds_event and schedule_capture_selector(trigger.schedule) != (
-                accepted_event
-            ):
-                return _refusal(
-                    "playbill.trigger.event_not_accepted",
-                    f"Line {trigger.target.line.target.qualified!r} binds its triggering "
-                    "Capture to a Source input and accepts only its declared trigger_event; "
-                    "this Trigger's schedule does not fire on that exact event.",
-                    path=path,
-                )
+            target = f"Line {trigger.target.line.target.qualified!r}"
+            required = target_line_input or NoTriggerInputV1()
+        if not schedule_satisfies_input(trigger.schedule, required):
+            assert isinstance(required, CaptureEventInputV1)
+            needed = (
+                "its declared trigger_event exactly"
+                if required.event is not None
+                else "a Capture event"
+            )
+            return _refusal(
+                "playbill.trigger.event_not_accepted",
+                f"{target} needs {needed} as its input; this Trigger's schedule does not "
+                "fire on it.",
+                path=path,
+            )
     return TriggerLawResultV1(
         verdict="accepted",
         artifact_digest=trigger_digest(trigger).tagged,
@@ -343,10 +444,14 @@ __all__ = [
     "AcceptedTriggerV1",
     "ActionTargetV1",
     "CadenceScheduleV1",
+    "CaptureEventInputV1",
     "CaptureLandingScheduleV1",
-    "InternalAction",
+    "InternalActionName",
+    "InternalActionSpec",
     "LineTargetV1",
+    "NoTriggerInputV1",
     "TriggerFormatError",
+    "TriggerInputV1",
     "TriggerLawResultV1",
     "TriggerScheduleV1",
     "TriggerTargetV1",
@@ -356,6 +461,7 @@ __all__ = [
     "parse_trigger",
     "render_trigger",
     "schedule_capture_selector",
+    "schedule_satisfies_input",
     "trigger_digest",
     "trigger_path",
     "trigger_schedule_pins",

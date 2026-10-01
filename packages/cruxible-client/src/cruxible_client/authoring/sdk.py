@@ -224,7 +224,7 @@ from cruxible_client.contracts.resolution_contracts import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
-from cruxible_client.contracts.triggers import InternalAction, TriggerScheduleV1
+from cruxible_client.contracts.triggers import InternalActionName, TriggerScheduleV1
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 
@@ -1021,16 +1021,17 @@ class ChangeSetDraft:
         name: str,
         schedule: TriggerScheduleV1,
         line: str | None = None,
-        action: InternalAction | None = None,
+        action: InternalActionName | None = None,
         retire: bool = False,
     ) -> ChangeSetDraft:
         """Define one Trigger inside this changeset: a schedule aimed at one target.
 
         Name exactly one of ``line`` (an accepted Line, or one defined in this
-        same set) or ``action`` (``evidence.sweep`` or
-        ``prediction.anchor_retry``, which take a cadence schedule only). A Line
-        can have several Triggers; retiring a Line needs its live Triggers
-        retired or retargeted in the same set.
+        same set) or ``action`` (a registered internal action such as
+        ``evidence.sweep`` or ``prediction.anchor_retry``). The schedule may be
+        any kind that supplies the target's input. A Line can have several
+        Triggers; retiring a Line needs its live Triggers retired or retargeted
+        in the same set.
         """
 
         payload = TriggerAuthoringPayloadV1(

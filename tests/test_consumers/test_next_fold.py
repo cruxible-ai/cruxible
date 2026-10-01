@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from cruxible_client.contracts.triggers import CadenceScheduleV1
 from cruxible_core.consumers import next as folded
 from cruxible_core.consumers.next import NEXT_QUEUE, evidence, predictions, queue
 from cruxible_core.consumers.protocol import ConsumerWork
@@ -21,10 +22,16 @@ from cruxible_core.consumers.runner import (
 )
 from cruxible_core.server.config import get_disabled_consumers
 from cruxible_core.service.discovery.next import _consumer_stalled_items
-from cruxible_core.triggers.journal import TriggerCadence, evaluate_triggers
+from cruxible_core.triggers.journal import InternalTrigger, evaluate_triggers
 from tests.core_support._knowledge_loop_support import seed_claims
 from tests.test_consumers.test_prediction_settlement import drain, fixed_world
 from tests.test_integration.test_next_closed_loop import EVALUATION_TIME
+
+
+def _cadence(trigger: str, action: str, interval: timedelta) -> InternalTrigger:
+    return InternalTrigger(
+        trigger, action, CadenceScheduleV1(interval_seconds=int(interval.total_seconds()))
+    )
 
 
 def test_one_kind_one_health_and_independent_part_cursors(tmp_path: Path) -> None:
@@ -146,18 +153,18 @@ def test_one_slow_part_does_not_block_other_keys_and_each_key_is_single_flight(
 def test_lag_in_any_part_lags_the_one_health_entry(tmp_path: Path, part: str) -> None:
     instance, _owner = seed_claims(tmp_path)
     config = (
-        TriggerCadence(
+        _cadence(
             "Trigger:evidence-sweep",
             "evidence.sweep",
             timedelta(seconds=100 if part == "evidence" else 1000),
         ),
-        TriggerCadence(
+        _cadence(
             "Trigger:prediction-anchor-retry",
             "prediction.anchor_retry",
             timedelta(seconds=100 if part == "prediction" else 1000),
         ),
     )
-    evaluate_triggers(instance, now=EVALUATION_TIME, cadences=config)
+    evaluate_triggers(instance, now=EVALUATION_TIME, triggers=config)
     drain(instance, now=EVALUATION_TIME)
     assert NEXT_QUEUE.health(instance, now=EVALUATION_TIME)[0].state == "running"
     if part == "queue":
@@ -165,7 +172,7 @@ def test_lag_in_any_part_lags_the_one_health_entry(tmp_path: Path, part: str) ->
     else:
         for seconds in (100, 200):
             evaluate_triggers(
-                instance, now=EVALUATION_TIME + timedelta(seconds=seconds), cadences=config
+                instance, now=EVALUATION_TIME + timedelta(seconds=seconds), triggers=config
             )
     (health,) = NEXT_QUEUE.health(instance, now=EVALUATION_TIME)
     assert health.state == "lagging" and health.detail[part]["state"] == "lagging"

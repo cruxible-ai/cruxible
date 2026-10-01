@@ -66,7 +66,7 @@ from cruxible_client.contracts.proposal_models import (
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1, QueryDefinitionV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
-from cruxible_client.contracts.triggers import InternalAction, TriggerScheduleV1
+from cruxible_client.contracts.triggers import InternalActionName, TriggerScheduleV1
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.records import RecordConstructor
@@ -332,9 +332,10 @@ class LineInput(_StrictInputModel):
 class TriggerInput(_StrictInputModel):
     """One Trigger: a schedule aimed at exactly one Line or internal action.
 
-    A Line target names an accepted or same-set Line; an internal action
-    (`evidence.sweep`, `prediction.anchor_retry`) takes a cadence only. A Trigger
-    is changed or retired (`retire`) through a successor, like any definition.
+    A Line target names an accepted or same-set Line; an internal action names a
+    registered action (`evidence.sweep`, `prediction.anchor_retry`). Any schedule
+    that supplies the target's input will do. A Trigger is changed or retired
+    (`retire`) through a successor, like any definition.
     """
 
     kind: Literal["trigger"]
@@ -343,7 +344,7 @@ class TriggerInput(_StrictInputModel):
     line_name: str | None = Field(
         default=None, description="The Line this Trigger runs; omit when naming an action."
     )
-    action: InternalAction | None = Field(
+    action: InternalActionName | None = Field(
         default=None, description="The internal action this Trigger fires; omit for a Line."
     )
     retire: bool = False
