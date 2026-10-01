@@ -553,3 +553,29 @@ def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path)
         "live",
     )
     assert card.card.schedule == {"interval_seconds": 3600, "kind": "cadence"}
+
+
+def test_an_unknown_schedule_kind_fails_loudly_everywhere_it_is_classified() -> None:
+    from datetime import UTC, datetime
+    from typing import Literal
+
+    from pydantic import BaseModel
+
+    from cruxible_client.contracts.triggers import schedule_capture_selector, schedule_is_timed
+    from cruxible_core.triggers.cadence import timer_due
+
+    class _QueryScheduleV1(BaseModel):
+        kind: Literal["query"] = "query"
+
+    future = _QueryScheduleV1()
+    for classify in (schedule_is_timed, schedule_capture_selector):
+        with pytest.raises(TriggerFormatError, match="unsupported Trigger schedule kind 'query'"):
+            classify(future)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="not a timer"):
+        timer_due(future, last=None, now=datetime(2026, 9, 30, tzinfo=UTC))  # type: ignore[arg-type]
+    # The wire union is discriminated: a kind it does not name is refused at parse.
+    wire = json.loads(
+        render_trigger(action_trigger("probe", action="evidence.sweep", interval_seconds=60))
+    )
+    with pytest.raises(ValidationError, match="query"):
+        TriggerV1.model_validate({**wire, "schedule": {"kind": "query"}})

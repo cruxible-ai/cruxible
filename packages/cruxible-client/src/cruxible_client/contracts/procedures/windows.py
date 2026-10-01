@@ -154,6 +154,9 @@ class LineTriggerBindingV1(_WindowModel):
         elif self.kind == "capture_landing":
             if self.event is None or self.window is not None:
                 raise ValueError("capture trigger must bind exactly one retained event")
-        elif self.window is None or self.event != self.window.event:
-            raise ValueError("window trigger must reproduce its event anchor")
+        elif self.kind == "window_close":
+            if self.window is None or self.event != self.window.event:
+                raise ValueError("window trigger must reproduce its event anchor")
+        else:
+            raise ValueError(f"unsupported trigger binding kind {self.kind!r}")
         return self
