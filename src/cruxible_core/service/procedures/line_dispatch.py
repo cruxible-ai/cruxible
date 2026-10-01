@@ -60,6 +60,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     LineNeverArmed,
     LineRunRequestV1,
     LineTriggersChanged,
+    LineVersionChanged,
     _accepted_line_by_reference,
     _journal,
     _line_admissions,
@@ -1044,6 +1045,13 @@ def service_dispatch_line(
                         raise
                     except LineTriggersChanged as exc:
                         raise LineArmAuthorityLost("trigger_changed", _TRIGGER_CHANGED) from exc
+                    except LineVersionChanged as exc:
+                        if pinned_line_artifact_digest is None:
+                            # An explicit dispatch keeps the occurrence pending; the
+                            # next pass reconciles it against the current Line.
+                            detail = str(exc)
+                        else:
+                            raise LineArmAuthorityLost("line_changed", _LINE_CHANGED) from exc
                     except PlaybillExecutionError as exc:
                         detail = str(exc)
                     finally:

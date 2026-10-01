@@ -6,7 +6,8 @@ import difflib
 import json
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
@@ -263,6 +264,7 @@ from cruxible_core.procedures.execution import (
     run_value_digest,
     verify_line_admission_spec,
 )
+from cruxible_core.procedures.line_admission import LINE_ARM_ADMISSION_GATE
 from cruxible_core.procedures.proposal_delivery import (
     ProposalTerminalEgressSink,
 )
@@ -944,6 +946,62 @@ class LineTriggerMismatch(PlaybillExecutionError):
 
 class LineTriggersChanged(PlaybillExecutionError):
     """The Triggers aimed at a Line differ at admission from the set an arm pinned."""
+
+
+class LineVersionChanged(PlaybillExecutionError):
+    """The accepted Line differs at admission from the version its pending binding pinned."""
+
+
+@contextmanager
+def _line_admission_head_gate(
+    instance: PlaybillInstance,
+    *,
+    accepted_line: AcceptedLineSpecV1,
+    coordinate: AcceptedProjectionCoordinate,
+    expected_line_artifact_digest: str | None,
+    expected_trigger_pins: dict[str, str] | None,
+    arm_gate: Callable[[], AbstractContextManager[None]] | None,
+) -> Iterator[None]:
+    """Record a Line admission only while accepted main is still the run's coordinate.
+
+    Everything the run validated -- the Line version and the complete Trigger set
+    aimed at it -- was read at `coordinate`. The executor enters this gate around
+    the admission append, so holding main still across the comparison and the
+    append leaves no window for an acceptance to change either between the last
+    check and the admission record. A moved head is classified after the hold is
+    released: a changed pin set or Line version stops an arm that pinned it,
+    anything else is the ordinary not-current refusal.
+    """
+
+    with arm_gate() if arm_gate is not None else nullcontext():
+        with instance.holding_accepted_head() as head:
+            if head == coordinate.git_oid:
+                yield
+                return
+    current = instance.accepted_coordinate()
+    try:
+        moved = _accepted_line_by_reference(
+            instance,
+            coordinate=current,
+            reference=line_identity_digest(accepted_line.line.identity),
+        )
+    except LineRunNotAccepted:
+        moved = None
+    if expected_trigger_pins is not None and (
+        moved is None
+        or line_trigger_pins(line_triggers(instance, moved, coordinate=current))
+        != expected_trigger_pins
+    ):
+        raise LineTriggersChanged(
+            "the Triggers aimed at this Line changed before its admission was recorded"
+        )
+    if expected_line_artifact_digest is not None and (
+        moved is None or moved.artifact_digest != expected_line_artifact_digest
+    ):
+        raise LineVersionChanged("the accepted Line changed before its admission was recorded")
+    raise ProcedureRunNotCurrent(
+        f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before Line admission"
+    )
 
 
 def select_line_trigger(
@@ -4571,6 +4629,19 @@ def _run_playbill_line(
             raise ProcedureRunNotCurrent(
                 f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before Line append"
             )
+        # Preflight runs between that check and the admission append; the head
+        # gate closes the window by holding main still across the append itself.
+        admission_gate = LINE_ARM_ADMISSION_GATE.set(
+            partial(
+                _line_admission_head_gate,
+                instance,
+                accepted_line=accepted_line,
+                coordinate=coordinate,
+                expected_line_artifact_digest=expected_line_artifact_digest,
+                expected_trigger_pins=expected_trigger_pins,
+                arm_gate=LINE_ARM_ADMISSION_GATE.get(),
+            )
+        )
         try:
             result = service_execute_direct_procedure(
                 prepared,
@@ -4617,6 +4688,8 @@ def _run_playbill_line(
                 message=str(exc),
                 details={"boundary_code": exc.code, "detail": exc.details},
             )
+        finally:
+            LINE_ARM_ADMISSION_GATE.reset(admission_gate)
         if result.status == "succeeded":
             # The terminal and finalization are durable before staged bodies are released.
             capture_store.release()

@@ -1078,3 +1078,91 @@ def test_a_trigger_accepted_just_before_admission_stops_the_arm_instead_of_runni
     status = service_line_status(instance, line.identity.name)
     assert (status.state, status.stop_reason) == ("stopped", "trigger_changed")
     assert status.pending_explicit == 1
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"), [("trigger", "trigger_changed"), ("line", "line_changed")]
+)
+def test_an_acceptance_during_executor_preflight_never_records_an_admission(
+    tmp_path, monkeypatch, change, reason
+):
+    import cruxible_core.service.procedures.procedure_runs as runs
+    from cruxible_client.contracts.artifacts import ArtifactLifecycle
+    from cruxible_client.contracts.procedures.line_specs import (
+        line_spec_digest,
+        line_spec_path,
+        render_line_spec,
+    )
+    from tests.support.lines import line_trigger, trigger_members
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, line, procedure, owner = line_world(
+        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+    )
+    start = READ_TIME + timedelta(seconds=10)
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+    )
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    if change == "trigger":
+        tree.update(
+            trigger_members(
+                line_trigger(
+                    "another",
+                    line=line.identity.name,
+                    schedule=CadenceScheduleV1(interval_seconds=60),
+                )
+            )
+        )
+    else:
+        tree[line_spec_path(line.identity.name)] = render_line_spec(
+            line.model_copy(
+                update={
+                    "parameters": {"status": "closed"},
+                    "lifecycle": ArtifactLifecycle(
+                        predecessor_digest=line_spec_digest(line).tagged
+                    ),
+                }
+            )
+        )
+    original = runs._CurrentProcedureAuthority.current_procedure_digest
+    injected = False
+
+    def accept_after_the_last_head_check(self, identity, *, coordinate):  # type: ignore[no-untyped-def]
+        # Executor preflight runs after the run's final head check and before
+        # the admission append; an acceptance landing here must still stop the arm.
+        nonlocal injected
+        if not injected:
+            injected = True
+            _accept_tree(
+                instance,
+                owner,
+                tree,
+                timestamp="2026-08-28T15:02:00.000000Z",
+                proposal_name="during-preflight",
+            )
+        return original(self, identity, coordinate=coordinate)
+
+    monkeypatch.setattr(
+        runs._CurrentProcedureAuthority,
+        "current_procedure_digest",
+        accept_after_the_last_head_check,
+    )
+    dispatch_armed_line(
+        _manager(instance), instance.descriptor.instance_id, arm, now=start + timedelta(seconds=3)
+    )
+
+    assert injected
+    assert _admissions(instance) == 0
+    status = service_line_status(instance, line.identity.name)
+    assert (status.state, status.stop_reason) == ("stopped", reason)
+    assert status.pending_explicit == 1

@@ -2050,6 +2050,20 @@ class PlaybillInstance:
             assembler.assemble(request)
         return self._projection_sources(bind_projection(manifest_path, expected=verified))
 
+    @contextmanager
+    def holding_accepted_head(self) -> Iterator[str]:
+        """Hold accepted main still and yield its commit, for one short critical section.
+
+        Takes the locks every acceptance takes, in the same order (this
+        instance's state lock, then the ledger activation lock), so no
+        activation in this or any other process can move main until exit and
+        the hold cannot deadlock against one. The body must not accept,
+        activate or refresh, and must not wait on a thread that does.
+        """
+
+        with self._state_lock, self._ledger.activation_lock():
+            yield self._ledger.read_main()
+
     def refresh(self, *, witness: WitnessSink | None = None) -> AcceptedProjectionCoordinate:
         """Replay accepted state and repair publication, excluding concurrent writers."""
         with self._state_lock, self._ledger.activation_lock():
