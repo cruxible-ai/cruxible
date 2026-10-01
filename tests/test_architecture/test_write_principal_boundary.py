@@ -32,7 +32,6 @@ BOUNDARY = frozenset(
 EXEMPT: dict[str, str] = {
     # Reads whose tier is a disclosure control, not a mutation.
     "playbill_read_capture": "reads retained Capture bytes; mutates nothing",
-    "playbill_dereference_document": "reads Document body bytes; mutates nothing",
     # Daemon-wide operator levers the runtime bootstrap secret drives before,
     # or independently of, any principal; none changes governed state.
     "create_playbill_host": "allocates an empty host before any principal exists",

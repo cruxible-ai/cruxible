@@ -1016,7 +1016,7 @@ def _claim_counts(
     """
 
     from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
-    from cruxible_core.service.discovery.search import (
+    from cruxible_core.service.discovery.claim_status import (
         claim_resolution_statuses,
         remembered_resolution_statuses,
     )

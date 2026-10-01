@@ -317,45 +317,6 @@ def test_explicit_remote_workspace_config_never_sends_the_client_path(
     }
 
 
-def test_cli_lists_documents_with_their_canonical_coordinate(monkeypatch) -> None:
-    class StubClient:
-        def list_playbill_documents(self, instance_id: str) -> contracts.PlaybillDocumentList:
-            assert instance_id == "inst_cli"
-            return contracts.PlaybillDocumentList(
-                coordinate=COORDINATE,
-                documents=[
-                    contracts.PlaybillDocumentView(
-                        coordinate=COORDINATE,
-                        envelope={
-                            "identity": "document:design",
-                            "path": "documents/design.json",
-                        },
-                        facts=[],
-                    )
-                ],
-            )
-
-    monkeypatch.setattr(
-        "cruxible_core.cli.commands._common._get_client",
-        lambda: StubClient(),
-    )
-    result = CliRunner().invoke(
-        cli,
-        [
-            "--server-url",
-            "https://playbill.invalid",
-            "--instance-id",
-            "inst_cli",
-            "playbill",
-            "document",
-            "list",
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    assert "document:design  documents/design.json" in result.stdout
-    assert f"Coordinate: {COORDINATE.git_oid}" in result.stdout
-
-
 def test_document_example_is_local_and_model_constructed(monkeypatch) -> None:
     monkeypatch.setattr(
         "cruxible_core.cli.commands._common._get_client",

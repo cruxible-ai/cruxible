@@ -14,7 +14,6 @@ from cruxible_client import contracts
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendResultV1
-from cruxible_client.contracts.claim_reads import ClaimValuesResultV1
 from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeRequestV1,
     ClaimTypeUpgradeResultV1,
@@ -39,7 +38,6 @@ from cruxible_client.contracts.kits import (
     PlaybillKitRemoveRequestV1,
     PlaybillKitStatusV1,
 )
-from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
     PlaybillProviderCatalogV1,
     PlaybillProviderInstallRequestV1,
@@ -76,6 +74,17 @@ from cruxible_core.mcp.tool_prompts import tool_description
 InstanceId = Annotated[
     str | None,
     Field(description=f"Instance to act on; defaults to the server's {MCP_INSTANCE_ENV}."),
+]
+
+
+ReadAt = Annotated[
+    str | int | None,
+    Field(
+        description=(
+            "Read at an accepted generation: its git oid (a unique prefix of 12+ hex "
+            "characters is enough) or its generation number; default the current head."
+        )
+    ),
 ]
 
 
@@ -337,15 +346,7 @@ def register_tools(
         cursor: Annotated[
             str | None, Field(description="next_cursor from the previous page of this view.")
         ] = None,
-        at: Annotated[
-            str | int | contracts.PlaybillAcceptedCoordinate | None,
-            Field(
-                description=(
-                    "An accepted coordinate, one accepted generation's Git OID (a unique "
-                    "prefix of 12+ hex characters is enough), or its generation number."
-                )
-            ),
-        ] = None,
+        at: ReadAt = None,
         evaluation_time: Annotated[
             str | None, Field(description="ISO-8601 instant; defaults to now.")
         ] = None,
@@ -400,57 +401,11 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_list_documents(
-        instance_id: InstanceId = None,
-    ) -> contracts.PlaybillDocumentList:
-        """List accepted Documents at the current coordinate."""
-        return handlers.handle_playbill_list_documents(require_instance_id(instance_id))
-
-    @_tool
-    def cruxible_playbill_get_document(
-        instance_id: InstanceId = None, *, identity: str
-    ) -> contracts.PlaybillDocumentView:
-        """Read one accepted Document envelope and facts."""
-        return handlers.handle_playbill_get_document(require_instance_id(instance_id), identity)
-
-    @_tool
     def cruxible_playbill_read_capture(
         instance_id: InstanceId = None, *, request: CaptureReadRequestV1
     ) -> CaptureReadV1:
         """Read exact retained Capture evidence with a byte budget and body permission."""
         return handlers.handle_playbill_read_capture(require_instance_id(instance_id), request)
-
-    @_tool
-    def cruxible_playbill_dereference(
-        instance_id: InstanceId = None, *, identity: str
-    ) -> contracts.PlaybillBodyRead:
-        """Dereference verified accepted body bytes."""
-        return handlers.handle_playbill_dereference(require_instance_id(instance_id), identity)
-
-    @_tool
-    def cruxible_playbill_history(
-        instance_id: InstanceId = None, *, identity: str
-    ) -> contracts.PlaybillDocumentHistory:
-        """Read one Document's replay-verified history."""
-        return handlers.handle_playbill_history(require_instance_id(instance_id), identity)
-
-    @_tool
-    def cruxible_playbill_explain(
-        instance_id: InstanceId = None,
-        *,
-        subject: dict[str, Any],
-        at: dict[str, Any],
-        detail: Literal["summary", "evidence", "proof"] = "summary",
-        include_body: bool = False,
-    ) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
-        """Explain governance and provenance at an exact coordinate."""
-        return handlers.handle_playbill_explain(
-            require_instance_id(instance_id),
-            subject,
-            at,
-            detail=detail,
-            include_body=include_body,
-        )
 
     @_tool
     def cruxible_playbill_source_context(
@@ -502,13 +457,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_list_principals(
-        instance_id: InstanceId = None,
-    ) -> contracts.PlaybillPrincipalList:
-        """List accepted public principal records."""
-        return handlers.handle_playbill_list_principals(require_instance_id(instance_id))
-
-    @_tool
     def cruxible_playbill_compiler_upgrade(
         instance_id: InstanceId = None,
         *,
@@ -537,38 +485,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_list_subjects(
-        instance_id: InstanceId = None,
-        subject_kind: str | None = None,
-        limit: Annotated[
-            int, Field(ge=1, le=contracts.PLAYBILL_SUBJECT_LIST_MAX_LIMIT)
-        ] = contracts.PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT,
-        cursor: str | None = None,
-    ) -> contracts.PlaybillSubjectList:
-        """One page of Subjects (kind, id, live Claim count); follow next_cursor while truncated."""
-        return handlers.handle_playbill_list_subjects(
-            require_instance_id(instance_id), subject_kind=subject_kind, limit=limit, cursor=cursor
-        )
-
-    @_tool
-    def cruxible_playbill_get_subject(
-        instance_id: InstanceId = None, *, subject_kind: str, subject_id: str
-    ) -> contracts.PlaybillSubjectView:
-        """Read one accepted Subject envelope, facts, and incoming relations."""
-        return handlers.handle_playbill_get_subject(
-            require_instance_id(instance_id), subject_kind, subject_id
-        )
-
-    @_tool
-    def cruxible_playbill_subject_history(
-        instance_id: InstanceId = None, *, subject_kind: str, subject_id: str
-    ) -> contracts.PlaybillSubjectHistory:
-        """Read one Subject's accepted lineage."""
-        return handlers.handle_playbill_subject_history(
-            require_instance_id(instance_id), subject_kind, subject_id
-        )
-
-    @_tool
     def cruxible_playbill_propose_claim_type(
         instance_id: InstanceId = None,
         *,
@@ -590,20 +506,6 @@ def register_tools(
         return handlers.handle_playbill_migrate_claim_type(
             require_instance_id(instance_id), request
         )
-
-    @_tool
-    def cruxible_playbill_list_claim_types(
-        instance_id: InstanceId = None,
-    ) -> contracts.PlaybillClaimTypeList:
-        """List accepted ClaimType interfaces."""
-        return handlers.handle_playbill_list_claim_types(require_instance_id(instance_id))
-
-    @_tool
-    def cruxible_playbill_get_claim_type(
-        instance_id: InstanceId = None, *, predicate: str
-    ) -> contracts.PlaybillClaimTypeView:
-        """Read one accepted ClaimType by predicate."""
-        return handlers.handle_playbill_get_claim_type(require_instance_id(instance_id), predicate)
 
     @_tool
     def cruxible_playbill_claim_attest(
@@ -812,47 +714,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_list_claims(
-        instance_id: InstanceId = None,
-        *,
-        subject_path: str | None = None,
-        predicate: str | None = None,
-        include_retired: bool = False,
-        subject_kind: str | None = None,
-    ) -> contracts.PlaybillClaimList:
-        """List accepted Claims, optionally by Subject, Subject kind or predicate."""
-        return handlers.handle_playbill_list_claims(
-            require_instance_id(instance_id),
-            subject_path=subject_path,
-            predicate=predicate,
-            include_retired=include_retired,
-            subject_kind=subject_kind,
-        )
-
-    @_tool
-    def cruxible_playbill_claim_values(
-        instance_id: InstanceId = None,
-        *,
-        subject_kind: str,
-        predicates: list[str],
-        subject_ids: list[str] | None = None,
-        evaluation_time: str | None = None,
-    ) -> ClaimValuesResultV1:
-        """Status table: each live Claim's value and verdict for Subjects of one kind.
-
-        Covers every Subject of ``subject_kind`` (or only ``subject_ids``) for the
-        given fully qualified predicates, one row per Claim with ``subject_id``,
-        ``value`` and ``verdict``, without full Claim views.
-        """
-        return handlers.handle_playbill_claim_values(
-            require_instance_id(instance_id),
-            subject_kind=subject_kind,
-            predicates=predicates,
-            subject_ids=subject_ids,
-            evaluation_time=evaluation_time,
-        )
-
-    @_tool
     def cruxible_playbill_get(
         instance_id: InstanceId = None,
         *,
@@ -873,15 +734,7 @@ def register_tools(
             PlaybillByteRangeV1 | None,
             Field(description='Byte range [start, end) of a Document body; detail="body" only.'),
         ] = None,
-        at: Annotated[
-            contracts.PlaybillAcceptedCoordinate | str | int | None,
-            Field(
-                description=(
-                    "Accepted coordinate, git oid (or a unique 12+ hex prefix), or generation "
-                    "number to read at; default current head."
-                )
-            ),
-        ] = None,
+        at: ReadAt = None,
         evaluation_time: Annotated[
             str | None,
             Field(description="ISO-8601 instant verdicts are evaluated at; default now."),
@@ -1092,84 +945,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_get_claim(
-        instance_id: InstanceId = None,
-        *,
-        identity: str,
-        evaluation_time: str | None = None,
-    ) -> contracts.PlaybillClaimViewV2:
-        """Read one accepted Claim with its capture-admission accounts."""
-        return handlers.handle_playbill_get_claim(
-            require_instance_id(instance_id),
-            identity,
-            evaluation_time=evaluation_time,
-        )
-
-    @_tool
-    def cruxible_playbill_claim_history(
-        instance_id: InstanceId = None, *, identity: str
-    ) -> contracts.PlaybillClaimHistory:
-        """Read one Claim's accepted lineage."""
-        return handlers.handle_playbill_claim_history(require_instance_id(instance_id), identity)
-
-    @_tool
-    def cruxible_playbill_explain_claim(
-        instance_id: InstanceId = None,
-        *,
-        identity: str,
-        evaluation_time: str | None = None,
-    ) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
-        """Explain one Claim's verdict, law evidence, and sources."""
-        return handlers.handle_playbill_explain_claim(
-            require_instance_id(instance_id), identity, evaluation_time=evaluation_time
-        )
-
-    @_tool
-    def cruxible_playbill_list_query_definitions(
-        instance_id: InstanceId = None,
-    ) -> contracts.PlaybillQueryDefinitionList:
-        """List accepted QueryDefinition entrypoints."""
-        return handlers.handle_playbill_list_query_definitions(require_instance_id(instance_id))
-
-    @_tool
-    def cruxible_playbill_policies_in_force(
-        instance_id: InstanceId = None,
-        limit: Annotated[
-            int, Field(ge=1, le=contracts.PLAYBILL_POLICY_LIST_MAX_LIMIT)
-        ] = contracts.PLAYBILL_POLICY_LIST_DEFAULT_LIMIT,
-        cursor: str | None = None,
-    ) -> contracts.PlaybillPolicyInForceList:
-        """List one page of live governed policies; pass next_cursor back while truncated."""
-        return handlers.handle_playbill_policies_in_force(
-            require_instance_id(instance_id), limit=limit, cursor=cursor
-        )
-
-    @_tool
-    def cruxible_playbill_get_query_definition(
-        instance_id: InstanceId = None, *, name: str
-    ) -> contracts.PlaybillQueryDefinitionView:
-        """Read one accepted QueryDefinition and its contract."""
-        return handlers.handle_playbill_get_query_definition(require_instance_id(instance_id), name)
-
-    @_tool
-    def cruxible_playbill_run_query(
-        instance_id: InstanceId = None,
-        *,
-        name: str,
-        parameters: dict[str, Any] | None = None,
-        evaluation_time: str | None = None,
-        budgets: dict[str, Any] | None = None,
-    ) -> contracts.PlaybillQueryRun:
-        """Execute an accepted QueryDefinition and return its execution receipt."""
-        return handlers.handle_playbill_run_query(
-            require_instance_id(instance_id),
-            name,
-            parameters=parameters,
-            evaluation_time=evaluation_time,
-            budgets=budgets,
-        )
-
-    @_tool
     def cruxible_playbill_query(
         instance_id: InstanceId = None,
         *,
@@ -1189,7 +964,7 @@ def register_tools(
         claims: bool = False,
         budgets: QueryBudgetsV1 | None = None,
         receipt: QueryReceiptDetail = "compact",
-        at: AcceptedCoordinate | str | int | None = None,
+        at: ReadAt = None,
         evaluation_time: str | None = None,
     ) -> contracts.PlaybillQueryResult:
         """Query accepted state: rows of values with flags; pass next_cursor while truncated."""
@@ -1222,7 +997,7 @@ def register_tools(
             int, Field(ge=1, le=contracts.PLAYBILL_QUERY_MAX_LIMIT)
         ] = contracts.PLAYBILL_QUERY_DEFAULT_LIMIT,
         cursor: str | None = None,
-        at: AcceptedCoordinate | str | int | None = None,
+        at: ReadAt = None,
         evaluation_time: str | None = None,
     ) -> contracts.PlaybillQueryResult:
         """Run one full QueryDefinition spec inline: the query verb's rows, flags and paging."""
@@ -1437,53 +1212,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_discover(
-        instance_id: InstanceId = None,
-        *,
-        query: str | None = None,
-        entrypoint: str | None = None,
-        evaluation_time: str | None = None,
-        profile: Literal["interfaces", "subjects", "all"] = "interfaces",
-        budget: dict[str, Any] | None = None,
-    ) -> contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory:
-        """Find accepted interfaces and Subjects by exact or lexical match."""
-        return handlers.handle_playbill_discover(
-            require_instance_id(instance_id),
-            query=query,
-            entrypoint=entrypoint,
-            evaluation_time=evaluation_time,
-            profile=profile,
-            budget=budget,
-        )
-
-    @_tool
-    def cruxible_playbill_search(
-        instance_id: InstanceId = None,
-        *,
-        mode: Literal["search", "list", "orient"],
-        query: str | None = None,
-        kinds: list[Literal["claim", "procedure", "demand"]] | None = None,
-        subject: dict[str, Any] | None = None,
-        statuses: list[Literal["accepted", "conflicted", "overturned", "refused", "retired"]]
-        | None = None,
-        cursor: dict[str, Any] | None = None,
-        evaluation_time: str | None = None,
-        budgets: dict[str, Any] | None = None,
-    ) -> contracts.PlaybillSearchResult:
-        """Search, list, or orient over accepted Claims and Procedures."""
-        return handlers.handle_playbill_search(
-            require_instance_id(instance_id),
-            mode=mode,
-            query=query,
-            kinds=kinds,
-            subject=subject,
-            statuses=statuses,
-            cursor=cursor,
-            evaluation_time=evaluation_time,
-            budgets=budgets,
-        )
-
-    @_tool
     def cruxible_playbill_next(
         instance_id: InstanceId = None,
         *,
@@ -1652,24 +1380,6 @@ def register_tools(
             scope=scope,
             until_generation=until_generation,
             attribution_refs=attribution_refs or [],
-        )
-
-    @_tool
-    def cruxible_playbill_expand(
-        instance_id: InstanceId = None,
-        *,
-        address: dict[str, Any],
-        facets: list[str] | None = None,
-        evaluation_time: str | None = None,
-        budget: dict[str, Any] | None = None,
-    ) -> contracts.PlaybillContextCapsule:
-        """Expand one accepted address into a bounded context capsule."""
-        return handlers.handle_playbill_expand(
-            require_instance_id(instance_id),
-            address,
-            evaluation_time=evaluation_time,
-            facets=facets or [],
-            budget=budget,
         )
 
     @_tool

@@ -77,13 +77,10 @@ def test_orientation_carries_the_mirror_url_without_a_second_round_trip(
         == 200
     )
 
-    response = client.post(
-        f"/api/v1/{instance_id}/playbill/search",
-        json={"mode": "orient"},
-    )
+    response = client.get(f"/api/v1/{instance_id}/playbill/orient")
 
     assert response.status_code == 200, response.text
-    assert response.json()["orientation"]["mirror_url"] == str(remote)
+    assert response.json()["mirror_url"] == str(remote)
 
 
 def test_init_binds_the_mirror_during_bootstrap(

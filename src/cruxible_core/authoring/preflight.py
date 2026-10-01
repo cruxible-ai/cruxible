@@ -394,8 +394,8 @@ def _reference_diagnostics(
                     offending_element=expectation.payload_path,
                     message=(
                         "The named artifact was absent where this ref claims it was "
-                        "minted. Re-resolve the target with playbill discover, then "
-                        "re-create the intent with the address it returns."
+                        "minted. Re-resolve the target with playbill orient or query, then "
+                        "re-create the intent with the address it names."
                     ),
                     owner="daemon",
                     disposition="terminal",
@@ -484,14 +484,14 @@ def _reference_diagnostics(
             message = (
                 "More than one accepted artifact claims to succeed this reference. "
                 "Name the intended successor explicitly: read the candidates with "
-                "playbill list, then re-create the intent against one of them."
+                "playbill get, then re-create the intent against one of them."
             )
         else:
             code = "playbill.authoring.reference_retired"
             message = (
                 "The typed reference has no live successor at the intent base. "
-                "Choose a live target with playbill discover, then re-create the "
-                "intent against it."
+                "Choose a live target with playbill orient or query, then re-create "
+                "the intent against it."
             )
         diagnostics.append(
             _diagnostic(

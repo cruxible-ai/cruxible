@@ -18,8 +18,6 @@ from cruxible_client.contracts.claim_reads import (
     ClaimBackingsResultV1,
     ClaimReadBatchRequestV1,
     ClaimReadBatchResultV1,
-    ClaimValuesRequestV1,
-    ClaimValuesResultV1,
 )
 from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeRequestV1,
@@ -50,7 +48,6 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallRequestV1,
     PlaybillProviderInstallResultV1,
 )
-from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.write import (
     PlaybillRetireRequestV1,
     PlaybillSetRequestV1,
@@ -78,15 +75,11 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringSubmitRequest,
     PlaybillBlockDeclareRequest,
     PlaybillBlockDepublishRequest,
-    PlaybillClaimExplainRequest,
     PlaybillCompilerUpgradeRequest,
     PlaybillCurationAcceptFixedRequest,
     PlaybillCurationListRequest,
     PlaybillCurationOverruleRequest,
     PlaybillCurationSuppressRequest,
-    PlaybillDiscoverRequest,
-    PlaybillExpandRequest,
-    PlaybillExplainRequest,
     PlaybillFloorExportRequest,
     PlaybillInitRequest,
     PlaybillInsertionAbandonRequest,
@@ -103,8 +96,6 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillProposePrincipalRequest,
     PlaybillResolveCoverageRequest,
     PlaybillReviewRequest,
-    PlaybillRunQueryRequest,
-    PlaybillSearchRequest,
     PlaybillSourceBundleRequest,
     PlaybillSourceProposeRequest,
     PlaybillStoreBodyRequest,
@@ -118,24 +109,6 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["playbill"])
-
-
-@router.get(
-    "/{instance_id}/playbill/policies",
-    response_model=contracts.PlaybillPolicyInForceList,
-)
-async def list_policies_in_force(
-    instance_id: str,
-    limit: int = Query(
-        default=contracts.PLAYBILL_POLICY_LIST_DEFAULT_LIMIT,
-        ge=1,
-        le=contracts.PLAYBILL_POLICY_LIST_MAX_LIMIT,
-    ),
-    cursor: str | None = Query(default=None, max_length=4096),
-) -> contracts.PlaybillPolicyInForceList:
-    return playbill_api.playbill_policies_in_force(
-        resolve_server_instance_id(instance_id), limit=limit, cursor=cursor
-    )
 
 
 def _coordinate(
@@ -349,14 +322,6 @@ def propose_principal(
         proposal_name=req.proposal_name,
         base=req.base,
     )
-
-
-@router.get(
-    "/{instance_id}/playbill/principals",
-    response_model=contracts.PlaybillPrincipalList,
-)
-async def list_principals(instance_id: str) -> contracts.PlaybillPrincipalList:
-    return playbill_api.playbill_list_principals(resolve_server_instance_id(instance_id))
 
 
 @router.get(
@@ -616,92 +581,9 @@ def activate_proposal(
     return playbill_api.playbill_activate(resolve_server_instance_id(instance_id), proposal_id)
 
 
-@router.get(
-    "/{instance_id}/playbill/documents",
-    response_model=contracts.PlaybillDocumentList,
-)
-async def list_documents(
-    instance_id: str,
-    git_oid: str | None = None,
-    semantic_root: str | None = None,
-    generation_root: str | None = None,
-    compiler_digest: str | None = None,
-) -> contracts.PlaybillDocumentList:
-    return playbill_api.playbill_list_documents(
-        resolve_server_instance_id(instance_id),
-        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-    )
-
-
-@router.get(
-    "/{instance_id}/playbill/documents/{identity}",
-    response_model=contracts.PlaybillDocumentView,
-)
-async def get_document(
-    instance_id: str,
-    identity: str,
-    git_oid: str | None = None,
-    semantic_root: str | None = None,
-    generation_root: str | None = None,
-    compiler_digest: str | None = None,
-) -> contracts.PlaybillDocumentView:
-    return playbill_api.playbill_get_document(
-        resolve_server_instance_id(instance_id),
-        identity,
-        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-    )
-
-
 @router.post("/{instance_id}/playbill/captures/read", response_model=CaptureReadV1)
 async def read_capture(instance_id: str, request: CaptureReadRequestV1) -> CaptureReadV1:
     return playbill_api.playbill_read_capture(resolve_server_instance_id(instance_id), request)
-
-
-@router.get(
-    "/{instance_id}/playbill/documents/{identity}/body",
-    response_model=contracts.PlaybillBodyRead,
-)
-async def dereference_document(
-    instance_id: str,
-    identity: str,
-    git_oid: str | None = None,
-    semantic_root: str | None = None,
-    generation_root: str | None = None,
-    compiler_digest: str | None = None,
-) -> contracts.PlaybillBodyRead:
-    return playbill_api.playbill_dereference_document(
-        resolve_server_instance_id(instance_id),
-        identity,
-        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-    )
-
-
-@router.get(
-    "/{instance_id}/playbill/documents/{identity}/history",
-    response_model=contracts.PlaybillDocumentHistory,
-)
-async def document_history(
-    instance_id: str,
-    identity: str,
-) -> contracts.PlaybillDocumentHistory:
-    return playbill_api.playbill_document_history(resolve_server_instance_id(instance_id), identity)
-
-
-@router.post(
-    "/{instance_id}/playbill/explain",
-    response_model=contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail,
-)
-async def explain(
-    instance_id: str,
-    req: PlaybillExplainRequest,
-) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
-    return playbill_api.playbill_explain(
-        resolve_server_instance_id(instance_id),
-        subject=req.subject,
-        at=req.at,
-        detail=req.detail,
-        include_body=req.include_body,
-    )
 
 
 @router.get(
@@ -741,85 +623,6 @@ def propose_sources(
     )
 
 
-@router.get(
-    "/{instance_id}/playbill/subject-index",
-    response_model=contracts.PlaybillSubjectIndex,
-)
-def list_subject_index(
-    instance_id: str,
-    git_oid: str | None = None,
-    semantic_root: str | None = None,
-    generation_root: str | None = None,
-    compiler_digest: str | None = None,
-) -> contracts.PlaybillSubjectIndex:
-    return playbill_api.playbill_list_subject_index(
-        resolve_server_instance_id(instance_id),
-        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-    )
-
-
-@router.get(
-    "/{instance_id}/playbill/subjects",
-    response_model=contracts.PlaybillSubjectList,
-)
-async def list_subjects(
-    instance_id: str,
-    git_oid: str | None = None,
-    semantic_root: str | None = None,
-    generation_root: str | None = None,
-    compiler_digest: str | None = None,
-    subject_kind: str | None = None,
-    limit: int = Query(
-        default=contracts.PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT,
-        ge=1,
-        le=contracts.PLAYBILL_SUBJECT_LIST_MAX_LIMIT,
-    ),
-    cursor: str | None = Query(default=None, max_length=4096),
-) -> contracts.PlaybillSubjectList:
-    return playbill_api.playbill_list_subjects(
-        resolve_server_instance_id(instance_id),
-        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-        subject_kind=subject_kind,
-        limit=limit,
-        cursor=cursor,
-    )
-
-
-@router.get(
-    "/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}",
-    response_model=contracts.PlaybillSubjectView,
-)
-async def get_subject(
-    instance_id: str,
-    subject_kind: str,
-    subject_id: str,
-    git_oid: str | None = None,
-    semantic_root: str | None = None,
-    generation_root: str | None = None,
-    compiler_digest: str | None = None,
-) -> contracts.PlaybillSubjectView:
-    return playbill_api.playbill_get_subject(
-        resolve_server_instance_id(instance_id),
-        f"Subject:{subject_kind}/{subject_id}",
-        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-    )
-
-
-@router.get(
-    "/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}/history",
-    response_model=contracts.PlaybillSubjectHistory,
-)
-async def subject_history(
-    instance_id: str,
-    subject_kind: str,
-    subject_id: str,
-) -> contracts.PlaybillSubjectHistory:
-    return playbill_api.playbill_subject_history(
-        resolve_server_instance_id(instance_id),
-        f"Subject:{subject_kind}/{subject_id}",
-    )
-
-
 @router.post(
     "/{instance_id}/playbill/claim-types/proposals",
     response_model=(
@@ -855,42 +658,6 @@ def migrate_claim_type(
     return playbill_api.playbill_migrate_claim_type(
         resolve_server_instance_id(instance_id),
         request=req,
-    )
-
-
-@router.get(
-    "/{instance_id}/playbill/claim-types",
-    response_model=contracts.PlaybillClaimTypeList,
-)
-async def list_claim_types(
-    instance_id: str,
-    git_oid: str | None = None,
-    semantic_root: str | None = None,
-    generation_root: str | None = None,
-    compiler_digest: str | None = None,
-) -> contracts.PlaybillClaimTypeList:
-    return playbill_api.playbill_list_claim_types(
-        resolve_server_instance_id(instance_id),
-        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-    )
-
-
-@router.get(
-    "/{instance_id}/playbill/claim-types/{predicate}",
-    response_model=contracts.PlaybillClaimTypeView,
-)
-async def get_claim_type(
-    instance_id: str,
-    predicate: str,
-    git_oid: str | None = None,
-    semantic_root: str | None = None,
-    generation_root: str | None = None,
-    compiler_digest: str | None = None,
-) -> contracts.PlaybillClaimTypeView:
-    return playbill_api.playbill_get_claim_type(
-        resolve_server_instance_id(instance_id),
-        predicate,
-        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
     )
 
 
@@ -1190,41 +957,9 @@ async def depublish_playbill_block(
     )
 
 
-@router.get(
-    "/{instance_id}/playbill/claims",
-    response_model=contracts.PlaybillClaimList,
-)
-async def list_claims(
-    instance_id: str,
-    subject_path: str | None = None,
-    predicate: str | None = None,
-    include_retired: bool = False,
-    git_oid: str | None = None,
-    semantic_root: str | None = None,
-    generation_root: str | None = None,
-    compiler_digest: str | None = None,
-    subject_kind: str | None = None,
-) -> contracts.PlaybillClaimList:
-    return playbill_api.playbill_list_claims(
-        resolve_server_instance_id(instance_id),
-        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-        subject=(None if subject_path is None else SemanticAddress.whole_artifact(subject_path)),
-        predicate=predicate,
-        include_retired=include_retired,
-        subject_kind=subject_kind,
-    )
-
-
 @router.post("/{instance_id}/playbill/claims/read-batch", response_model=ClaimReadBatchResultV1)
 def read_claim_batch(instance_id: str, req: ClaimReadBatchRequestV1) -> ClaimReadBatchResultV1:
     return playbill_api.playbill_read_claim_batch(
-        resolve_server_instance_id(instance_id), request=req
-    )
-
-
-@router.post("/{instance_id}/playbill/claims/values", response_model=ClaimValuesResultV1)
-def read_claim_values(instance_id: str, req: ClaimValuesRequestV1) -> ClaimValuesResultV1:
-    return playbill_api.playbill_read_claim_values(
         resolve_server_instance_id(instance_id), request=req
     )
 
@@ -1266,27 +1001,6 @@ def read_claim_backings(instance_id: str, req: ClaimBackingsRequestV1) -> ClaimB
     )
 
 
-@router.get(
-    "/{instance_id}/playbill/claims/{identity}",
-    response_model=contracts.PlaybillClaimViewV2,
-)
-async def get_claim(
-    instance_id: str,
-    identity: str,
-    git_oid: str | None = None,
-    semantic_root: str | None = None,
-    generation_root: str | None = None,
-    compiler_digest: str | None = None,
-    evaluation_time: datetime | None = None,
-) -> contracts.PlaybillClaimViewV2:
-    return playbill_api.playbill_get_claim(
-        resolve_server_instance_id(instance_id),
-        identity,
-        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-        evaluation_time=evaluation_time,
-    )
-
-
 @router.post(
     "/{instance_id}/playbill/projections/check",
     response_model=contracts.PlaybillProjectionCheckResultV1,
@@ -1310,89 +1024,6 @@ async def read_block_sync_backing(
     return playbill_api.playbill_read_block_sync_backing(
         resolve_server_instance_id(instance_id),
         request=req,
-    )
-
-
-@router.get(
-    "/{instance_id}/playbill/claims/{identity}/history",
-    response_model=contracts.PlaybillClaimHistory,
-)
-async def claim_history(
-    instance_id: str,
-    identity: str,
-) -> contracts.PlaybillClaimHistory:
-    return playbill_api.playbill_claim_history(resolve_server_instance_id(instance_id), identity)
-
-
-@router.post(
-    "/{instance_id}/playbill/claims/{identity}/explanation",
-    response_model=(contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3),
-)
-async def explain_claim(
-    instance_id: str,
-    identity: str,
-    req: PlaybillClaimExplainRequest,
-) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
-    return playbill_api.playbill_explain_claim(
-        resolve_server_instance_id(instance_id),
-        identity,
-        at=req.at,
-        evaluation_time=req.evaluation_time,
-    )
-
-
-@router.get(
-    "/{instance_id}/playbill/queries",
-    response_model=contracts.PlaybillQueryDefinitionList,
-)
-async def list_query_definitions(
-    instance_id: str,
-    git_oid: str | None = None,
-    semantic_root: str | None = None,
-    generation_root: str | None = None,
-    compiler_digest: str | None = None,
-) -> contracts.PlaybillQueryDefinitionList:
-    return playbill_api.playbill_list_query_definitions(
-        resolve_server_instance_id(instance_id),
-        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-    )
-
-
-@router.get(
-    "/{instance_id}/playbill/queries/{name}",
-    response_model=contracts.PlaybillQueryDefinitionView,
-)
-async def get_query_definition(
-    instance_id: str,
-    name: str,
-    git_oid: str | None = None,
-    semantic_root: str | None = None,
-    generation_root: str | None = None,
-    compiler_digest: str | None = None,
-) -> contracts.PlaybillQueryDefinitionView:
-    return playbill_api.playbill_get_query_definition(
-        resolve_server_instance_id(instance_id),
-        name,
-        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-    )
-
-
-@router.post(
-    "/{instance_id}/playbill/queries/{name}/run",
-    response_model=contracts.PlaybillQueryRun,
-)
-async def run_query(
-    instance_id: str,
-    name: str,
-    req: PlaybillRunQueryRequest,
-) -> contracts.PlaybillQueryRun:
-    return playbill_api.playbill_run_query(
-        resolve_server_instance_id(instance_id),
-        name,
-        at=req.at,
-        evaluation_time=req.evaluation_time,
-        parameters=req.parameters,
-        budgets=req.budgets,
     )
 
 
@@ -1676,65 +1307,6 @@ async def since(
     return playbill_api.playbill_since(
         resolve_server_instance_id(instance_id),
         request=req,
-    )
-
-
-@router.post(
-    "/{instance_id}/playbill/discover",
-    response_model=contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory,
-)
-async def discover(
-    instance_id: str,
-    req: PlaybillDiscoverRequest,
-) -> contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory:
-    return playbill_api.playbill_discover(
-        resolve_server_instance_id(instance_id),
-        query=req.query,
-        entrypoint=req.entrypoint,
-        at=req.at,
-        evaluation_time=req.evaluation_time,
-        profile=req.profile,
-        budget=req.budget,
-    )
-
-
-@router.post(
-    "/{instance_id}/playbill/search",
-    response_model=contracts.PlaybillSearchResult,
-)
-async def search(
-    instance_id: str,
-    req: PlaybillSearchRequest,
-) -> contracts.PlaybillSearchResult:
-    return playbill_api.playbill_search(
-        resolve_server_instance_id(instance_id),
-        mode=req.mode,
-        query=req.query,
-        kinds=req.kinds,
-        subject=req.subject,
-        statuses=req.statuses,
-        cursor=req.cursor,
-        at=req.at,
-        evaluation_time=req.evaluation_time,
-        budgets=req.budgets,
-    )
-
-
-@router.post(
-    "/{instance_id}/playbill/expand",
-    response_model=contracts.PlaybillContextCapsule,
-)
-async def expand(
-    instance_id: str,
-    req: PlaybillExpandRequest,
-) -> contracts.PlaybillContextCapsule:
-    return playbill_api.playbill_expand(
-        resolve_server_instance_id(instance_id),
-        address=req.address,
-        at=req.at,
-        evaluation_time=req.evaluation_time,
-        facets=req.facets,
-        budget=req.budget,
     )
 
 

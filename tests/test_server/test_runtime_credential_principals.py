@@ -196,7 +196,9 @@ def test_an_unbound_credential_keeps_transport_authority_but_cannot_author(
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     headers = {"Authorization": f"Bearer {unbound}"}
 
-    listed = client.get(f"/api/v1/{instance_id}/playbill/principals", headers=headers)
+    listed = client.get(
+        f"/api/v1/{instance_id}/playbill/orient", params={"section": "principals"}, headers=headers
+    )
     who = client.get(f"/api/v1/{instance_id}/playbill/whoami", headers=headers).json()
     refused = client.post(
         f"/api/v1/{instance_id}/playbill/proposals/sha256:{'0' * 64}/withdraw",
@@ -292,7 +294,9 @@ def test_revoking_a_principal_revokes_its_credentials(
 ) -> None:
     client, instance_id, reviewer_key = playbill_http
     reviewer_token = _bearer("reviewer", instance_id, PermissionMode.GOVERNED_WRITE)
-    listing = client.get(f"/api/v1/{instance_id}/playbill/principals").json()
+    listing = client.get(
+        f"/api/v1/{instance_id}/playbill/orient", params={"section": "principals"}
+    ).json()
     reviewer = next(
         PrincipalRecord.model_validate(item)
         for item in listing["principals"]

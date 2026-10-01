@@ -10,7 +10,7 @@ import pytest
 from cruxible_client.contracts.captures import DirectForeignSourceSelectionV1
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
-from cruxible_core.service.discovery import search as playbill_search
+from cruxible_core.service.discovery import claim_status as playbill_search
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from tests.core_support._candidate_support import submit_query_definition_candidate
 from tests.core_support._knowledge_loop_support import (

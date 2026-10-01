@@ -543,7 +543,9 @@ def descriptor_relations(
 
 
 def _expansion_links(address: SemanticAddress) -> tuple[GovernedOperationReference, ...]:
-    return (GovernedOperationReference(operation="expand", subject=address),)
+    """Read the described artifact in full: ``get`` its address (detail ``why``/``proof``)."""
+
+    return (GovernedOperationReference(operation="get", subject=address),)
 
 
 def _coverage(

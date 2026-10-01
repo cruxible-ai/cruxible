@@ -32,7 +32,7 @@ def test_registered_schema_catalog_matches_permission_catalog() -> None:
     assert set(_schemas()) == set(TOOL_PERMISSIONS)
 
 
-def test_init_and_explain_publish_their_protocol_enums() -> None:
+def test_init_and_get_publish_their_protocol_enums() -> None:
     schemas = _schemas()
     init = schemas["cruxible_playbill_init"].inputSchema
     assert set(init["required"]) == {"principals"}
@@ -41,8 +41,15 @@ def test_init_and_explain_publish_their_protocol_enums() -> None:
     # Bootstrap no longer installs a seed implicitly; provider setup is separate.
     assert "seed" not in init["properties"]
 
-    explain = schemas["cruxible_playbill_explain"].inputSchema
-    assert explain["properties"]["detail"]["enum"] == ["summary", "evidence", "proof"]
+    get = schemas["cruxible_playbill_get"].inputSchema
+    assert get["properties"]["detail"]["enum"] == [
+        "summary",
+        "evidence",
+        "why",
+        "history",
+        "proof",
+        "body",
+    ]
 
 
 def test_line_run_schema_exposes_occurrence_assertions_and_exact_investigation() -> None:
@@ -161,17 +168,6 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "window_lines",
     }
     assert forbidden.isdisjoint(bind_schema["properties"])
-
-
-def test_search_schema_exposes_modes_but_not_access_or_digest_plumbing() -> None:
-    schema = _schemas()["cruxible_playbill_search"].inputSchema
-    assert schema["properties"]["mode"]["enum"] == ["search", "list", "orient"]
-    kind_schema = next(
-        member for member in schema["properties"]["kinds"]["anyOf"] if member.get("type") == "array"
-    )
-    assert kind_schema["items"]["enum"] == ["claim", "procedure", "demand"]
-    assert "access_profile" not in schema["properties"]
-    assert "selection_basis_digest" not in schema["properties"]
 
 
 def test_since_schema_exposes_the_frozen_history_wire() -> None:

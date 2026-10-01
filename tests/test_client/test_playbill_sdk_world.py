@@ -37,6 +37,7 @@ from cruxible_client.authoring.world import (
 )
 from cruxible_client.authoring.world_stub import STUB_HEADER_TAG
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from tests.test_client._read_fakes import ClaimTypeListing, ClaimTypeRead
 
 _DIGEST = "sha256:" + "1" * 64
 _COORDINATE = api.PlaybillAcceptedCoordinate(
@@ -57,7 +58,7 @@ AFFECTS = "sec.vuln.affects_package"
 LANDED_AT = "dev.batch.landed_at"
 
 
-def _claim_type(predicate: str, **overrides: object) -> api.PlaybillClaimTypeView:
+def _claim_type(predicate: str, **overrides: object) -> ClaimTypeRead:
     envelope: dict[str, Any] = {
         "artifact_format": "playbill-claim-type-v1",
         "identity": {"kind": "ClaimType", "name": predicate},
@@ -72,7 +73,7 @@ def _claim_type(predicate: str, **overrides: object) -> api.PlaybillClaimTypeVie
         "lifecycle": {"state": "live"},
     }
     envelope.update(overrides)
-    return api.PlaybillClaimTypeView(
+    return ClaimTypeRead(
         coordinate=_COORDINATE,
         path=f"claim-types/{predicate}.json",
         predicate=predicate,
@@ -124,14 +125,14 @@ class _WorldClient:
 
     def _claim_type_view(
         self, _instance_id: str, predicate: str, *, at: Any = None
-    ) -> api.PlaybillClaimTypeView:
+    ) -> ClaimTypeRead:
         self.claim_type_reads.append(predicate)
         return _claim_type(predicate)
 
-    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> api.PlaybillClaimTypeList:
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
         self.claim_type_list_calls += 1
         self.claim_type_coordinates.append(at)
-        return api.PlaybillClaimTypeList(
+        return ClaimTypeListing(
             coordinate=at or self.coordinate,
             claim_types=[
                 _claim_type(
@@ -1165,9 +1166,9 @@ def test_selecting_a_file_still_refuses_at_the_same_typed_point(
 class _CollidingClient(_WorldClient):
     """A world whose accepted names collide with the facade's own."""
 
-    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> api.PlaybillClaimTypeList:
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
         self.claim_type_list_calls += 1
-        return api.PlaybillClaimTypeList(
+        return ClaimTypeListing(
             coordinate=self.coordinate,
             claim_types=[
                 _claim_type(
@@ -1274,9 +1275,9 @@ def test_a_kind_a_predicate_shadows_stays_reachable_as_a_kind(
 class _KeywordSegmentClient(_WorldClient):
     """A world whose accepted grammar admits segments Python reserves."""
 
-    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> api.PlaybillClaimTypeList:
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
         self.claim_type_list_calls += 1
-        return api.PlaybillClaimTypeList(
+        return ClaimTypeListing(
             coordinate=self.coordinate,
             claim_types=[
                 _claim_type("sec.vuln.import", allowed_subject_kinds=("dev.class",)),
@@ -1400,9 +1401,9 @@ def _mypy(project: Path, target: str) -> str:
 class _UnderscoreSegmentClient(_WorldClient):
     """A world naming both `sec.package` and the single segment `sec__package`."""
 
-    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> api.PlaybillClaimTypeList:
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
         self.claim_type_list_calls += 1
-        return api.PlaybillClaimTypeList(
+        return ClaimTypeListing(
             coordinate=self.coordinate,
             claim_types=[
                 _claim_type(SEVERITY, allowed_subject_kinds=("sec.package", "sec__package")),

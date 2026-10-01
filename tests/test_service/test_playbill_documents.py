@@ -28,7 +28,6 @@ from cruxible_core.service.authoring.documents import (
     service_inspect_playbill_proposal,
     service_inspect_playbill_refusal,
     service_list_playbill_documents,
-    service_list_playbill_principals,
     service_playbill_document_history,
     service_propose_playbill_document,
     service_propose_playbill_principal_change,
@@ -254,7 +253,7 @@ def test_service_owner_rotation_and_recovery_require_lifecycle_actor_key_binding
     assert (
         next(
             item
-            for item in service_list_playbill_principals(instance).principals
+            for item in instance.accepted_history()[-1].principals.principals
             if item.principal_id == "owner"
         )
         == rotated_owner.principal
@@ -306,7 +305,7 @@ def test_service_owner_rotation_and_recovery_require_lifecycle_actor_key_binding
     assert (
         next(
             item
-            for item in service_list_playbill_principals(instance).principals
+            for item in instance.accepted_history()[-1].principals.principals
             if item.principal_id == "owner"
         )
         == recovered_owner.principal

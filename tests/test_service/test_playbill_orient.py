@@ -570,7 +570,7 @@ def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
 def test_orient_pages_the_provider_interfaces_a_procedure_can_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_core.service.discovery.discovery import service_discover_playbill_semantic
+    from cruxible_core.service.discovery.discovery import accepted_provider_interfaces
 
     instance = _accept_interfaces(tmp_path, monkeypatch)
 
@@ -605,11 +605,9 @@ def test_orient_pages_the_provider_interfaces_a_procedure_can_call(
     assert implementation.provider == "demo-provider"
     assert implementation.implementation_digest.startswith("sha256:")
 
-    # The rows come from discover's own inventory: the same interfaces, in order.
-    inventory = service_discover_playbill_semantic(
-        instance, evaluation_time="2026-08-16T21:00:00Z", profile="interfaces"
-    )
-    assert [item.identity.removeprefix("ProviderInterface:") for item in inventory.interfaces] == [  # type: ignore[union-attr]
+    # The rows come from the one accepted inventory: the same interfaces, in order.
+    inventory = accepted_provider_interfaces(instance, instance.accepted_coordinate())
+    assert [item.entry.identity.removeprefix("ProviderInterface:") for item in inventory] == [
         "demo.fetch",
         "demo.interface",
     ]
@@ -705,7 +703,13 @@ def test_attention_summary_preserves_complete_orient_bytes(
     from datetime import UTC, datetime
 
     from cruxible_client.contracts.canonical import canonical_bytes
-    from cruxible_core.service.claims.claims import _claim_law_evidence_index
+    from cruxible_core.service.evidence.evidence import _claim_read_history_index
+
+    def _claim_law_evidence_index(instance, *, at):  # type: ignore[no-untyped-def]
+        """The entire law-evidence map, materialized from retained locators."""
+
+        return dict(_claim_read_history_index(instance, coordinate=at).law_evidence)
+
     from cruxible_core.service.discovery import next as next_module
     from cruxible_core.service.discovery.next import PlaybillNextSummary, service_playbill_next
 

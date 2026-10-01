@@ -6,18 +6,12 @@ HTTP and CLI.
 `CRUXIBLE_MCP_PROFILE` takes two values. `default` (or unset) advertises the
 everyday agent loop:
 
-- orient and pick work: `cruxible_playbill_orient` (the map of accepted state),
-  `cruxible_playbill_search`, `cruxible_playbill_next`, and
-  `cruxible_playbill_expand`;
-- any question over state, values first: `cruxible_playbill_query`;
-- one thing by any reference, values first: `cruxible_playbill_get` (`detail`
-  picks summary, evidence, why, history, proof, or a Document body range);
-- Claim, ClaimType, and Subject reads: `cruxible_playbill_claim_values` (a status
-  table for one Subject kind), `cruxible_playbill_list_claims`,
-  `cruxible_playbill_get_claim`, `cruxible_playbill_explain_claim`,
-  `cruxible_playbill_list_claim_types`, `cruxible_playbill_get_claim_type`,
-  `cruxible_playbill_list_subjects`, `cruxible_playbill_get_subject`, and
-  `cruxible_playbill_run_query`;
+- read with three verbs: `cruxible_playbill_orient` (the map of accepted state,
+  one kind in full, or one paged section), `cruxible_playbill_query` (any
+  question as rows of values with verdict flags) and `cruxible_playbill_get`
+  (one thing by any reference; `detail` picks summary, evidence, why, history,
+  proof, or a Document body range);
+- the work queue: `cruxible_playbill_next`;
 - the write verbs: `cruxible_playbill_set` (one value in one field, replacing
   the live value), `cruxible_playbill_retire` (end one live Claim), and
   `cruxible_playbill_write` (set, add and retire changes as one change set);
@@ -26,9 +20,15 @@ everyday agent loop:
   `cruxible_playbill_activate`;
 - identity and versions: `cruxible_playbill_whoami` and `cruxible_server_info`.
 
+To find something by name, grep the floor (`.playbill/floor/`, which
+`cruxible playbill floor export` and `cruxible_playbill_floor_export` write)
+and `get` the ref a hit names; an agent without a shell searches values with
+`cruxible_playbill_query` and `contains`.
+
 `full` advertises the complete catalog below, including the `authoring_*`
-intent tools, curation, coverage, the
-floor, sources, blocks, kits, Procedures, Lines, and the split approval pair
+intent tools, `cruxible_playbill_query_spec`, `cruxible_playbill_since`,
+curation, coverage, the floor, sources, blocks, kits, Procedures, Lines, and the
+split approval pair
 `cruxible_playbill_prepare_approval` and `cruxible_playbill_submit_approval` for
 a signer outside the MCP process. Curation changes
 discoverability only; permission tiers still gate every call. There is no
@@ -158,14 +158,16 @@ outside the language server/MCP process.
 
 ## Accepted reads
 
+Accepted state is read through `cruxible_playbill_orient`,
+`cruxible_playbill_query` and `cruxible_playbill_get` (see
+[Queries, orient and get](#queries-orient-and-get)). Documents are listed by
+`orient(section="documents")` and read by `get("Document:<name>")`, its
+`why`, `history` and `body` details; a body read needs `GOVERNED_WRITE` and
+names the whole body's `body_digest`.
+
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_list_documents` | List accepted Documents and coordinate | `READ_ONLY` |
-| `cruxible_playbill_get_document` | Read an accepted Document envelope | `READ_ONLY` |
 | `cruxible_playbill_read_capture` | Verify retained Capture evidence and read bounded material; `capture_digest` may be the full digest, a `CAP-<12 hex>` handle or a 12+ hex prefix unique among accepted Captures | `GOVERNED_WRITE` |
-| `cruxible_playbill_dereference` | Read permission-gated body bytes | `GOVERNED_WRITE` |
-| `cruxible_playbill_history` | Read accepted history | `READ_ONLY` |
-| `cruxible_playbill_explain` | Explain governance, provenance, coverage, and history | `READ_ONLY` |
 
 ## Sources
 
@@ -183,9 +185,11 @@ paths and root aliases, not compilation wire.
 
 ## Principals
 
+The principal registry is `orient(section="principals")`; one record is
+`get("Principal:<id>")`.
+
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_list_principals` | List accepted public principals | `READ_ONLY` |
 | `cruxible_playbill_compiler_upgrade` | Propose an exact compiler transition; signed approval and activation use the ordinary proposal workflow. | `ADMIN` |
 | `cruxible_playbill_propose_principal_change` | Propose rotation, revocation, or recovery | `ADMIN` |
 
@@ -193,23 +197,13 @@ paths and root aliases, not compilation wire.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_list_subjects` | One page (`limit`, default 50; `cursor`) of Subject rows (`subject_kind`, `subject_id`, `lifecycle`, live Claim count), optionally of one `subject_kind`; `get_subject` reads one | `READ_ONLY` |
-| `cruxible_playbill_get_subject` | Read one accepted Subject | `READ_ONLY` |
-| `cruxible_playbill_subject_history` | Read one Subject's accepted lineage | `READ_ONLY` |
 | `cruxible_playbill_propose_claim_type` | Propose a governed predicate interface | `GOVERNED_WRITE` |
-| `cruxible_playbill_list_claim_types` | List the accepted predicate vocabulary | `READ_ONLY` |
-| `cruxible_playbill_get_claim_type` | Read one accepted ClaimType | `READ_ONLY` |
 | `cruxible_playbill_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
 | `cruxible_playbill_claim_attest` | Sign and append a support, contradict, or unsure observation of the current exact Claim; pass `capture_digests` (and optionally `referent_coordinate`) to attest on new Captures you examined instead of the Claim's own citations | `GOVERNED_WRITE` |
-| `cruxible_playbill_list_claims` | List accepted Claims by Subject, `subject_kind` or predicate | `READ_ONLY` |
-| `cruxible_playbill_claim_values` | Status table: each live Claim's `subject_id`, value and verdict for every Subject of one kind (or named `subject_ids`) and the given predicates | `READ_ONLY` |
 | `cruxible_playbill_set` | Put one value in one field of one Subject (`kind/id`), replacing the live value without its Claim ID; a missing Subject of a known kind is added; `evidence` defaults to `because` as self evidence (an exact-content value is its own evidence); accepts in the same call when policy and tier allow it, else answers `awaiting_approval` with the eligible approvers and the approve call; `dry_run` writes nothing; `at` refuses `playbill.write.slot_changed` if the field moved since; each change carries its `verdict`, and a verdict other than `supported` comes with a warning and its repair | `GOVERNED_WRITE` |
 | `cruxible_playbill_retire` | End one live Claim, by Claim ID or by Subject and single-value field, with its dependent Claims, in one change set | `GOVERNED_WRITE` |
 | `cruxible_playbill_write` | Apply `set`, `add` (one more value in a many-valued field) and `retire` changes as one change set, accepted or refused together | `GOVERNED_WRITE` |
-| `cruxible_playbill_get` | Read one thing by any reference (Claim id or prefix, `kind/id`, predicate, `Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, artifact path, proposal id, or an operational reference: `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is cut to `{value, truncated: true, length}`, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why`, `history` (newest first, paged by `limit` and `cursor`), `proof` (with the full `accepted_coordinate`), or `body` with a byte `range`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
-| `cruxible_playbill_get_claim` | Read one accepted Claim | `READ_ONLY` |
-| `cruxible_playbill_claim_history` | Read one Claim's accepted lineage | `READ_ONLY` |
-| `cruxible_playbill_explain_claim` | Explain a Claim's verdict and evidence | `READ_ONLY` |
+| `cruxible_playbill_get` | Read one thing by any reference (Claim id or prefix, `kind/id`, predicate, `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:`/`Principal:`/`ProviderInterface:<name>`, `ApprovalPolicy:instance`, artifact path, proposal id, or an operational reference: `Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`; their operational parts are read live at the head whatever `at` names, and the answer marks them with `live: {as_of, fields}`); `detail` is `summary` (values-first card with verdict flags; a string value over 500 characters is cut to `{value, truncated: true, length}`, and Subject rows name each value's `claim`), `evidence` (with the whole value), `why` (a Claim's verdict and law evidence, or a Subject's or Document's governance and provenance), `history` (newest first, paged by `limit` and `cursor`), `proof` (the full accepted envelope and facts, with the full `accepted_coordinate`), or `body` with a byte `range` and the whole `body_digest`; other answers carry a compact `coordinate` (12-hex git oid prefix and `generation`), either of which `at` accepts back (a history row carries both); evidence names Captures by `CAP-<12 hex>` handles; a wrong name refuses with the nearest names | `READ_ONLY` |
 
 A proposal is not accepted state. A Claim's verdict is computed at read time
 from accepted law evidence, never carried forward from acceptance.
@@ -303,7 +297,7 @@ Prediction settlement records the activation and resolution in operational
 exhaust; it does not create or mutate Claims, and it does not create a second
 authority plane beside accepted state.
 
-## Queries, discovery, and the floor
+## Queries, orient and get
 
 `cruxible_playbill_query` takes exactly one mode: compact or a query `name`
 (a full spec runs through `cruxible_playbill_query_spec`, in the `full`
@@ -321,31 +315,33 @@ not apply, refuses with a code, the nearest valid names and a repair. `ne` means
 no value equals, so a Subject without the value matches. `contains` alone
 searches every live Claim value across kinds. Rows lead with values (an array
 for a many-valued predicate or a contested slot) and carry `flags` (`stale`,
-`contested`, `contradicted`, `unsure_hold`); without `select` a kind shows up to
-12 predicates and names the rest in `notes`. `subject`, `subject_id` and `flags` are row metadata; a column with one of those names is served as `value.<name>`. ClaimType rows name the
+`contested`, `contradicted`, `uncovered`, `unsure_hold`); without `select` a kind
+shows up to 12 predicates and names the rest in `notes`. Cells show each slot's
+answer as `get` shows it (its accepted and conflicted Claims, or every live
+Claim when resolution accepted none); `status` adds Claims resolution set aside
+(`overturned`, `refused`) or withdrew (`retired`), and `claims: true` answers
+each cell's Claims under `rows[].claims[<column>]` with `claim`, `value`,
+`verdict`, `status` and `role`, so a slot's winner reads apart from its losers.
+`subject`, `subject_id`, `flags` and `claims` are row metadata; a column with one
+of those names is served as `value.<name>`. ClaimType rows name the
 CaptureContracts their evidence rules admit, never digests. `receipt` records the
 mode, the definition digest, the coordinate and the evaluation time (default
-now).
+now). A named query takes `budgets` up to its definition's maximum, and
+`receipt: "full"` adds `receipt.replay`: the engine result (the Claims each row
+read, traversal paths, bound parameters, verdict) and its execution receipt.
 
 | Tool | Purpose | Permission |
 |---|---|---|
-| `cruxible_playbill_list_query_definitions` | List accepted entrypoints | `READ_ONLY` |
-| `cruxible_playbill_get_query_definition` | Read one entrypoint's contract | `READ_ONLY` |
-| `cruxible_playbill_run_query` | Execute an entrypoint with a replay receipt | `READ_ONLY` |
-| `cruxible_playbill_query` | Answer any question over accepted state in one call: compact (`kind` and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`) or a query `name` with `params`; rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
+| `cruxible_playbill_query` | Answer any question over accepted state in one call: compact (`kind` and/or `contains`, with `where` filters shaped by operator, `select`, one-hop `follow`, `order_by`, `status`, `claims`) or a query `name` with `params` (`budgets`, `receipt`); rows of values with `flags`, paged by `limit` and `cursor` | `READ_ONLY` |
 | `cruxible_playbill_query_spec` | Run one full `QueryDefinitionSpecV1` inline (`spec`, `limit`, `cursor`, `at`, `evaluation_time`) with the same evaluation, rows, flags and paging as `cruxible_playbill_query`; `full` profile only | `READ_ONLY` |
-| `cruxible_playbill_discover` | Find interfaces and Subjects by name | `READ_ONLY` |
-| `cruxible_playbill_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue (with `arms`: the instance's Line arms by state and the stalled or stopped Lines by name, no daemon scope needed), and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types`, `queries`, `interfaces`, or an operational family -- `runs` (Procedure runs, newest admission first, paged by an immutable key) or `running` (only the runs still running; read one with `cruxible_playbill_get(ref="ProcedureRun:RUN-...")` for its live progress), `lines`, `captures`, `capture_contracts`, `predictions`, `mandates` -- which the map only counts under `artifacts` (`limit`, `cursor`); when the MCP workspace holds this instance's floor, `floor: {at, generations_behind}` says how far behind the head it is | `READ_ONLY` |
-| `cruxible_playbill_search` | Search, list, or orient over accepted state | `READ_ONLY` |
+| `cruxible_playbill_orient` | Map accepted state in one call: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (can this caller author, and why not), `attention` from the `next` queue (with `arms`: the instance's Line arms by state and the stalled or stopped Lines by name, no daemon scope needed), and `next` suggestions written as MCP tool calls; `kind` reads one kind in full with sample Subject IDs, `section` pages `documents`, `procedures`, `claim_types`, `queries`, `interfaces` (each with its interface digest, operation contract and implementing Providers' implementation digests), `principals`, `policies` (every live standalone or embedded governed policy), or an operational family -- `runs` (Procedure runs, newest admission first, paged by an immutable key) or `running` (only the runs still running; read one with `cruxible_playbill_get(ref="ProcedureRun:RUN-...")` for its live progress), `lines`, `captures`, `capture_contracts`, `predictions`, `mandates` -- which the map only counts under `artifacts` (`limit`, `cursor`); when the MCP workspace holds this instance's floor, `floor: {at, generations_behind}` says how far behind the head it is | `READ_ONLY` |
 | `cruxible_playbill_since` | Read signed accepted ChangeSet members after a generation | `READ_ONLY` |
 | `cruxible_playbill_next` | Rank outstanding repair work, each row with its exact next operation; observes the MCP workspace's floor and declared sources as `cruxible playbill next` does | `READ_ONLY` |
-| `cruxible_playbill_policies_in_force` | List one page of live standalone and embedded governed policies (`limit`, `cursor`) | `READ_ONLY` |
 | `cruxible_playbill_audit` | Rank visible Claim verification work and record completed coverage | `READ_ONLY` |
 | `cruxible_playbill_curation_list` | List one page of curation patterns (`limit`, `cursor`) and ingest an explicit declared-block observation | `READ_ONLY` |
 | `cruxible_playbill_curation_overrule` | Close an inapplicable detector-version item with attribution | `GOVERNED_WRITE` |
 | `cruxible_playbill_curation_accept_fixed` | Link an item to an exact related accepted ChangeSet | `GOVERNED_WRITE` |
 | `cruxible_playbill_curation_suppress` | Hide open work by item, pattern, or instance without resolving it | `GOVERNED_WRITE` |
-| `cruxible_playbill_expand` | Expand one address into a context capsule | `READ_ONLY` |
 | `cruxible_playbill_floor_export` | `mode=bytes` returns the greppable floor as base64 bytes; `mode=write` verifies and exactly replaces `.playbill/floor` under the MCP workspace (status `unchanged` when it already holds this floor) and records the workspace `floor_output` profile, `include` too, exactly as `cruxible playbill floor export` does, so an activation refresh exports the same parts; `mode=status` reports whether that floor is current, stale, or absent. The floor is `current/<kind>/<id>.yaml` (values first, one header line naming the ref and coordinate), `current/<kind>/INDEX`, readable `documents/` and `provenance/`; digests stay in `provenance/` and the manifest. `include=["discovery"]` adds the discovery cards and `coverage-manifest.json`. Grep it, then `cruxible_playbill_get` the ref for live verdicts; an agent without a shell uses `cruxible_playbill_query` with `contains` | `READ_ONLY` |
 | `cruxible_playbill_coverage` | Resolve working sources against accepted state, from `observations` you built or from workspace `bindings` plus a file selection (`files`, `ranges`, `grep_results_path`, or `whole_working_set`) | `READ_ONLY` |
 
@@ -367,17 +363,15 @@ active) has every writing repair withheld with `because` including
 `"authoring"` and `authoring_refusal` carrying the same code, detail and repair
 `whoami` reports.
 
-Lists that can outgrow one answer are paged. `proposal_list`,
-`policies_in_force` and `curation_list` take `limit` and `cursor`; a cut page
+Lists that can outgrow one answer are paged. `query`, `orient` sections,
+`proposal_list` and `curation_list` take `limit` and `cursor`; a cut page
 carries top-level `truncated: true` and a `next_cursor` to pass back as `cursor`.
 A cursor whose listing changed since its first page is refused as
 `playbill.list.cursor_stale`; list again without it.
-`search` pages the same way with its structured cursor. `discover` has no
-cursor; its top-level `truncated` says a budget clipped the hits.
 
-Query execution is a read: it returns the result together with its
-`playbill-query-execution-receipt-v1`. Qualifying direct reads, query/search
-matches, coverage delivery, and Procedure dependency resolution also append
+Query execution is a read: a named query's `receipt: "full"` returns its
+`playbill-query-execution-receipt-v1`. Qualifying direct reads, named query
+runs, coverage delivery, and Procedure dependency resolution also append
 idempotent per-artifact touches to the daemon-local operational store. A
 `READ_ONLY` actor can therefore grow that store, but these records never alter
 accepted state or any semantic/generation root. Audit likewise appends an

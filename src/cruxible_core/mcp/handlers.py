@@ -47,13 +47,11 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
     PreparedClaimAttestationRequestV1,
 )
-from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1, ClaimValuesResultV1
 from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeRequestV1,
     ClaimTypeUpgradeResultV1,
 )
 from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
-from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
 from cruxible_client.contracts.get_reads import (
@@ -76,8 +74,6 @@ from cruxible_client.contracts.provider_installation import (
     PlaybillProviderInstallResultV1,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
-from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
@@ -114,13 +110,6 @@ from cruxible_core.mcp.workspace import (
     mcp_workspace_root,
     optional_mcp_git_workspace_root,
     resolve_workspace_path,
-)
-from cruxible_core.query.search import (
-    SEARCH_KINDS,
-    PlaybillSearchBudgetsV1,
-    PlaybillSearchCursorV1,
-    SearchKind,
-    SearchStatus,
 )
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.server.config import get_runtime_bearer_token, resolve_server_settings
@@ -349,7 +338,6 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_curation_accept_fixed": TypeAdapter(PlaybillCurationAcceptFixedRequest),
     "cruxible_playbill_curation_overrule": TypeAdapter(PlaybillCurationOverruleRequest),
     "cruxible_playbill_curation_suppress": TypeAdapter(PlaybillCurationSuppressRequest),
-    "cruxible_playbill_dereference": None,  # path and query only
     "cruxible_playbill_read_capture": TypeAdapter(CaptureReadRequestV1),
     "cruxible_playbill_init": TypeAdapter(PlaybillInitRequest),
     "cruxible_playbill_predict": TypeAdapter(contracts.PlaybillPredictRequestV2),
@@ -900,73 +888,12 @@ def handle_playbill_withdraw_proposal(
     )
 
 
-def handle_playbill_list_documents(instance_id: str) -> contracts.PlaybillDocumentList:
-    return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_documents(instance_id),
-        lambda: playbill_api.playbill_list_documents(instance_id),
-        operation_name="cruxible_playbill_list_documents",
-    )
-
-
-def handle_playbill_get_document(instance_id: str, identity: str) -> contracts.PlaybillDocumentView:
-    return _dispatch_remote_or_local(
-        lambda client: client.get_playbill_document(instance_id, identity),
-        lambda: playbill_api.playbill_get_document(instance_id, identity),
-        operation_name="cruxible_playbill_get_document",
-    )
-
-
 def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequestV1) -> CaptureReadV1:
     return _dispatch_remote_or_local(
         lambda client: client.read_playbill_capture(instance_id, request),
         lambda: playbill_api.playbill_read_capture(instance_id, request),
         operation_name="cruxible_playbill_read_capture",
         local_payload=request.model_dump(mode="json"),
-    )
-
-
-def handle_playbill_dereference(instance_id: str, identity: str) -> contracts.PlaybillBodyRead:
-    return _dispatch_remote_or_local(
-        lambda client: client.dereference_playbill_document(instance_id, identity),
-        lambda: playbill_api.playbill_dereference_document(instance_id, identity),
-        operation_name="cruxible_playbill_dereference",
-    )
-
-
-def handle_playbill_history(instance_id: str, identity: str) -> contracts.PlaybillDocumentHistory:
-    return _dispatch_remote_or_local(
-        lambda client: client.playbill_document_history(instance_id, identity),
-        lambda: playbill_api.playbill_document_history(instance_id, identity),
-        operation_name="cruxible_playbill_history",
-    )
-
-
-def handle_playbill_explain(
-    instance_id: str,
-    subject: dict[str, Any],
-    at: dict[str, Any],
-    *,
-    detail: str,
-    include_body: bool,
-) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
-    semantic_subject = SemanticAddress.model_validate(subject)
-    coordinate = AcceptedCoordinate.model_validate(at)
-    return _dispatch_remote_or_local(
-        lambda client: client.explain_playbill_subject(
-            instance_id,
-            subject=semantic_subject.model_dump(mode="json"),
-            at=coordinate.model_dump(mode="json"),
-            detail=cast(Any, detail),
-            include_body=include_body,
-        ),
-        lambda: playbill_api.playbill_explain(
-            instance_id,
-            subject=semantic_subject,
-            at=coordinate,
-            detail=cast(Any, detail),
-            include_body=include_body,
-        ),
-        operation_name="cruxible_playbill_explain",
     )
 
 
@@ -1049,14 +976,6 @@ def handle_playbill_propose_source_bundle(
     )
 
 
-def handle_playbill_list_principals(instance_id: str) -> contracts.PlaybillPrincipalList:
-    return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_principals(instance_id),
-        lambda: playbill_api.playbill_list_principals(instance_id),
-        operation_name="cruxible_playbill_list_principals",
-    )
-
-
 def handle_playbill_compiler_upgrade(
     instance_id: str,
     target_compiler_digest: str,
@@ -1113,48 +1032,6 @@ def handle_playbill_propose_principal_change(
     )
 
 
-def handle_playbill_list_subjects(
-    instance_id: str,
-    *,
-    subject_kind: str | None = None,
-    limit: int = contracts.PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT,
-    cursor: str | None = None,
-) -> contracts.PlaybillSubjectList:
-    return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_subjects(
-            instance_id, subject_kind=subject_kind, limit=limit, cursor=cursor
-        ),
-        lambda: playbill_api.playbill_list_subjects(
-            instance_id, subject_kind=subject_kind, limit=limit, cursor=cursor
-        ),
-        operation_name="cruxible_playbill_list_subjects",
-    )
-
-
-def handle_playbill_get_subject(
-    instance_id: str, subject_kind: str, subject_id: str
-) -> contracts.PlaybillSubjectView:
-    return _dispatch_remote_or_local(
-        lambda client: client.get_playbill_subject(instance_id, subject_kind, subject_id),
-        lambda: playbill_api.playbill_get_subject(
-            instance_id, f"Subject:{subject_kind}/{subject_id}"
-        ),
-        operation_name="cruxible_playbill_get_subject",
-    )
-
-
-def handle_playbill_subject_history(
-    instance_id: str, subject_kind: str, subject_id: str
-) -> contracts.PlaybillSubjectHistory:
-    return _dispatch_remote_or_local(
-        lambda client: client.playbill_subject_history(instance_id, subject_kind, subject_id),
-        lambda: playbill_api.playbill_subject_history(
-            instance_id, f"Subject:{subject_kind}/{subject_id}"
-        ),
-        operation_name="cruxible_playbill_subject_history",
-    )
-
-
 def handle_playbill_propose_claim_type(
     instance_id: str,
     input: dict[str, Any],
@@ -1193,24 +1070,6 @@ def handle_playbill_migrate_claim_type(
         lambda: playbill_api.playbill_migrate_claim_type(instance_id, request=migration),
         operation_name="cruxible_playbill_claim_type_migrate",
         local_payload=migration.model_dump(mode="json"),
-    )
-
-
-def handle_playbill_list_claim_types(instance_id: str) -> contracts.PlaybillClaimTypeList:
-    return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_claim_types(instance_id),
-        lambda: playbill_api.playbill_list_claim_types(instance_id),
-        operation_name="cruxible_playbill_list_claim_types",
-    )
-
-
-def handle_playbill_get_claim_type(
-    instance_id: str, predicate: str
-) -> contracts.PlaybillClaimTypeView:
-    return _dispatch_remote_or_local(
-        lambda client: client.get_playbill_claim_type(instance_id, predicate),
-        lambda: playbill_api.playbill_get_claim_type(instance_id, predicate),
-        operation_name="cruxible_playbill_get_claim_type",
     )
 
 
@@ -1497,58 +1356,6 @@ def handle_playbill_block_depublish(
     )
 
 
-def handle_playbill_list_claims(
-    instance_id: str,
-    *,
-    subject_path: str | None,
-    predicate: str | None,
-    include_retired: bool,
-    subject_kind: str | None = None,
-) -> contracts.PlaybillClaimList:
-    subject = None if subject_path is None else SemanticAddress.whole_artifact(subject_path)
-    return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_claims(
-            instance_id,
-            subject_path=subject_path,
-            predicate=predicate,
-            include_retired=include_retired,
-            subject_kind=subject_kind,
-        ),
-        lambda: playbill_api.playbill_list_claims(
-            instance_id,
-            subject=subject,
-            predicate=predicate,
-            include_retired=include_retired,
-            subject_kind=subject_kind,
-        ),
-        operation_name="cruxible_playbill_list_claims",
-    )
-
-
-def handle_playbill_claim_values(
-    instance_id: str,
-    *,
-    subject_kind: str,
-    predicates: list[str],
-    subject_ids: list[str] | None = None,
-    evaluation_time: str | None = None,
-) -> ClaimValuesResultV1:
-    try:
-        request = ClaimValuesRequestV1.for_kind(
-            subject_kind,
-            subject_ids=subject_ids or (),
-            predicates=predicates,
-            evaluation_time=None if evaluation_time is None else parse_datetime(evaluation_time),
-        )
-    except (ValidationError, ValueError) as exc:
-        raise ConfigError(f"Invalid claim values selection: {exc}") from exc
-    return _dispatch_remote_or_local(
-        lambda client: client.read_playbill_claim_values(instance_id, request=request),
-        lambda: playbill_api.playbill_read_claim_values(instance_id, request=request),
-        operation_name="cruxible_playbill_claim_values",
-    )
-
-
 def handle_playbill_get(
     instance_id: str,
     *,
@@ -1587,124 +1394,6 @@ def handle_playbill_get(
         lambda client: client.playbill_get(instance_id, request=request),
         lambda: playbill_api.playbill_get(instance_id, request=request),
         operation_name="cruxible_playbill_get",
-    )
-
-
-def handle_playbill_get_claim(
-    instance_id: str,
-    identity: str,
-    *,
-    evaluation_time: str | None = None,
-) -> contracts.PlaybillClaimViewV2:
-    evaluated_at = parse_datetime(evaluation_time)
-    return _dispatch_remote_or_local(
-        lambda client: client.get_playbill_claim(
-            instance_id,
-            identity,
-            evaluation_time=(None if evaluated_at is None else evaluated_at.isoformat()),
-        ),
-        lambda: playbill_api.playbill_get_claim(
-            instance_id,
-            identity,
-            evaluation_time=evaluated_at,
-        ),
-        operation_name="cruxible_playbill_get_claim",
-    )
-
-
-def handle_playbill_claim_history(
-    instance_id: str, identity: str
-) -> contracts.PlaybillClaimHistory:
-    return _dispatch_remote_or_local(
-        lambda client: client.playbill_claim_history(instance_id, identity),
-        lambda: playbill_api.playbill_claim_history(instance_id, identity),
-        operation_name="cruxible_playbill_claim_history",
-    )
-
-
-def handle_playbill_explain_claim(
-    instance_id: str,
-    identity: str,
-    *,
-    evaluation_time: str | None,
-) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
-    evaluated_at = parse_datetime(evaluation_time)
-    return _dispatch_remote_or_local(
-        lambda client: client.explain_playbill_claim(
-            instance_id,
-            identity,
-            evaluation_time=(None if evaluated_at is None else evaluated_at.isoformat()),
-        ),
-        lambda: playbill_api.playbill_explain_claim(
-            instance_id,
-            identity,
-            evaluation_time=evaluated_at,
-        ),
-        operation_name="cruxible_playbill_explain_claim",
-    )
-
-
-def handle_playbill_list_query_definitions(
-    instance_id: str,
-) -> contracts.PlaybillQueryDefinitionList:
-    return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_query_definitions(instance_id),
-        lambda: playbill_api.playbill_list_query_definitions(instance_id),
-        operation_name="cruxible_playbill_list_query_definitions",
-    )
-
-
-def handle_playbill_policies_in_force(
-    instance_id: str,
-    *,
-    limit: int = contracts.PLAYBILL_POLICY_LIST_DEFAULT_LIMIT,
-    cursor: str | None = None,
-) -> contracts.PlaybillPolicyInForceList:
-    return _dispatch_remote_or_local(
-        lambda client: client.list_playbill_policies_in_force(
-            instance_id, limit=limit, cursor=cursor
-        ),
-        lambda: playbill_api.playbill_policies_in_force(instance_id, limit=limit, cursor=cursor),
-        operation_name="cruxible_playbill_policies_in_force",
-    )
-
-
-def handle_playbill_get_query_definition(
-    instance_id: str, name: str
-) -> contracts.PlaybillQueryDefinitionView:
-    return _dispatch_remote_or_local(
-        lambda client: client.get_playbill_query_definition(instance_id, name),
-        lambda: playbill_api.playbill_get_query_definition(instance_id, name),
-        operation_name="cruxible_playbill_get_query_definition",
-    )
-
-
-def handle_playbill_run_query(
-    instance_id: str,
-    name: str,
-    *,
-    parameters: dict[str, Any] | None,
-    evaluation_time: str | None,
-    budgets: dict[str, Any] | None,
-) -> contracts.PlaybillQueryRun:
-    evaluated_at = parse_datetime(evaluation_time)
-    limits = None if budgets is None else QueryBudgetsV1.model_validate(budgets)
-    return _dispatch_remote_or_local(
-        lambda client: client.run_playbill_query(
-            instance_id,
-            name,
-            evaluation_time=(None if evaluated_at is None else evaluated_at.isoformat()),
-            parameters=parameters,
-            budgets=(None if limits is None else limits.model_dump(mode="json")),
-        ),
-        lambda: playbill_api.playbill_run_query(
-            instance_id,
-            name,
-            evaluation_time=evaluated_at,
-            parameters=parameters,
-            budgets=limits,
-        ),
-        operation_name="cruxible_playbill_run_query",
     )
 
 
@@ -2105,88 +1794,6 @@ def handle_playbill_settle_prediction(
     )
 
 
-def handle_playbill_discover(
-    instance_id: str,
-    *,
-    query: str | None,
-    entrypoint: str | None,
-    evaluation_time: str | None,
-    profile: str,
-    budget: dict[str, Any] | None,
-) -> contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory:
-    limits = None if budget is None else DiscoveryBudgetV1.model_validate(budget)
-    return _dispatch_remote_or_local(
-        lambda client: client.discover_playbill(
-            instance_id,
-            query=query,
-            entrypoint=entrypoint,
-            evaluation_time=evaluation_time,
-            profile=cast(Any, profile),
-            budget=(None if limits is None else limits.model_dump(mode="json")),
-        ),
-        lambda: playbill_api.playbill_discover(
-            instance_id,
-            query=query,
-            entrypoint=entrypoint,
-            evaluation_time=evaluation_time,
-            profile=cast(Any, profile),
-            budget=limits,
-        ),
-        operation_name="cruxible_playbill_discover",
-    )
-
-
-def handle_playbill_search(
-    instance_id: str,
-    *,
-    mode: str,
-    query: str | None,
-    kinds: list[SearchKind] | None,
-    subject: dict[str, Any] | None,
-    statuses: list[SearchStatus] | None,
-    cursor: dict[str, Any] | None,
-    evaluation_time: str | None,
-    budgets: dict[str, Any] | None,
-) -> contracts.PlaybillSearchResult:
-    parsed_cursor = None if cursor is None else PlaybillSearchCursorV1.model_validate(cursor)
-    limits = (
-        parsed_cursor.budgets
-        if budgets is None and parsed_cursor is not None
-        else None
-        if budgets is None
-        else PlaybillSearchBudgetsV1.model_validate(budgets)
-    )
-    parsed_subject = None if subject is None else SemanticAddress.model_validate(subject)
-    evaluated_at = parse_datetime(evaluation_time)
-    selected_kinds = SEARCH_KINDS if kinds is None else tuple(sorted(set(kinds)))
-    selected_statuses = () if statuses is None else tuple(sorted(set(statuses)))
-    return _dispatch_remote_or_local(
-        lambda client: client.search_playbill(
-            instance_id,
-            mode=cast(Any, mode),
-            query=query,
-            kinds=selected_kinds,
-            subject=(None if parsed_subject is None else parsed_subject.model_dump(mode="json")),
-            statuses=selected_statuses,
-            cursor=(None if parsed_cursor is None else parsed_cursor.model_dump(mode="json")),
-            evaluation_time=(None if evaluated_at is None else evaluated_at.isoformat()),
-            budgets=(None if limits is None else limits.model_dump(mode="json")),
-        ),
-        lambda: playbill_api.playbill_search(
-            instance_id,
-            mode=cast(Any, mode),
-            query=query,
-            kinds=cast(Any, selected_kinds),
-            subject=parsed_subject,
-            statuses=cast(Any, selected_statuses),
-            cursor=parsed_cursor,
-            evaluation_time=evaluated_at,
-            budgets=limits,
-        ),
-        operation_name="cruxible_playbill_search",
-    )
-
-
 def handle_playbill_since(
     instance_id: str,
     *,
@@ -2527,35 +2134,6 @@ def handle_playbill_curation_suppress(
             "until_generation": until_generation,
             "attribution_refs": attribution_refs,
         },
-    )
-
-
-def handle_playbill_expand(
-    instance_id: str,
-    address: dict[str, Any],
-    *,
-    evaluation_time: str | None,
-    facets: list[str],
-    budget: dict[str, Any] | None,
-) -> contracts.PlaybillContextCapsule:
-    semantic_address = SemanticAddress.model_validate(address)
-    limits = None if budget is None else ExpansionBudgetV1.model_validate(budget)
-    return _dispatch_remote_or_local(
-        lambda client: client.expand_playbill(
-            instance_id,
-            address=semantic_address.model_dump(mode="json"),
-            evaluation_time=evaluation_time,
-            facets=tuple(facets),
-            budget=(None if limits is None else limits.model_dump(mode="json")),
-        ),
-        lambda: playbill_api.playbill_expand(
-            instance_id,
-            address=semantic_address,
-            evaluation_time=evaluation_time,
-            facets=tuple(facets),
-            budget=limits,
-        ),
-        operation_name="cruxible_playbill_expand",
     )
 
 

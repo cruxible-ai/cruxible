@@ -37,7 +37,6 @@ from cruxible_core.indexes import logical_digest
 from cruxible_core.indexes import sqlite as playbill_projection
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.git import GitLedger
-from cruxible_core.query.search import PlaybillSearchRequestV1
 from cruxible_core.runtime import playbill_api as runtime_api
 from cruxible_core.service.claims.claims import (
     _claim_from_view,
@@ -51,7 +50,6 @@ from cruxible_core.service.discovery.next import (
     service_playbill_next,
 )
 from cruxible_core.service.discovery.query import build_accepted_query_facts
-from cruxible_core.service.discovery.search import service_search_playbill
 from cruxible_core.service.evidence import evidence as playbill_evidence
 from cruxible_core.service.proposals.publications import (
     bound_publication_registrations,
@@ -72,13 +70,12 @@ EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
 ACCESS = CoverageAccessProfileV1(profile_id="read-latency-test")
 
 
-def _orient_request(instance: Any) -> PlaybillSearchRequestV1:
-    return PlaybillSearchRequestV1(
-        mode="orient",
-        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        evaluation_time=EVALUATION_TIME,
-        access_profile=ACCESS,
-    )
+def _orient(instance: Any) -> Any:
+    """One real orient: its Claim status counts read every accepted Claim's status."""
+
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    return service_playbill_orient(instance, evaluation_time=EVALUATION_TIME)
 
 
 def _count_read_trees(monkeypatch: pytest.MonkeyPatch) -> Counter[str]:
@@ -100,12 +97,12 @@ def test_orient_uses_indexed_inventory_without_accepted_tree_reads(
     instance, _owner = seed_claims(tmp_path)
 
     counted = _count_read_trees(monkeypatch)
-    service_search_playbill(instance, request=_orient_request(instance))
+    _orient(instance)
 
     assert counted == Counter()
 
     counted.clear()
-    service_search_playbill(instance, request=_orient_request(instance))
+    _orient(instance)
     assert counted == Counter()
 
 
@@ -309,11 +306,11 @@ def test_claim_reads_use_history_locators_without_a_retained_history_map(
     instance, _owner = seed_claims(tmp_path)
 
     def forbidden(*args: Any, **kwargs: Any) -> Any:
-        pytest.fail("served search must not build the old Claim history map")
+        pytest.fail("served orient must not build the old Claim history map")
 
     monkeypatch.setattr(playbill_evidence, "_build_claim_read_history_index", forbidden)
-    service_search_playbill(instance, request=_orient_request(instance))
-    service_search_playbill(instance, request=_orient_request(instance))
+    _orient(instance)
+    _orient(instance)
     assert not hasattr(instance, "claim_read_history_memo")
 
 
@@ -362,17 +359,19 @@ def test_one_claim_read_materializes_no_generation_and_still_receipts(
     monkeypatch.setattr(runtime_api, "get_playbill_manager", lambda: _Manager())
 
     counted = _count_read_trees(monkeypatch)
-    view = runtime_api.playbill_get_claim(
+    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+
+    view = runtime_api.playbill_get(
         instance.descriptor.instance_id,
-        identity,
-        evaluation_time=EVALUATION_TIME,
-    )
+        request=PlaybillGetRequestV1(ref=identity, detail="proof", evaluation_time=EVALUATION_TIME),
+    ).proof
+    assert view is not None
 
     # One served read reads the paths it answers for and nothing else.
     assert counted == Counter()
-    assert view.envelope["path"] == path
+    assert view["envelope"]["path"] == path
     # The narrow read still resolved the ClaimType and the capture contracts.
-    assert view.admission_accounts
+    assert view["admission_accounts"]
 
     # The receipt is still written, and names the artifact the read served.
     served = consumption_artifacts_for_paths(instance.tree_at(coordinate.git_oid), (path,))

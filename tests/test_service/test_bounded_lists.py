@@ -13,7 +13,6 @@ from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.service.claims.policies import list_playbill_policies_in_force
-from cruxible_core.service.claims.subjects import service_list_playbill_subjects
 from cruxible_core.service.discovery.curation import (
     PlaybillCurationListRequestV1,
     service_list_playbill_curation,
@@ -225,40 +224,3 @@ def test_a_curation_cursor_refuses_once_accepted_state_moves(tmp_path: Path) -> 
     activate(instance, owner, _propose(instance, "moves-state", "wi-60"))
     with pytest.raises(PlaybillListCursorStale, match="accepted state moved"):
         _curation(instance, limit=1, cursor=cursor)
-
-
-def test_subject_pages_are_compact_rows_walked_with_a_cursor(tmp_path: Path) -> None:
-    instance, _owner = seed_claims(tmp_path)
-    whole = service_list_playbill_subjects(instance)
-    assert len(whole.subjects) >= 2
-    assert whole.truncated is False and whole.next_cursor is None
-    # Rows name the Subject and count its live Claims; no envelope, no facts.
-    assert set(type(whole.subjects[0]).model_fields) == {
-        "subject_kind",
-        "subject_id",
-        "lifecycle",
-        "live_claims",
-    }
-    assert sum(row.live_claims for row in whole.subjects) > 0
-
-    first = service_list_playbill_subjects(instance, limit=1)
-    assert first.truncated is True and first.next_cursor is not None
-    walked = list(first.subjects)
-    cursor = first.next_cursor
-    while cursor is not None:
-        page = service_list_playbill_subjects(instance, limit=1, cursor=cursor)
-        walked.extend(page.subjects)
-        cursor = page.next_cursor
-    assert walked == list(whole.subjects)
-
-    kind = whole.subjects[0].subject_kind
-    of_kind = service_list_playbill_subjects(instance, subject_kind=kind, limit=1)
-    assert of_kind.subject_kind_filter == kind
-    assert all(row.subject_kind == kind for row in of_kind.subjects)
-    # A cursor minted for one selection does not continue another.
-    with pytest.raises(PlaybillListCursorMismatch):
-        service_list_playbill_subjects(
-            instance, limit=1, cursor=first.next_cursor, subject_kind=kind
-        )
-    with pytest.raises(PlaybillListCursorMismatch):
-        service_list_playbill_subjects(instance, cursor="not-a-cursor")

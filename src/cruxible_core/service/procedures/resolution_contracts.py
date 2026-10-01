@@ -102,7 +102,7 @@ def resolve_claim_version(
     if raw is None:
         raise ClaimNotFoundError(
             f"Claim {claim_id} is not accepted at the requested coordinate; "
-            "find it with `cruxible playbill claim list`"
+            "find it with `cruxible playbill query KIND --claims`"
         )
     claim = parse_claim(raw, path=path, codec=artifact_codec_for_compiler(coordinate.compiler))
     artifact_digest = claim_artifact_digest(claim).tagged

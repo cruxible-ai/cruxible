@@ -35,7 +35,8 @@ def test_protocol_list_hides_tools_outside_playbill_profile(
             return {tool.name for tool in listed.tools}
 
     names = _run(exercise())
-    assert "cruxible_playbill_list_claims" in names
+    assert {"cruxible_playbill_orient", "cruxible_playbill_query", "cruxible_playbill_get"} <= names
+    assert "cruxible_playbill_query_spec" not in names
     assert "cruxible_playbill_set" in names
     assert "cruxible_playbill_authoring_compile" not in names
     assert "cruxible_playbill_activate" in names
@@ -90,7 +91,7 @@ def test_protocol_explicit_allowlist_is_enforced_on_list_and_call(
     monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
     monkeypatch.setenv(
         "CRUXIBLE_MCP_TOOLS",
-        "cruxible_server_info,cruxible_playbill_get_document",
+        "cruxible_server_info,cruxible_playbill_get",
     )
     server = create_server()
 
@@ -99,23 +100,15 @@ def test_protocol_explicit_allowlist_is_enforced_on_list_and_call(
             await session.initialize()
             listed = await session.list_tools()
             result = await session.call_tool(
-                "cruxible_playbill_explain",
-                {
-                    "instance_id": "inst_missing",
-                    "subject": {
-                        "tag": "playbill-semantic-address-v1",
-                        "artifact_path": "documents/design.json",
-                        "selector": {"scheme": "artifact-v1", "value": ""},
-                    },
-                },
+                "cruxible_playbill_orient", {"instance_id": "inst_missing"}
             )
             text = " ".join(block.text for block in result.content if hasattr(block, "text"))
             return {tool.name for tool in listed.tools}, bool(result.isError), text
 
     names, is_error, message = _run(exercise())
-    assert names == {"cruxible_server_info", "cruxible_playbill_get_document"}
+    assert names == {"cruxible_server_info", "cruxible_playbill_get"}
     assert is_error
-    assert "cruxible_playbill_explain" in message
+    assert "cruxible_playbill_orient" in message
 
 
 def test_protocol_permission_tier_hides_and_refuses_write(
@@ -166,7 +159,7 @@ def test_protocol_listing_is_static_when_daemon_transport_is_missing(
             return {tool.name for tool in listed.tools}, bool(result.isError), text
 
     names, is_error, message = _run(exercise())
-    assert "cruxible_playbill_search" in names
+    assert "cruxible_playbill_orient" in names
     assert "cruxible_playbill_next" in names
     assert is_error
     assert "CRUXIBLE_SERVER_URL" in message

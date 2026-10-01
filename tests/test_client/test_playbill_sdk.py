@@ -57,6 +57,7 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core import __version__ as DAEMON_VERSION
+from tests.test_client._read_fakes import ClaimTypeRead
 
 _DIGEST = "sha256:" + "1" * 64
 _COORDINATE = api.PlaybillAcceptedCoordinate(
@@ -120,9 +121,9 @@ class _Client:
         predicate: str,
         *,
         at: api.PlaybillAcceptedCoordinate,
-    ) -> api.PlaybillClaimTypeView:
+    ) -> ClaimTypeRead:
         self.claim_type_reads += 1
-        return api.PlaybillClaimTypeView(
+        return ClaimTypeRead(
             coordinate=at,
             path=f"claim-types/{predicate}.json",
             predicate=predicate,

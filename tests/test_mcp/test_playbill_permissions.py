@@ -21,19 +21,8 @@ def _tool_names() -> set[str]:
 
 
 _DEFAULT_PROFILE = {
-    "cruxible_playbill_claim_values",
-    "cruxible_playbill_search",
     "cruxible_playbill_next",
-    "cruxible_playbill_expand",
-    "cruxible_playbill_list_claims",
-    "cruxible_playbill_get_claim",
     "cruxible_playbill_get",
-    "cruxible_playbill_explain_claim",
-    "cruxible_playbill_list_claim_types",
-    "cruxible_playbill_get_claim_type",
-    "cruxible_playbill_list_subjects",
-    "cruxible_playbill_get_subject",
-    "cruxible_playbill_run_query",
     "cruxible_playbill_query",
     "cruxible_playbill_set",
     "cruxible_playbill_retire",

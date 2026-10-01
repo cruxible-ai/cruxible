@@ -150,7 +150,7 @@ def claim_reads(
     each slot's resolution is its full resolution.
     """
 
-    from cruxible_core.service.discovery.search import claim_resolution_statuses
+    from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
     ordered = tuple(sorted(set(identities)))

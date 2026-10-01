@@ -353,10 +353,7 @@ def test_claim_type_policy_and_query_readers_skip_unrelated_owners(
         render_query_definition,
     )
     from cruxible_core.proposals.proposals import _accepted_query
-    from cruxible_core.service.claims.claim_types import (
-        service_get_playbill_claim_type,
-        service_list_playbill_claim_types,
-    )
+    from cruxible_core.service.claims.claim_types import service_get_playbill_claim_type
     from cruxible_core.service.claims.policies import list_playbill_policies_in_force
     from cruxible_core.service.evidence.source_catalog import service_playbill_source_context
     from tests.test_query.test_query_definitions import active_work_query, claim_type
@@ -377,14 +374,8 @@ def test_claim_type_policy_and_query_readers_skip_unrelated_owners(
     }
     instance, coordinate, reads = _published_sources(tmp_path, tree, monkeypatch)
     monkeypatch.setattr(instance, "accepted_coordinate", lambda: coordinate)
-    listed = service_list_playbill_claim_types(instance)
-    assert [row.identity for row in listed.claim_types] == [definition.identity.qualified]
-    assert reads == [type_path]
-    reads.clear()
-    assert (
-        service_get_playbill_claim_type(instance, predicate=definition.predicate)
-        == listed.claim_types[0]
-    )
+    listed = service_get_playbill_claim_type(instance, predicate=definition.predicate)
+    assert listed.identity == definition.identity.qualified
     assert reads == [type_path]
     reads.clear()
     policies = list_playbill_policies_in_force(instance)

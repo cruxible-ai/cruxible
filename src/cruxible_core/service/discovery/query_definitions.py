@@ -36,12 +36,6 @@ class PlaybillQueryDefinitionView(_StrictQueryDefinitionServiceModel):
     envelope: dict[str, object]
 
 
-class PlaybillQueryDefinitionList(_StrictQueryDefinitionServiceModel):
-    tag: Literal["playbill-query-definition-list-v1"] = "playbill-query-definition-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    query_definitions: tuple[PlaybillQueryDefinitionView, ...]
-
-
 def _resolve_coordinate(
     instance: PlaybillInstance,
     at: PlaybillAcceptedCoordinate | None,
@@ -109,36 +103,8 @@ def service_get_playbill_query_definition(
     return _view(accepted.query, path=accepted.path, coordinate=coordinate)
 
 
-def service_list_playbill_query_definitions(
-    instance: PlaybillInstance,
-    *,
-    at: PlaybillAcceptedCoordinate | None = None,
-) -> PlaybillQueryDefinitionList:
-    """Return every accepted QueryDefinition in byte-sorted ledger-path order."""
-
-    coordinate = _resolve_coordinate(instance, at)
-    with instance.bind_accepted_projection(coordinate) as projection:
-        views = []
-        for envelope in sorted(
-            projection.typed.envelopes(kind="query-definition"),
-            key=lambda item: item.path.encode("utf-8"),
-        ):
-            query = projection.typed.source(envelope.identity)
-            if not isinstance(query, QueryDefinitionV1):
-                raise ProjectionIntegrityError(
-                    "accepted QueryDefinition source is absent or invalid"
-                )
-            views.append(_view(query, path=envelope.path, coordinate=coordinate))
-    return PlaybillQueryDefinitionList(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-        query_definitions=tuple(views),
-    )
-
-
 __all__ = [
-    "PlaybillQueryDefinitionList",
     "PlaybillQueryDefinitionView",
     "accepted_query_definition",
     "service_get_playbill_query_definition",
-    "service_list_playbill_query_definitions",
 ]

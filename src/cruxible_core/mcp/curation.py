@@ -14,26 +14,17 @@ PROFILE_DEFAULT = "default"
 
 _PROFILES = (PROFILE_DEFAULT, PROFILE_FULL)
 
-#: The everyday agent loop: orient and pick work, read Claims, write, and settle.
+#: The everyday agent loop: map state, read it, write it, and settle. Agents read
+#: state only through orient, query and get; the full grammar (query_spec, the
+#: since change feed, authoring, Procedures, Lines, curation) is in the full
+#: profile.
 _DEFAULT_TOOLS = frozenset(
     {
-        # orient (search mode=orient), next, search, and expand
-        "cruxible_playbill_search",
-        "cruxible_playbill_next",
-        "cruxible_playbill_expand",
-        # Claim, ClaimType, and Subject reads
-        "cruxible_playbill_claim_values",
-        "cruxible_playbill_list_claims",
-        "cruxible_playbill_get_claim",
-        "cruxible_playbill_get",
-        "cruxible_playbill_explain_claim",
-        "cruxible_playbill_list_claim_types",
-        "cruxible_playbill_get_claim_type",
-        "cruxible_playbill_list_subjects",
-        "cruxible_playbill_get_subject",
-        "cruxible_playbill_run_query",
-        # the query read verb
+        # the three read verbs and the work queue
+        "cruxible_playbill_orient",
         "cruxible_playbill_query",
+        "cruxible_playbill_get",
+        "cruxible_playbill_next",
         # the write verbs; the authoring_* intent tools stay in the full profile
         "cruxible_playbill_set",
         "cruxible_playbill_retire",
@@ -43,8 +34,6 @@ _DEFAULT_TOOLS = frozenset(
         "cruxible_playbill_review",
         "cruxible_playbill_approve",
         "cruxible_playbill_activate",
-        # the orient map
-        "cruxible_playbill_orient",
         # identity and versions
         "cruxible_playbill_whoami",
         "cruxible_server_info",

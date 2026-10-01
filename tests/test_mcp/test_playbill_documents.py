@@ -23,14 +23,9 @@ PLAYBILL_DOCUMENT_TOOLS = {
     "cruxible_playbill_prepare_approval",
     "cruxible_playbill_submit_approval",
     "cruxible_playbill_activate",
-    "cruxible_playbill_list_documents",
-    "cruxible_playbill_get_document",
-    "cruxible_playbill_dereference",
-    "cruxible_playbill_history",
     "cruxible_playbill_source_context",
     "cruxible_playbill_source_check",
     "cruxible_playbill_propose_source_bundle",
-    "cruxible_playbill_list_principals",
     "cruxible_playbill_propose_principal_change",
 }
 
@@ -62,7 +57,7 @@ def test_playbill_permission_tiers_separate_inert_proposal_approval_and_activati
     assert TOOL_PERMISSIONS["cruxible_playbill_prepare_approval"] == PermissionMode.READ_ONLY
     assert TOOL_PERMISSIONS["cruxible_playbill_submit_approval"] == PermissionMode.GRAPH_WRITE
     assert TOOL_PERMISSIONS["cruxible_playbill_activate"] == PermissionMode.GRAPH_WRITE
-    assert TOOL_PERMISSIONS["cruxible_playbill_get_document"] == PermissionMode.READ_ONLY
+    assert TOOL_PERMISSIONS["cruxible_playbill_get"] == PermissionMode.READ_ONLY
     assert TOOL_PERMISSIONS["cruxible_playbill_init"] == PermissionMode.ADMIN
 
 

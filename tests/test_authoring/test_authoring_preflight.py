@@ -54,7 +54,6 @@ from cruxible_core.service.authoring.documents import (
 )
 from cruxible_core.service.claims.subjects import (
     service_get_playbill_subject,
-    service_list_playbill_subjects,
 )
 from cruxible_core.service.floor.floor import service_export_playbill_floor
 from tests.core_support._support import client_material, initialize_local
@@ -465,20 +464,14 @@ def test_the_object_subjects_profile_lists_the_incoming_relation(tmp_path: Path)
     vulnerability = service_get_playbill_subject(
         instance, identity="Subject:sec.vulnerability/cve-2026-0001"
     )
-    listed = service_list_playbill_subjects(instance)
 
     assert [group.predicate for group in package.incoming] == [AFFECTS_PACKAGE]
     edge = package.incoming[0].claims[0]
     assert edge.subject_identity == "subjects/sec.vulnerability/cve-2026-0001.json"
     assert edge.claim_identity.startswith("Claim:")
     assert len(package.incoming[0].claims) == 1
-    # The asserting end still carries no incoming edge, and the list surface
-    # carries only compact rows, never envelopes or edges.
+    # The asserting end still carries no incoming edge.
     assert vulnerability.incoming == ()
-    assert {(row.subject_kind, row.subject_id) for row in listed.subjects} >= {
-        ("sec.package", "demo"),
-        ("sec.vulnerability", "cve-2026-0001"),
-    }
 
 
 def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) -> None:

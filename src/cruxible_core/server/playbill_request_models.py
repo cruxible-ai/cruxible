@@ -29,10 +29,8 @@ from cruxible_client.contracts.declared_blocks import (
     PlaybillReviewWorkspaceObservationV1,
     ProjectionBlockStamp,
 )
-from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.ledger_mirror import MIRROR_URL_MAX_LENGTH
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.types import (
@@ -52,14 +50,6 @@ from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_DEFAULT_MAX_ROWS,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.query.search import (
-    SEARCH_KINDS,
-    PlaybillSearchBudgetsV1,
-    PlaybillSearchCursorV1,
-    SearchKind,
-    SearchMode,
-    SearchStatus,
-)
 
 
 class _StrictPlaybillRequest(BaseModel):
@@ -236,11 +226,6 @@ class PlaybillBlockDepublishRequest(_StrictPlaybillRequest):
     block_id: str = Field(min_length=1)
 
 
-class PlaybillClaimExplainRequest(_StrictPlaybillRequest):
-    at: AcceptedCoordinate | None = None
-    evaluation_time: datetime | None = None
-
-
 class PlaybillProposalReadmitRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-proposal-readmit-request-v1"] = "playbill-proposal-readmit-request-v1"
 
@@ -248,34 +233,6 @@ class PlaybillProposalReadmitRequest(_StrictPlaybillRequest):
 class PlaybillProposalWithdrawRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-proposal-withdraw-request-v1"] = "playbill-proposal-withdraw-request-v1"
     reason: str = Field(min_length=1, max_length=1_000)
-
-
-class PlaybillRunQueryRequest(_StrictPlaybillRequest):
-    at: AcceptedCoordinate | None = None
-    evaluation_time: datetime | None = None
-    parameters: dict[str, Any] | None = None
-    budgets: QueryBudgetsV1 | None = None
-
-
-class PlaybillDiscoverRequest(_StrictPlaybillRequest):
-    query: str | None = None
-    entrypoint: str | None = None
-    at: AcceptedCoordinate | None = None
-    evaluation_time: str | None = None
-    profile: Literal["interfaces", "subjects", "all"] = "interfaces"
-    budget: DiscoveryBudgetV1 = DiscoveryBudgetV1()
-
-
-class PlaybillSearchRequest(_StrictPlaybillRequest):
-    mode: SearchMode
-    query: str | None = None
-    kinds: tuple[SearchKind, ...] = SEARCH_KINDS
-    subject: SemanticAddress | None = None
-    statuses: tuple[SearchStatus, ...] = ()
-    cursor: PlaybillSearchCursorV1 | None = None
-    at: AcceptedCoordinate | None = None
-    evaluation_time: datetime | None = None
-    budgets: PlaybillSearchBudgetsV1 = PlaybillSearchBudgetsV1()
 
 
 class PlaybillNextRequest(_StrictPlaybillRequest):
@@ -373,14 +330,6 @@ class PlaybillCurationSuppressRequest(_StrictPlaybillRequest):
     scope: Literal["item", "pattern", "instance"]
     until_generation: int | None = None
     attribution_refs: tuple[str, ...] = ()
-
-
-class PlaybillExpandRequest(_StrictPlaybillRequest):
-    address: SemanticAddress
-    at: AcceptedCoordinate | None = None
-    evaluation_time: str | None = None
-    facets: tuple[str, ...] = ()
-    budget: ExpansionBudgetV1 = ExpansionBudgetV1()
 
 
 class PlaybillResolveCoverageRequest(_StrictPlaybillRequest):

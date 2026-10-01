@@ -28,8 +28,6 @@ from cruxible_client.contracts.claim_reads import (
     ClaimBackingsResultV1,
     ClaimReadBatchRequestV1,
     ClaimReadBatchResultV1,
-    ClaimValuesRequestV1,
-    ClaimValuesResultV1,
 )
 from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeRequestV1,
@@ -621,10 +619,6 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillProposalInspection)
 
-    def list_playbill_principals(self, instance_id: str) -> contracts.PlaybillPrincipalList:
-        response = self._client.get(f"/api/v1/{instance_id}/playbill/principals")
-        return self._parse_model(response, contracts.PlaybillPrincipalList)
-
     def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/whoami")
         return self._parse_model(response, contracts.PlaybillWhoAmI)
@@ -834,31 +828,6 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillActivationReceipt)
 
-    def list_playbill_documents(
-        self,
-        instance_id: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillDocumentList:
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/documents",
-            params=self._playbill_coordinate_params(at),
-        )
-        return self._parse_model(response, contracts.PlaybillDocumentList)
-
-    def get_playbill_document(
-        self,
-        instance_id: str,
-        identity: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillDocumentView:
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/documents/{identity}",
-            params=self._playbill_coordinate_params(at),
-        )
-        return self._parse_model(response, contracts.PlaybillDocumentView)
-
     def read_playbill_capture(
         self, instance_id: str, request: CaptureReadRequestV1
     ) -> CaptureReadV1:
@@ -867,49 +836,6 @@ class CruxibleClient:
             json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, CaptureReadV1)
-
-    def dereference_playbill_document(
-        self,
-        instance_id: str,
-        identity: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillBodyRead:
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/documents/{identity}/body",
-            params=self._playbill_coordinate_params(at),
-        )
-        return self._parse_model(response, contracts.PlaybillBodyRead)
-
-    def playbill_document_history(
-        self, instance_id: str, identity: str
-    ) -> contracts.PlaybillDocumentHistory:
-        response = self._client.get(f"/api/v1/{instance_id}/playbill/documents/{identity}/history")
-        return self._parse_model(response, contracts.PlaybillDocumentHistory)
-
-    def explain_playbill_subject(
-        self,
-        instance_id: str,
-        *,
-        subject: Mapping[str, Any],
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any],
-        detail: Literal["summary", "evidence", "proof"] = "summary",
-        include_body: bool = False,
-    ) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
-        coordinate = at.model_dump(mode="json") if isinstance(at, BaseModel) else dict(at)
-        response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/explain",
-            json={
-                "subject": dict(subject),
-                "at": coordinate,
-                "detail": detail,
-                "include_body": include_body,
-            },
-        )
-        payload = self._parse_json(response)
-        if payload.get("tag") == "playbill-explain-v1":
-            return contracts.PlaybillExplainResult.model_validate(payload)
-        return contracts.PlaybillExplainUnsupportedDetail.model_validate(payload)
 
     def playbill_source_context(self, instance_id: str) -> contracts.PlaybillSourceContext:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/sources/context")
@@ -963,64 +889,6 @@ class CruxibleClient:
             payload["base"] = base_payload
         return payload
 
-    def list_playbill_subjects(
-        self,
-        instance_id: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-        subject_kind: str | None = None,
-        limit: int | None = None,
-        cursor: str | None = None,
-    ) -> contracts.PlaybillSubjectList:
-        """One page of compact Subject rows; follow ``next_cursor`` while ``truncated``."""
-        params: dict[str, Any] = dict(self._playbill_coordinate_params(at))
-        if subject_kind is not None:
-            params["subject_kind"] = subject_kind
-        if limit is not None:
-            params["limit"] = limit
-        if cursor is not None:
-            params["cursor"] = cursor
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/subjects",
-            params=params,
-        )
-        return self._parse_model(response, contracts.PlaybillSubjectList)
-
-    def list_playbill_subject_index(
-        self,
-        instance_id: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillSubjectIndex:
-        """Which Subjects exist at a coordinate, without their compiled facts."""
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/subject-index",
-            params=self._playbill_coordinate_params(at),
-        )
-        return self._parse_model(response, contracts.PlaybillSubjectIndex)
-
-    def get_playbill_subject(
-        self,
-        instance_id: str,
-        subject_kind: str,
-        subject_id: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillSubjectView:
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}",
-            params=self._playbill_coordinate_params(at),
-        )
-        return self._parse_model(response, contracts.PlaybillSubjectView)
-
-    def playbill_subject_history(
-        self, instance_id: str, subject_kind: str, subject_id: str
-    ) -> contracts.PlaybillSubjectHistory:
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}/history"
-        )
-        return self._parse_model(response, contracts.PlaybillSubjectHistory)
-
     def propose_playbill_claim_type(
         self,
         instance_id: str,
@@ -1066,31 +934,6 @@ class CruxibleClient:
         )
         self._check_error(response)
         return _CLAIM_TYPE_MIGRATION_RESPONSE.validate_python(response.json())
-
-    def list_playbill_claim_types(
-        self,
-        instance_id: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillClaimTypeList:
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/claim-types",
-            params=self._playbill_coordinate_params(at),
-        )
-        return self._parse_model(response, contracts.PlaybillClaimTypeList)
-
-    def get_playbill_claim_type(
-        self,
-        instance_id: str,
-        predicate: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillClaimTypeView:
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/claim-types/{predicate}",
-            params=self._playbill_coordinate_params(at),
-        )
-        return self._parse_model(response, contracts.PlaybillClaimTypeView)
 
     def append_playbill_claim_attestation(
         self,
@@ -1366,32 +1209,6 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillInsertionAbandonResult)
 
-    def list_playbill_claims(
-        self,
-        instance_id: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-        subject_path: str | None = None,
-        predicate: str | None = None,
-        include_retired: bool = False,
-        subject_kind: str | None = None,
-    ) -> contracts.PlaybillClaimList:
-        params: dict[str, Any] = {
-            **self._playbill_coordinate_params(at),
-            "include_retired": include_retired,
-        }
-        if subject_path is not None:
-            params["subject_path"] = subject_path
-        if predicate is not None:
-            params["predicate"] = predicate
-        if subject_kind is not None:
-            params["subject_kind"] = subject_kind
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/claims",
-            params=params,
-        )
-        return self._parse_model(response, contracts.PlaybillClaimList)
-
     def read_playbill_claim_batch(
         self,
         instance_id: str,
@@ -1403,19 +1220,6 @@ class CruxibleClient:
             json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, ClaimReadBatchResultV1)
-
-    def read_playbill_claim_values(
-        self,
-        instance_id: str,
-        *,
-        request: ClaimValuesRequestV1,
-    ) -> ClaimValuesResultV1:
-        """Live Claim values and verdicts for explicit Subjects, without full views."""
-        response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/claims/values",
-            json=request.model_dump(mode="json"),
-        )
-        return self._parse_model(response, ClaimValuesResultV1)
 
     def playbill_get(
         self,
@@ -1487,111 +1291,6 @@ class CruxibleClient:
             json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, ClaimBackingsResultV1)
-
-    def get_playbill_claim(
-        self,
-        instance_id: str,
-        identity: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-        evaluation_time: str | None = None,
-    ) -> contracts.PlaybillClaimViewV2:
-        params = self._playbill_coordinate_params(at)
-        if evaluation_time is not None:
-            params["evaluation_time"] = evaluation_time
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/claims/{identity}",
-            params=params,
-        )
-        return self._parse_model(response, contracts.PlaybillClaimViewV2)
-
-    def playbill_claim_history(
-        self, instance_id: str, identity: str
-    ) -> contracts.PlaybillClaimHistory:
-        response = self._client.get(f"/api/v1/{instance_id}/playbill/claims/{identity}/history")
-        return self._parse_model(response, contracts.PlaybillClaimHistory)
-
-    def explain_playbill_claim(
-        self,
-        instance_id: str,
-        identity: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-        evaluation_time: str | None = None,
-    ) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/claims/{identity}/explanation",
-            json={
-                "at": self._playbill_coordinate_body(at),
-                "evaluation_time": evaluation_time,
-            },
-        )
-        payload = self._parse_json(response)
-        if payload.get("tag") == "playbill-claim-explanation-v3":
-            return contracts.PlaybillClaimExplanationV3.model_validate(payload)
-        return contracts.PlaybillClaimExplanationV2.model_validate(payload)
-
-    def list_playbill_query_definitions(
-        self,
-        instance_id: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillQueryDefinitionList:
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/queries",
-            params=self._playbill_coordinate_params(at),
-        )
-        return self._parse_model(response, contracts.PlaybillQueryDefinitionList)
-
-    def list_playbill_policies_in_force(
-        self,
-        instance_id: str,
-        *,
-        limit: int | None = None,
-        cursor: str | None = None,
-    ) -> contracts.PlaybillPolicyInForceList:
-        """One page of policies in force; follow ``next_cursor`` while ``truncated``."""
-        params: dict[str, Any] = {}
-        if limit is not None:
-            params["limit"] = limit
-        if cursor is not None:
-            params["cursor"] = cursor
-        response = self._client.get(f"/api/v1/{instance_id}/playbill/policies", params=params)
-        return self._parse_model(response, contracts.PlaybillPolicyInForceList)
-
-    def get_playbill_query_definition(
-        self,
-        instance_id: str,
-        name: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillQueryDefinitionView:
-        response = self._client.get(
-            f"/api/v1/{instance_id}/playbill/queries/{name}",
-            params=self._playbill_coordinate_params(at),
-        )
-        return self._parse_model(response, contracts.PlaybillQueryDefinitionView)
-
-    def run_playbill_query(
-        self,
-        instance_id: str,
-        name: str,
-        *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-        evaluation_time: str | None = None,
-        parameters: Mapping[str, Any] | None = None,
-        budgets: Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillQueryRun:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/queries/{name}/run",
-            json={
-                "at": self._playbill_coordinate_body(at),
-                "evaluation_time": evaluation_time,
-                "parameters": None if parameters is None else dict(parameters),
-                "budgets": None if budgets is None else dict(budgets),
-            },
-        )
-        return self._parse_model(response, contracts.PlaybillQueryRun)
 
     def query_playbill(
         self,
@@ -2015,87 +1714,6 @@ class CruxibleClient:
             },
         )
         return self._parse_model(response, contracts.PlaybillCurationActionResult)
-
-    def discover_playbill(
-        self,
-        instance_id: str,
-        *,
-        query: str | None = None,
-        entrypoint: str | None = None,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-        evaluation_time: str | None = None,
-        profile: Literal["interfaces", "subjects", "all"] = "interfaces",
-        budget: Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory:
-        payload: dict[str, Any] = {
-            "query": query,
-            "entrypoint": entrypoint,
-            "at": self._playbill_coordinate_body(at),
-            "evaluation_time": evaluation_time,
-            "profile": profile,
-        }
-        if budget is not None:
-            payload["budget"] = dict(budget)
-        response = self._client.post(f"/api/v1/{instance_id}/playbill/discover", json=payload)
-        parsed = self._parse_json(response)
-        if parsed.get("tag") == "playbill-interface-inventory-v1":
-            return contracts.PlaybillInterfaceInventory.model_validate(parsed)
-        return contracts.PlaybillDiscoveryResult.model_validate(parsed)
-
-    def search_playbill(
-        self,
-        instance_id: str,
-        *,
-        mode: Literal["search", "list", "orient"],
-        query: str | None = None,
-        kinds: Sequence[str] = ("claim", "demand", "procedure"),
-        subject: Mapping[str, Any] | None = None,
-        statuses: Sequence[str] = (),
-        cursor: Mapping[str, Any] | None = None,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-        evaluation_time: str | None = None,
-        budgets: Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillSearchResult:
-        payload: dict[str, Any] = {
-            "mode": mode,
-            "query": query,
-            "kinds": sorted(set(kinds)),
-            "subject": None if subject is None else dict(subject),
-            "statuses": sorted(set(statuses)),
-            "cursor": None if cursor is None else dict(cursor),
-            "at": self._playbill_coordinate_body(at),
-            "evaluation_time": evaluation_time,
-        }
-        resolved_budgets = budgets
-        if resolved_budgets is None and cursor is not None:
-            cursor_budgets = cursor.get("budgets")
-            if isinstance(cursor_budgets, Mapping):
-                resolved_budgets = cursor_budgets
-        if resolved_budgets is not None:
-            payload["budgets"] = dict(resolved_budgets)
-        response = self._client.post(f"/api/v1/{instance_id}/playbill/search", json=payload)
-        return self._parse_model(response, contracts.PlaybillSearchResult)
-
-    def expand_playbill(
-        self,
-        instance_id: str,
-        *,
-        address: Mapping[str, Any],
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-        evaluation_time: str | None = None,
-        facets: Sequence[str] = (),
-        budget: Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillContextCapsule:
-        payload: dict[str, Any] = {
-            "address": dict(address),
-            "at": self._playbill_coordinate_body(at),
-            "evaluation_time": evaluation_time,
-            "facets": list(facets),
-        }
-        if budget is not None:
-            payload["budget"] = dict(budget)
-        response = self._client.post(f"/api/v1/{instance_id}/playbill/expand", json=payload)
-        return self._parse_model(response, contracts.PlaybillContextCapsule)
 
     def resolve_playbill_coverage(
         self,

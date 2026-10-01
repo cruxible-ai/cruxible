@@ -68,7 +68,8 @@ def test_get_serves_cards_details_and_coded_refusals(
         url, json={"ref": "document:design", "detail": "body", "range": {"start": 0, "end": 8}}
     )
     missing = client.post(url, json={"ref": "Document:desig"})
-    unsupported = client.post(url, json={"ref": "Document:design", "detail": "why"})
+    unsupported = client.post(url, json={"ref": "Document:design", "detail": "evidence"})
+    why = client.post(url, json={"ref": "Document:design", "detail": "why"})
     malformed = client.post(url, json={"ref": "Document:design", "range": {"start": 0, "end": 8}})
 
     assert card.status_code == 200, card.text
@@ -99,8 +100,18 @@ def test_get_serves_cards_details_and_coded_refusals(
     }
     assert "nearest: Document:design" in refusal["message"]
 
+    # A Document explains why it is accepted; with body permission (the
+    # default admin tier here) its source maps onto its body.
+    assert why.status_code == 200, why.text
+    assert why.json()["why"]["source_mapping"] is not None
     assert unsupported.status_code == 400, unsupported.text
     assert unsupported.json()["error_code"] == "playbill.get.detail_unsupported"
-    assert unsupported.json()["context"]["allowed"] == ["summary", "history", "proof", "body"]
+    assert unsupported.json()["context"]["allowed"] == [
+        "summary",
+        "why",
+        "history",
+        "proof",
+        "body",
+    ]
     assert malformed.status_code == 422, malformed.text
     assert any("range applies only to detail" in item for item in malformed.json()["errors"])

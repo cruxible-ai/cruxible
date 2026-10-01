@@ -31,7 +31,6 @@ def _isolated_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 class _StubClient:
     def __init__(self) -> None:
         self.requests: list[PlaybillQueryRequestV1] = []
-        self.listed = 0
 
     def query_playbill(
         self, instance_id: str, *, request: PlaybillQueryRequestV1
@@ -64,12 +63,6 @@ class _StubClient:
                 coordinate=COORDINATE,  # type: ignore[arg-type]
                 evaluation_time=datetime(2026, 9, 28, tzinfo=UTC),
             ),
-        )
-
-    def list_playbill_query_definitions(self, instance_id: str) -> Any:
-        self.listed += 1
-        return contracts.PlaybillQueryDefinitionList(
-            coordinate=contracts.PlaybillAcceptedCoordinate(**COORDINATE), query_definitions=[]
         )
 
 
@@ -215,16 +208,6 @@ def test_follow_order_falls_back_when_the_raw_arguments_disagree() -> None:
     assert parsed == [("--follow", "x:y"), ("--follow-in", "a:b")]
     ordered = _follow_order(["k", "--follow-in", "a:b", "--follow", "x:y"], ("x:y",), ("a:b",))
     assert ordered == [("--follow-in", "a:b"), ("--follow", "x:y")]
-
-
-def test_the_named_entrypoint_leaves_still_answer(stub: _StubClient) -> None:
-    listed = _run("list")
-    assert listed.exit_code == 0, listed.output
-    assert stub.listed == 1 and stub.requests == []
-
-    helped = _run()
-    assert helped.exit_code == 0
-    assert "Query accepted state" in helped.output and "run" in helped.output
 
 
 def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
