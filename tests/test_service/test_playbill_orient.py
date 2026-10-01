@@ -570,36 +570,40 @@ def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
 def test_orient_pages_the_provider_interfaces_a_procedure_can_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_client.contracts.orient import PlaybillOrientInterfaceV1
     from cruxible_core.service.discovery.discovery import service_discover_playbill_semantic
 
     instance = _accept_interfaces(tmp_path, monkeypatch)
 
     first = service_playbill_orient(instance, section="interfaces", limit=1, surface="mcp")
     assert first.section == "interfaces" and first.truncated and first.next_cursor
-    assert first.interfaces == (
-        PlaybillOrientInterfaceV1(
-            name="demo.fetch",
-            description="Fetch one resource over HTTP.",
-            input=("max_bytes?: integer", "url: string"),
-            output=("playbill-provider-result-to-external-capture-v1",),
-            effect="external_read",
-        ),
+    (fetch,) = first.interfaces or ()
+    assert (fetch.name, fetch.description, fetch.input, fetch.output, fetch.effect) == (
+        "demo.fetch",
+        "Fetch one resource over HTTP.",
+        ("max_bytes?: integer", "url: string"),
+        ("playbill-provider-result-to-external-capture-v1",),
+        "external_read",
     )
-    # get reads no interface, so the only suggestion continues the page.
+    # A row carries what a Procedure node pins: the interface digest and its
+    # operation contract; demo.fetch has no Provider yet.
+    assert fetch.interface_digest.startswith("sha256:") and fetch.providers == ()
+    assert fetch.operation_contract is not None
     assert first.next == (
+        'cruxible_playbill_get(ref="ProviderInterface:demo.fetch")',
         f'cruxible_playbill_orient(section="interfaces", cursor="{first.next_cursor}")',
     )
     rest = service_playbill_orient(instance, section="interfaces", cursor=first.next_cursor)
     assert rest.interfaces is not None
     ((demo),) = rest.interfaces
-    assert (demo.name, demo.input, demo.output, demo.effect, demo.providers) == (
+    assert (demo.name, demo.input, demo.output, demo.effect) == (
         "demo.interface",
         (),
         (),
         "external_read",
-        ("demo-provider",),
     )
+    ((implementation),) = demo.providers
+    assert implementation.provider == "demo-provider"
+    assert implementation.implementation_digest.startswith("sha256:")
 
     # The rows come from discover's own inventory: the same interfaces, in order.
     inventory = service_discover_playbill_semantic(
@@ -732,3 +736,35 @@ def test_attention_summary_preserves_complete_orient_bytes(
     assert canonical_bytes(optimized.model_dump(mode="json")) == canonical_bytes(
         previous.model_dump(mode="json")
     )
+
+
+def test_get_reads_one_provider_interface_card_and_its_inventory_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_core.service.discovery.discovery import accepted_provider_interfaces
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    instance = _accept_interfaces(tmp_path, monkeypatch)
+    access = BodyAccessContext(principal_id="reader", can_read_body=False)
+
+    card = service_playbill_get(
+        instance,
+        request=PlaybillGetRequestV1(ref="ProviderInterface:demo.interface"),
+        access=access,
+    )
+    assert card.kind == "provider_interface" and card.card is not None
+    shown = card.card.model_dump(mode="json")
+    assert [item["provider"] for item in shown["providers"]] == ["demo-provider"]
+    proof = service_playbill_get(
+        instance,
+        request=PlaybillGetRequestV1(ref="ProviderInterface:demo.interface", detail="proof"),
+        access=access,
+    )
+    (entry,) = (
+        item.entry
+        for item in accepted_provider_interfaces(instance, instance.accepted_coordinate())
+        if item.entry.identity == "ProviderInterface:demo.interface"
+    )
+    assert proof.proof is not None and proof.proof["entry"] == entry.model_dump(mode="json")

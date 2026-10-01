@@ -72,6 +72,8 @@ from cruxible_client.contracts.get_reads import (
     PlaybillGetProcedureCardV1,
     PlaybillGetProposalCardV1,
     PlaybillGetProposalChangeV1,
+    PlaybillGetProviderInterfaceCardV1,
+    PlaybillGetProviderInterfaceProviderV1,
     PlaybillGetQueryCardV1,
     PlaybillGetQueryParameterV1,
     PlaybillGetRefKind,
@@ -96,6 +98,10 @@ from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.discovery import (
+    AcceptedProviderInterface,
+    accepted_provider_interfaces,
+)
 from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.operational import (
@@ -167,6 +173,7 @@ _TYPED_PREFIXES: Mapping[str, PlaybillGetRefKind] = {
     "ProcedureRun": "procedure_run",
     "Principal": "principal",
     "ApprovalPolicy": "approval_policy",
+    "ProviderInterface": "provider_interface",
 }
 # The projection's artifact kind for each reference kind, and back.
 _PROJECTION_KIND: Mapping[PlaybillGetRefKind, str] = {
@@ -181,6 +188,7 @@ _PROJECTION_KIND: Mapping[PlaybillGetRefKind, str] = {
     "resolution_contract": "resolution-contract",
     "mandate": "procedure-mandate",
     "approval_policy": "approval-policy",
+    "provider_interface": "provider-interface",
 }
 _REF_KIND = {value: key for key, value in _PROJECTION_KIND.items()}
 _QUALIFIER: Mapping[PlaybillGetRefKind, str] = {
@@ -195,6 +203,7 @@ _QUALIFIER: Mapping[PlaybillGetRefKind, str] = {
     "resolution_contract": "ResolutionContract",
     "mandate": "ProcedureMandate",
     "approval_policy": "ApprovalPolicy",
+    "provider_interface": "ProviderInterface",
 }
 _NAMED_KINDS: tuple[PlaybillGetRefKind, ...] = (
     "document",
@@ -219,6 +228,7 @@ _DISPLAY_PREFIX: Mapping[PlaybillGetRefKind, str] = {
     "procedure_run": "ProcedureRun",
     "principal": "Principal",
     "approval_policy": "ApprovalPolicy",
+    "provider_interface": "ProviderInterface",
 }
 # The orient section that lists each operational kind, named by a refusal
 # that has no nearer candidate to offer.
@@ -231,6 +241,7 @@ _ORIENT_SECTION: Mapping[PlaybillGetRefKind, str] = {
     "procedure_run": "runs",
     "principal": "principals",
     "approval_policy": "policies",
+    "provider_interface": "interfaces",
 }
 
 
@@ -574,6 +585,7 @@ def _resolve_typed(
         "resolution_contract": "ResolutionContract",
         "mandate": "ProcedureMandate",
         "approval_policy": "ApprovalPolicy",
+        "provider_interface": "ProviderInterface",
     }[kind]
     candidates = tuple(
         item if kind == "subject" else f"{_DISPLAY_PREFIX[kind]}:{item}"
@@ -1151,6 +1163,58 @@ def _approval_policy_card(
             _render_get(surface, resolved.display, "history"),
             _render_get(surface, resolved.display, "proof"),
         ),
+    )
+
+
+def _live_interface(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    installed_classifier_digests: frozenset[str] = frozenset(),
+) -> AcceptedProviderInterface:
+    """The live accepted inventory entry of one provider interface, or a coded refusal."""
+
+    for item in accepted_provider_interfaces(
+        instance, coordinate, installed_classifier_digests=installed_classifier_digests
+    ):
+        if item.entry.identity == resolved.identity:
+            return item
+    raise ReadRefusalError(
+        "playbill.get.ref_not_found",
+        f"{resolved.display} is retired; no live provider interface carries that name",
+        http_status=404,
+        candidates=(),
+        repair=RepairOperationV1(operation="playbill.orient", arguments={"section": "interfaces"}),
+        repair_line='Run orient(section="interfaces") to list the live interfaces',
+        context={"ref": resolved.display},
+    )
+
+
+def _provider_interface_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: PlaybillReadSurface,
+) -> PlaybillGetProviderInterfaceCardV1:
+    from cruxible_core.service.discovery.orient import interface_row
+
+    row = interface_row(_live_interface(instance, coordinate, resolved))
+    return PlaybillGetProviderInterfaceCardV1(
+        interface=resolved.display,
+        description=row.description,
+        input=row.input,
+        output=row.output,
+        effect=row.effect,
+        providers=tuple(
+            PlaybillGetProviderInterfaceProviderV1(
+                provider=item.provider, implementation_digest=item.implementation_digest
+            )
+            for item in row.providers
+        ),
+        interface_digest=row.interface_digest,
+        next=(_render_get(surface, resolved.display, "proof"),),
     )
 
 
@@ -1734,6 +1798,7 @@ def _proof(
     evaluation_time: datetime,
     access: BodyAccessContext,
     viewer: OperationalViewer | None = None,
+    installed_classifier_digests: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     at = AcceptedCoordinate.from_internal(coordinate)
     # A run id and a Capture digest are bare identities, not `Kind:name`.
@@ -1792,6 +1857,17 @@ def _proof(
             name=name,
             request=ProcedureReadinessRequestV1(at=at, evaluation_time=evaluation_time),
         ).model_dump(mode="json")
+    if resolved.kind == "provider_interface":
+        item = _live_interface(
+            instance,
+            coordinate,
+            resolved,
+            installed_classifier_digests=installed_classifier_digests,
+        )
+        return {
+            "coordinate": at.model_dump(mode="json"),
+            "entry": item.entry.model_dump(mode="json"),
+        }
     if resolved.kind == "principal":
         record = _principals_at(instance, coordinate)[name]
         return {
@@ -1859,6 +1935,7 @@ def service_playbill_get(
     request: PlaybillGetRequestV1,
     access: BodyAccessContext,
     viewer: OperationalViewer | None = None,
+    installed_classifier_digests: frozenset[str] = frozenset(),
 ) -> PlaybillGetResultV1:
     """Resolve one reference and answer it at one ``detail`` level.
 
@@ -1971,6 +2048,8 @@ def service_playbill_get(
             card = _principal_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "approval_policy":
             card = _approval_policy_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "provider_interface":
+            card = _provider_interface_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "mandate":
             card = mandate_card(
                 instance,
@@ -2012,6 +2091,7 @@ def service_playbill_get(
             evaluation_time=evaluation_time,
             access=access,
             viewer=viewer,
+            installed_classifier_digests=installed_classifier_digests,
         )
         if resolved.kind == "procedure_run":
             fields["live"] = live_view(instance, ("proof",))

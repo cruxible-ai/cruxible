@@ -47,6 +47,7 @@ PlaybillGetRefKind = Literal[
     "procedure_run",
     "principal",
     "approval_policy",
+    "provider_interface",
 ]
 # Verdict problems a row or card carries; derived from the verdict machinery,
 # never re-adjudicated here.
@@ -84,6 +85,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "procedure_run": ("summary", "proof"),
     "principal": ("summary", "proof"),
     "approval_policy": ("summary", "history", "proof"),
+    "provider_interface": ("summary", "history", "proof"),
 }
 
 
@@ -377,6 +379,29 @@ class PlaybillGetApprovalPolicyCardV1(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class PlaybillGetProviderInterfaceProviderV1(_StrictGetModel):
+    provider: str
+    implementation_digest: str
+
+
+class PlaybillGetProviderInterfaceCardV1(_StrictGetModel):
+    """One live provider interface: its contract fields, effect and implementations.
+
+    ``detail="proof"`` answers the accepted inventory entry a Procedure node
+    pins (``entry``): artifact, interface and classifier digests, the operation
+    contract and every implementation.
+    """
+
+    interface: str
+    description: str | None = Field(default=None, exclude_if=_omit_none)
+    input: tuple[str, ...] = ()
+    output: tuple[str, ...] = ()
+    effect: Literal["none", "external_read", "external_mutation"]
+    providers: tuple[PlaybillGetProviderInterfaceProviderV1, ...] = ()
+    interface_digest: str
+    next: tuple[str, ...] = ()
+
+
 PlaybillGetCardV1 = (
     PlaybillGetClaimCardV1
     | PlaybillGetSubjectCardV1
@@ -393,6 +418,7 @@ PlaybillGetCardV1 = (
     | PlaybillGetProcedureRunCardV1
     | PlaybillGetPrincipalCardV1
     | PlaybillGetApprovalPolicyCardV1
+    | PlaybillGetProviderInterfaceCardV1
 )
 
 
@@ -515,6 +541,8 @@ __all__ = [
     "PlaybillGetHistoryV1",
     "PlaybillGetPrincipalCardV1",
     "PlaybillGetProcedureCardV1",
+    "PlaybillGetProviderInterfaceCardV1",
+    "PlaybillGetProviderInterfaceProviderV1",
     "PlaybillGetProposalCardV1",
     "PlaybillGetProposalChangeV1",
     "PlaybillGetQueryCardV1",

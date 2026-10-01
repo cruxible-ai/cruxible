@@ -39,6 +39,7 @@ from cruxible_client.contracts.operational_reads import (
 from cruxible_client.contracts.policy_rows import PlaybillPolicyInForce
 from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
 from cruxible_client.contracts.types import PrincipalRecord
 
 PlaybillOrientSection: TypeAlias = Literal[
@@ -206,6 +207,13 @@ class PlaybillOrientProcedureV1(_StrictOrientModel):
     runnable: Literal["directly_runnable", "binding_required"]
 
 
+class PlaybillOrientInterfaceProviderV1(_StrictOrientModel):
+    """One live Provider implementing an interface, and the implementation it pins."""
+
+    provider: str
+    implementation_digest: str
+
+
 class PlaybillOrientInterfaceV1(_StrictOrientModel):
     """One live provider interface a Procedure node can call.
 
@@ -213,8 +221,11 @@ class PlaybillOrientInterfaceV1(_StrictOrientModel):
     ``name: type`` (``?`` when optional); an acquisition interface's output is
     the named external-capture contract instead. ``effect`` is the interface's
     governed effect class: an ``external_mutation`` call needs an effect policy
-    on its node. ``providers`` are the live Providers implementing it; one with
-    none has nothing to run it yet.
+    on its node. ``providers`` are the live Providers implementing it, each
+    with the implementation digest a Procedure node pins; one with none has
+    nothing to run it yet. ``interface_digest`` and ``operation_contract`` are
+    what a node pins the interface by; ``get("ProviderInterface:<name>")``
+    reads the whole accepted entry.
     """
 
     name: str
@@ -222,7 +233,11 @@ class PlaybillOrientInterfaceV1(_StrictOrientModel):
     input: tuple[str, ...] = ()
     output: tuple[str, ...] = ()
     effect: Literal["none", "external_read", "external_mutation"]
-    providers: tuple[str, ...] = ()
+    providers: tuple[PlaybillOrientInterfaceProviderV1, ...] = ()
+    interface_digest: str
+    operation_contract: ProviderOperationContractV1 | None = Field(
+        default=None, exclude_if=_is_none
+    )
 
 
 class PlaybillOrientArmsV1(_StrictOrientModel):
@@ -364,6 +379,7 @@ __all__ = [
     "PlaybillOrientAttentionV1",
     "PlaybillOrientDocumentV1",
     "PlaybillOrientFloorV1",
+    "PlaybillOrientInterfaceProviderV1",
     "PlaybillOrientInterfaceV1",
     "PlaybillOrientKindDetailV1",
     "PlaybillOrientKindV1",

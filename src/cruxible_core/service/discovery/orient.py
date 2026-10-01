@@ -43,6 +43,7 @@ from cruxible_client.contracts.orient import (
     PlaybillOrientArtifactCountsV1,
     PlaybillOrientAttentionV1,
     PlaybillOrientDocumentV1,
+    PlaybillOrientInterfaceProviderV1,
     PlaybillOrientInterfaceV1,
     PlaybillOrientKindDetailV1,
     PlaybillOrientKindV1,
@@ -55,6 +56,7 @@ from cruxible_client.contracts.orient import (
     PlaybillOrientYouV1,
 )
 from cruxible_client.contracts.policy_rows import PlaybillPolicyInForce
+from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.types import PrincipalRecord
@@ -197,7 +199,7 @@ def _first_sentence(text: str) -> str | None:
     return head + "." if separator else text
 
 
-def _interface_row(item: AcceptedProviderInterface) -> PlaybillOrientInterfaceV1:
+def interface_row(item: AcceptedProviderInterface) -> PlaybillOrientInterfaceV1:
     registration = item.registration
     definition = json.loads(bytes.fromhex(registration.interface_bytes_hex))
     vocabulary = json.loads(bytes.fromhex(registration.vocabulary_bytes_hex))
@@ -214,9 +216,18 @@ def _interface_row(item: AcceptedProviderInterface) -> PlaybillOrientInterfaceV1
         output=_contract_fields(sides.get("output"), stub=stub),
         effect=registration.effect_class,
         providers=tuple(
-            dict.fromkeys(
-                provider.provider_identity.removeprefix("Provider:")
-                for provider in item.entry.providers
+            PlaybillOrientInterfaceProviderV1(
+                provider=provider.provider_identity.removeprefix("Provider:"),
+                implementation_digest=provider.implementation_digest,
+            )
+            for provider in item.entry.providers
+        ),
+        interface_digest=item.entry.interface_digest,
+        operation_contract=(
+            None
+            if item.entry.operation_contract is None
+            else ProviderOperationContractV1.model_validate(
+                item.entry.operation_contract.model_dump(mode="json")
             )
         ),
     )
@@ -279,7 +290,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
         documents=documents,
         queries=tuple(sorted(queries, key=lambda item: item.name)),
         interfaces=tuple(
-            _interface_row(item) for item in accepted_provider_interfaces(instance, coordinate)
+            interface_row(item) for item in accepted_provider_interfaces(instance, coordinate)
         ),
     )
 
@@ -1333,8 +1344,11 @@ def _section_rows(
             lambda row: f"query:{row.name}",
         )
     if section == "interfaces":
-        # get reads no interface; the rows are the whole answer.
-        return state.interfaces, [item.name for item in state.interfaces], None
+        return (
+            state.interfaces,
+            [item.name for item in state.interfaces],
+            lambda row: f"ProviderInterface:{row.name}",
+        )
     accepted = {item.predicate for item in state.claim_types}
     rows = tuple(
         _descriptor(
@@ -1355,6 +1369,7 @@ def _section_rows(
 
 __all__ = [
     "OrientCaller",
+    "interface_row",
     "render_orient_call",
     "service_playbill_head",
     "service_playbill_orient",

@@ -2861,6 +2861,9 @@ def playbill_get(instance_id: str, *, request: PlaybillGetRequestV1) -> Playbill
         get_playbill_manager().get(instance_id),
         request=request.model_copy(update={"full_coordinate": True}),
         access=_access(instance_id, include_body=request.detail == "body"),
+        installed_classifier_digests=(
+            PROVIDER_BUCKET_CLASSIFIER_REGISTRY.installed_classifier_digests
+        ),
         # Arming credentials are shown only to an admin, themselves, or another
         # credential bound to the same principal.
         viewer=OperationalViewer(
