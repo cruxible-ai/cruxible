@@ -1307,11 +1307,7 @@ class World:
 
         Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
-        from cruxible_client.contracts.compact_query import (
-            PLAYBILL_QUERY_MAX_LIMIT,
-            PlaybillQueryClaimValueV1,
-            PlaybillQueryRequestV1,
-        )
+        from cruxible_client.contracts.compact_query import PLAYBILL_QUERY_MAX_SELECT
 
         self._assert_current()
         for ref in (*subjects, *predicates):
@@ -1327,59 +1323,85 @@ class World:
             kind, _, subject_id = address.partition("/")
             by_kind.setdefault(kind, []).append(subject_id)
         playbill = self._playbill
+        # Every page is one answer: this World's coordinate and one evaluation
+        # instant, however many Subject and predicate batches it takes.
+        evaluation_time = playbill._evaluation_time()
         values: list[PlaybillQueryClaimValueV1] = []
         for kind, ids in by_kind.items():
             admitted = {full for group in self._leaf_map(kind).values() for full in group}
             select = sorted(admitted & names if names else admitted)
             for start in range(0, len(ids), 256) if select else ():
-                cursor: str | None = None
-                while True:
-                    page = playbill._client.query_playbill(
-                        playbill._instance_id,
-                        request=PlaybillQueryRequestV1.model_validate(
-                            {
-                                "kind": kind,
-                                "where": [{"field": "subject_id", "in": ids[start : start + 256]}],
-                                "select": select,
-                                "status": ("live", "overturned", "refused"),
-                                "claims": True,
-                                "limit": PLAYBILL_QUERY_MAX_LIMIT,
-                                "cursor": cursor,
-                                "at": None
-                                if cursor is not None
-                                else self._coordinate.model_dump(mode="json"),
-                                "evaluation_time": (
-                                    None if cursor is not None else playbill._evaluation_time()
-                                ),
-                            }
-                        ),
-                    )
-                    self._assert_current()
-                    if page.receipt.coordinate.model_dump(mode="json") != (
-                        self._coordinate.model_dump(mode="json")
-                    ):
-                        raise WorldStructureError(
-                            "Claim values returned a different accepted coordinate"
+                for first in range(0, len(select), PLAYBILL_QUERY_MAX_SELECT):
+                    values.extend(
+                        self._value_page(
+                            kind,
+                            ids[start : start + 256],
+                            select[first : first + PLAYBILL_QUERY_MAX_SELECT],
+                            evaluation_time=evaluation_time,
                         )
-                    predicate_of = {
-                        column.name: column.predicate for column in page.columns if column.predicate
-                    }
-                    for row in page.rows:
-                        for column, entries in (row.get("claims") or {}).items():
-                            values.extend(
-                                PlaybillQueryClaimValueV1.model_validate(
-                                    {
-                                        **entry,
-                                        "subject": row["subject"],
-                                        "predicate": predicate_of[column],
-                                    }
-                                )
-                                for entry in entries
-                            )
-                    if not page.truncated or page.next_cursor is None:
-                        break
-                    cursor = page.next_cursor
+                    )
         return tuple(values)
+
+    def _value_page(
+        self,
+        kind: str,
+        ids: Sequence[str],
+        select: Sequence[str],
+        *,
+        evaluation_time: str,
+    ) -> list[PlaybillQueryClaimValueV1]:
+        """Every Claim value of one Subject and predicate batch, every page of it."""
+        from cruxible_client.contracts.compact_query import (
+            PLAYBILL_QUERY_MAX_LIMIT,
+            PlaybillQueryClaimValueV1,
+            PlaybillQueryRequestV1,
+        )
+
+        playbill = self._playbill
+        values: list[PlaybillQueryClaimValueV1] = []
+        cursor: str | None = None
+        while True:
+            page = playbill._client.query_playbill(
+                playbill._instance_id,
+                request=PlaybillQueryRequestV1.model_validate(
+                    {
+                        "kind": kind,
+                        "where": [{"field": "subject_id", "in": list(ids)}],
+                        "select": list(select),
+                        "status": ("live", "overturned", "refused"),
+                        "claims": True,
+                        "limit": PLAYBILL_QUERY_MAX_LIMIT,
+                        "cursor": cursor,
+                        "at": None
+                        if cursor is not None
+                        else self._coordinate.model_dump(mode="json"),
+                        "evaluation_time": None if cursor is not None else evaluation_time,
+                    }
+                ),
+            )
+            self._assert_current()
+            if page.receipt.coordinate.model_dump(mode="json") != (
+                self._coordinate.model_dump(mode="json")
+            ):
+                raise WorldStructureError("Claim values returned a different accepted coordinate")
+            predicate_of = {
+                column.name: column.predicate for column in page.columns if column.predicate
+            }
+            for row in page.rows:
+                for column, entries in (row.get("claims") or {}).items():
+                    values.extend(
+                        PlaybillQueryClaimValueV1.model_validate(
+                            {**entry, "subject": row["subject"], "predicate": predicate_of[column]}
+                        )
+                        for entry in entries
+                    )
+            if not page.truncated:
+                return values
+            if page.next_cursor is None or page.next_cursor == cursor or not page.rows:
+                raise WorldStructureError(
+                    f"the {kind} Claim values are truncated and cannot be continued"
+                )
+            cursor = page.next_cursor
 
     def _claims_about(
         self,
