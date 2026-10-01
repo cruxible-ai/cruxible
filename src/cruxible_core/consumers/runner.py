@@ -105,6 +105,9 @@ class ConsumerRunner:
 
             get_disabled_consumers()
             self.daemon_id = uuid4().hex
+            # Every start listens afresh: timer instants that passed while this
+            # runner was stopped are skipped, never caught up.
+            self._listening_since = {}
             self.stop_event.clear()
             self._executors = {
                 kind.name: ThreadPoolExecutor(

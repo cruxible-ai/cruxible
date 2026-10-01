@@ -257,3 +257,32 @@ def test_due_triggers_are_rechecked_after_the_read_before_firing(
     assert fire(world, NOW + timedelta(minutes=1)) == ()
     (event,) = fire(world, NOW + timedelta(minutes=2))
     assert event.action == "next.expire" and event.due_at == NOW + timedelta(minutes=2)
+
+
+def test_restarting_the_same_runner_skips_the_ticks_it_missed_while_stopped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.consumers import runner as runner_module
+    from cruxible_core.consumers.runner import ConsumerRunner
+
+    world = instance(tmp_path)
+    hourly = (replace(RETRY, accepted_at=NOW - timedelta(hours=1)),)
+    monkeypatch.setattr(trigger_journal, "internal_triggers", lambda _instance: hourly)
+    # The loop thread reads no registry: it must not see a real state root.
+    monkeypatch.setattr(
+        runner_module, "get_registry", lambda: SimpleNamespace(list_instances=lambda: ())
+    )
+    runner = ConsumerRunner(SimpleNamespace(), kinds=())
+    runner.start()
+    runner.match_once("instance", world, now=NOW)
+    assert [event.due_at for event in trigger_events(world)] == [NOW]
+    runner.close()
+    # Stopped for four hours, then started again in place.
+    runner.start()
+    try:
+        runner.match_once("instance", world, now=NOW + timedelta(hours=4, minutes=30))
+        assert [event.due_at for event in trigger_events(world)] == [NOW]
+        runner.match_once("instance", world, now=NOW + timedelta(hours=5))
+    finally:
+        runner.close()
+    assert [event.due_at for event in trigger_events(world)] == [NOW, NOW + timedelta(hours=5)]
