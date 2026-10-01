@@ -750,7 +750,7 @@ run_query(
 ) -> api.PlaybillQueryRun
 ```
 
-Runs a named accepted query in the live/pinned/reference context with explicit evaluation time and returns result plus receipt. It is `query(name=..., params=..., budgets=..., receipt="full")` underneath: the `PlaybillQueryRun` is built from that answer's replay receipt (`definition_path`, the `ClaimQueryResultV1` result and the `QueryExecutionReceiptV1` execution receipt).
+Runs a named accepted query in the live/pinned/reference context with explicit evaluation time and returns result plus receipt. It is `query(name=..., params=..., budgets=..., receipt="full")` underneath: the `PlaybillQueryRun` is built from that answer's replay receipt (`definition_path`, the `ClaimQueryResultV1` result and the `QueryExecutionReceiptV1` execution receipt). A full receipt runs the definition's declared budgets (or the ones you pass), never the compact page's server ceiling, so a replay's result and digest match the old `run_query`.
 
 **Conditions and effects:** Check verdict and truncation; artifact_definitions is a checked typed property for artifact queries only.
 

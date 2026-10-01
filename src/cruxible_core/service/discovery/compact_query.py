@@ -2080,12 +2080,19 @@ def _named_answer(
     definition = accepted_query_definition(instance, name=request.name, coordinate=coordinate)
     artifacts = isinstance(definition.query.entry, QueryArtifactsEntryV2)
     # A caller's own budgets run as given, up to the definition's maximum (the
-    # engine refuses past it); the default is the definition's, held under the
-    # surface's server ceiling.
-    budgets = request.budgets or _server_budgets(
-        definition.query.default_budgets,
-        ARTIFACT_QUERY_MAX_RESULTS if artifacts else COMPACT_QUERY_MAX_RESULTS,
-    )
+    # engine refuses past it). A full receipt is a replay, so it runs the
+    # definition's declared budgets exactly as run_query did: its result and
+    # digest never depend on the compact surface's ceiling or the page size.
+    # Otherwise the definition's budgets are held under that ceiling.
+    if request.budgets is not None:
+        budgets = request.budgets
+    elif request.receipt == "full":
+        budgets = definition.query.default_budgets
+    else:
+        budgets = _server_budgets(
+            definition.query.default_budgets,
+            ARTIFACT_QUERY_MAX_RESULTS if artifacts else COMPACT_QUERY_MAX_RESULTS,
+        )
     run = service_run_playbill_query(
         instance,
         name=request.name,

@@ -32,10 +32,12 @@ from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
+from cruxible_core.service.discovery import compact_query as compact_module
 from tests.core_support._candidate_support import submit_query_definition_candidate
 from tests.core_support._knowledge_loop_support import (
     EVALUATION_TIME,
     PREDICATE,
+    QUERY_NAME,
     TIMESTAMP,
     accept_proposal,
     seed_claims,
@@ -222,3 +224,51 @@ def test_the_request_model_admits_null_params_only() -> None:
     assert request.params == {"optional_status": None}
     with pytest.raises(ValueError):
         PlaybillQueryRequestV1.model_validate({"name": BY_STATUS, "params": {"x": [1]}})
+
+
+# -- F-004: a replay runs the definition's declared budgets ---------------------
+
+
+def test_a_replay_runs_declared_budgets_past_the_surface_ceiling(
+    served: tuple[CruxibleClient, str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_query's result and digest do not move with the compact surface's ceiling."""
+
+    client, instance_id, _instance = served
+    pb = _sdk(client, instance_id, tmp_path)
+    uncapped = pb.run_query(QUERY_NAME)
+    assert len(uncapped.result.rows) == 2
+
+    monkeypatch.setattr(compact_module, "COMPACT_QUERY_MAX_RESULTS", 1)
+    replayed = pb.run_query(QUERY_NAME)
+
+    assert replayed.result.verdict == "completed"
+    assert replayed.result.truncation.clipped_budgets == ()
+    assert replayed.result.budgets.max_results == work_item_query().default_budgets.max_results
+    assert replayed.result == uncapped.result
+    assert replayed.receipt == uncapped.receipt
+    # The compact page is still held under the ceiling.
+    compact = pb.query(name=QUERY_NAME).page
+    assert compact.capped == ("max_results=1",)
+
+
+def test_a_block_backing_repins_a_query_past_the_surface_ceiling(
+    served: tuple[CruxibleClient, str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, instance_id, instance = served
+
+    def backing() -> Any:
+        return _query_backing(
+            client,
+            instance_id,
+            name=f"QueryDefinition:{QUERY_NAME}",
+            parameters={},
+            coordinate=_coordinate(instance),
+            evaluation_time=WHEN,
+        )
+
+    uncapped = backing()
+    monkeypatch.setattr(compact_module, "COMPACT_QUERY_MAX_RESULTS", 1)
+    assert backing() == uncapped

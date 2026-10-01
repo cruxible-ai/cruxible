@@ -61041,7 +61041,7 @@
           "required": false,
           "schema": {
             "default": "compact",
-            "description": "full adds the named query's replay receipt: Claims read, paths, verdict.",
+            "description": "full adds the named query's replay receipt (Claims read, paths, verdict), run at its declared budgets.",
             "enum": [
               "compact",
               "full"
@@ -63148,7 +63148,7 @@
           },
           "receipt": {
             "default": "compact",
-            "description": "full adds the named query's replay receipt: Claims read, paths, verdict.",
+            "description": "full adds the named query's replay receipt (Claims read, paths, verdict), run at its declared budgets.",
             "enum": [
               "compact",
               "full"

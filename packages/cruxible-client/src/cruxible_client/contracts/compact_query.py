@@ -306,7 +306,10 @@ class PlaybillQueryRequestV1(BaseModel):
     )
     receipt: QueryReceiptDetail = Field(
         default="compact",
-        description="full adds the named query's replay receipt: Claims read, paths, verdict.",
+        description=(
+            "full adds the named query's replay receipt (Claims read, paths, verdict), "
+            "run at its declared budgets."
+        ),
     )
     at: AcceptedCoordinate | str | None = Field(
         default=None,
