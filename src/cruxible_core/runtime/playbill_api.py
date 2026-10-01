@@ -1675,18 +1675,30 @@ def playbill_query(
     """Answer one ``query`` call (compact, spec or named) as one page of values."""
 
     check_permission("cruxible_playbill_read", instance_id=instance_id)
+    served: set[str] = set()
     result = service_playbill_query(
         get_playbill_manager().get(instance_id),
         request=request,
+        served_claims=served,
+    )
+    coordinate = AcceptedCoordinate.model_validate(
+        result.receipt.coordinate.model_dump(mode="json")
     )
     if result.receipt.mode == "named" and request.name is not None:
         _record_consumed_paths(
             instance_id,
             operation="playbill.query.run",
-            coordinate=AcceptedCoordinate.model_validate(
-                result.receipt.coordinate.model_dump(mode="json")
-            ),
+            coordinate=coordinate,
             paths=(query_definition_path(request.name),),
+        )
+    if served:
+        # Every Claim a row served is read at the answer's coordinate, as get
+        # and the former claim_values read recorded it, named on the page or not.
+        _record_consumed_paths(
+            instance_id,
+            operation="playbill.claim.get",
+            coordinate=coordinate,
+            paths=tuple(sorted(served)),
         )
     return result
 

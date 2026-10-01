@@ -38,6 +38,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claim_verdicts import EvidenceCurrency, EvidenceRelativeClaimVerdict
+from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.compact_query import (
     PlaybillQueryClaimV1,
     PlaybillQueryColumnV1,
@@ -245,6 +246,8 @@ class _Answer:
     capped: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
     replay: PlaybillQueryReplayV1 | None = None
+    # The Claim paths the rendered rows served; ``render`` fills it.
+    served: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -890,6 +893,8 @@ class _RowRenderer:
     # Rows also state their Subject's lifecycle: a compact query whose status
     # admits retired Subjects lists them beside the live ones.
     lifecycle: bool = False
+    # The Claim paths behind every cell rendered so far.
+    served: set[str] = field(default_factory=set)
 
     def _shown(
         self, path: str, predicate: str, reads: Mapping[str, ClaimRead]
@@ -1005,6 +1010,9 @@ class _RowRenderer:
                 info = column.field.info
                 live, retired = (
                     ([], []) if path is None else self._shown(path, info.predicate, reads)
+                )
+                self.served.update(
+                    claim_path(item.identity.removeprefix("Claim:")) for item in (*live, *retired)
                 )
                 for item in live:
                     row_flags.update(reads[item.identity].flags if item.identity in reads else ())
@@ -1282,6 +1290,7 @@ def _compact_subject_query(
         render=lambda page: renderer.render(cast(Sequence[dict[str, str | None]], page)),
         capped=capped,
         notes=(*notes, *cap_notes),
+        served=renderer.served,
     )
 
 
@@ -1410,9 +1419,11 @@ def _contains_everywhere(
     spec_digest = typed_digest(
         Sha256Value, _CONTAINS_DIGEST_DOMAIN, {"contains": request.contains}
     ).tagged
+    served: set[str] = set()
 
     def render(page: Sequence[Any]) -> list[dict[str, Any]]:
         items = cast(Sequence[LiveValue], page)
+        served.update(claim_path(item.identity.removeprefix("Claim:")) for item in items)
         slots = sorted({(item.subject_path, item.predicate) for item in items})
         slot_values = ValueIndex()
         for path, predicate in slots:
@@ -1466,6 +1477,7 @@ def _contains_everywhere(
         candidates=matches,
         keys=[(item.identity,) for item in matches],
         render=render,
+        served=served,
     )
 
 
@@ -1940,6 +1952,8 @@ def _engine_answer(
         for row in candidates
     ]
 
+    served: set[str] = set()
+
     def render(page: Sequence[Any]) -> list[dict[str, Any]]:
         rows = page
         bound = [{ROOT: _subject_path_of(row, query.result_binding)} for row in rows]
@@ -1953,6 +1967,8 @@ def _engine_answer(
             if row.conflicts:
                 marks.add("contested")
             extra.append(marks)
+        # The Claims the engine read for these rows are the ones they serve.
+        served.update(read_identities)
         by_path = _flags_for_paths(instance, coordinate, read_identities, evaluation_time)
         for row, marks in zip(rows, extra, strict=True):
             for item in row.read_claims:
@@ -2013,6 +2029,7 @@ def _engine_answer(
         render=render,
         capped=capped,
         notes=(*notes, *cap_notes),
+        served=served,
     )
 
 
@@ -2333,10 +2350,13 @@ def service_playbill_query(
     instance: PlaybillInstance,
     *,
     request: PlaybillQueryRequestV1,
+    served_claims: set[str] | None = None,
 ) -> PlaybillQueryResult:
     """Answer one ``query`` call: one page of values, flags and paging.
 
     Exact-content values read as their text, for every caller.
+    ``served_claims`` receives the path of every Claim the page's rows served
+    (whether or not the answer names Claims), for consumption receipts.
     """
 
     mode = _mode(request)
@@ -2444,6 +2464,8 @@ def service_playbill_query(
         {key: value if key == "flags" else summary_value(value) for key, value in row.items()}
         for row in answer.render(page)
     ]
+    if served_claims is not None:
+        served_claims.update(answer.served)
     next_cursor = None
     if truncated and page:
         next_cursor = _encode_cursor(
