@@ -27486,12 +27486,6 @@
                 "title": "Held",
                 "type": "integer"
               },
-              "hidden": {
-                "default": 0,
-                "minimum": 0,
-                "title": "Hidden",
-                "type": "integer"
-              },
               "instance": {
                 "$ref": "#/$defs/PlaybillNextHealth"
               },
@@ -27730,20 +27724,6 @@
             "default": 0,
             "minimum": 0,
             "title": "Held",
-            "type": "integer"
-          }
-        },
-        "hidden": {
-          "default": 0,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "hidden",
-          "required": false,
-          "schema": {
-            "default": 0,
-            "minimum": 0,
-            "title": "Hidden",
             "type": "integer"
           }
         },
@@ -28126,12 +28106,6 @@
             "default": 0,
             "minimum": 0,
             "title": "Held",
-            "type": "integer"
-          },
-          "hidden": {
-            "default": 0,
-            "minimum": 0,
-            "title": "Hidden",
             "type": "integer"
           },
           "instance": {
@@ -46467,13 +46441,28 @@
           "schema": {
             "anyOf": [
               {
-                "$ref": "#/$defs/ProcedureRunAttributionV1"
+                "discriminator": {
+                  "mapping": {
+                    "playbill-procedure-run-attribution-v1": "#/$defs/ProcedureRunAttributionV1",
+                    "playbill-procedure-run-attribution-withheld-v1": "#/$defs/ProcedureRunAttributionWithheldV1"
+                  },
+                  "propertyName": "tag"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureRunAttributionV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureRunAttributionWithheldV1"
+                  }
+                ]
               },
               {
                 "type": "null"
               }
             ],
-            "default": null
+            "default": null,
+            "title": "Attribution"
           }
         },
         "bound_coordinate": {
@@ -46632,6 +46621,9 @@
               },
               {
                 "$ref": "#/$defs/ProcedureRunReceiptV6"
+              },
+              {
+                "$ref": "#/$defs/ProcedureRunReceiptWithheldV1"
               },
               {
                 "type": "null"
@@ -48458,6 +48450,61 @@
             "title": "ProcedureRunAttributionV1",
             "type": "object"
           },
+          "ProcedureRunAttributionWithheldV1": {
+            "additionalProperties": false,
+            "description": "A run's attribution with its actor withheld from this reader.\n\nAn armed run acts as its arming credential's principal. A reader who may\nnot see that credential -- not an admin, not the credential itself, and\nnot another credential bound to the same principal -- reads everything but\nthe actor, the same rule the Line and run cards apply to ``armed_by``.",
+            "properties": {
+              "actor_type": {
+                "title": "Actor Type",
+                "type": "string"
+              },
+              "operation_id": {
+                "title": "Operation Id",
+                "type": "string"
+              },
+              "org_id": {
+                "title": "Org Id",
+                "type": "string"
+              },
+              "recorded_time": {
+                "format": "date-time",
+                "title": "Recorded Time",
+                "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-attribution-withheld-v1",
+                "default": "playbill-procedure-run-attribution-withheld-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "withheld": {
+                "const": "names_the_arming_credential",
+                "default": "names_the_arming_credential",
+                "title": "Withheld",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_type",
+              "org_id",
+              "operation_id",
+              "recorded_time"
+            ],
+            "title": "ProcedureRunAttributionWithheldV1",
+            "type": "object"
+          },
           "ProcedureRunBudgetDeclaredV1": {
             "additionalProperties": false,
             "properties": {
@@ -49928,6 +49975,26 @@
             "title": "ProcedureRunReceiptV6",
             "type": "object"
           },
+          "ProcedureRunReceiptWithheldV1": {
+            "additionalProperties": false,
+            "description": "A run receipt withheld from this reader: it carries the arming credential's actor.\n\n``receipt_digest`` beside it still names the exact receipt.",
+            "properties": {
+              "tag": {
+                "const": "playbill-procedure-run-receipt-withheld-v1",
+                "default": "playbill-procedure-run-receipt-withheld-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "withheld": {
+                "const": "names_the_arming_credential",
+                "default": "names_the_arming_credential",
+                "title": "Withheld",
+                "type": "string"
+              }
+            },
+            "title": "ProcedureRunReceiptWithheldV1",
+            "type": "object"
+          },
           "ProcedureSelectionDecisionV1": {
             "additionalProperties": false,
             "properties": {
@@ -50603,13 +50670,28 @@
           "attribution": {
             "anyOf": [
               {
-                "$ref": "#/$defs/ProcedureRunAttributionV1"
+                "discriminator": {
+                  "mapping": {
+                    "playbill-procedure-run-attribution-v1": "#/$defs/ProcedureRunAttributionV1",
+                    "playbill-procedure-run-attribution-withheld-v1": "#/$defs/ProcedureRunAttributionWithheldV1"
+                  },
+                  "propertyName": "tag"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureRunAttributionV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureRunAttributionWithheldV1"
+                  }
+                ]
               },
               {
                 "type": "null"
               }
             ],
-            "default": null
+            "default": null,
+            "title": "Attribution"
           },
           "bound_coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
@@ -50692,6 +50774,9 @@
               },
               {
                 "$ref": "#/$defs/ProcedureRunReceiptV6"
+              },
+              {
+                "$ref": "#/$defs/ProcedureRunReceiptWithheldV1"
               },
               {
                 "type": "null"
@@ -75864,6 +75949,160 @@
         "recorded_time"
       ]
     },
+    "ProcedureRunAttributionWithheldV1": {
+      "fields": {
+        "actor_type": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor_type",
+          "required": true,
+          "schema": {
+            "title": "Actor Type",
+            "type": "string"
+          }
+        },
+        "operation_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operation_id",
+          "required": true,
+          "schema": {
+            "title": "Operation Id",
+            "type": "string"
+          }
+        },
+        "org_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "org_id",
+          "required": true,
+          "schema": {
+            "title": "Org Id",
+            "type": "string"
+          }
+        },
+        "recorded_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "recorded_time",
+          "required": true,
+          "schema": {
+            "format": "date-time",
+            "title": "Recorded Time",
+            "type": "string"
+          }
+        },
+        "request_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "request_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-run-attribution-withheld-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-run-attribution-withheld-v1",
+            "default": "playbill-procedure-run-attribution-withheld-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "withheld": {
+          "default": "names_the_arming_credential",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "withheld",
+          "required": false,
+          "schema": {
+            "const": "names_the_arming_credential",
+            "default": "names_the_arming_credential",
+            "title": "Withheld",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "A run's attribution with its actor withheld from this reader.\n\nAn armed run acts as its arming credential's principal. A reader who may\nnot see that credential -- not an admin, not the credential itself, and\nnot another credential bound to the same principal -- reads everything but\nthe actor, the same rule the Line and run cards apply to ``armed_by``.",
+        "properties": {
+          "actor_type": {
+            "title": "Actor Type",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "recorded_time": {
+            "format": "date-time",
+            "title": "Recorded Time",
+            "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
+          },
+          "tag": {
+            "const": "playbill-procedure-run-attribution-withheld-v1",
+            "default": "playbill-procedure-run-attribution-withheld-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "withheld": {
+            "const": "names_the_arming_credential",
+            "default": "names_the_arming_credential",
+            "title": "Withheld",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_type",
+          "org_id",
+          "operation_id",
+          "recorded_time"
+        ],
+        "title": "ProcedureRunAttributionWithheldV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "actor_type",
+        "operation_id",
+        "org_id",
+        "recorded_time"
+      ]
+    },
     "ProcedureRunReceiptV2": {
       "fields": {
         "admission_binding_digest": {
@@ -85575,6 +85814,59 @@
         "terminal",
         "validated_pins"
       ]
+    },
+    "ProcedureRunReceiptWithheldV1": {
+      "fields": {
+        "tag": {
+          "default": "playbill-procedure-run-receipt-withheld-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-run-receipt-withheld-v1",
+            "default": "playbill-procedure-run-receipt-withheld-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "withheld": {
+          "default": "names_the_arming_credential",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "withheld",
+          "required": false,
+          "schema": {
+            "const": "names_the_arming_credential",
+            "default": "names_the_arming_credential",
+            "title": "Withheld",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "A run receipt withheld from this reader: it carries the arming credential's actor.\n\n``receipt_digest`` beside it still names the exact receipt.",
+        "properties": {
+          "tag": {
+            "const": "playbill-procedure-run-receipt-withheld-v1",
+            "default": "playbill-procedure-run-receipt-withheld-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "withheld": {
+            "const": "names_the_arming_credential",
+            "default": "names_the_arming_credential",
+            "title": "Withheld",
+            "type": "string"
+          }
+        },
+        "title": "ProcedureRunReceiptWithheldV1",
+        "type": "object"
+      },
+      "required_fields": []
     },
     "ProcedureSourceObservationV1": {
       "fields": {

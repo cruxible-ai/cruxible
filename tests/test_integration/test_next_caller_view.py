@@ -255,18 +255,18 @@ def test_the_sdk_next_names_its_surface(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert [call["caller_surface"] for call in calls] == ["sdk"]
 
 
-def test_the_sdk_page_carries_the_hidden_count_and_status(
+def test_the_sdk_page_carries_the_status_and_no_hidden_count(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A daemon reporting hidden rows is still read: the page says so."""
+    """No row is left out for a caller, so neither the page nor its status counts any."""
 
     from tests.test_cli.test_playbill_next import HEALTHY_STATUS
 
-    page, _calls = _sdk_next(monkeypatch, tmp_path, status={**HEALTHY_STATUS, "hidden": 2})
+    page, _calls = _sdk_next(monkeypatch, tmp_path, status=dict(HEALTHY_STATUS))
 
     assert tuple(page) == ()  # type: ignore[call-overload]
-    assert page.hidden == 2  # type: ignore[attr-defined]
-    assert page.status.hidden == 2  # type: ignore[attr-defined]
+    assert not hasattr(page, "hidden")
+    assert "hidden" not in type(page.status).model_fields  # type: ignore[attr-defined]
     assert page.status.line_dispatch.state == "idle"  # type: ignore[attr-defined]
 
 

@@ -353,6 +353,27 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
     assert projected["output"] == output
     assert projected["output_digest"] == {"$digest": output_digest}
 
+    # `get` on the Procedure shows the same accepted track record, which the
+    # SDK's ProcedureRun.track_record reads.
+    from cruxible_client.contracts.get_reads import (
+        PlaybillGetProcedureCardV1,
+        PlaybillGetRequestV1,
+    )
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    card = service_playbill_get(
+        instance,
+        request=PlaybillGetRequestV1(ref=accepted_procedure.procedure.identity.qualified),
+        access=BodyAccessContext(principal_id="test", can_read_body=False),
+    ).card
+    assert isinstance(card, PlaybillGetProcedureCardV1)
+    (entry,) = card.track_record
+    assert entry.promotion == "run-a"
+    assert (entry.first_sequence, entry.last_sequence) == (1, 2)
+    assert entry.output == output
+    assert entry.output_digest == output_digest
+
     # An unrelated delta must preserve this promotion's output and its original
     # accepting coordinate. Compare all rows against a ledger-only rebuild.
     from cruxible_core.compiler import projection_delta as delta_module

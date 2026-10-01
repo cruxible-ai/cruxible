@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -301,7 +301,6 @@ from cruxible_core.service.procedures.procedure_runs import (
     procedure_run_target_rung,
     run_permission_rung,
     service_bind_playbill_procedure,
-    service_get_playbill_procedure_run,
     service_playbill_procedure_readiness,
     service_run_playbill_line,
     service_run_playbill_procedure,
@@ -329,6 +328,9 @@ from cruxible_core.service.proposals.review import (
     service_review_playbill_proposal,
 )
 from cruxible_core.storage.cas import BodyAccessContext
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from cruxible_core.service.discovery.operational_viewer import OperationalViewer
 
 _ProposalResultT = TypeVar("_ProposalResultT")
 _CurationRequestT = TypeVar("_CurationRequestT")
@@ -2221,12 +2223,16 @@ def playbill_procedure_run_status(
     instance_id: str,
     run_id: str,
 ) -> contracts.PlaybillProcedureRunState:
+    """One run's state; another principal's arming credential is withheld as on its card."""
+
+    from cruxible_core.service.discovery.runs import procedure_run_status
+
     check_permission("cruxible_playbill_procedure_run_status", instance_id=instance_id)
-    result = service_get_playbill_procedure_run(
+    return procedure_run_status(
         get_playbill_manager().get(instance_id),
-        run_id=run_id,
+        run_id,
+        viewer=_operational_viewer(instance_id),
     )
-    return contracts.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_procedure_measure(
@@ -2830,36 +2836,45 @@ def _credential_principal_resolver(instance_id: str) -> Callable[[str], str | No
     return resolve
 
 
+def _operational_viewer(instance_id: str) -> OperationalViewer:
+    """Who reads operational state here, as the transport authenticated them.
+
+    Arming credentials are shown only to an admin, themselves, or another
+    credential bound to the same principal: only a bearer credential bound to
+    a principal sees that principal's other credentials; an unbound
+    credential or a claim never does.
+    """
+
+    from cruxible_core.service.discovery.operational_viewer import OperationalViewer
+
+    auth = get_current_auth_context()
+    bearer = auth if auth is not None and auth.credential_type == "runtime_credential" else None
+    bound_to = None if bearer is None else bearer.principal_id
+    return OperationalViewer(
+        credential_id=None if bearer is None else bearer.credential_id,
+        admin=get_current_mode() >= PermissionMode.ADMIN,
+        principal_id=bound_to,
+        credential_principal=(
+            None if bound_to is None else _credential_principal_resolver(instance_id)
+        ),
+    )
+
+
 def playbill_get(instance_id: str, *, request: PlaybillGetRequestV1) -> PlaybillGetResultV1:
     """One governed thing by reference; a Document body needs body-read permission."""
 
     from cruxible_client.contracts.claim_types import claim_type_path
     from cruxible_client.contracts.query.definitions import query_definition_path
     from cruxible_core.service.discovery.get import service_playbill_get
-    from cruxible_core.service.discovery.operational_viewer import OperationalViewer
 
     check_permission("cruxible_playbill_get", instance_id=instance_id)
     # Consumption is recorded at the full coordinate, which a summary answer
     # leaves out unless the caller asked for it.
-    auth = get_current_auth_context()
-    bearer = auth if auth is not None and auth.credential_type == "runtime_credential" else None
-    # Only a bearer credential bound to a principal sees that principal's other
-    # credentials; an unbound credential or a claim never does.
-    bound_to = None if bearer is None else bearer.principal_id
     result = service_playbill_get(
         get_playbill_manager().get(instance_id),
         request=request.model_copy(update={"full_coordinate": True}),
         access=_access(instance_id, include_body=request.detail == "body"),
-        # Arming credentials are shown only to an admin, themselves, or another
-        # credential bound to the same principal.
-        viewer=OperationalViewer(
-            credential_id=None if bearer is None else bearer.credential_id,
-            admin=get_current_mode() >= PermissionMode.ADMIN,
-            principal_id=bound_to,
-            credential_principal=(
-                None if bound_to is None else _credential_principal_resolver(instance_id)
-            ),
-        ),
+        viewer=_operational_viewer(instance_id),
     )
     read_at = result.accepted_coordinate
     assert read_at is not None

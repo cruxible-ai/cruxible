@@ -170,4 +170,4 @@ def _assert_attention_parity(
     withheld = [item for item in result["items"] if item.get("repair") is None]
     assert len(runnable) == expected
     assert all(item["repair_requires"]["tool"] for item in withheld)
-    assert result["status"].get("hidden", 0) == 0
+    assert "hidden" not in result["status"]

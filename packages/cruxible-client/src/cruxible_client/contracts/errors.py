@@ -330,6 +330,51 @@ class ProposalContentUnavailable(ProposalAdmissionError):
         )
 
 
+class ProposalReadmitAlreadyAccepted(ProposalAdmissionError):
+    """Readmission refused: the change this proposal carries is already accepted.
+
+    Either history accepted the proposal itself, or it accepted the proposal's
+    readmission (``accepted_as``), which carried the same change under another
+    proposal id. Readmitting it again would only propose the change twice.
+    """
+
+    error_code = "playbill.proposal.readmit_already_accepted"
+
+    def __init__(self, proposal_id: str, *, accepted_as: str | None = None) -> None:
+        self.proposal_id = proposal_id
+        self.accepted_as = accepted_as
+        how = (
+            "it was accepted"
+            if accepted_as is None
+            else f"its readmission {accepted_as} was accepted"
+        )
+        super().__init__(
+            f"{self.error_code}: proposal {proposal_id} is not stale work: {how}, so "
+            "its change is in accepted state; run `cruxible playbill next` for what "
+            "still needs you"
+        )
+
+
+class ProposalReadmitNotStale(ProposalAdmissionError):
+    """Readmission refused: only a stale proposal is readmitted, and this one is not."""
+
+    error_code = "playbill.proposal.readmit_not_stale"
+
+    def __init__(self, proposal_id: str, *, status: str) -> None:
+        self.proposal_id = proposal_id
+        self.status = status
+        repair = (
+            "it can still be activated where it stands; run `cruxible playbill proposal "
+            f"status {proposal_id}`"
+            if status == "open"
+            else "author the change again as a new proposal"
+        )
+        super().__init__(
+            f"{self.error_code}: only a stale proposal may be readmitted; proposal "
+            f"{proposal_id} is {status}: {repair}"
+        )
+
+
 class ProposalReadmitRequiresResubmission(ProposalAdmissionError):
     """A generated closure must be rebuilt rather than byte-rebased."""
 
@@ -540,6 +585,8 @@ __all__ = [
     "PrincipalIntegrityError",
     "ProposalActivationRequestInvalid",
     "ProposalAdmissionError",
+    "ProposalReadmitAlreadyAccepted",
+    "ProposalReadmitNotStale",
     "ProposalReadmitRequiresResubmission",
     "ProposalContentUnavailable",
     "ProposalNotFoundError",

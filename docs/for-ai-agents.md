@@ -53,6 +53,14 @@ w.sec.vuln.severity.cardinality         # object_kind, cardinality, permitted_ro
                                         # allowed_object_subject_kinds, referent_sensitivity
 ~~~
 
+`print(w.describe())` lists the verbs that act on the world -- `pb.orient()`,
+`pb.query(...)`, `pb.get(ref)`, grepping the exported floor, and the writes --
+then every Subject kind with its fields. `w.kinds` and `w.predicates` answer as
+attributes or as calls (`w.kinds()`), `dir(cruxible_client)` lists every public
+name, every public SDK member's docstring ends by naming the next call
+(`help(pb.query)`), and refs print short: `SubjectRef('sec.package/click' @
+0123456789ab)`.
+
 Dotted kinds nest, so `w.sec.package` and `w.dev.batch` are namespaces on the
 same tree as the predicates. A Subject that does not exist refuses `AbsentSubject`
 naming the kind, the ID and the coordinate; an enum member that does not exist
