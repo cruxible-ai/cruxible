@@ -1,4 +1,11 @@
-"""Client package for talking to a governed Cruxible daemon."""
+"""Client package for talking to a governed Cruxible daemon.
+
+Start with ``pb = Playbill.connect()``, then read: ``pb.orient()`` maps
+accepted state, ``pb.query(kind, ...)`` answers questions over it, ``pb.get(ref)``
+opens one thing, and the exported floor (``.playbill/floor/current/``) is
+greppable. ``pb.world().describe()`` names every verb and the vocabulary;
+``pb.next(...)`` says what needs attention.
+"""
 
 from __future__ import annotations
 
@@ -167,6 +174,15 @@ __all__ = [
 ]
 
 __version__ = "0.5.1"
+
+
+def __dir__() -> list[str]:
+    """Every public name, though most load only on first use.
+
+    Next: ``Playbill.connect(...)`` to open a connection, then ``pb.orient()``.
+    """
+
+    return sorted({*__all__, "__version__"})
 
 
 def __getattr__(name: str) -> Any:

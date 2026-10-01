@@ -43,6 +43,7 @@ _WORLD_MEMBERS = frozenset(
     {
         "claim_type",
         "coordinate",
+        "describe",
         "kind",
         "kinds",
         "predicates",
@@ -69,7 +70,7 @@ _STUB_IMPORTS = (
     "    ReferentSensitivity,",
     "    SubjectRef,",
     ")",
-    "from cruxible_client.authoring.world import KindNamespace, WorldClaimType",
+    "from cruxible_client.authoring.world import KindNamespace, Names, WorldClaimType",
     "from cruxible_client.contracts.claim_types import ClaimTypeMemberDescriptionV1",
     "from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1",
     "from cruxible_client.contracts.projection import AcceptedCoordinate",
@@ -570,9 +571,10 @@ def render_world_stub(world: World) -> str:
     lines.append("")
     body = _Body()
     body.declare("coordinate: AcceptedCoordinate")
-    body.declare("kinds: tuple[str, ...]")
-    body.declare("predicates: tuple[str, ...]")
+    body.declare("kinds: Names")
+    body.declare("predicates: Names")
     body.declare("unstructured_predicates: tuple[str, ...]")
+    body.declare("def describe(self) -> str: ...")
     body.declare("def claim_type(self, predicate: str) -> WorldClaimType: ...")
     body.declare("def kind(self, subject_kind: str) -> KindNamespace: ...")
     body.declare("def stub(self) -> str: ...")

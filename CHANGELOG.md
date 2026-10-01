@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **The SDK is discoverable from Python itself.** `World.describe()` lists the
+  verbs (`pb.orient`, `pb.query`, `pb.get`, grepping the floor, the writes)
+  and every Subject kind with its fields; `w.kinds` and `w.predicates` work as
+  attributes and as calls; `dir(cruxible_client)` lists the lazily loaded
+  names; every public SDK member's docstring names the next call; `Playbill`,
+  `Intent` and `Proposal` print readable reprs (no I/O), and refs print short
+  (`SubjectRef('sec.package/click' @ 0123456789ab)`, `CaptureRef(CAP-... )`,
+  with `CaptureRef.handle`).
+
 - **One `CAP-` handle resolver for reads and writes.** `get`, `read_capture`
   and the write verbs' `--capture` now resolve a handle or digest prefix through
   the same bounded lookup: a Capture accepted Claims cite, or one the instance
