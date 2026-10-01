@@ -1383,6 +1383,8 @@ class PlaybillAuthoringExampleResult(BaseModel):
     tag: Literal["playbill-authoring-example-result-v1"] = "playbill-authoring-example-result-v1"
     name: PlaybillAuthoringExampleName
     payload: AuthoringInputV1
+    #: A line to read beside the payload, such as that cron is evaluated in UTC.
+    note: str | None = None
 
 
 class PlaybillAuthoringIntentList(BaseModel):

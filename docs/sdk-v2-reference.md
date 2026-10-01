@@ -1499,9 +1499,10 @@ Capture to the Procedure's Source alias `feed`. Every new Line authors as
 Line v6 under compiler revision 32, and declares the exact event that input
 accepts: the Source's CaptureContract. A Line runs on the Triggers aimed at it;
 `ChangeSetDraft.trigger(name=..., schedule=..., line=...)` defines one; its
-`schedule` is a `CadenceScheduleV1`, `CronScheduleV1(expression=...)` (UTC),
-`CaptureLandingScheduleV1` or `WindowCloseScheduleV1`, and
-`action=` aims it at a registered internal action (cadence or cron schedules
+`schedule` is a `CadenceScheduleV1`, `CronScheduleV1(expression=...)`,
+`CaptureLandingScheduleV1` or `WindowCloseScheduleV1`. A cron expression is
+evaluated in UTC, always; convert local times first (09:00 New York in winter
+is 14:00 UTC). `action=` aims it at a registered internal action (cadence or cron schedules
 only) instead of a Line. Every
 Trigger aimed at a `trigger_input` Line must fire on that event, as a
 capture-arrival schedule or an event-relative window. Cadence, cron and

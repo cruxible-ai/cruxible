@@ -24,6 +24,7 @@ from types import MappingProxyType
 from typing import Annotated, Final, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -40,7 +41,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.cron import CronExpressionError, parse_cron
+from cruxible_client.contracts.cron import CRON_UTC_HINT, CronExpressionError, parse_cron
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -77,13 +78,35 @@ class CadenceScheduleV1(_StrictTriggerModel):
 class CronScheduleV1(_StrictTriggerModel):
     """Fire at each instant a standard five-field cron expression names, in UTC.
 
-    ``minute hour day-of-month month day-of-week``, read as UTC: no host
-    timezone database enters an instant. The Trigger law refuses an expression
-    the grammar does not admit; see ``cruxible_client.contracts.cron``.
+    ``minute hour day-of-month month day-of-week``, always read as UTC: no host
+    timezone database enters an instant, and a schedule names no timezone. The
+    Trigger law refuses an expression the grammar does not admit; see
+    ``cruxible_client.contracts.cron``.
     """
 
     kind: Literal["cron"] = "cron"
-    expression: str = Field(min_length=1, max_length=128, examples=["0 9 * * 1-5"])
+    expression: str = Field(
+        min_length=1,
+        max_length=128,
+        examples=["0 14 * * 1-5"],
+        description=(
+            "Five fields, minute hour day-of-month month day-of-week, evaluated in UTC. "
+            + CRON_UTC_HINT
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _utc_only(cls, data: object) -> object:
+        if isinstance(data, dict):
+            for field in ("timezone", "time_zone", "tz", "zone", "utc_offset"):
+                if field in data:
+                    raise PydanticCustomError(
+                        "cron_utc_only",
+                        "A cron schedule names no {field}: it is evaluated in UTC. {hint}",
+                        {"field": field, "hint": CRON_UTC_HINT},
+                    )
+        return data
 
 
 class CaptureLandingScheduleV1(_StrictTriggerModel):

@@ -1004,8 +1004,9 @@
           "json_name": "expression",
           "required": true,
           "schema": {
+            "description": "Five fields, minute hour day-of-month month day-of-week, evaluated in UTC. Cron expressions are evaluated in UTC; convert local times first (09:00 New York in winter is 14:00 UTC).",
             "examples": [
-              "0 9 * * 1-5"
+              "0 14 * * 1-5"
             ],
             "maxLength": 128,
             "minLength": 1,
@@ -1030,11 +1031,12 @@
       },
       "json_schema": {
         "additionalProperties": false,
-        "description": "Fire at each instant a standard five-field cron expression names, in UTC.\n\n``minute hour day-of-month month day-of-week``, read as UTC: no host\ntimezone database enters an instant. The Trigger law refuses an expression\nthe grammar does not admit; see ``cruxible_client.contracts.cron``.",
+        "description": "Fire at each instant a standard five-field cron expression names, in UTC.\n\n``minute hour day-of-month month day-of-week``, always read as UTC: no host\ntimezone database enters an instant, and a schedule names no timezone. The\nTrigger law refuses an expression the grammar does not admit; see\n``cruxible_client.contracts.cron``.",
         "properties": {
           "expression": {
+            "description": "Five fields, minute hour day-of-month month day-of-week, evaluated in UTC. Cron expressions are evaluated in UTC; convert local times first (09:00 New York in winter is 14:00 UTC).",
             "examples": [
-              "0 9 * * 1-5"
+              "0 14 * * 1-5"
             ],
             "maxLength": 128,
             "minLength": 1,
@@ -7685,6 +7687,26 @@
             "type": "string"
           }
         },
+        "note": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "note",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          }
+        },
         "payload": {
           "has_default": false,
           "has_default_factory": false,
@@ -9327,11 +9349,12 @@
           },
           "CronScheduleV1": {
             "additionalProperties": false,
-            "description": "Fire at each instant a standard five-field cron expression names, in UTC.\n\n``minute hour day-of-month month day-of-week``, read as UTC: no host\ntimezone database enters an instant. The Trigger law refuses an expression\nthe grammar does not admit; see ``cruxible_client.contracts.cron``.",
+            "description": "Fire at each instant a standard five-field cron expression names, in UTC.\n\n``minute hour day-of-month month day-of-week``, always read as UTC: no host\ntimezone database enters an instant, and a schedule names no timezone. The\nTrigger law refuses an expression the grammar does not admit; see\n``cruxible_client.contracts.cron``.",
             "properties": {
               "expression": {
+                "description": "Five fields, minute hour day-of-month month day-of-week, evaluated in UTC. Cron expressions are evaluated in UTC; convert local times first (09:00 New York in winter is 14:00 UTC).",
                 "examples": [
-                  "0 9 * * 1-5"
+                  "0 14 * * 1-5"
                 ],
                 "maxLength": 128,
                 "minLength": 1,
@@ -12276,6 +12299,18 @@
             ],
             "title": "Name",
             "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
           },
           "payload": {
             "discriminator": {
@@ -89674,11 +89709,12 @@
           },
           "CronScheduleV1": {
             "additionalProperties": false,
-            "description": "Fire at each instant a standard five-field cron expression names, in UTC.\n\n``minute hour day-of-month month day-of-week``, read as UTC: no host\ntimezone database enters an instant. The Trigger law refuses an expression\nthe grammar does not admit; see ``cruxible_client.contracts.cron``.",
+            "description": "Fire at each instant a standard five-field cron expression names, in UTC.\n\n``minute hour day-of-month month day-of-week``, always read as UTC: no host\ntimezone database enters an instant, and a schedule names no timezone. The\nTrigger law refuses an expression the grammar does not admit; see\n``cruxible_client.contracts.cron``.",
             "properties": {
               "expression": {
+                "description": "Five fields, minute hour day-of-month month day-of-week, evaluated in UTC. Cron expressions are evaluated in UTC; convert local times first (09:00 New York in winter is 14:00 UTC).",
                 "examples": [
-                  "0 9 * * 1-5"
+                  "0 14 * * 1-5"
                 ],
                 "maxLength": 128,
                 "minLength": 1,

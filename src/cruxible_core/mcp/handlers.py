@@ -24,7 +24,7 @@ from cruxible_client.authoring.attestations import (
     local_attestation_signer_from_environment,
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
-from cruxible_client.authoring.examples import authoring_example
+from cruxible_client.authoring.examples import authoring_example, authoring_example_note
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
 from cruxible_client.authoring.sources import (
@@ -1324,7 +1324,9 @@ def handle_playbill_authoring_example(
         claim_id=claim_id,
         capture_digest=capture_digest,
     )
-    return contracts.PlaybillAuthoringExampleResult(name=name, payload=payload)
+    return contracts.PlaybillAuthoringExampleResult(
+        name=name, payload=payload, note=authoring_example_note(name)
+    )
 
 
 def handle_playbill_authoring_get(

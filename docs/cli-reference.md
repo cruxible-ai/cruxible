@@ -1200,9 +1200,11 @@ target is one Line (`line_name`) or one registered internal action (`action`,
 which takes a `cadence` or `cron` schedule).
 A `cron` schedule is a standard five-field expression (`minute hour
 day-of-month month day-of-week`; numbers, `*`, ranges, steps and lists, with
-day-of-week 0-7 and Sunday both 0 and 7; no names or `@` macros) read in UTC.
-Schedules are UTC only, so an instant never depends on a host's timezone
-database; the Trigger law refuses an expression outside this grammar
+day-of-week 0-7 and Sunday both 0 and 7; no names or `@` macros) evaluated in
+UTC, always: a schedule names no timezone, so an instant never depends on a
+host's timezone database. Convert local times first (09:00 New York in winter
+is 14:00 UTC); a schedule that supplies a `timezone` is refused with that
+reason. The Trigger law refuses an expression outside this grammar
 (`playbill.trigger.cron_invalid`). A Line can
 have several Triggers; one with none runs only when run explicitly, and `run`
 of a Line with Triggers names the Trigger it fires on (`--trigger`). Retiring

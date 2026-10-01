@@ -85,6 +85,68 @@ def test_cron_is_utc_and_never_reads_a_host_timezone_database(tmp_path: Path) ->
         CronScheduleV1.model_validate({"expression": "0 9 * * *", "timezone": "UTC"})
 
 
+@pytest.mark.parametrize("field", ["timezone", "tz", "time_zone"])
+def test_an_authored_timezone_is_refused_with_the_utc_reason(field: str) -> None:
+    from pydantic import ValidationError
+
+    from cruxible_client.contracts.authoring.inputs import TriggerInput
+    from cruxible_client.contracts.cron import CRON_UTC_HINT
+
+    with pytest.raises(ValidationError) as caught:
+        TriggerInput.model_validate(
+            {
+                "kind": "trigger",
+                "name": "weekday-mornings",
+                "schedule": {
+                    "kind": "cron",
+                    "expression": "0 9 * * 1-5",
+                    field: "America/New_York",
+                },
+                "line_name": "triage",
+            }
+        )
+    (error,) = caught.value.errors()
+    # A typed refusal naming the rule and the repair, not a generic extra field.
+    assert error["type"] == "cron_utc_only"
+    assert (
+        error["msg"] == f"A cron schedule names no {field}: it is evaluated in UTC. {CRON_UTC_HINT}"
+    )
+
+
+def test_the_trigger_example_says_cron_is_utc_and_how_to_convert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from click.testing import CliRunner
+
+    from cruxible_client.authoring.examples import (
+        authoring_example_note,
+        trigger_example,
+    )
+    from cruxible_client.contracts.cron import CRON_UTC_HINT
+    from cruxible_client.contracts.triggers import CronScheduleV1
+    from cruxible_core.cli.main import cli
+    from cruxible_core.mcp.handlers import handle_playbill_authoring_example
+
+    assert "UTC" in CRON_UTC_HINT and "14:00 UTC" in CRON_UTC_HINT
+    assert trigger_example.__doc__ is not None and CRON_UTC_HINT.split(";")[0] in " ".join(
+        trigger_example.__doc__.split()
+    )
+    assert authoring_example_note("trigger") == CRON_UTC_HINT
+    assert authoring_example_note("line") is None
+    # The schema an agent reads says UTC on the expression itself.
+    description = CronScheduleV1.model_json_schema()["properties"]["expression"]["description"]
+    assert "evaluated in UTC" in description and CRON_UTC_HINT in description
+
+    printed = CliRunner().invoke(cli, ["playbill", "authoring", "create", "--example", "trigger"])
+    assert printed.exit_code == 0, printed.output
+    # stdout stays one JSON document; the hint rides beside it.
+    assert json.loads(printed.stdout)["schedule"]["kind"] == "cron"
+    assert printed.stderr.strip() == f"# {CRON_UTC_HINT}"
+    assert handle_playbill_authoring_example("trigger").note == CRON_UTC_HINT
+
+
 def test_a_cron_line_tick_follows_its_last_fire_and_never_precedes_its_floor() -> None:
     hourly = CronScheduleV1(expression="0 * * * *")
     noon = MONDAY.replace(hour=12)

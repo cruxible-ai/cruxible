@@ -39,6 +39,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.artifacts import ArtifactLifecycle as _ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependentV1
 from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.cron import CRON_UTC_HINT
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
@@ -272,7 +273,10 @@ def line_example() -> LineInput:
 
 
 def trigger_example() -> TriggerInput:
-    """A Trigger that runs the `--example line` Line hourly, on the hour.
+    """A Trigger that runs the `--example line` Line hourly, on the hour, in UTC.
+
+    Cron expressions are evaluated in UTC; convert local times first (09:00 New
+    York in winter is 14:00 UTC).
 
     Name `line_name` or `action` (a registered internal action such as
     `evidence.sweep`), never both. A schedule is `cadence` (`interval_seconds`),
@@ -730,6 +734,16 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "claim-type-succession": claim_type_succession_example,
 }
 
+#: One line shown beside an example's payload, where the payload alone could mislead.
+AUTHORING_EXAMPLE_NOTES: Final[dict[AuthoringExampleName, str]] = {
+    "trigger": CRON_UTC_HINT,
+}
+
+
+def authoring_example_note(name: AuthoringExampleName) -> str | None:
+    return AUTHORING_EXAMPLE_NOTES.get(name)
+
+
 _DOOR_EXAMPLES = {
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
@@ -810,9 +824,11 @@ def authoring_example(
 __all__ = [
     "AUTHORING_EXAMPLE_FACTORIES",
     "AUTHORING_EXAMPLE_NAMES",
+    "AUTHORING_EXAMPLE_NOTES",
     "AuthoringExampleName",
     "acquisition_policy_example",
     "authoring_example",
+    "authoring_example_note",
     "change_set_example",
     "claim_type_succession_example",
     "claim_existing_capture_example",

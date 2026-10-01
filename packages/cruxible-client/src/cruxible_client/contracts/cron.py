@@ -8,10 +8,9 @@ and 7 meaning Sunday. Names (``MON``, ``JAN``), ``?``, ``L``, ``W``, ``#`` and
 reader. As in classic cron, when both day fields are restricted a day matches
 if either does.
 
-Instants are UTC times, on whole minutes. Governed schedules are UTC only:
-an instant is a pure function of the expression, never of a host's timezone
-database, so every daemon and reader agrees on it. Named timezones would need a
-bundled, versioned ruleset of their own.
+Instants are UTC times, on whole minutes, and always will be: an instant is a
+pure function of the expression, never of a host's timezone database, so every
+daemon and reader agrees on it. An author converts local times to UTC first.
 
 No dependency: the matcher walks calendar days and only the hours and minutes
 the expression names, which keeps a search to a handful of candidates for any
@@ -24,6 +23,13 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from functools import lru_cache
+from typing import Final
+
+#: The one line every authoring surface shows beside a cron expression.
+CRON_UTC_HINT: Final = (
+    "Cron expressions are evaluated in UTC; convert local times first "
+    "(09:00 New York in winter is 14:00 UTC)."
+)
 
 #: How far a search walks before concluding an expression never fires. A
 #: weekday-restricted 29 February recurs within 28 years except across a
@@ -136,4 +142,4 @@ def parse_cron(expression: str) -> CronSpec:
     return spec
 
 
-__all__ = ["CronExpressionError", "CronSpec", "parse_cron"]
+__all__ = ["CRON_UTC_HINT", "CronExpressionError", "CronSpec", "parse_cron"]

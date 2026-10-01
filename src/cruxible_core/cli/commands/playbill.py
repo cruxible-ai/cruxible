@@ -48,6 +48,7 @@ from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_NAMES,
     AuthoringExampleName,
     authoring_example,
+    authoring_example_note,
     document_example,
 )
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
@@ -2973,6 +2974,10 @@ def create_authoring_intent(
                 sort_keys=True,
             )
         )
+        note = authoring_example_note(cast(AuthoringExampleName, example_name))
+        if note is not None:
+            # Beside the payload, never in it: stdout stays one JSON document.
+            click.echo(f"# {note}", err=True)
         return
     assert payload is not None
     parsed_input = _read_authoring_input(payload)
