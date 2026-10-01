@@ -2194,11 +2194,16 @@ def _selection(request: PlaybillQueryRequestV1, mode: QueryMode) -> dict[str, An
     return {"query": typed_digest(Sha256Value, "playbill-query-selection-v1", body).tagged}
 
 
-_CURSOR_TAG = "q1"
+# q2 counts the instant from 0001-01-01Z, so every representable instant is a
+# nonnegative count; a q1 cursor (counted from 1970) no longer decodes.
+_CURSOR_TAG = "q2"
 _CURSOR_OID = 16
 _CURSOR_DIGEST = 12
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_EPOCH = datetime.min.replace(tzinfo=UTC)
+_MAX_MICROS = (datetime.max.replace(tzinfo=UTC) - _EPOCH) // timedelta(microseconds=1)
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+_CURSOR_TIME_DIGITS = 12  # base-36 digits of _MAX_MICROS
+_CURSOR_OFFSET_DIGITS = 9
 
 
 @dataclass(frozen=True)
@@ -2213,6 +2218,8 @@ class _QueryCursor:
 
 
 def _base36(value: int) -> str:
+    if value < 0:
+        raise ValueError("a cursor counts only nonnegative values")
     digits = ""
     while True:
         value, digit = divmod(value, 36)
@@ -2267,17 +2274,22 @@ def _decode_cursor(cursor: str, *, selection: str) -> _QueryCursor:
         or parts[0] != _CURSOR_TAG
         or len(parts[1]) != _CURSOR_OID
         or not all(char in "0123456789abcdef" for char in parts[1])
-        or not parts[2]
+        or not 0 < len(parts[2]) <= _CURSOR_TIME_DIGITS
         or not all(char in _BASE36 for char in parts[2])
         or not all(len(part) == _CURSOR_DIGEST for part in parts[3:5])
-        or not parts[5].isdigit()
+        or not 0 < len(parts[5]) <= _CURSOR_OFFSET_DIGITS
+        # str.isdigit admits non-ASCII digits (such as superscripts) int() refuses.
+        or not all(char in "0123456789" for char in parts[5])
     ):
+        raise _cursor_mismatch("the cursor is not a query cursor")
+    micros = int(parts[2], 36)
+    if micros > _MAX_MICROS:
         raise _cursor_mismatch("the cursor is not a query cursor")
     if parts[3] != _digest_part(selection):
         raise _cursor_mismatch("the cursor was minted for a different query")
     return _QueryCursor(
         git_oid=parts[1],
-        evaluation_time=_EPOCH + timedelta(microseconds=int(parts[2], 36)),
+        evaluation_time=_EPOCH + timedelta(microseconds=micros),
         selection=parts[3],
         snapshot=parts[4],
         offset=int(parts[5]),
@@ -2324,6 +2336,13 @@ def service_playbill_query(
         raise query_refusal(
             "playbill.query.evaluation_time_invalid",
             "evaluation_time must carry a timezone",
+            repair="pass an ISO-8601 instant such as 2026-09-28T12:00:00Z",
+            field_path="evaluation_time",
+        )
+    if evaluation_time < _EPOCH:
+        raise query_refusal(
+            "playbill.query.evaluation_time_invalid",
+            "evaluation_time must be on or after 0001-01-01T00:00:00Z",
             repair="pass an ISO-8601 instant such as 2026-09-28T12:00:00Z",
             field_path="evaluation_time",
         )
