@@ -40,8 +40,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "that depend on those definitions block it."
     ),
     "cruxible_server_info": (
-        "Use when you need adapter and daemon versions with state, auth, and host metadata; "
-        "an instance-scoped credential gets its own instance's host and identity."
+        "Use when you need adapter and daemon versions with state, auth, and host metadata."
     ),
     "cruxible_playbill_init": (
         "Use when you need to bootstrap Playbill from client-generated public keys."
@@ -85,9 +84,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "operational family (runs, lines, captures, ...)."
     ),
     "cruxible_playbill_whoami": (
-        "Use when you need which instance this server acts on, who you are there, "
-        "whether you can author (and the repair when not), and the adapter and daemon "
-        "versions."
+        "Use when you need which instance this server acts on, who you are there, and "
+        "whether you can author (and the repair when not)."
     ),
     "cruxible_playbill_proposal_list": (
         "Use when you need to find open proposals or inspect terminal proposal outcomes. "
@@ -191,9 +189,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use to change one value: set a field of a Subject (kind/id) to a value. It replaces "
         "the live value (no Claim ID needed), adds a missing Subject of a known kind, and "
         "accepts in the same call when policy lets you; otherwise it answers awaiting_approval "
-        "with the approve call. dry_run previews without writing; pass the coordinate you read "
-        "at as `at` to refuse if the field changed since, or the value you read as `expect` "
-        "(compare-and-set). Check each change's verdict and the warnings."
+        "with the approve call. Check each change's verdict and the warnings."
     ),
     "cruxible_playbill_retire": (
         "Use to end one live Claim: by Claim ID, or by Subject and field when it holds one "

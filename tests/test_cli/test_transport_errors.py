@@ -39,7 +39,7 @@ def test_playbill_read_against_dead_port_emits_friendly_error(
 
     result = runner.invoke(
         cli,
-        ["--instance-id", "inst_x", "playbill", "document", "list"],
+        ["--instance-id", "inst_x", "playbill", "orient", "--section", "documents"],
     )
 
     assert result.exit_code == 1

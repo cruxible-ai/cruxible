@@ -187,9 +187,21 @@ def test_unwrapped_curation_seams_fail_startup() -> None:
 def test_default_input_schema_catalog_stays_within_agent_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import json
+    """The default profile's model-visible catalog stays within the approved budget.
+
+    The metric is what MCP hosts send the model: every tool's input schema
+    plus its description, estimated as JSON text length over four. Output
+    schemas are not call grammar and are not counted; their size is a
+    separately measured follow-up.
+    """
+    from tests.core_support._mcp_budget import (
+        DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS,
+        catalog_model_visible_tokens,
+    )
 
     monkeypatch.delenv("CRUXIBLE_MCP_PROFILE", raising=False)
     tools = _run(create_server().list_tools())
-    estimate = sum(len(json.dumps(tool.inputSchema)) for tool in tools) / 4
-    assert estimate <= 10_000, f"default input schemas cost about {estimate:.0f} tokens"
+    estimate = catalog_model_visible_tokens(tools)
+    assert estimate <= DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS, (
+        f"default input schemas plus descriptions cost about {estimate:.0f} tokens"
+    )
