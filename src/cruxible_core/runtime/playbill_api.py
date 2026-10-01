@@ -1020,6 +1020,17 @@ def playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
     return contracts.PlaybillWhoAmI.model_validate(result.model_dump(mode="json"))
 
 
+def playbill_head(
+    instance_id: str, *, at: AcceptedCoordinate | str | None = None
+) -> contracts.PlaybillHeadV1:
+    """The accepted head (or ``at``) and its generation: the cheapest coordinate read."""
+
+    from cruxible_core.service.discovery.orient import service_playbill_head
+
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    return service_playbill_head(get_playbill_manager().get(instance_id), at=at)
+
+
 def playbill_orient(
     instance_id: str,
     *,

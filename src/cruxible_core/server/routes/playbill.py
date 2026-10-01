@@ -362,6 +362,27 @@ async def whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
     return playbill_api.playbill_whoami(resolve_server_instance_id(instance_id))
 
 
+@router.get("/{instance_id}/playbill/head", response_model=contracts.PlaybillHeadV1)
+async def head(
+    instance_id: str,
+    at: str | None = Query(
+        default=None,
+        pattern=r"^[0-9a-f]{1,64}$",
+        description="An accepted generation's Git OID, or a unique prefix of 12+ hex.",
+    ),
+    git_oid: str | None = None,
+    semantic_root: str | None = None,
+    generation_root: str | None = None,
+    compiler_digest: str | None = None,
+) -> contracts.PlaybillHeadV1:
+    coordinate = _coordinate(git_oid, semantic_root, generation_root, compiler_digest)
+    if at is not None and coordinate is not None:
+        raise PlaybillFormatError("head takes at or the four coordinate fields, not both")
+    return playbill_api.playbill_head(
+        resolve_server_instance_id(instance_id), at=at if at is not None else coordinate
+    )
+
+
 @router.get(
     "/{instance_id}/playbill/orient",
     response_model=contracts.PlaybillOrientResultV1,

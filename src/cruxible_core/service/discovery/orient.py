@@ -38,6 +38,7 @@ from cruxible_client.contracts.orient import (
     PLAYBILL_ORIENT_DEFAULT_LIMIT,
     PLAYBILL_ORIENT_DEFAULT_QUERIES,
     PLAYBILL_ORIENT_SAMPLE_SUBJECTS,
+    PlaybillHeadV1,
     PlaybillOrientArmsV1,
     PlaybillOrientArtifactCountsV1,
     PlaybillOrientAttentionV1,
@@ -740,6 +741,27 @@ def _page(
 # -- the verb -------------------------------------------------------------------
 
 
+def _generation(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate) -> int:
+    return next(
+        item.sequence for item in instance.accepted_history() if item.oid == coordinate.git_oid
+    )
+
+
+def service_playbill_head(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedCoordinate | str | None = None,
+) -> PlaybillHeadV1:
+    """The accepted head (or ``at``) as a coordinate and its generation; nothing else."""
+
+    coordinate = resolve_read_coordinate(instance, at)
+    return PlaybillHeadV1(
+        instance=instance.descriptor.instance_id,
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
+        generation=_generation(instance, coordinate),
+    )
+
+
 def service_playbill_orient(
     instance: PlaybillInstance,
     *,
@@ -779,9 +801,7 @@ def service_playbill_orient(
     base: dict[str, Any] = {
         "instance": instance.descriptor.instance_id,
         "coordinate": served,
-        "generation": next(
-            item.sequence for item in instance.accepted_history() if item.oid == coordinate.git_oid
-        ),
+        "generation": _generation(instance, coordinate),
         "accepted_at": instance.accepted_evaluation_time(coordinate.git_oid),
         "evaluation_time": moment,
         "mirror_url": instance.ledger_mirror_url(),
@@ -1276,5 +1296,6 @@ def _section_rows(
 __all__ = [
     "OrientCaller",
     "render_orient_call",
+    "service_playbill_head",
     "service_playbill_orient",
 ]

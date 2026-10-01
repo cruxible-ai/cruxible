@@ -261,6 +261,20 @@ class PlaybillOrientFloorV1(_StrictOrientModel):
     generations_behind: int | None = Field(ge=0)
 
 
+class PlaybillHeadV1(_StrictOrientModel):
+    """The accepted head (or the coordinate ``at`` names) and its generation.
+
+    The cheapest read there is: no kind, artifact or attention fold, only the
+    coordinate a caller pins its next reads to and the generation a floor's
+    freshness is counted in. Internal callers use it in place of ``orient``.
+    """
+
+    tag: Literal["playbill-head-v1"] = "playbill-head-v1"
+    instance: str
+    coordinate: AcceptedCoordinate
+    generation: int = Field(ge=0)
+
+
 class PlaybillOrientResultV1(_StrictOrientModel):
     """One orient answer; which parts are present depends on the request.
 
@@ -333,6 +347,7 @@ __all__ = [
     "PLAYBILL_ORIENT_DEFAULT_QUERIES",
     "PLAYBILL_ORIENT_MAX_LIMIT",
     "PLAYBILL_ORIENT_SAMPLE_SUBJECTS",
+    "PlaybillHeadV1",
     "PlaybillOrientArmsV1",
     "PlaybillOrientArtifactCountsV1",
     "PlaybillOrientAttentionV1",

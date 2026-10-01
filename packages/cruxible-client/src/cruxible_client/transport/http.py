@@ -624,6 +624,20 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/whoami")
         return self._parse_model(response, contracts.PlaybillWhoAmI)
 
+    def playbill_head(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | str | None = None,
+    ) -> contracts.PlaybillHeadV1:
+        """The accepted head (or ``at``) as a coordinate and its generation; nothing else."""
+
+        params: dict[str, Any] = (
+            {"at": at} if isinstance(at, str) else dict(self._playbill_coordinate_params(at))
+        )
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/head", params=params)
+        return self._parse_model(response, contracts.PlaybillHeadV1)
+
     def orient_playbill(
         self,
         instance_id: str,
