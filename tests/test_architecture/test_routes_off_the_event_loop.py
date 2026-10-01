@@ -77,11 +77,11 @@ def _call_arguments(call: ast.Call) -> list[ast.expr]:
     return [*call.args, *(keyword.value for keyword in call.keywords)]
 
 
-def _target_names(target: ast.expr) -> list[str]:
+def _target_names(target: ast.expr) -> list[ast.Name]:
     """Names an assignment target binds; ``x[k] = v`` and ``x.a = v`` bind none."""
 
     if isinstance(target, ast.Name):
-        return [target.id]
+        return [target]
     if isinstance(target, ast.Starred):
         return _target_names(target.value)
     if isinstance(target, ast.Tuple | ast.List):
@@ -90,29 +90,52 @@ def _target_names(target: ast.expr) -> list[str]:
 
 
 def _bound_names(node: ast.AST) -> dict[str, list[ast.AST]]:
-    """Every binding of every name anywhere under ``node``."""
+    """Every binding of every name anywhere under ``node``, in every binding form.
+
+    Assignments record their statement, so a caller can inspect the bound value;
+    every other form (for and with targets, walrus, comprehension and match
+    captures, except-as, del, imports, definitions, parameters, and global or
+    nonlocal declarations) records its node. A check that needs a name bound
+    once sees every way it could have been rebound.
+    """
 
     bindings: dict[str, list[ast.AST]] = {}
+    recorded: set[int] = set()
+
+    def bind(name: str, where: ast.AST) -> None:
+        bindings.setdefault(name, []).append(where)
+
     for inner in ast.walk(node):
-        if isinstance(inner, ast.Assign):
-            for target in inner.targets:
+        if isinstance(inner, ast.Assign | ast.AnnAssign | ast.AugAssign):
+            targets = inner.targets if isinstance(inner, ast.Assign) else [inner.target]
+            for target in targets:
                 for name in _target_names(target):
-                    bindings.setdefault(name, []).append(inner)
-        elif isinstance(inner, ast.AnnAssign | ast.AugAssign) and isinstance(
-            inner.target, ast.Name
-        ):
-            bindings.setdefault(inner.target.id, []).append(inner)
+                    recorded.add(id(name))
+                    bind(name.id, inner)
         elif isinstance(inner, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-            bindings.setdefault(inner.name, []).append(inner)
+            bind(inner.name, inner)
         elif isinstance(inner, ast.Import | ast.ImportFrom):
             for alias in inner.names:
-                bindings.setdefault(alias.asname or alias.name.split(".")[0], []).append(inner)
+                bind(alias.asname or alias.name.split(".")[0], inner)
         elif isinstance(inner, ast.arg):
-            bindings.setdefault(inner.arg, []).append(inner)
-        elif isinstance(inner, ast.NamedExpr | ast.For | ast.With | ast.AsyncWith):
-            for name in ast.walk(inner):
-                if isinstance(name, ast.Name) and isinstance(name.ctx, ast.Store):
-                    bindings.setdefault(name.id, []).append(inner)
+            bind(inner.arg, inner)
+        elif isinstance(inner, ast.ExceptHandler) and inner.name is not None:
+            bind(inner.name, inner)
+        elif isinstance(inner, ast.MatchAs | ast.MatchStar) and inner.name is not None:
+            bind(inner.name, inner)
+        elif isinstance(inner, ast.MatchMapping) and inner.rest is not None:
+            bind(inner.rest, inner)
+        elif isinstance(inner, ast.Global | ast.Nonlocal):
+            for name in inner.names:
+                bind(name, inner)
+    for inner in ast.walk(node):
+        # for/with/walrus/comprehension targets and del: any other stored name.
+        if (
+            isinstance(inner, ast.Name)
+            and isinstance(inner.ctx, ast.Store | ast.Del)
+            and id(inner) not in recorded
+        ):
+            bind(inner.id, inner)
     return bindings
 
 
@@ -250,23 +273,36 @@ def _admission_violations(tree: ast.Module) -> list[str]:
         }
     )
     init = methods.get("__init__")
-    loops_bound = init is not None and any(
-        isinstance(statement, ast.AnnAssign)
-        and ast.unparse(statement.target) == "self._loops"
-        and statement.value is not None
-        and ast.unparse(statement.value) == "weakref.WeakKeyDictionary()"
-        for statement in init.body
-    )
-    rebinds_loops = any(
-        isinstance(inner, ast.Attribute)
-        and isinstance(inner.ctx, ast.Store)
+    # Exactly one write to self._loops anywhere in the module -- __init__
+    # included -- and it is a WeakKeyDictionary from the real weakref module.
+    loops_writes = [
+        inner
+        for inner in ast.walk(tree)
+        if isinstance(inner, ast.Attribute)
+        and isinstance(inner.ctx, ast.Store | ast.Del)
         and ast.unparse(inner) == "self._loops"
-        for name, method in methods.items()
-        if name != "__init__"
-        for inner in ast.walk(method)
+    ]
+    loops_bound = (
+        init is not None
+        and len(loops_writes) == 1
+        and any(
+            isinstance(statement, ast.AnnAssign)
+            and statement.target is loops_writes[0]
+            and statement.value is not None
+            and ast.unparse(statement.value) == "weakref.WeakKeyDictionary()"
+            for statement in init.body
+        )
     )
-    if not loops_bound or rebinds_loops:
+    if not loops_bound:
         problems.append("self._loops is not only a WeakKeyDictionary")
+    weakref_bindings = module.get("weakref", [])
+    if not (
+        len(weakref_bindings) == 1
+        and isinstance(weakref_bindings[0], ast.Import)
+        and [(alias.name, alias.asname) for alias in weakref_bindings[0].names]
+        == [("weakref", None)]
+    ):
+        problems.append("weakref is not the weakref module")
     admit = methods.get("admit")
     if not isinstance(admit, ast.AsyncFunctionDef) or [
         ast.unparse(decorator) for decorator in admit.decorator_list
@@ -387,6 +423,24 @@ def test_the_route_check_resolves_bindings_not_names() -> None:
         + body.format(cm="exports.admit(a)")
     )
     assert "run_in_threadpool" in _check(shadowed)
+    # The offload or the admission rebound by a form other than assignment.
+    for rebinding in (
+        "    try:\n        pass\n    except Exception as run_in_threadpool:\n        pass\n",
+        "    for run_in_threadpool in ():\n        pass\n",
+        "    with open(a) as run_in_threadpool:\n        pass\n",
+        "    [run_in_threadpool for run_in_threadpool in ()]\n",
+        "    match a:\n        case [*run_in_threadpool]:\n            pass\n",
+    ):
+        source = _ROUTE_HEADER + body.format(cm="exports.admit(a)").replace(
+            "async def r(a):\n", "async def r(a):\n" + rebinding, 1
+        )
+        assert "run_in_threadpool" in _check(source), rebinding
+    module_rebinding = (
+        _ROUTE_HEADER
+        + "try:\n    pass\nexcept Exception as exports:\n    pass\n"
+        + body.format(cm="exports.admit(a)")
+    )
+    assert _check(module_rebinding) == ["exports.admit"]
     # Loop work smuggled into admission's arguments.
     smuggled = _ROUTE_HEADER + body.format(cm="exports.admit(parse(a))")
     assert "exports.admit" in _check(smuggled)
@@ -414,6 +468,15 @@ def test_the_admission_check_resolves_receivers() -> None:
     assert spoofed("entry.users += 1", "entry.users += 1\n        time.sleep(30)")
     # A synchronous admit.
     assert spoofed("    @asynccontextmanager\n    async def admit", "    def admit")
+    # A second write to the loop map, in __init__ or anywhere else.
+    second_write = "weakref.WeakKeyDictionary()\n        )\n"
+    assert spoofed(second_write, second_write + "        self._loops = SlowMap()\n")
+    assert spoofed(
+        "    def active_loops(self) -> int:\n",
+        "    def active_loops(self) -> int:\n        del self._loops\n",
+    )
+    # A module that is not weakref behind the weakref name.
+    assert spoofed("import weakref\n", "import fake_weakref as weakref\n")
 
 
 def test_no_route_holds_the_event_loop() -> None:
