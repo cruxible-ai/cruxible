@@ -164,6 +164,23 @@ class PlaybillOrientKindDetailV1(PlaybillOrientKindV1):
     sample_subject_ids: tuple[str, ...] = ()
 
 
+class PlaybillOrientClaimCountsV1(_StrictOrientModel):
+    """Every accepted Claim by its status at the coordinate.
+
+    ``accepted`` Claims answer their slot; ``conflicted`` ones are contenders
+    resolution left unresolved; ``overturned`` ones lost their slot to an
+    accepted rival; ``refused`` ones failed their own ClaimType's admission;
+    ``retired`` ones were withdrawn. ``query(..., status=[...])`` lists the
+    non-live ones.
+    """
+
+    accepted: int = Field(default=0, ge=0)
+    conflicted: int = Field(default=0, ge=0)
+    overturned: int = Field(default=0, ge=0)
+    refused: int = Field(default=0, ge=0)
+    retired: int = Field(default=0, ge=0)
+
+
 class PlaybillOrientArtifactCountsV1(_StrictOrientModel):
     """How many of each family exist; each operational family is its own section.
 
@@ -184,6 +201,7 @@ class PlaybillOrientArtifactCountsV1(_StrictOrientModel):
     mandates: int = Field(default=0, ge=0)
     runs: int = Field(default=0, ge=0)
     running: int = Field(default=0, ge=0)
+    claims: PlaybillOrientClaimCountsV1 | None = Field(default=None, exclude_if=_is_none)
 
 
 class PlaybillOrientQueryV1(_StrictOrientModel):
@@ -377,6 +395,7 @@ __all__ = [
     "PlaybillOrientArmsV1",
     "PlaybillOrientArtifactCountsV1",
     "PlaybillOrientAttentionV1",
+    "PlaybillOrientClaimCountsV1",
     "PlaybillOrientDocumentV1",
     "PlaybillOrientFloorV1",
     "PlaybillOrientInterfaceProviderV1",

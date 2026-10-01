@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from cruxible_client.contracts.write import PlaybillWriteRequestV1
@@ -9,7 +11,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.write_verbs import service_playbill_write
 from cruxible_core.service.discovery.orient import service_playbill_head
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._write_support import caller, seed_write_surface
+from tests.core_support._write_support import KIND, caller, seed_write_surface
 
 _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
 
@@ -103,3 +105,23 @@ def test_orient_pages_policies_in_force_and_get_reads_the_approval_policy(
         access=_ACCESS,
     )
     assert history.history is not None and history.history.revisions
+
+
+def test_orient_counts_claims_by_status_including_retired(tmp_path: Path) -> None:
+    from cruxible_core.service.discovery.orient import service_playbill_orient
+
+    instance, _owner = seed_write_surface(tmp_path)
+    first = _write(
+        instance, {"op": "set", "subject": f"{KIND}/wi-1", "field": "status", "value": "ready"}
+    )
+    _write(instance, {"op": "set", "subject": f"{KIND}/wi-2", "field": "status", "value": "done"})
+    _write(instance, {"op": "retire", "target": first[0]})
+
+    result = service_playbill_orient(instance)
+
+    assert result.artifacts is not None and result.artifacts.claims is not None
+    counts = result.artifacts.claims
+    assert counts.retired == 1
+    assert counts.accepted + counts.conflicted + counts.overturned + counts.refused == 1
+    # The section and kind views carry no counts; only the default map does.
+    assert service_playbill_orient(instance, section="documents").artifacts is None

@@ -42,6 +42,7 @@ from cruxible_client.contracts.orient import (
     PlaybillOrientArmsV1,
     PlaybillOrientArtifactCountsV1,
     PlaybillOrientAttentionV1,
+    PlaybillOrientClaimCountsV1,
     PlaybillOrientDocumentV1,
     PlaybillOrientInterfaceProviderV1,
     PlaybillOrientInterfaceV1,
@@ -981,6 +982,7 @@ def service_playbill_orient(
             queries=len(state.queries),
             interfaces=len(state.interfaces),
             **counts,
+            claims=_claim_counts(instance, coordinate, evaluation_time=moment),
         ),
         queries=state.queries[:PLAYBILL_ORIENT_DEFAULT_QUERIES],
         attention=attention,
@@ -999,6 +1001,55 @@ _LIVE_SECTIONS: dict[str, tuple[str, ...]] = {
 _OPERATIONAL_SECTIONS: frozenset[str] = frozenset(
     {"lines", "capture_contracts", "predictions", "mandates"}
 )
+
+
+def _claim_counts(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    *,
+    evaluation_time: datetime,
+) -> PlaybillOrientClaimCountsV1:
+    """Every accepted Claim counted by status, from the remembered resolution when it holds.
+
+    The ``next`` fold just derived the same statuses at this coordinate, so a
+    warm memo answers from the index alone; a miss derives them once.
+    """
+
+    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.discovery.search import (
+        claim_resolution_statuses,
+        remembered_resolution_statuses,
+    )
+    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+
+    with instance.bind_accepted_projection(coordinate) as projection:
+        identities = tuple(
+            str(row[0])
+            for row in projection.typed.connection.execute(
+                "SELECT identity FROM claims ORDER BY identity"
+            )
+        )
+    at = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    statuses = remembered_resolution_statuses(
+        instance, identities=identities, at=at, evaluation_time=evaluation_time
+    )
+    if statuses is None or len(statuses) != len(identities):
+        context = ClaimVerdictReadContext(instance, coordinate)
+        statuses = claim_resolution_statuses(
+            instance,
+            claims=context.claims(),
+            at=at,
+            evaluation_time=evaluation_time,
+            read_context=context,
+        )
+    counts = Counter(statuses.values())
+    return PlaybillOrientClaimCountsV1(
+        accepted=counts["accepted"],
+        conflicted=counts["conflicted"],
+        overturned=counts["overturned"],
+        refused=counts["refused"],
+        retired=counts["retired"],
+    )
 
 
 def _operational_counts(
