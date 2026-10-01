@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **`procedure_run_status` withholds another principal's arming credential.**
+  An armed run acts as its arming credential's principal, and the status read
+  returned that actor and the receipt carrying it to every caller. It now
+  applies the Line and run cards' rule: unless the caller is an admin, the
+  arming credential, or a credential bound to the same principal, the
+  attribution answers as `ProcedureRunAttributionWithheldV1` (everything but
+  the actor) and the receipt as `ProcedureRunReceiptWithheldV1`, with
+  `receipt_digest` still naming it. `get` with `detail="proof"` uses the same
+  two typed markers instead of a nulled actor and an untyped marker.
+
 - **The write verbs read `@kind/id` as a Subject.** `set`, `retire` and
   `write` accept `@dev.roadmap_item/x` wherever they take a Subject: the
   change's subject, a slot, a Subject-valued value and an `expect`. It used to

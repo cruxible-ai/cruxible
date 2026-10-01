@@ -264,7 +264,7 @@ exactly one may omit it.
 | `cruxible_playbill_procedure_readiness` | Report exact binding requirements or run readiness | `READ_ONLY` |
 | `cruxible_playbill_procedure_bind` | Attach accepted input-plane bindings through a same-identity successor | `GOVERNED_WRITE` |
 | `cruxible_playbill_procedure_run` | Execute a ready Procedure -- accepted-state reads, deterministic computation, and graph-v4 `source` reads through an accepted Provider -- at an explicit coordinate and time | `READ_ONLY` |
-| `cruxible_playbill_procedure_run_status` | Read one finalized Procedure run and its receipt | `READ_ONLY` |
+| `cruxible_playbill_procedure_run_status` | Read one finalized Procedure run and its receipt; for an armed run, the run actor and the receipt are withheld (`playbill-procedure-run-attribution-withheld-v1`, `playbill-procedure-run-receipt-withheld-v1`) unless the caller is an admin, the arming credential, or a credential bound to the same principal | `READ_ONLY` |
 | `cruxible_playbill_procedure_measure` | Evaluate due Procedure measurements from real evidence, persist the resolution, and credit one run's exact grain | `GOVERNED_WRITE` |
 | `cruxible_playbill_procedure_readings` | Inspect measurement standing and retained exact-grain readings (read-only, paginated) | `READ_ONLY` |
 | `cruxible_playbill_line_check` | Read trigger eligibility, exact matches, and admitted occurrences without queuing or running. | `READ_ONLY` |

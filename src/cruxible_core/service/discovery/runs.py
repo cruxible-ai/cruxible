@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, get_args
 
+from cruxible_client.contracts import PlaybillProcedureRunState
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.operational_reads import (
     OPERATIONAL_CARD_LIST_LIMIT,
@@ -26,7 +27,12 @@ from cruxible_client.contracts.operational_reads import (
     PlaybillRunRowV1,
     PlaybillRunStatus,
 )
-from cruxible_client.contracts.procedures.results import ProcedureOperationalFailureCodeV1
+from cruxible_client.contracts.procedures.results import (
+    ProcedureOperationalFailureCodeV1,
+    ProcedureRunAttributionV1,
+    ProcedureRunAttributionWithheldV1,
+    ProcedureRunReceiptWithheldV1,
+)
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_core.exhaust import LocalJournalBackend
 from cruxible_core.exhaust.journal_index import RunLocator, RunLocatorKey
@@ -355,16 +361,68 @@ def procedure_run_card(
     )
 
 
+def run_arming_withheld(
+    instance: PlaybillInstance, run_id: str, *, viewer: OperationalViewer | None
+) -> bool:
+    """Whether this run acts as an arming credential ``viewer`` may not see.
+
+    The Line and run cards' rule (``OperationalViewer.may_see``): a runtime
+    arming credential is shown only to an admin, that credential, or another
+    credential bound to the same principal. A direct run has no arm.
+    """
+
+    records = procedure_run_journal(instance)
+    if records is None:
+        return False
+    locators, _more = records.index.run_locators(_stream(instance), limit=1, run_id=run_id)
+    if not locators:
+        return False
+    admission = parse_admission_payload(
+        _payload(instance, locators[0].admission_payload_digest)
+    ).admission
+    candidate = getattr(admission, "line_identity", None)
+    line = candidate if isinstance(candidate, ArtifactIdentity) else None
+    trigger = _run_trigger(instance, run_id, line, admission.occurrence_id, viewer)
+    return trigger is not None and bool(trigger.armed_by_withheld)
+
+
+def procedure_run_status(
+    instance: PlaybillInstance, run_id: str, *, viewer: OperationalViewer | None
+) -> PlaybillProcedureRunState:
+    """A run's served state, with its arming credential withheld as on the card.
+
+    An armed run acts as its arming credential's principal, which the state's
+    attribution and receipt both carry. For a reader who may not see that
+    credential the attribution answers without its actor and the receipt as a
+    withheld marker; ``receipt_digest`` still names the exact receipt.
+    """
+
+    from cruxible_core.service.procedures.procedure_runs import (
+        service_get_playbill_procedure_run,
+    )
+
+    state = PlaybillProcedureRunState.model_validate(
+        service_get_playbill_procedure_run(instance, run_id=run_id).model_dump(mode="json")
+    )
+    if not run_arming_withheld(instance, run_id, viewer=viewer):
+        return state
+    attribution = state.attribution
+    return state.model_copy(
+        update={
+            "attribution": (
+                ProcedureRunAttributionWithheldV1.of(attribution)
+                if isinstance(attribution, ProcedureRunAttributionV1)
+                else attribution
+            ),
+            "receipt": None if state.receipt is None else ProcedureRunReceiptWithheldV1(),
+        }
+    )
+
+
 def procedure_run_proof(
     instance: PlaybillInstance, run_id: str, *, viewer: OperationalViewer | None
 ) -> dict[str, object]:
-    """A run's full served state, with its arming credential withheld as on the card.
-
-    An armed run acts as its arming credential's label, which the state's
-    attribution and receipt both carry. For a reader who may not see that
-    credential the attribution's actor is withheld and the receipt is replaced
-    by a marker; ``receipt_digest`` still names the exact receipt.
-    """
+    """A run's full served state, under ``procedure_run_status``'s withholding."""
 
     from cruxible_core.service.procedures.procedure_runs import (
         service_get_playbill_procedure_run,
@@ -372,23 +430,13 @@ def procedure_run_proof(
 
     state = service_get_playbill_procedure_run(instance, run_id=run_id)
     proof: dict[str, object] = state.model_dump(mode="json")
-    line = None
-    records = procedure_run_journal(instance)
-    if records is not None:
-        locators, _more = records.index.run_locators(_stream(instance), limit=1, run_id=run_id)
-        if locators:
-            admission = parse_admission_payload(
-                _payload(instance, locators[0].admission_payload_digest)
-            ).admission
-            candidate = getattr(admission, "line_identity", None)
-            line = candidate if isinstance(candidate, ArtifactIdentity) else None
-            trigger = _run_trigger(instance, run_id, line, admission.occurrence_id, viewer)
-            if trigger is not None and trigger.armed_by_withheld:
-                attribution = proof.get("attribution")
-                if isinstance(attribution, dict):
-                    proof["attribution"] = {**attribution, "actor_id": None}
-                if proof.get("receipt") is not None:
-                    proof["receipt"] = {"withheld": "names the arming credential"}
+    if run_arming_withheld(instance, run_id, viewer=viewer):
+        if state.attribution is not None:
+            proof["attribution"] = ProcedureRunAttributionWithheldV1.of(
+                state.attribution
+            ).model_dump(mode="json")
+        if state.receipt is not None:
+            proof["receipt"] = ProcedureRunReceiptWithheldV1().model_dump(mode="json")
     return proof
 
 
@@ -436,6 +484,8 @@ __all__ = [
     "procedure_run_card",
     "procedure_run_journal",
     "procedure_run_proof",
+    "procedure_run_status",
+    "run_arming_withheld",
     "run_counts",
     "run_ids_with_prefix",
     "run_row",

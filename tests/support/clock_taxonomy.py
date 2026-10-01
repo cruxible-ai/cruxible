@@ -375,6 +375,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProcedureRunAdmissionV1", "admitted_at"): "ASSERTION TIME",
     ("ProcedureRunAdmissionV3", "occurrence_evaluation_time"): "EVALUATION INSTANT",
     ("ProcedureRunAttributionV1", "recorded_time"): "ASSERTION TIME",
+    ("ProcedureRunAttributionWithheldV1", "recorded_time"): "ASSERTION TIME",
     ("ProcedureRunBudgetObservedV1", "wall_clock_microseconds"): "VALIDITY WINDOW",
     ("ProcedureRunIndexEntryV1", "first_sequence"): "SETTLEMENT ORDER",
     ("ProcedureRunIndexEntryV1", "last_sequence"): "SETTLEMENT ORDER",
