@@ -996,6 +996,90 @@
         "state"
       ]
     },
+    "CronScheduleV1": {
+      "fields": {
+        "expression": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "expression",
+          "required": true,
+          "schema": {
+            "examples": [
+              "0 9 * * 1-5"
+            ],
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Expression",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "default": "cron",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "const": "cron",
+            "default": "cron",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "timezone": {
+          "default": "UTC",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "timezone",
+          "required": false,
+          "schema": {
+            "default": "UTC",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Fire at each instant a standard five-field cron expression names.\n\n``minute hour day-of-month month day-of-week``, read as wall-clock time in\n``timezone`` (an IANA name). Like a cadence it fires once after downtime,\nnever back-filling the instants it missed, and an armed Line fires only on\ninstants from its arm forward. The Trigger law refuses an expression or\ntimezone the grammar does not admit; see ``cruxible_client.contracts.cron``.",
+        "properties": {
+          "expression": {
+            "examples": [
+              "0 9 * * 1-5"
+            ],
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Expression",
+            "type": "string"
+          },
+          "kind": {
+            "const": "cron",
+            "default": "cron",
+            "title": "Kind",
+            "type": "string"
+          },
+          "timezone": {
+            "default": "UTC",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expression"
+        ],
+        "title": "CronScheduleV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "expression"
+      ]
+    },
     "GitWorkspaceNoteV1": {
       "fields": {
         "code": {
@@ -3245,6 +3329,7 @@
           "schema": {
             "enum": [
               "cadence",
+              "cron",
               "capture_landing",
               "window_close"
             ],
@@ -3373,7 +3458,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence tick binds no event\nor window: its instant is the occurrence's own evaluation instant.",
+        "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds\nno event or window: its instant is the occurrence's own evaluation instant.",
         "properties": {
           "event": {
             "anyOf": [
@@ -3389,6 +3474,7 @@
           "kind": {
             "enum": [
               "cadence",
+              "cron",
               "capture_landing",
               "window_close"
             ],
@@ -3828,7 +3914,7 @@
           },
           "LineTriggerBindingV1": {
             "additionalProperties": false,
-            "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence tick binds no event\nor window: its instant is the occurrence's own evaluation instant.",
+            "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds\nno event or window: its instant is the occurrence's own evaluation instant.",
             "properties": {
               "event": {
                 "anyOf": [
@@ -3844,6 +3930,7 @@
               "kind": {
                 "enum": [
                   "cadence",
+                  "cron",
                   "capture_landing",
                   "window_close"
                 ],
@@ -4267,7 +4354,7 @@
           },
           "LineTriggerBindingV1": {
             "additionalProperties": false,
-            "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence tick binds no event\nor window: its instant is the occurrence's own evaluation instant.",
+            "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds\nno event or window: its instant is the occurrence's own evaluation instant.",
             "properties": {
               "event": {
                 "anyOf": [
@@ -4283,6 +4370,7 @@
               "kind": {
                 "enum": [
                   "cadence",
+                  "cron",
                   "capture_landing",
                   "window_close"
                 ],
@@ -9257,6 +9345,39 @@
             "title": "CorroborationRequirementV1",
             "type": "object"
           },
+          "CronScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire at each instant a standard five-field cron expression names.\n\n``minute hour day-of-month month day-of-week``, read as wall-clock time in\n``timezone`` (an IANA name). Like a cadence it fires once after downtime,\nnever back-filling the instants it missed, and an armed Line fires only on\ninstants from its arm forward. The Trigger law refuses an expression or\ntimezone the grammar does not admit; see ``cruxible_client.contracts.cron``.",
+            "properties": {
+              "expression": {
+                "examples": [
+                  "0 9 * * 1-5"
+                ],
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Expression",
+                "type": "string"
+              },
+              "kind": {
+                "const": "cron",
+                "default": "cron",
+                "title": "Kind",
+                "type": "string"
+              },
+              "timezone": {
+                "default": "UTC",
+                "maxLength": 64,
+                "minLength": 1,
+                "title": "Timezone",
+                "type": "string"
+              }
+            },
+            "required": [
+              "expression"
+            ],
+            "title": "CronScheduleV1",
+            "type": "object"
+          },
           "DeclaredSnapshotGroupCoherenceV1": {
             "additionalProperties": false,
             "properties": {
@@ -12066,6 +12187,7 @@
                   "mapping": {
                     "cadence": "#/$defs/CadenceScheduleV1",
                     "capture_landing": "#/$defs/CaptureLandingScheduleV1",
+                    "cron": "#/$defs/CronScheduleV1",
                     "window_close": "#/$defs/WindowCloseScheduleV1"
                   },
                   "propertyName": "kind"
@@ -12073,6 +12195,9 @@
                 "oneOf": [
                   {
                     "$ref": "#/$defs/CadenceScheduleV1"
+                  },
+                  {
+                    "$ref": "#/$defs/CronScheduleV1"
                   },
                   {
                     "$ref": "#/$defs/CaptureLandingScheduleV1"
@@ -45376,7 +45501,7 @@
           },
           "LineTriggerBindingV1": {
             "additionalProperties": false,
-            "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence tick binds no event\nor window: its instant is the occurrence's own evaluation instant.",
+            "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds\nno event or window: its instant is the occurrence's own evaluation instant.",
             "properties": {
               "event": {
                 "anyOf": [
@@ -45392,6 +45517,7 @@
               "kind": {
                 "enum": [
                   "cadence",
+                  "cron",
                   "capture_landing",
                   "window_close"
                 ],
@@ -89313,6 +89439,7 @@
               "mapping": {
                 "cadence": "#/$defs/CadenceScheduleV1",
                 "capture_landing": "#/$defs/CaptureLandingScheduleV1",
+                "cron": "#/$defs/CronScheduleV1",
                 "window_close": "#/$defs/WindowCloseScheduleV1"
               },
               "propertyName": "kind"
@@ -89320,6 +89447,9 @@
             "oneOf": [
               {
                 "$ref": "#/$defs/CadenceScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/CronScheduleV1"
               },
               {
                 "$ref": "#/$defs/CaptureLandingScheduleV1"
@@ -89564,6 +89694,39 @@
             "title": "CaptureLandingScheduleV1",
             "type": "object"
           },
+          "CronScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire at each instant a standard five-field cron expression names.\n\n``minute hour day-of-month month day-of-week``, read as wall-clock time in\n``timezone`` (an IANA name). Like a cadence it fires once after downtime,\nnever back-filling the instants it missed, and an armed Line fires only on\ninstants from its arm forward. The Trigger law refuses an expression or\ntimezone the grammar does not admit; see ``cruxible_client.contracts.cron``.",
+            "properties": {
+              "expression": {
+                "examples": [
+                  "0 9 * * 1-5"
+                ],
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Expression",
+                "type": "string"
+              },
+              "kind": {
+                "const": "cron",
+                "default": "cron",
+                "title": "Kind",
+                "type": "string"
+              },
+              "timezone": {
+                "default": "UTC",
+                "maxLength": 64,
+                "minLength": 1,
+                "title": "Timezone",
+                "type": "string"
+              }
+            },
+            "required": [
+              "expression"
+            ],
+            "title": "CronScheduleV1",
+            "type": "object"
+          },
           "FixedWindowV1": {
             "additionalProperties": false,
             "properties": {
@@ -89681,6 +89844,7 @@
               "mapping": {
                 "cadence": "#/$defs/CadenceScheduleV1",
                 "capture_landing": "#/$defs/CaptureLandingScheduleV1",
+                "cron": "#/$defs/CronScheduleV1",
                 "window_close": "#/$defs/WindowCloseScheduleV1"
               },
               "propertyName": "kind"
@@ -89688,6 +89852,9 @@
             "oneOf": [
               {
                 "$ref": "#/$defs/CadenceScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/CronScheduleV1"
               },
               {
                 "$ref": "#/$defs/CaptureLandingScheduleV1"

@@ -1166,3 +1166,43 @@ def test_an_acceptance_during_executor_preflight_never_records_an_admission(
     status = service_line_status(instance, line.identity.name)
     assert (status.state, status.stop_reason) == ("stopped", reason)
     assert status.pending_explicit == 1
+
+
+def test_an_armed_cron_line_ticks_on_calendar_instants_forward_only(tmp_path):
+    from cruxible_client.contracts.temporal import parse_datetime
+    from cruxible_client.contracts.triggers import CronScheduleV1
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+
+    instance, line, _procedure = line_world(tmp_path, CronScheduleV1(expression="*/5 * * * *"))
+
+    def ticks():  # type: ignore[no-untyped-def]
+        # The calendar instant each admitted occurrence was due at.
+        with LineDispatchStore(instance).locked() as conn:
+            rows = conn.execute(
+                "SELECT eligible_at FROM pending WHERE disposition='admitted' ORDER BY eligible_at"
+            ).fetchall()
+        return [parse_datetime(row[0]) for row in rows]
+
+    def match_and_dispatch(at):  # type: ignore[no-untyped-def]
+        _match(instance, at)
+        for arm in armed_work(instance, now=at):
+            dispatch_armed_line(_manager(instance), instance.descriptor.instance_id, arm, now=at)
+
+    # Armed at 16:02: the 16:00 instant precedes the arm and never runs.
+    armed_at = READ_TIME + timedelta(minutes=2)
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=armed_at,
+        daemon_id="daemon",
+    )
+    match_and_dispatch(armed_at + timedelta(seconds=30))
+    assert ticks() == []
+    match_and_dispatch(READ_TIME + timedelta(minutes=5, seconds=1))
+    assert ticks() == [READ_TIME + timedelta(minutes=5)]
+    # An hour without matching runs one tick, the latest, not the eleven it missed.
+    match_and_dispatch(READ_TIME + timedelta(hours=1, seconds=1))
+    assert ticks() == [READ_TIME + timedelta(minutes=5), READ_TIME + timedelta(hours=1)]
+    assert _admissions(instance) == 2

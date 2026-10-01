@@ -128,14 +128,18 @@ def bind_observation_window(
     )
 
 
+#: Binding kinds whose occurrence is a tick of time rather than an event or window.
+TIMED_BINDING_KINDS = frozenset({"cadence", "cron"})
+
+
 class LineTriggerBindingV1(_WindowModel):
     """Semantic cause of one occurrence, independent of its dispatch instant.
 
-    ``trigger`` is the Trigger artifact that fired. A cadence tick binds no event
-    or window: its instant is the occurrence's own evaluation instant.
+    ``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds
+    no event or window: its instant is the occurrence's own evaluation instant.
     """
 
-    kind: Literal["cadence", "capture_landing", "window_close"]
+    kind: Literal["cadence", "cron", "capture_landing", "window_close"]
     trigger: ArtifactIdentity
     event: TriggerEventReferenceV1 | None = None
     window: BoundObservationWindowV1 | None = None
@@ -144,9 +148,9 @@ class LineTriggerBindingV1(_WindowModel):
     def _shape(self) -> LineTriggerBindingV1:
         if self.trigger.kind != "Trigger":
             raise ValueError("a trigger binding names the Trigger that fired")
-        if self.kind == "cadence":
+        if self.kind in TIMED_BINDING_KINDS:
             if self.event is not None or self.window is not None:
-                raise ValueError("a cadence tick binds no event or window")
+                raise ValueError("a cadence or cron tick binds no event or window")
         elif self.kind == "capture_landing":
             if self.event is None or self.window is not None:
                 raise ValueError("capture trigger must bind exactly one retained event")

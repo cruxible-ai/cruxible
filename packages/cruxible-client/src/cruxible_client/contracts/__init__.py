@@ -239,6 +239,9 @@ from cruxible_client.contracts.triggers import (
     CaptureLandingScheduleV1 as CaptureLandingScheduleV1,
 )
 from cruxible_client.contracts.triggers import (
+    CronScheduleV1 as CronScheduleV1,
+)
+from cruxible_client.contracts.triggers import (
     TriggerV1 as TriggerV1,
 )
 from cruxible_client.contracts.triggers import (

@@ -22,6 +22,7 @@ from cruxible_client.contracts.line_dispatch import (
 )
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.windows import (
+    TIMED_BINDING_KINDS,
     CaptureEventWindowV1,
     LineTriggerBindingV1,
     TriggerEventReferenceV1,
@@ -30,9 +31,9 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.triggers import (
     AcceptedTriggerV1,
-    CadenceScheduleV1,
     CaptureLandingScheduleV1,
     WindowCloseScheduleV1,
+    schedule_is_timed,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.procedures.procedure_runs import (
@@ -206,8 +207,7 @@ def service_check_line_trigger(
                 bindings.append(
                     (trigger, trigger_binding_for(trigger, window=bound), bound.ends_at)
                 )
-            else:
-                assert isinstance(schedule, CadenceScheduleV1)
+            elif schedule_is_timed(schedule):
                 binding = trigger_binding_for(trigger)
                 _, due = _line_occurrence(
                     accepted,
@@ -247,7 +247,7 @@ def service_check_line_trigger(
                 prior=(),
                 trigger=trigger,
                 binding=binding,
-                exact_basis=eligible if binding.kind == "cadence" else None,
+                exact_basis=eligible if binding.kind in TIMED_BINDING_KINDS else None,
             )
             admission = next(
                 iter(_line_admissions(instance, accepted, occurrence_id=occurrence)), None

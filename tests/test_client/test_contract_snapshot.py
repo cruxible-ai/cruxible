@@ -117,6 +117,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "TriggerV1",
         "CadenceScheduleV1",
         "CaptureLandingScheduleV1",
+        "CronScheduleV1",
         "WindowCloseScheduleV1",
         "ClaimStatementCardV1",
         "GitWorkspaceNoteV1",

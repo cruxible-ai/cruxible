@@ -38,14 +38,14 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalV1,
     ProcedureNodeRefusalV1,
 )
-from cruxible_client.contracts.procedures.windows import FixedWindowV1
+from cruxible_client.contracts.procedures.windows import TIMED_BINDING_KINDS, FixedWindowV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.repairs import served_repair_for_refusal
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     AcceptedTriggerV1,
-    CadenceScheduleV1,
     WindowCloseScheduleV1,
+    schedule_is_timed,
 )
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -286,9 +286,9 @@ def _lapse_cadence_backlog(
     actor: GovernedActorContext,
     now: datetime,
 ) -> None:
-    """Lapse a Line's pending cadence ticks as a new arm segment opens.
+    """Lapse a Line's pending cadence and cron ticks as a new arm segment opens.
 
-    A cadence tick is not an event but "the Trigger is due", and the evaluator
+    A tick is not an event but "the Trigger is due", and the evaluator
     re-offers the first undispatched one, so a tick left pending by a restart,
     a disarm or explicit evaluation would hold every later tick of its Trigger
     back. The new segment's own ticks supersede it: it closes as `lapsed`,
@@ -303,7 +303,7 @@ def _lapse_cadence_backlog(
         (line_id, accepted.line.occurrence_epoch),
     ).fetchall():
         binding = json.loads(payload)["occurrence"].get("binding")
-        if binding is None or binding.get("kind") != "cadence":
+        if binding is None or binding.get("kind") not in TIMED_BINDING_KINDS:
             continue
         store.append(
             conn,
@@ -312,9 +312,7 @@ def _lapse_cadence_backlog(
                 line_id=line_id,
                 epoch=accepted.line.occurrence_epoch,
                 occurrence_id=occurrence_id,
-                detail=(
-                    "A cadence tick due before this arm lapsed; retry it explicitly to run it."
-                ),
+                detail=("A tick due before this arm lapsed; retry it explicitly to run it."),
                 status="lapsed",
                 refusal=None,
             ),
@@ -602,7 +600,7 @@ def _timed(trigger: AcceptedTriggerV1) -> bool:
     """Whether a Trigger fires by time (ticks, fixed windows) rather than on events."""
 
     schedule = trigger.trigger.schedule
-    return isinstance(schedule, CadenceScheduleV1) or (
+    return schedule_is_timed(schedule) or (
         isinstance(schedule, WindowCloseScheduleV1) and isinstance(schedule.window, FixedWindowV1)
     )
 
@@ -735,11 +733,11 @@ def service_match_listening_lines(
                 name = trigger.trigger.identity.qualified
                 if name in scan["done"]:
                     continue
-                # One outstanding cadence tick per Trigger per arm segment: work
+                # One outstanding tick per timed Trigger per arm segment: work
                 # explicit evaluation recorded, or an earlier segment left, never
                 # holds the arm's own ticks back.
                 if (
-                    isinstance(trigger.trigger.schedule, CadenceScheduleV1)
+                    schedule_is_timed(trigger.trigger.schedule)
                     and conn.execute(
                         "SELECT 1 FROM pending WHERE session_id=? AND trigger_id=? "
                         "AND disposition='pending' LIMIT 1",

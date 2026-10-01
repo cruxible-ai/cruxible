@@ -36,6 +36,7 @@ from cruxible_client.contracts.triggers import (
     CadenceScheduleV1,
     CaptureEventInputV1,
     CaptureLandingScheduleV1,
+    CronScheduleV1,
     InternalActionSpec,
     NoTriggerInputV1,
     TriggerFormatError,
@@ -197,6 +198,41 @@ def test_an_action_takes_any_schedule_that_supplies_its_declared_input() -> None
     assert all(
         schedule_satisfies_input(item, NoTriggerInputV1())
         for item in (ticking.schedule, CaptureLandingScheduleV1(event=SELECTOR))
+    )
+
+
+def test_the_trigger_law_refuses_a_cron_schedule_the_grammar_does_not_admit() -> None:
+    def nightly(expression: str, timezone: str = "UTC") -> TriggerV1:
+        return action_trigger(
+            "nightly",
+            action="evidence.sweep",
+            schedule=CronScheduleV1(expression=expression, timezone=timezone),
+        )
+
+    assert _law(nightly("0 2 * * *", "Europe/Amsterdam")).verdict == "accepted"
+    on_line = line_trigger(
+        "weekdays", line="triage", schedule=CronScheduleV1(expression="0 9 * * 1-5")
+    )
+    assert _law(on_line, target_line_live=True).verdict == "accepted"
+    for expression, timezone, reason in (
+        ("0 2 * *", "UTC", "five"),
+        ("0 25 * * *", "UTC", "outside 0-23"),
+        ("0 2 * * MON", "UTC", "number, range or"),
+        ("0 2 * * *", "Atlantis/Capital", "IANA timezone"),
+    ):
+        refused = _law(nightly(expression, timezone))
+        assert _code(refused) == "playbill.trigger.cron_invalid"
+        assert reason in refused.diagnostics[0].message
+    # A cron tick carries no Capture, so a Line that binds one refuses it.
+    assert (
+        _code(
+            _law(
+                on_line,
+                target_line_live=True,
+                target_line_input=CaptureEventInputV1(event=SELECTOR),
+            )
+        )
+        == "playbill.trigger.event_not_accepted"
     )
 
 

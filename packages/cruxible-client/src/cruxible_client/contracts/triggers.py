@@ -1,7 +1,7 @@
 """Governed Trigger artifact: one schedule aimed at a Line or an internal action.
 
 Every trigger has one governed home. A Trigger holds when something happens
-(a cadence, a Capture landing, an observation window closing) and what it sets
+(a cadence, a cron calendar, a Capture landing, an observation window closing) and what it sets
 off: a Line, named by identity so an ordinary Line successor never strands it,
 or one internal action from the code's action registry. Triggers are changed
 and retired through ordinary proposals; a Line no longer embeds its own.
@@ -38,6 +38,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.cron import CronExpressionError, parse_cron
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -71,6 +72,21 @@ class CadenceScheduleV1(_StrictTriggerModel):
     interval_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
 
 
+class CronScheduleV1(_StrictTriggerModel):
+    """Fire at each instant a standard five-field cron expression names.
+
+    ``minute hour day-of-month month day-of-week``, read as wall-clock time in
+    ``timezone`` (an IANA name). Like a cadence it fires once after downtime,
+    never back-filling the instants it missed, and an armed Line fires only on
+    instants from its arm forward. The Trigger law refuses an expression or
+    timezone the grammar does not admit; see ``cruxible_client.contracts.cron``.
+    """
+
+    kind: Literal["cron"] = "cron"
+    expression: str = Field(min_length=1, max_length=128, examples=["0 9 * * 1-5"])
+    timezone: str = Field(default="UTC", min_length=1, max_length=64)
+
+
 class CaptureLandingScheduleV1(_StrictTriggerModel):
     """Fire once for each retained Capture landing under one exact CaptureContract."""
 
@@ -86,9 +102,23 @@ class WindowCloseScheduleV1(_StrictTriggerModel):
 
 
 TriggerScheduleV1: TypeAlias = Annotated[
-    CadenceScheduleV1 | CaptureLandingScheduleV1 | WindowCloseScheduleV1,
+    CadenceScheduleV1 | CronScheduleV1 | CaptureLandingScheduleV1 | WindowCloseScheduleV1,
     Field(discriminator="kind"),
 ]
+
+
+def schedule_is_timed(schedule: TriggerScheduleV1) -> bool:
+    """Whether a schedule fires on time alone rather than on a Capture or window.
+
+    Every kind is named: a kind added later fails here until it is classified,
+    never falling through as one or the other.
+    """
+
+    if isinstance(schedule, CadenceScheduleV1 | CronScheduleV1):
+        return True
+    if isinstance(schedule, CaptureLandingScheduleV1 | WindowCloseScheduleV1):
+        return False
+    raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
 class NoTriggerInputV1(_StrictTriggerModel):
@@ -200,11 +230,12 @@ def schedule_capture_selector(schedule: TriggerScheduleV1) -> CaptureEventSelect
 
     if isinstance(schedule, CaptureLandingScheduleV1):
         return schedule.event
-    if isinstance(schedule, WindowCloseScheduleV1) and isinstance(
-        schedule.window, CaptureEventWindowV1
-    ):
-        return schedule.window.event
-    return None
+    if isinstance(schedule, WindowCloseScheduleV1):
+        window = schedule.window
+        return window.event if isinstance(window, CaptureEventWindowV1) else None
+    if schedule_is_timed(schedule):
+        return None
+    raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
 def schedule_satisfies_input(schedule: TriggerScheduleV1, required: TriggerInputV1) -> bool:
@@ -396,6 +427,17 @@ def evaluate_trigger_law(
                 path=path,
             )
     if trigger.lifecycle.state == "live":
+        if isinstance(trigger.schedule, CronScheduleV1):
+            try:
+                parse_cron(trigger.schedule.expression, trigger.schedule.timezone)
+            except CronExpressionError as exc:
+                return _refusal(
+                    "playbill.trigger.cron_invalid",
+                    f"Cron schedule is not valid: {exc}. Use five fields (minute hour "
+                    "day-of-month month day-of-week) of numbers, ranges, steps or lists, and "
+                    "an IANA timezone.",
+                    path=path,
+                )
         if isinstance(trigger.target, ActionTargetV1):
             spec = actions.get(trigger.target.action)
             if spec is None:
@@ -446,6 +488,7 @@ __all__ = [
     "CadenceScheduleV1",
     "CaptureEventInputV1",
     "CaptureLandingScheduleV1",
+    "CronScheduleV1",
     "InternalActionName",
     "InternalActionSpec",
     "LineTargetV1",
@@ -461,6 +504,7 @@ __all__ = [
     "parse_trigger",
     "render_trigger",
     "schedule_capture_selector",
+    "schedule_is_timed",
     "schedule_satisfies_input",
     "trigger_digest",
     "trigger_path",

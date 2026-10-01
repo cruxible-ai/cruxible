@@ -179,10 +179,10 @@ from cruxible_client.contracts.resolution_contracts import (
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.triggers import (
     AcceptedTriggerV1,
-    CadenceScheduleV1,
     CaptureLandingScheduleV1,
     TriggerV1,
     WindowCloseScheduleV1,
+    schedule_is_timed,
 )
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -298,7 +298,7 @@ from cruxible_core.storage.material_reservations import (
     ReservedCaptureStore,
     reserve_admission_material_body,
 )
-from cruxible_core.triggers.cadence import cadence_due
+from cruxible_core.triggers.cadence import timer_due
 
 PROCEDURE_RUN_STREAM_ID = "procedures"
 PROCEDURE_RUN_FENCING_TOKEN = "playbill-procedure-direct-run-v1"
@@ -1240,16 +1240,18 @@ def trigger_binding_for(
     """The semantic cause one Trigger gives an occurrence."""
 
     schedule = trigger.trigger.schedule
-    if isinstance(schedule, CadenceScheduleV1):
-        return LineTriggerBindingV1(kind="cadence", trigger=trigger.trigger.identity)
+    if schedule_is_timed(schedule):
+        return LineTriggerBindingV1(kind=schedule.kind, trigger=trigger.trigger.identity)
     if isinstance(schedule, CaptureLandingScheduleV1):
         return LineTriggerBindingV1(
             kind="capture_landing", trigger=trigger.trigger.identity, event=event
         )
-    assert window is not None
-    return LineTriggerBindingV1(
-        kind="window_close", trigger=trigger.trigger.identity, window=window, event=window.event
-    )
+    if isinstance(schedule, WindowCloseScheduleV1):
+        assert window is not None
+        return LineTriggerBindingV1(
+            kind="window_close", trigger=trigger.trigger.identity, window=window, event=window.event
+        )
+    raise PlaybillExecutionError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
 def _line_occurrence(
@@ -1265,10 +1267,11 @@ def _line_occurrence(
     """Derive one occurrence's identity and its next due instant.
 
     With no Trigger the occurrence is an explicit run at its evaluation instant.
-    A cadence occurrence is the tick after the last one its Trigger fired
-    (`prior`). `not_before` floors it for forward-only matching: an arm that
-    starts or resumes later than that tick starts ticking from its own start,
-    never catching up. `exact_basis` names a retained tick outright, for an
+    A cadence or cron occurrence is the tick after the last one its Trigger
+    fired (`prior`); a long-overdue cron tick collapses to its latest instant.
+    `not_before` floors it for forward-only matching: an arm that starts or
+    resumes later than that tick starts ticking from its own start, never
+    catching up. `exact_basis` names a retained tick outright, for an
     explicit dispatch or retry of that exact occurrence.
     """
 
@@ -1288,13 +1291,14 @@ def _line_occurrence(
             raise PlaybillExecutionError(
                 "a Trigger occurrence requires its exact tick, retained event, or window"
             )
-        if isinstance(schedule, CadenceScheduleV1):
+        if schedule_is_timed(schedule):
             next_due = (
                 exact_basis
                 if exact_basis is not None
-                else cadence_due(
-                    timedelta(seconds=schedule.interval_seconds),
+                else timer_due(
+                    schedule,
                     last=None if last is None else last.occurrence_evaluation_time,
+                    now=evaluation_time,
                     not_before=not_before,
                 )
             )
@@ -4035,7 +4039,7 @@ def _run_playbill_line(
     schedule = None if trigger is None else trigger.trigger.schedule
     trigger_binding = None
     try:
-        if trigger is not None and isinstance(schedule, CadenceScheduleV1):
+        if trigger is not None and schedule is not None and schedule_is_timed(schedule):
             trigger_binding = trigger_binding_for(trigger)
         elif trigger is not None and isinstance(schedule, CaptureLandingScheduleV1):
             if request.trigger_event is None:
@@ -4105,15 +4109,15 @@ def _run_playbill_line(
         raise PlaybillExecutionError(
             "Line and resolution contract must bind the same observation window"
         )
-    is_cadence = isinstance(schedule, CadenceScheduleV1)
+    is_timed = schedule is not None and schedule_is_timed(schedule)
     prior = (
         _trigger_admissions(instance, accepted_line, trigger.trigger.identity)
-        if trigger is not None and is_cadence
+        if trigger is not None and is_timed
         else ()
     )
     cadence_basis = (
         min(occurrence_basis_time, evaluation_time)
-        if occurrence_basis_time is not None and is_cadence
+        if occurrence_basis_time is not None and is_timed
         else None
     )
     occurrence_id, next_due = _line_occurrence(

@@ -212,10 +212,9 @@ OWNER_CODECS = (
         (
             ("target_kind", "TEXT NOT NULL CHECK(target_kind IN ('line','action'))"),
             ("target", "TEXT NOT NULL"),
-            (
-                "schedule_kind",
-                "TEXT NOT NULL CHECK(schedule_kind IN ('cadence','capture_landing','window_close'))",
-            ),
+            # Open: the Trigger artifact's own union admits the kinds; an index
+            # constraint repeating them would make every new kind a schema change.
+            ("schedule_kind", "TEXT NOT NULL"),
             ("interval_seconds", "INTEGER CHECK(interval_seconds IS NULL OR interval_seconds>0)"),
         ),
     ),

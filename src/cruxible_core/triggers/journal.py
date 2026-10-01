@@ -29,7 +29,7 @@ import threading
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,14 +42,14 @@ from cruxible_client.contracts.procedures.windows import (
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     INTERNAL_ACTIONS,
-    CadenceScheduleV1,
     CaptureLandingScheduleV1,
     TriggerScheduleV1,
     TriggerV1,
     WindowCloseScheduleV1,
     schedule_capture_selector,
+    schedule_is_timed,
 )
-from cruxible_core.triggers.cadence import cadence_due
+from cruxible_core.triggers.cadence import timer_due
 
 _SCHEMA = """
 CREATE TABLE events (
@@ -259,24 +259,6 @@ def cancel_deadline(instance: Any, name: str) -> None:
         connection.execute("DELETE FROM deadlines WHERE name=?", (name,))
 
 
-def _timed(schedule: TriggerScheduleV1) -> bool:
-    """Whether a schedule fires on time alone; every kind is named, none assumed."""
-
-    if isinstance(schedule, CadenceScheduleV1):
-        return True
-    if isinstance(schedule, CaptureLandingScheduleV1 | WindowCloseScheduleV1):
-        return False
-    raise ValueError(f"unsupported Trigger schedule kind {schedule.kind!r}")
-
-
-def _timer_due(schedule: TriggerScheduleV1, *, last: datetime | None) -> datetime | None:
-    """When a timed schedule is next due after its last fire; None when it never fired."""
-
-    if isinstance(schedule, CadenceScheduleV1):
-        return cadence_due(timedelta(seconds=schedule.interval_seconds), last=last)
-    raise ValueError(f"unsupported timed Trigger schedule kind {schedule.kind!r}")
-
-
 def _due_timers(
     connection: sqlite3.Connection | None,
     *,
@@ -292,10 +274,12 @@ def _due_timers(
         else dict(connection.execute("SELECT trigger_id,last_fired_at FROM cadences").fetchall())
     )
     for item in triggers:
-        if not _timed(item.schedule):
+        if not schedule_is_timed(item.schedule):
             continue
         previous = last.get(item.trigger)
-        due = _timer_due(item.schedule, last=None if previous is None else _instant(previous))
+        due = timer_due(
+            item.schedule, last=None if previous is None else _instant(previous), now=now
+        )
         if due is None or due <= now:
             fires.append(_Fire(item.action, item.trigger, now if due is None else due))
     if connection is not None:
@@ -328,7 +312,7 @@ def _watched_due(
 ) -> bool:
     """Whether any Capture-driven or window Trigger has something to read or fire."""
 
-    watched = [item for item in triggers if not _timed(item.schedule)]
+    watched = [item for item in triggers if not schedule_is_timed(item.schedule)]
     if not watched:
         return False
     if connection is None:
@@ -506,7 +490,7 @@ def evaluate_triggers(
         # a deadline may have been replaced since the read-only due check.
         fires = _due_timers(connection, now=now, triggers=triggers)
         for item in triggers:
-            if not _timed(item.schedule):
+            if not schedule_is_timed(item.schedule):
                 fires.extend(_watched_fires(connection, instance, now=now, item=item))
         for fire in sorted(
             fires,
