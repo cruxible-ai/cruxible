@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import weakref
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
 
@@ -62,6 +58,7 @@ from cruxible_client.contracts.write import (
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime import playbill_api
+from cruxible_core.server.admission import KeyedAdmission
 from cruxible_core.server.config import resolve_server_settings
 from cruxible_core.server.playbill_request_models import (
     PlaybillApprovalChallengeRequest,
@@ -116,22 +113,8 @@ from cruxible_core.service.procedures.procedure_runs import (
 router = APIRouter(prefix="/api/v1", tags=["playbill"])
 
 # One floor export at a time per instance, admitted on the event loop; see
-# `export_floor`. Keyed by loop because an asyncio.Lock belongs to one loop.
-_ExportLocks = dict[str, asyncio.Lock]
-_FLOOR_EXPORT_ADMISSION: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _ExportLocks] = (
-    weakref.WeakKeyDictionary()
-)
-
-
-@asynccontextmanager
-async def _floor_export_admission(instance_id: str) -> AsyncIterator[None]:
-    """Wait for this instance's previous floor export without holding a worker thread."""
-
-    loop = asyncio.get_running_loop()
-    locks = _FLOOR_EXPORT_ADMISSION.setdefault(loop, {})
-    lock = locks.setdefault(instance_id, asyncio.Lock())
-    async with lock:
-        yield
+# `export_floor`.
+_floor_export_admission = KeyedAdmission()
 
 
 def _coordinate(
@@ -1377,7 +1360,7 @@ async def export_floor(
             review_notes_oid=req.review_notes_oid,
         )
 
-    async with _floor_export_admission(resolved):
+    async with _floor_export_admission.admit(resolved):
         return await run_in_threadpool(export)
 
 
