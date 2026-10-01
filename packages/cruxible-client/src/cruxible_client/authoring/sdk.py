@@ -558,12 +558,6 @@ class NextPage:
     status: api.PlaybillNextStatus
     attestation_head_digest: str | None = None
 
-    @property
-    def hidden(self) -> int:
-        """Rows left out for this caller: none, since a row whose repair it cannot
-        run stays with ``repair_requires`` (kept for compatibility; always 0)."""
-        return self.status.hidden
-
     def __iter__(self):  # type: ignore[no-untyped-def]
         return iter(self.items)
 

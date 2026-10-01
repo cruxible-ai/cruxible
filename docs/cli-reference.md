@@ -1740,8 +1740,7 @@ profile does not advertise it; `profile: "full"` does; or `authoring` when the
 caller cannot author on the instance at all, with `authoring_refusal` carrying
 the code, detail and repair `whoami` reports). The text output prints
 `repair withheld: <tool> needs the <tier> tier`, led by the identity repair
-when authoring gates it. Nothing is left out, so
-`status.hidden` stays 0. A status facet (the compiler, floor, ledger mirror and
+when authoring gates it. Nothing is left out. A status facet (the compiler, floor, ledger mirror and
 so on) always reports its state; when its repair is one the caller cannot
 perform, the repair is dropped and the facet carries `repair_hidden: true` and
 `repair_requires` instead. Each repair's `command`

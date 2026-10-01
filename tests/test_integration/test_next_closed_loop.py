@@ -1693,7 +1693,6 @@ def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_pa
     (row,) = settle_rows(governed)
     bound = row.detail["bound_contract_id"]
     assert row.repair.command == f"cruxible playbill settle {bound}"
-    assert governed.status.hidden == 0
     assert "hidden" not in governed.status.model_dump(mode="json")
 
     read_only = service_playbill_next(instance, request=request, caller_rung=0)
@@ -1701,7 +1700,6 @@ def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_pa
     assert withheld.repair is None
     assert withheld.repair_requires.tool == "cruxible_playbill_settle"
     assert withheld.repair_requires.because == ("tier",)
-    assert read_only.status.hidden == 0
 
     mcp = request.model_copy(
         update={
@@ -1716,4 +1714,5 @@ def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_pa
     profiled = service_playbill_next(instance, request=default_profile, caller_rung=1)
     (kept,) = settle_rows(profiled)
     assert kept.repair is None and kept.repair_requires.because == ("profile",)
-    assert kept.repair_requires.profile == "full" and profiled.status.hidden == 0
+    assert kept.repair_requires.profile == "full"
+    assert profiled.total_items == governed.total_items

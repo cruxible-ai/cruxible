@@ -1732,10 +1732,9 @@ class PlaybillNextStatus(BaseModel):
     compiler: PlaybillNextHealth
     line_dispatch: PlaybillNextHealth
     consumers: PlaybillNextHealth
+    #: Rows parked by a current ``unsure`` attestation. No row is left out for
+    #: the caller: one whose repair it cannot run keeps `repair_requires`.
     held: int = Field(default=0, ge=0)
-    #: Rows left out for this caller. None are: a row whose repair this caller
-    #: cannot run keeps its place with `repair_requires`, so this stays 0.
-    hidden: int = Field(default=0, ge=0)
 
 
 class PlaybillNextResult(BaseModel):

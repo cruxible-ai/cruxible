@@ -27486,12 +27486,6 @@
                 "title": "Held",
                 "type": "integer"
               },
-              "hidden": {
-                "default": 0,
-                "minimum": 0,
-                "title": "Hidden",
-                "type": "integer"
-              },
               "instance": {
                 "$ref": "#/$defs/PlaybillNextHealth"
               },
@@ -27730,20 +27724,6 @@
             "default": 0,
             "minimum": 0,
             "title": "Held",
-            "type": "integer"
-          }
-        },
-        "hidden": {
-          "default": 0,
-          "default_json_serializable": true,
-          "has_default": true,
-          "has_default_factory": false,
-          "json_name": "hidden",
-          "required": false,
-          "schema": {
-            "default": 0,
-            "minimum": 0,
-            "title": "Hidden",
             "type": "integer"
           }
         },
@@ -28126,12 +28106,6 @@
             "default": 0,
             "minimum": 0,
             "title": "Held",
-            "type": "integer"
-          },
-          "hidden": {
-            "default": 0,
-            "minimum": 0,
-            "title": "Hidden",
             "type": "integer"
           },
           "instance": {

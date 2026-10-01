@@ -313,8 +313,8 @@ def test_a_status_repair_the_caller_cannot_perform_keeps_the_facet_but_not_the_r
         assert lower.compiler.repair_requires is not None
         assert lower.compiler.repair_requires.tier == "admin"
         assert lower.compiler.repair_requires.because == ("tier",)
-        # Facets are not rows: the row count stays about rows.
-        assert lower.hidden == 0
+        # Facets are not rows: the status counts no left-out rows.
+        assert "hidden" not in lower.model_dump(mode="json")
 
     mcp = request.model_copy(
         update={"caller_surface": "mcp", "caller_tools": ("cruxible_playbill_next",)}

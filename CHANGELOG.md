@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`next` no longer reports `status.hidden`.** The count was always 0: since
+  operational reads, a row whose repair the caller cannot run stays in the
+  queue with `repair_requires`. The field leaves `PlaybillNextStatus`, and the
+  SDK's `NextPage.hidden` property goes with it.
+
 - **The floor is the grep-first front door to accepted state.** `playbill floor
   export` now leads with `current/<kind>/<id>.yaml`: a one-line header (ref,
   kind, `at <git_oid> gen <n>`), then each field's current value under its short

@@ -704,7 +704,7 @@ class PlaybillNextHealthV1(_StrictNextModel):
     repair: PlaybillNextRepairV1 | None = None
     #: The facet needs a repair this caller's surface, tool profile or
     #: permission tier cannot perform, so its repair was dropped. The facet
-    #: itself is not left out, so it is not counted in ``status.hidden``.
+    #: itself is kept.
     repair_hidden: bool = Field(default=False, exclude_if=lambda value: not value)
     #: What running the withheld repair needs; set exactly when ``repair_hidden``.
     repair_requires: PlaybillNextRepairRequirementV1 | None = Field(
@@ -747,14 +747,10 @@ class PlaybillNextStatusV1(_StrictNextModel):
     line_dispatch: PlaybillNextHealthV1
     consumers: PlaybillNextHealthV1
     #: Rows parked by a current ``unsure`` attestation whose basis is unchanged.
+    #: No row is left out for the caller: one whose repair this caller's
+    #: surface, tool profile or permission tier cannot run is kept with its
+    #: repair withheld and ``repair_requires`` set.
     held: int = Field(default=0, ge=0)
-    #: Rows left out of ``items`` for this caller. The caller view leaves no
-    #: row out: a row or nested finding whose repair this caller's surface,
-    #: tool profile or permission tier cannot run is kept with its repair
-    #: withheld and ``repair_requires`` set, and a status facet says so itself
-    #: (``repair_hidden``). Rows an access profile does not permit are never
-    #: derived, so they are not counted either; this stays 0.
-    hidden: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
 
     @model_validator(mode="after")
     def _states(self) -> "PlaybillNextStatusV1":

@@ -356,7 +356,7 @@ A row or nested finding whose repair the session cannot perform -- its profile
 does not advertise the tool that performs it, or its tier is too low -- stays in
 the queue with `repair: null` and `repair_requires: {tool, tier, because,
 profile?}` naming what running it needs, so `orient` attention and the queue
-count it for every caller and `status.hidden` stays 0. A status facet keeps its
+count it for every caller. A status facet keeps its
 state either way, but drops a repair the session cannot perform and says
 `repair_hidden: true` with the same `repair_requires`. The `default` profile
 advertises neither `cruxible_playbill_settle` nor the Line tools, for example:
