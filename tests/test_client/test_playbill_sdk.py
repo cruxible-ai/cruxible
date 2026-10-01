@@ -592,6 +592,85 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
     assert client.line_request["trigger_event"] == event
 
 
+def test_procedure_run_track_record_reads_the_procedure_card_from_get(tmp_path: Path) -> None:
+    """The track record comes from `get` on the run's Procedure, not a search row.
+
+    Search rows never carried ``track_record``, so the old read always answered
+    None. The Procedure card does, one entry per accepted promotion.
+    """
+
+    _workspace(tmp_path)
+    from cruxible_client.contracts.get_reads import (
+        PlaybillGetCoordinateV1,
+        PlaybillGetProcedureCardV1,
+        PlaybillGetProcedureTrackRecordV1,
+        PlaybillGetResultV1,
+    )
+
+    entry = PlaybillGetProcedureTrackRecordV1(
+        promotion="daily-summary-runs",
+        first_sequence=1,
+        last_sequence=4,
+        output={"succeeded": 3, "halted": 1},
+        output_digest="sha256:" + "6" * 64,
+        promotion_digest="sha256:" + "7" * 64,
+    )
+
+    class TrackRecordClient(_Client):
+        def __init__(self) -> None:
+            super().__init__()
+            self.gets: list[Any] = []
+
+        def playbill_get(self, _instance_id: str, *, request: Any) -> PlaybillGetResultV1:
+            self.gets.append(request)
+            return PlaybillGetResultV1(
+                ref=request.ref,
+                kind="procedure",
+                detail=request.detail,
+                card=PlaybillGetProcedureCardV1(
+                    procedure="daily-summary",
+                    inputs={"input": "daily-summary-input"},
+                    readiness="ready",
+                    track_record=(entry,),
+                ),
+                coordinate=PlaybillGetCoordinateV1(git_oid="a" * 12, generation=3),
+                accepted_coordinate=_COORDINATE,
+                evaluation_time=datetime(2026, 8, 24, 12, tzinfo=UTC),
+            )
+
+    client = TrackRecordClient()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    )
+    from cruxible_client.authoring.sdk import ProcedureRun
+
+    run = ProcedureRun(
+        pb,
+        api.PlaybillProcedureRunState(
+            run_id="RUN-" + "a" * 64,
+            procedure_identity={"kind": "Procedure", "name": "daily-summary"},
+            procedure_artifact_digest=_DIGEST,
+            bound_coordinate=_COORDINATE,
+            head_at_admission=_COORDINATE,
+            lane="current",
+            evaluation_time="2026-08-24T12:00:00+00:00",
+            status="succeeded",
+            pending_inputs=[],
+            outcomes=[],
+            next_operation={"kind": "done"},
+            result={"ok": True},
+        ),
+    )
+
+    assert run.track_record == (entry,)
+    (request,) = client.gets
+    assert request.ref == "Procedure:daily-summary"
+    assert request.detail == "summary"
+
+
 def test_subject_draft_prepares_through_the_authoring_coordinator(tmp_path: Path) -> None:
     _workspace(tmp_path)
     client = _Client()

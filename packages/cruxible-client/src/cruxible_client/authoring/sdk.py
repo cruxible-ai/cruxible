@@ -191,6 +191,8 @@ from cruxible_client.contracts.get_reads import (
     PlaybillByteRangeV1,
     PlaybillExactContentRefV1,
     PlaybillGetDetail,
+    PlaybillGetProcedureCardV1,
+    PlaybillGetProcedureTrackRecordV1,
     PlaybillGetRequestV1,
     PlaybillGetResultV1,
 )
@@ -4431,23 +4433,21 @@ class ProcedureRun:
         )
 
     @property
-    def track_record(self) -> object:
-        result = self._playbill._client.search_playbill(
-            self._playbill._instance_id,
-            mode="search",
-            query=str(self._raw.procedure_identity.get("name", "")),
-            kinds=("procedure",),
-            statuses=(),
-            at=self._raw.coordinate,
-            evaluation_time=self._raw.evaluation_time,
-        )
-        matches = [
-            row
-            for row in result.rows
-            if row.get("identity") == self._raw.procedure_identity.get("qualified")
-            or row.get("name") == self._raw.procedure_identity.get("name")
-        ]
-        return matches[0].get("track_record") if len(matches) == 1 else None
+    def track_record(self) -> tuple[PlaybillGetProcedureTrackRecordV1, ...]:
+        """This run's Procedure's accepted track record: one entry per promotion.
+
+        Read from ``pb.get("Procedure:<name>")`` in this connection's context
+        (its live head, or the coordinate it is pinned to), so promotions
+        accepted after this run count too. Empty until a promotion of the
+        Procedure's run exhaust is accepted. Next: ``pb.get(...)`` with
+        ``detail="proof"`` for the Procedure's full accepted definition.
+        """
+
+        name = str(self._raw.procedure_identity["name"])
+        card = self._playbill._get(f"Procedure:{name}", "summary", None, None).card
+        if not isinstance(card, PlaybillGetProcedureCardV1):
+            raise ValueError(f"get did not answer Procedure:{name} with a Procedure card")
+        return card.track_record
 
     def refresh(self) -> ProcedureRun:
         if self.run_id is None:

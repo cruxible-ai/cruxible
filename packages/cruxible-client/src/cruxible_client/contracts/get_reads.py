@@ -303,6 +303,22 @@ class PlaybillGetDocumentCardV1(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class PlaybillGetProcedureTrackRecordV1(_StrictGetModel):
+    """One accepted promotion of a Procedure's run exhaust, and what it computed.
+
+    A promotion pins a contiguous range of run records and a reducer; its
+    acceptance makes the reducer's output over exactly those records part of
+    accepted state. Records nobody promoted are never counted here.
+    """
+
+    promotion: str = Field(description="The ExhaustPromotion's name.")
+    first_sequence: int = Field(description="The first run record the promotion covers.")
+    last_sequence: int = Field(description="The last run record the promotion covers.")
+    output: Any = Field(description="The reducer's output over those records, as accepted.")
+    output_digest: str
+    promotion_digest: str
+
+
 class PlaybillGetProcedureCardV1(_StrictGetModel):
     procedure: str
     description: str | None = Field(default=None, exclude_if=_omit_none)
@@ -310,6 +326,8 @@ class PlaybillGetProcedureCardV1(_StrictGetModel):
     readiness: str
     required_slots: tuple[str, ...] = ()
     unsupported_nodes: int = 0
+    #: Accepted promotions of this Procedure's runs, by promotion name.
+    track_record: tuple[PlaybillGetProcedureTrackRecordV1, ...] = ()
     next: tuple[str, ...] = ()
 
 
@@ -488,6 +506,7 @@ __all__ = [
     "PlaybillGetEvidenceV1",
     "PlaybillGetHistoryV1",
     "PlaybillGetProcedureCardV1",
+    "PlaybillGetProcedureTrackRecordV1",
     "PlaybillGetProposalCardV1",
     "PlaybillGetProposalChangeV1",
     "PlaybillGetQueryCardV1",

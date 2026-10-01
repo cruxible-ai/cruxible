@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **`get` on a Procedure shows its track record, and the SDK reads it.** The
+  Procedure card carries `track_record`: one entry per accepted promotion of
+  the Procedure's run exhaust (promotion name, record range, reducer output
+  and digests). `ProcedureRun.track_record` now reads it through `get` and
+  returns those entries; it used to look for a key search rows never carried,
+  so it always answered `None`.
+
 - **`next` no longer reports `status.hidden`.** The count was always 0: since
   operational reads, a row whose repair the caller cannot run stays in the
   queue with `repair_requires`. The field leaves `PlaybillNextStatus`, and the

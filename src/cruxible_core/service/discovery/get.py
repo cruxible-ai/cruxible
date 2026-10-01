@@ -67,6 +67,7 @@ from cruxible_client.contracts.get_reads import (
     PlaybillGetEvidenceV1,
     PlaybillGetHistoryV1,
     PlaybillGetProcedureCardV1,
+    PlaybillGetProcedureTrackRecordV1,
     PlaybillGetProposalCardV1,
     PlaybillGetProposalChangeV1,
     PlaybillGetQueryCardV1,
@@ -84,6 +85,7 @@ from cruxible_client.contracts.get_reads import (
 )
 from cruxible_client.contracts.operational_reads import capture_handle
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRuleV3
+from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -1098,6 +1100,10 @@ def _procedure_card(
         inputs["parameters"] = _pin_name(definition.parameter_contract)
     if definition.pin_slots:
         inputs["slots"] = [slot.slot_name for slot in definition.pin_slots]
+    with instance.bind_accepted_projection(coordinate) as projection:
+        promoted = projection.typed.facts(
+            "playbill.procedure.track_record", identity=resolved.identity
+        )
     return PlaybillGetProcedureCardV1(
         procedure=_name(resolved.identity),
         description=definition.description,
@@ -1105,7 +1111,30 @@ def _procedure_card(
         readiness=readiness.state,
         required_slots=readiness.required_slots,
         unsupported_nodes=len(readiness.unsupported_nodes),
+        track_record=tuple(
+            _track_record_entry(fact)
+            for fact in sorted(promoted, key=lambda item: item.fact_key.encode("utf-8"))
+        ),
         next=(_render_get(surface, resolved.display, "proof"),),
+    )
+
+
+def _track_record_entry(fact: ProjectionFact) -> PlaybillGetProcedureTrackRecordV1:
+    """One ``playbill.procedure.track_record`` fact, as the Procedure card shows it."""
+
+    value = cast(Mapping[str, Any], fact.value)
+
+    def digest(name: str) -> str:
+        tagged = value[name]
+        return str(tagged["$digest"] if isinstance(tagged, Mapping) else tagged)
+
+    return PlaybillGetProcedureTrackRecordV1(
+        promotion=fact.fact_key,
+        first_sequence=value["first_sequence"],
+        last_sequence=value["last_sequence"],
+        output=value["output"],
+        output_digest=digest("output_digest"),
+        promotion_digest=digest("promotion_digest"),
     )
 
 
