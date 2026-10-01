@@ -36,6 +36,7 @@ from cruxible_client.authoring.workspace import (
     observe_playbill_next_workspace_with_coverage,
     workspace_floor_freshness,
     write_workspace_floor,
+    write_workspace_floor_delta,
 )
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
@@ -54,6 +55,7 @@ from cruxible_client.contracts.claim_type_upgrade import (
 from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
+from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
 from cruxible_client.contracts.get_reads import (
     PlaybillByteRangeV1,
     PlaybillGetRequestV1,
@@ -172,6 +174,25 @@ class _LocalFloorClient:
         if at is not None:  # pragma: no cover - shared refresh always asks for current
             raise DataValidationError("local floor adapter accepts only the current coordinate")
         return playbill_api.playbill_export_floor(instance_id, include=tuple(include))
+
+    def playbill_floor_delta(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        base_generation: int | None = None,
+        base_renderer: str | None = None,
+    ) -> PlaybillFloorDeltaV1:
+        return playbill_api.playbill_floor_delta(
+            instance_id,
+            at=None
+            if at is None
+            else AcceptedCoordinate.model_validate(
+                at if isinstance(at, Mapping) else at.model_dump(mode="json")
+            ),
+            base_generation=base_generation,
+            base_renderer=base_renderer,
+        )
 
     def check_playbill_projection_blocks(
         self, instance_id: str, *, request: contracts.PlaybillProjectionCheckRequestV1
@@ -2330,6 +2351,25 @@ def handle_playbill_floor_export(
             **transport,
         )[1]
 
+    def write_delta(client: Any) -> contracts.PlaybillWorkspaceFloorWriteResult:
+        # The default floor goes through the one shared apply, as a delta from
+        # the floor already there.
+        return write_workspace_floor_delta(
+            lambda generation, renderer: client.playbill_floor_delta(
+                instance_id, base_generation=generation, base_renderer=renderer
+            ),
+            instance_id=instance_id,
+            workspace=workspace,
+            force=force,
+            **transport,
+        )[1]
+
+    if not include:
+        return _dispatch_remote_or_local(
+            write_delta,
+            lambda: write_delta(_LocalFloorClient()),
+            operation_name="cruxible_playbill_floor_export",
+        )
     return _dispatch_remote_or_local(
         lambda client: write(lambda: client.export_playbill_floor(instance_id, **parts)),
         lambda: write(lambda: playbill_api.playbill_export_floor(instance_id, **parts)),

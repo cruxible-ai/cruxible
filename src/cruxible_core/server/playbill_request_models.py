@@ -348,9 +348,21 @@ class PlaybillResolveCoverageRequest(_StrictPlaybillRequest):
     scan_budget: CoverageScanBudgetV1 | None = None
 
 
+class PlaybillFloorDeltaRequest(_StrictPlaybillRequest):
+    """Ask for what brings a floor at ``base_generation`` to ``at`` (default: head).
+
+    ``base_generation`` and ``base_renderer`` come from the client's own floor
+    manifest; with either absent the answer is the whole floor.
+    """
+
+    at: AcceptedCoordinate | None = None
+    base_generation: int | None = Field(default=None, ge=0)
+    base_renderer: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+
+
 class PlaybillFloorExportRequest(_StrictPlaybillRequest):
     at: AcceptedCoordinate | None = None
-    format_version: Literal[2, 4] = 4
-    # Opt-in parts of a v4 floor; "discovery" adds the discovery cards.
+    format_version: Literal[2, 5] = 5
+    # Opt-in parts of a v5 floor; "discovery" adds the discovery cards.
     include: tuple[PlaybillFloorExportPart, ...] = ()
     review_notes_oid: str | None = None

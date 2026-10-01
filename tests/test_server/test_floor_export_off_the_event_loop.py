@@ -103,7 +103,7 @@ def test_a_slow_floor_export_does_not_block_a_concurrent_cheap_request(
             compiler_digest=_DIGEST,
         )
         return contracts.PlaybillFloorExport(
-            tag="playbill-floor-export-v4", coordinate=coordinate, manifest={}, files=[]
+            tag="playbill-floor-export-v5", coordinate=coordinate, manifest={}, files=[]
         )
 
     monkeypatch.setattr(playbill_routes, "resolve_server_instance_id", lambda value: value)
@@ -189,7 +189,7 @@ def test_queued_exports_hold_no_worker_thread_while_they_wait(
             if instance_id == "inst_b":
                 other_instance_entered.set()
             return contracts.PlaybillFloorExport(
-                tag="playbill-floor-export-v4",
+                tag="playbill-floor-export-v5",
                 coordinate=contracts.PlaybillAcceptedCoordinate(
                     git_oid="0" * 40,
                     semantic_root=_DIGEST,

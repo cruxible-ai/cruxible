@@ -166,6 +166,8 @@ EXPECTED_OPERATIONS = {
     "claim_new_evidence_supporting": "playbill.authoring.create",
     "claim_new_evidence_unreviewed": "playbill.authoring.create",
     "document_modified": "playbill.document.propose",
+    # Restoring a bound file, or fixing its catalog locator, is a workspace edit.
+    "workspace_binding_missing": "hand_edit",
     "unregistered_projection_block": "playbill.block.repin",
     "proposal_stale": "playbill.proposal.readmit",
     "proposal_awaiting_approval": "playbill.proposal.approve",
@@ -1219,6 +1221,50 @@ def _claim_attestation_door(
     )
 
 
+def _workspace_binding_missing(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from cruxible_client.authoring.workspace import observe_playbill_next_workspace
+
+    (root / "instance").mkdir()
+    instance, _owner = initialize_local(root / "instance")
+    workspace = root / "workspace"
+    (workspace / ".playbill").mkdir(parents=True)
+    (workspace / ".playbill/sources.yaml").write_text(
+        "tag: playbill-source-catalog-v1\n"
+        "catalog_kind: portable\n"
+        "entries:\n"
+        "  - name: program-cards\n"
+        "    locator: docs/program/cards.md\n"
+        "    document_id: program-cards\n"
+        "    document_kind: program_page\n"
+        "    title: Cards\n"
+        "    media_type: text/markdown\n"
+        "    governance_scope: [dev]\n",
+        encoding="utf-8",
+    )
+
+    def observed() -> PlaybillNextWorkspaceObservationV1:
+        # What the client observes of its catalog's bindings; the per-source
+        # scans are the coverage enrichment's, and not this row's concern.
+        return PlaybillNextWorkspaceObservationV1.model_validate(
+            {
+                "source_observations": [],
+                "missing_bindings": observe_playbill_next_workspace(workspace).get(
+                    "missing_bindings", []
+                ),
+            }
+        )
+
+    row = _row(instance, "workspace_binding_missing", _request(instance, workspace=observed()))
+    assert row.subject_identity == "program-cards"
+    assert row.repair.operation == EXPECTED_OPERATIONS["workspace_binding_missing"]
+    assert row.repair.target == "docs/program/cards.md"
+
+    # The repair: restore the bound file.
+    (workspace / "docs/program").mkdir(parents=True)
+    (workspace / "docs/program/cards.md").write_text("# Cards\n", encoding="utf-8")
+    _assert_gone(instance, "workspace_binding_missing", _request(instance, workspace=observed()))
+
+
 def _unregistered_projection_block(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The borrowed body runs outside its module's autouse fixture, and its
     # legacy publication road registers on accepted intents, which only a
@@ -1644,6 +1690,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
         reason="claim_new_evidence_unreviewed",
     ),
     ("document_modified", None): _document_modified,
+    ("workspace_binding_missing", None): _workspace_binding_missing,
     ("unregistered_projection_block", None): _unregistered_projection_block,
     ("proposal_stale", None): _proposal_stale,
     ("proposal_awaiting_approval", None): _proposal_awaiting_approval,

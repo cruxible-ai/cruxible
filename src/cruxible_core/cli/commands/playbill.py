@@ -66,6 +66,7 @@ from cruxible_client.authoring.workspace import (
     workspace_floor_freshness,
     write_playbill_workspace_config,
     write_workspace_floor,
+    write_workspace_floor_delta,
 )
 from cruxible_client.authoring.world_stub import render_world_stub_for
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
@@ -5883,20 +5884,41 @@ def export_floor(
     if workspace_root is None:
         raise click.UsageError("playbill floor export must run inside one Git worktree")
     transport = _workspace_config_transport()
-    result, written = _server_call(
-        lambda client, instance_id: write_workspace_floor(
-            lambda: client.export_playbill_floor(instance_id, **floor_export_parts(include)),
-            instance_id=instance_id,
-            workspace=workspace_root,
-            include=include,
-            force=force,
-            **transport,
-        ),
-        command_name="playbill floor export",
-    )
+    if include:
+        # The discovery cards are a full export's; they never travel in a delta.
+        result, written = _server_call(
+            lambda client, instance_id: write_workspace_floor(
+                lambda: client.export_playbill_floor(instance_id, **floor_export_parts(include)),
+                instance_id=instance_id,
+                workspace=workspace_root,
+                include=include,
+                force=force,
+                **transport,
+            ),
+            command_name="playbill floor export",
+        )
+        manifest: dict[str, Any] = dict(result.manifest)
+        touched = len(result.files)
+    else:
+        # The default floor goes through the one shared apply: the daemon is
+        # sent this floor's own generation and answers with only what changed.
+        delta, written = _server_call(
+            lambda client, instance_id: write_workspace_floor_delta(
+                lambda generation, renderer: client.playbill_floor_delta(
+                    instance_id, base_generation=generation, base_renderer=renderer
+                ),
+                instance_id=instance_id,
+                workspace=workspace_root,
+                force=force,
+                **transport,
+            ),
+            command_name="playbill floor export",
+        )
+        manifest = json.loads(Path(written.destination, "manifest.json").read_text("utf-8"))
+        touched = len(delta.files) + len(delta.tombstones)
     written = _with_git_workspace_note(written)
     if output_json:
-        payload = dict(result.manifest)
+        payload = manifest
         if written.git_workspace_note is not None:
             payload["git_workspace_note"] = written.git_workspace_note.model_dump(mode="json")
         _emit_json(payload)
@@ -5904,9 +5926,9 @@ def export_floor(
     if written.status == "unchanged":
         click.echo(f"Floor already current at {written.destination}; nothing written")
     else:
-        click.echo(f"Wrote {len(result.files)} floor file(s) to {written.destination}")
-    click.echo(f"Floor digest: {result.manifest['floor_digest']}")
-    click.echo(f"Coordinate: {result.coordinate.git_oid}")
+        click.echo(f"Wrote {touched} floor file(s) to {written.destination}")
+    click.echo(f"Floor digest: {manifest['floor_digest']}")
+    click.echo(f"Coordinate: {written.coordinate.git_oid}")
 
 
 @playbill_group.group("coverage")

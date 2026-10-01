@@ -110,6 +110,8 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "claim_new_evidence_supporting",
         "claim_new_evidence_unreviewed",
         "document_modified",
+        # A catalog entry binding a workspace file that does not exist.
+        "workspace_binding_missing",
         "unregistered_projection_block",
         "proposal_stale",
         # An open candidate the calling principal could approve.

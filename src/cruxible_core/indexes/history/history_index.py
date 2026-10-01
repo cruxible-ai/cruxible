@@ -21,7 +21,7 @@ import tempfile
 import threading
 import weakref
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -349,6 +349,88 @@ class HistoryReader:
                 "SELECT DISTINCT member_path FROM accepted_member_locations "
                 "WHERE sequence>? AND sequence<=?",
                 (sequence, self.sequence),
+            )
+        )
+
+    def latest_sequences(
+        self, paths: Iterable[str] | None = None, *, at_most: int | None = None
+    ) -> dict[str, int]:
+        """The latest accepted sequence that touched each path, in bulk.
+
+        ``paths=None`` answers for every path history ever touched. ``at_most``
+        cuts history earlier than this reader's own cutoff. A path never touched
+        by then is absent.
+        """
+
+        cutoff = self.sequence if at_most is None else min(at_most, self.sequence)
+        if paths is None:
+            return {
+                str(path): int(sequence)
+                for path, sequence in self._connection.execute(
+                    "SELECT member_path, MAX(sequence) FROM accepted_member_locations "
+                    "WHERE sequence<=? GROUP BY member_path",
+                    (cutoff,),
+                )
+            }
+        wanted = tuple(dict.fromkeys(paths))
+        found: dict[str, int] = {}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            for path, sequence in self._connection.execute(
+                "SELECT member_path, MAX(sequence) FROM accepted_member_locations "
+                "WHERE sequence<=? AND member_path IN ("
+                + ",".join("?" for _ in chunk)
+                + ") GROUP BY member_path",
+                (cutoff, *chunk),
+            ):
+                found[str(path)] = int(sequence)
+        return found
+
+    def member_sequences(self, paths: Iterable[str]) -> dict[str, tuple[int, ...]]:
+        """Every distinct sequence that touched each path, ascending, to this cutoff."""
+
+        wanted = tuple(dict.fromkeys(paths))
+        found: dict[str, list[int]] = {path: [] for path in wanted}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            for path, sequence in self._connection.execute(
+                "SELECT DISTINCT member_path, sequence FROM accepted_member_locations "
+                "WHERE sequence<=? AND member_path IN ("
+                + ",".join("?" for _ in chunk)
+                + ") ORDER BY member_path, sequence",
+                (self.sequence, *chunk),
+            ):
+                found[str(path)].append(int(sequence))
+        return {path: tuple(values) for path, values in found.items()}
+
+    def member_paths_by_sequence(self, sequences: Iterable[int]) -> dict[int, tuple[str, ...]]:
+        """The member paths each of ``sequences`` touched, in member order."""
+
+        wanted = tuple(sorted(set(sequences)))
+        found: dict[int, list[str]] = {sequence: [] for sequence in wanted}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            for sequence, path in self._connection.execute(
+                "SELECT sequence, member_path FROM accepted_member_locations WHERE sequence<=? "
+                "AND sequence IN ("
+                + ",".join("?" for _ in chunk)
+                + ") ORDER BY sequence, member_ordinal",
+                (self.sequence, *chunk),
+            ):
+                found[int(sequence)].append(str(path))
+        return {sequence: tuple(paths) for sequence, paths in found.items()}
+
+    def member_paths_between(self, low: int, high: int) -> frozenset[str]:
+        """Every member path the change records in ``(low, high]`` touched."""
+
+        if not 0 <= low <= high <= self.sequence:
+            raise PlaybillFormatError("generation is outside requested accepted history")
+        return frozenset(
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT DISTINCT member_path FROM accepted_member_locations "
+                "WHERE sequence>? AND sequence<=?",
+                (low, high),
             )
         )
 

@@ -202,10 +202,19 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ExternalSourceReadRequestV1", "observed_at"): "EVALUATION INSTANT",
     ("FloorGenerationPairV1", "current_generation"): "SETTLEMENT ORDER",
     ("FloorGenerationPairV1", "floor_generation"): "SETTLEMENT ORDER",
-    ("FloorStamp", "generation"): "SETTLEMENT ORDER",
-    # The floor's verdict flags are evaluated at the coordinate's acceptance instant.
-    ("FloorStamp", "accepted_at"): "EVALUATION INSTANT",
-    ("_CurrentState", "sequence"): "SETTLEMENT ORDER",
+    # The floor carries no verdicts and no instants: a file's changed_at is the
+    # accepted generation that last touched one of its inputs.
+    ("PlaybillFloorEntryV5", "changed_at"): "SETTLEMENT ORDER",
+    ("PlaybillFloorManifestV5", "generation"): "SETTLEMENT ORDER",
+    ("PlaybillFloorHeadV1", "generation"): "SETTLEMENT ORDER",
+    ("PlaybillFloorDeltaFileV1", "changed_at"): "SETTLEMENT ORDER",
+    ("PlaybillFloorDeltaV1", "base_generation"): "SETTLEMENT ORDER",
+    ("PlaybillFloorApplyResultV1", "generation"): "SETTLEMENT ORDER",
+    ("FloorManifestFileV1", "changed_at"): "SETTLEMENT ORDER",
+    ("FloorFreshnessManifestV2", "generation"): "SETTLEMENT ORDER",
+    ("FloorInputs", "generation"): "SETTLEMENT ORDER",
+    ("_SubjectRender", "changed_at"): "SETTLEMENT ORDER",
+    ("_SubjectRender", "own_changed_at"): "SETTLEMENT ORDER",
     ("GovernedActorContext", "timestamp"): "ASSERTION TIME",
     ("InputAcquisitionRuleV1", "max_age"): "VALIDITY WINDOW",
     ("InsertionExpectationV2", "expires_at"): "VALIDITY WINDOW",

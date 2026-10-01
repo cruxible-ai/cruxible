@@ -413,6 +413,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "predict_playbill",
         "settle_playbill_prediction",
         "export_playbill_floor",
+        "playbill_floor_delta",
         "resolve_playbill_coverage",
         "read_playbill_block_sync_backing",
         "check_playbill_projection_blocks",

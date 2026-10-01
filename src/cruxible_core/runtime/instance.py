@@ -1612,11 +1612,14 @@ class PlaybillInstance:
         return self._ledger.read_proposal_note(kind, oid)
 
     def read_proposal_notes(
-        self, pairs: Sequence[tuple[str, str]]
+        self, pairs: Sequence[tuple[str, str]], *, notes_commit: str | None = None
     ) -> dict[tuple[str, str], bytes | None]:
-        """Read several projected proposal notes in one fresh ledger read."""
+        """Read several projected proposal notes in one fresh ledger read.
 
-        return self._ledger.read_proposal_notes(pairs)
+        ``notes_commit`` pins one immutable notes commit instead of the moving ref.
+        """
+
+        return self._ledger.read_proposal_notes(pairs, notes_commit=notes_commit)
 
     def review_operational_store(self) -> ReviewOperationalStore:
         """Return the local append-only review observation store.

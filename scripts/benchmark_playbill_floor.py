@@ -25,7 +25,7 @@ def main() -> None:
     parser.add_argument("--copied-instance", required=True, type=Path)
     parser.add_argument("--trust-root", required=True, type=Path)
     parser.add_argument("--workspace", required=True, type=Path)
-    parser.add_argument("--format-version", type=int, choices=(2, 4), default=4)
+    parser.add_argument("--format-version", type=int, choices=(2, 5), default=5)
     parser.add_argument("--with-discovery", action="store_true")
     args = parser.parse_args()
     start = time.perf_counter()
