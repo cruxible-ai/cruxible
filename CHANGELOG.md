@@ -48,13 +48,18 @@
   `providers` (`[{provider, implementation_digest}]`) and
   `operation_contract`. `get` gains `Principal:<id>`, `ApprovalPolicy:instance`
   and `ProviderInterface:<name>` references, Documents take `detail="why"`, and
-  body answers carry `body_digest`. `query` gains `status` (opt-in
-  `overturned`, `refused`, `retired` beside the default `live`), `claims=True`
+  body answers carry `body_digest`. A compact `query` lists a kind's live
+  Subjects. `query` gains `status` (opt-in `overturned`, `refused`, `retired`
+  beside the default `live`; `retired` also lists retired Subjects, each row
+  then stating `lifecycle`), `claims=True`
   (each cell's Claims as `rows[].claims[column]` with claim, value, verdict,
   status, role and qualifier), an `uncovered` flag, `budgets` for a named
-  query up to its maximum, and `receipt="full"`, which adds
+  query up to its maximum, named-query `params` that may bind an optional
+  parameter to `null`, and `receipt="full"`, which runs the definition's
+  declared budgets (never the compact page's server ceiling) and adds
   `receipt.replay` (`definition_path`, the `ClaimQueryResultV1` result and the
-  `QueryExecutionReceiptV1` execution receipt). In the SDK,
+  `QueryExecutionReceiptV1` execution receipt). Every query records the Claims
+  its page served as `playbill.claim.get` consumption. In the SDK,
   `Playbill.refresh()` returns `PlaybillHeadV1` (`instance`, `coordinate`,
   `generation`) from the new `CruxibleClient.playbill_head` (`GET
   /{id}/playbill/head`); `Playbill.run_query()` still returns
