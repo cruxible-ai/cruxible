@@ -540,14 +540,30 @@ def test_a_cursor_pins_an_evaluation_time_before_1970(instance: Any) -> None:
     assert second.receipt.evaluation_time == before_epoch
 
 
-def test_an_instant_before_year_one_refuses_typed(instance: Any) -> None:
+@pytest.mark.parametrize(
+    "outside",
+    [
+        # Year one local time, an hour before year one in UTC.
+        datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=1))),
+        # The last local microsecond of 9999, an hour past it in UTC: a cursor
+        # minted for it could not be continued.
+        datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=timezone(timedelta(hours=-1))),
+    ],
+)
+def test_an_instant_outside_the_utc_range_refuses_typed(instance: Any, outside: datetime) -> None:
     with pytest.raises(ReadRefusalError) as refused:
-        _query(
-            instance,
-            kind=SUBJECT_KIND,
-            evaluation_time=datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=1))),
-        )
+        _query(instance, kind=SUBJECT_KIND, limit=1, evaluation_time=outside)
     assert refused.value.error_code == "playbill.query.evaluation_time_invalid"
+
+
+def test_a_cursor_pins_the_last_utc_instant(instance: Any) -> None:
+    last = datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
+    first = _query(instance, kind=SUBJECT_KIND, limit=1, evaluation_time=last)
+    second = _query(
+        instance, kind=SUBJECT_KIND, limit=1, cursor=first.next_cursor, evaluation_time=None
+    )
+    assert _ids(first) + _ids(second) == ["wi-42", "wi-43"]
+    assert second.receipt.evaluation_time == last
 
 
 @pytest.mark.parametrize(

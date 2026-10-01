@@ -2250,7 +2250,8 @@ _CURSOR_TAG = "q2"
 _CURSOR_OID = 16
 _CURSOR_DIGEST = 12
 _EPOCH = datetime.min.replace(tzinfo=UTC)
-_MAX_MICROS = (datetime.max.replace(tzinfo=UTC) - _EPOCH) // timedelta(microseconds=1)
+_LAST_INSTANT = datetime.max.replace(tzinfo=UTC)
+_MAX_MICROS = (_LAST_INSTANT - _EPOCH) // timedelta(microseconds=1)
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 _CURSOR_TIME_DIGITS = 12  # base-36 digits of _MAX_MICROS
 _CURSOR_OFFSET_DIGITS = 9
@@ -2392,10 +2393,13 @@ def service_playbill_query(
             repair="pass an ISO-8601 instant such as 2026-09-28T12:00:00Z",
             field_path="evaluation_time",
         )
-    if evaluation_time < _EPOCH:
+    if not _EPOCH <= evaluation_time <= _LAST_INSTANT:
+        # A cursor counts the instant in UTC, so an offset instant must also
+        # fall inside the UTC range a cursor can carry back.
         raise query_refusal(
             "playbill.query.evaluation_time_invalid",
-            "evaluation_time must be on or after 0001-01-01T00:00:00Z",
+            "evaluation_time must lie in UTC between 0001-01-01T00:00:00Z and "
+            "9999-12-31T23:59:59.999999Z",
             repair="pass an ISO-8601 instant such as 2026-09-28T12:00:00Z",
             field_path="evaluation_time",
         )
