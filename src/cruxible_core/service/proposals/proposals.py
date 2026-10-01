@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from cruxible_client.contracts.canonical import ProposalDigest, Sha256Value, typed_digest
+from cruxible_client.contracts.canonical import ProposalDigest
 from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
     ProposalIntegrityError,
@@ -21,6 +21,7 @@ from cruxible_client.contracts.errors import (
     ProposalSelectorAmbiguousError,
 )
 from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
+from cruxible_client.contracts.proposal_models import ProposalReadmissionLinkV1
 from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
 from cruxible_core.indexes.proposals.proposal_index import timestamp
 from cruxible_core.proposals.proposals import (
@@ -403,14 +404,9 @@ class StaleProposal:
 def readmission_operation_digest(proposal_id: str, coordinate: PlaybillAcceptedCoordinate) -> str:
     """The one readmission of `proposal_id` that `coordinate` admits."""
 
-    return typed_digest(
-        Sha256Value,
-        "playbill-proposal-readmit-v1",
-        {
-            "source_proposal_id": proposal_id,
-            "current_accepted_coordinate": coordinate.model_dump(mode="json"),
-        },
-    ).tagged
+    return ProposalReadmissionLinkV1(
+        source_proposal_id=proposal_id, coordinate=coordinate
+    ).operation_digest
 
 
 _READMISSION_REF = "refs/proposals/{actor_id}/readmit-"
@@ -424,7 +420,7 @@ def _readmission_target_ref(actor_id: str, operation_digest: str) -> str:
 
 @dataclass(frozen=True)
 class ProposalReadmission:
-    """A proposal that readmitted another: the supersession link, as history records it.
+    """A proposal that readmitted another: the supersession link, as its admission records it.
 
     ``accepted``: history at the read coordinate settled it, so the source's
     change is accepted under this proposal id. Otherwise it is a candidate
@@ -436,63 +432,68 @@ class ProposalReadmission:
     accepted: bool
 
 
-def _readmissions_of(
-    connection: sqlite3.Connection, proposal_id: str, actor_id: str
-) -> tuple[sqlite3.Row, ...]:
-    """Every admission that readmitted `proposal_id`, linked exactly.
+@dataclass(frozen=True)
+class _LinkedReadmission:
+    proposal_id: str
+    link: ProposalReadmissionLinkV1
+    evaluation_status: str
+    withdrawn: bool
+    accepted_sequence: int | None
 
-    A readmission's target ref carries the operation digest of its source and
-    the coordinate it was readmitted at, and its evaluation names that
-    coordinate's git oid. So each of the author's readmission refs is
-    recomputed from the source rather than matched by shape: only the author
-    may readmit, and only through those refs.
+
+def _readmissions_by_source(
+    instance: PlaybillInstance, connection: sqlite3.Connection, actor_id: str
+) -> dict[str, tuple[_LinkedReadmission, ...]]:
+    """The author's readmissions, keyed by the stale proposal each re-admits.
+
+    The readmission ref is only where to look. What links a readmission to
+    its source is the ``readmits`` record on its own immutable admission,
+    which only the readmit service writes and which is bound to the
+    admission's identity through ``source_compilation_digest``. A proposal
+    that merely spells a readmission ref links nothing, and the link does not
+    depend on the head its evaluation happened to read.
     """
 
     prefix = _READMISSION_REF.format(actor_id=actor_id)
     rows = connection.execute(
-        "SELECT p.proposal_id,p.target_ref,p.evaluation_status,p.withdrawal_path,"
-        "p.accepted_sequence,g.git_oid,g.semantic_root,g.generation_root,g.compiler_digest "
-        "FROM proposals p JOIN accepted_generations g ON g.git_oid=p.evaluated_base_oid "
-        "WHERE p.target_ref>=? AND p.target_ref<? AND p.actor_id=? "
-        "ORDER BY p.admitted_at_us,p.proposal_id",
+        "SELECT proposal_id,evaluation_status,withdrawal_path,accepted_sequence FROM proposals "
+        "WHERE target_ref>=? AND target_ref<? AND actor_id=? AND admission_path IS NOT NULL "
+        "ORDER BY admitted_at_us,proposal_id",
         (prefix, prefix + "\uffff", actor_id),
     ).fetchall()
-    return tuple(
-        row
-        for row in rows
-        if row["target_ref"]
-        == _readmission_target_ref(
-            actor_id,
-            readmission_operation_digest(
-                proposal_id,
-                PlaybillAcceptedCoordinate(
-                    git_oid=row["git_oid"],
-                    semantic_root=row["semantic_root"],
-                    generation_root=row["generation_root"],
-                    compiler_digest=row["compiler_digest"],
-                ),
-            ),
+    evidence = instance.proposal_evidence()
+    found: dict[str, list[_LinkedReadmission]] = {}
+    for row in rows:
+        link = evidence.read_admission(row["proposal_id"]).readmits
+        if link is None:
+            continue
+        found.setdefault(link.source_proposal_id, []).append(
+            _LinkedReadmission(
+                proposal_id=row["proposal_id"],
+                link=link,
+                evaluation_status=row["evaluation_status"],
+                withdrawn=row["withdrawal_path"] is not None,
+                accepted_sequence=row["accepted_sequence"],
+            )
         )
-    )
+    return {source: tuple(items) for source, items in found.items()}
 
 
 def _carrying_readmission(
-    connection: sqlite3.Connection, sequence: int, proposal_id: str, actor_id: str
+    readmissions: Sequence[_LinkedReadmission], sequence: int
 ) -> ProposalReadmission | None:
-    """The readmission that now carries `proposal_id`'s change, at history `sequence`.
+    """The readmission that now carries a source's change, at history `sequence`.
 
     An accepted one wins, then a live one (a candidate nobody withdrew). A
     readmission that was refused or withdrawn carries nothing.
     """
 
     live: ProposalReadmission | None = None
-    for row in _readmissions_of(connection, proposal_id, actor_id):
-        if row["accepted_sequence"] is not None and row["accepted_sequence"] <= sequence:
-            return ProposalReadmission(row["proposal_id"], accepted=True)
-        if live is None and (
-            row["evaluation_status"] == "candidate" and row["withdrawal_path"] is None
-        ):
-            live = ProposalReadmission(row["proposal_id"], accepted=False)
+    for item in readmissions:
+        if item.accepted_sequence is not None and item.accepted_sequence <= sequence:
+            return ProposalReadmission(item.proposal_id, accepted=True)
+        if live is None and item.evaluation_status == "candidate" and not item.withdrawn:
+            live = ProposalReadmission(item.proposal_id, accepted=False)
     return live
 
 
@@ -503,13 +504,13 @@ def proposal_readmission(
 ) -> ProposalReadmission | None:
     """The readmission carrying `proposal_id`'s change at `coordinate`, if any."""
 
-    evidence = instance.proposal_evidence()
-    actor_id = evidence.read_admission(proposal_id).actor_id
+    actor_id = instance.proposal_evidence().read_admission(proposal_id).actor_id
     with _bound_inventory(instance, coordinate) as bound:
         if bound is None:
             return None
         connection, sequence = bound
-        return _carrying_readmission(connection, sequence, proposal_id, actor_id)
+        linked = _readmissions_by_source(instance, connection, actor_id)
+        return _carrying_readmission(linked.get(proposal_id, ()), sequence)
 
 
 def stale_unreadmitted_proposals(
@@ -524,10 +525,11 @@ def stale_unreadmitted_proposals(
     refused, accepted nor withdrawn whose parent semantic root is not the
     coordinate's -- read through the open-parent locator rather than the whole
     inventory; ``actor_id`` keeps only that author's. A proposal readmitted at
-    this coordinate is answered, found by the target-ref locator. So is one
-    whose readmission (linked by ``_readmissions_of``) still carries its
+    this coordinate is answered. So is one whose readmission still carries its
     change: that readmission was accepted -- the change landed, under another
-    proposal id -- or is a live proposal that answers for itself.
+    proposal id -- or is a live proposal that answers for itself. Every link
+    is the ``readmits`` record on the readmission's own admission
+    (``_readmissions_by_source``), never a ref's spelling.
     """
 
     with _bound_inventory(instance, coordinate) as bound:
@@ -547,16 +549,19 @@ def stale_unreadmitted_proposals(
             parameters=parameters,
         )
         stale = []
+        linked_by_actor: dict[str, dict[str, tuple[_LinkedReadmission, ...]]] = {}
         for row in rows:
-            readmission = _readmission_target_ref(
-                row["actor_id"],
-                readmission_operation_digest(row["proposal_id"], coordinate),
-            )
-            if connection.execute(
-                "SELECT 1 FROM proposals WHERE target_ref=? LIMIT 1", (readmission,)
-            ).fetchone():
+            if row["actor_id"] not in linked_by_actor:
+                linked_by_actor[row["actor_id"]] = _readmissions_by_source(
+                    instance, connection, row["actor_id"]
+                )
+            linked = linked_by_actor[row["actor_id"]].get(row["proposal_id"], ())
+            here = readmission_operation_digest(row["proposal_id"], coordinate)
+            # Readmitted at this coordinate (whatever its verdict: readmit
+            # answers that one again), or carried by a readmission elsewhere.
+            if any(item.link.operation_digest == here for item in linked):
                 continue
-            if _carrying_readmission(connection, sequence, row["proposal_id"], row["actor_id"]):
+            if _carrying_readmission(linked, sequence):
                 continue
             stale.append(
                 StaleProposal(
@@ -746,11 +751,12 @@ def service_readmit_playbill_proposal(
             "byte rebase would not check; run the write again at the current head"
         )
     coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    operation_digest = readmission_operation_digest(proposal_id, coordinate)
+    link = ProposalReadmissionLinkV1(source_proposal_id=proposal_id, coordinate=coordinate)
+    operation_digest = link.operation_digest
     matching = tuple(
         admission
         for admission in instance.proposal_evidence().list_admissions()
-        if admission.source_compilation_digest == operation_digest
+        if admission.readmits == link
     )
     if len(matching) > 1:
         raise ProposalIntegrityError("readmission operation digest names multiple admissions")
@@ -772,6 +778,7 @@ def service_readmit_playbill_proposal(
                 source.admission.candidate_tree_oid, proposal_id=proposal_id
             ),
             timestamp=generation.record.candidate.timestamp,
+            readmits=link,
         )
     return PlaybillProposalReadmitResultV1(
         source_proposal_id=proposal_id,

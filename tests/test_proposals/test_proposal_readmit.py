@@ -387,3 +387,106 @@ def test_an_accepted_readmission_supersedes_its_source(tmp_path: Path) -> None:
         service_readmit_playbill_proposal(instance, proposal_id=source_id, actor_id="owner")
     assert refusal.value.accepted_as == landed_id
     assert f"its readmission {landed_id} was accepted" in str(refusal.value)
+
+
+def test_a_proposal_that_only_spells_a_readmission_ref_links_nothing(tmp_path: Path) -> None:
+    """Review F-002: supersession is read from immutable admission evidence, not a ref.
+
+    An unrelated proposal named ``readmit-`` plus the source's expected
+    operation digest used to read as its readmission: once accepted, the stale
+    source left its author's queue for good and readmit refused it as already
+    accepted. It carries no ``readmits`` record, so it links nothing.
+    """
+
+    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.proposals.proposals import (
+        proposal_readmission,
+        readmission_operation_digest,
+    )
+
+    instance, owner = initialize_local(tmp_path)
+    first, source = _propose(instance, "first"), _propose(instance, "source")
+    source_id = source.proposal.admission.proposal_id
+    _accept(instance, owner, first)
+    head = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    digest = readmission_operation_digest(source_id, head)
+    body = service_store_playbill_body(instance, content=b"unrelated").digest
+    impostor = service_propose_playbill_document(
+        instance,
+        shell=_shell("unrelated", body, title="Unrelated"),
+        actor_id="owner",
+        proposal_name="readmit-" + digest.removeprefix("sha256:")[:24],
+        timestamp=TIMESTAMP,
+    )
+    assert impostor.proposal.admission.readmits is None
+    assert _stale_ids(instance) == [source_id]
+
+    _accept(instance, owner, impostor)
+
+    head = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    assert proposal_readmission(instance, head, source_id) is None
+    assert _stale_ids(instance) == [source_id]
+    readmitted = service_readmit_playbill_proposal(
+        instance, proposal_id=source_id, actor_id="owner"
+    )
+    admission = readmitted.proposal.proposal.admission
+    assert admission.readmits is not None
+    assert admission.readmits.source_proposal_id == source_id
+    assert admission.source_compilation_digest == admission.readmits.operation_digest
+
+
+def test_a_readmission_keeps_its_link_when_head_moves_before_evaluation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review F-003: the link names the coordinate readmit read, not the evaluated head.
+
+    The operation digest is taken at the coordinate readmit reads; an
+    interloper accepted just before the submission evaluates makes the
+    evaluation head a later one. Recomputing the link from the evaluation head
+    lost it, so the accepted readmission's source stayed stale work.
+    """
+
+    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.proposals.proposals import proposal_readmission
+
+    instance, owner = initialize_local(tmp_path)
+    first, source = _propose(instance, "first"), _propose(instance, "source")
+    source_id = source.proposal.admission.proposal_id
+    _accept(instance, owner, first)
+    interloper = _propose(instance, "interloper")
+    read_at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+
+    real = type(instance).proposal_service
+    moved: list[bool] = []
+
+    def proposal_service(self):  # type: ignore[no-untyped-def]
+        service = real(self)
+        if moved:
+            return service
+
+        def late_submit(**values):  # type: ignore[no-untyped-def]
+            moved.append(True)
+            _accept(instance, owner, interloper)
+            return real(self).submit(**values)
+
+        service.submit = late_submit  # type: ignore[method-assign]
+        return service
+
+    monkeypatch.setattr(type(instance), "proposal_service", proposal_service)
+    readmitted = service_readmit_playbill_proposal(
+        instance, proposal_id=source_id, actor_id="owner"
+    )
+    monkeypatch.undo()
+
+    assert moved
+    evaluation = readmitted.proposal.proposal.evaluation
+    assert evaluation.evaluated_base_oid != read_at.git_oid
+    link = readmitted.proposal.proposal.admission.readmits
+    assert link is not None and link.coordinate == read_at
+    _accept(instance, owner, readmitted.proposal)
+
+    head = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    carried = proposal_readmission(instance, head, source_id)
+    landed = readmitted.proposal.proposal.admission.proposal_id
+    assert carried is not None and (carried.proposal_id, carried.accepted) == (landed, True)
+    assert _stale_ids(instance) == []
