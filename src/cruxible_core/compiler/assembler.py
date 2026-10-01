@@ -365,7 +365,7 @@ class ProjectionAssembler:
         staging.rmdir()
         _fsync_directory(self.publication_directory)
 
-        record_source_built_piece(final_piece, accepted=self.accepted, manifest=manifest)
+        stamp = record_source_built_piece(final_piece, accepted=self.accepted, manifest=manifest)
 
         return AssemblerResult(
             manifest_path=str(final_manifest),
@@ -379,7 +379,7 @@ class ProjectionAssembler:
                 phase_nanoseconds=timings,
                 high_water_memory_bytes=_high_water_memory_bytes(),
             ),
-        )
+        ).with_source_authentication_stamp(stamp)
 
     def _populate_database(
         self,

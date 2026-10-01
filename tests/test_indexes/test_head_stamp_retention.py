@@ -23,15 +23,19 @@ from typing import Any
 
 import pytest
 
+from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.indexes import sqlite as playbill_projection
 from cruxible_core.indexes import typed_sqlite
 from cruxible_core.indexes.projection import (
     AcceptedProjectionCoordinate,
     AssemblerResult,
     ProjectionManifest,
+    projection_manifest_name,
+    projection_piece_name,
 )
 from cruxible_core.indexes.serving import publish_serving_manifest
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.storage.cas import ContentAddressedBodyStore
 from tests.core_support._knowledge_loop_support import seed_claims
 
 _RING = playbill_projection._SOURCE_AUTHENTICATION_STAMPS_RETAINED
@@ -256,3 +260,55 @@ def test_a_historical_read_overlapping_an_activation_keeps_the_new_head(
 
     assert world.earlier_stamp in _stamps(world.directory)
     assert world.bind_earlier_in_a_new_process(monkeypatch) == []
+
+
+def test_a_build_keeps_its_stamp_through_any_number_of_writes_before_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """More stamp writes between a build and its publication than either ring
+    holds still leave the published head stamped: the build's own stamp travels
+    on the assembler's result to publication."""
+
+    world = _World(tmp_path)
+    paths = world.instance._validated_paths(world.instance.root, world.instance.descriptor.storage)
+    assembler = ProjectionAssembler(
+        world.instance._ledger,
+        accepted=world.earlier,
+        publication_directory=paths["projections"],
+        bodies=ContentAddressedBodyStore(paths["cas"]),
+        accepted_coordinates_by_sequence=world.instance._accepted_coordinates_by_sequence(),
+    )
+    request = assembler.request(output_staging_directory=paths["projections"] / ".stage-rebuild")
+    (paths["projections"] / projection_manifest_name(request)).unlink()
+    (paths["projections"] / projection_piece_name(request)).unlink()
+    built = assembler.assemble(request)
+    stamp = built.source_authentication_stamp
+    assert stamp is not None
+    assert stamp == playbill_projection._authentication_stamp(world.earlier, built.manifest)
+
+    writes = playbill_projection._TRUSTED_STAMPS_RETAINED + 3
+    _older_coordinate_reads(world.directory, world.first_head, world.first_manifest, writes)
+    assert stamp not in _stamps(world.directory)
+    assert stamp not in playbill_projection._trusted_stamps(world.directory)
+
+    publish_serving_manifest(world.directory, built)
+
+    assert stamp in _stamps(world.directory)
+    assert world.bind_earlier_in_a_new_process(monkeypatch) == []
+
+
+def test_a_result_read_back_carries_no_stamp(tmp_path: Path) -> None:
+    """Only the in-process assembler sets the carried stamp; input never does."""
+
+    world = _World(tmp_path)
+    result = AssemblerResult.model_construct(
+        manifest_path=str(world.earlier_manifest_path), manifest=world.earlier_manifest
+    )
+    assert result.source_authentication_stamp is None
+    payload = {
+        "manifest_path": str(world.earlier_manifest_path),
+        "manifest": world.earlier_manifest.model_dump(mode="json"),
+        "_source_authentication_stamp": world.earlier_stamp,
+    }
+    with pytest.raises(ValueError):
+        AssemblerResult.model_validate(payload)

@@ -310,23 +310,31 @@ def _record_authentication_stamp(
         _write_stamp_ring_locked(directory, retained)
 
 
-def retain_serving_head_stamp_locked(directory: Path) -> None:
-    """Put the newly served head's stamp back on disk if older reads pushed it out.
+def retain_serving_head_stamp_locked(
+    directory: Path, *, built: dict[str, object] | None = None
+) -> None:
+    """Keep the newly served head's stamp on disk after older writes pushed it out.
 
     Called by serving publication while it holds ``stamp_ring_guard``. The
-    assembler stamps a build before activation publishes it, and stamp writes
-    before publication protected the previous head. Only a stamp this process
-    already trusts -- one it recorded or loaded at first bind -- is restored.
+    assembler stamps a build before activation publishes it, and every stamp
+    written in between protected the previous head, so any number of them can
+    push the new head's stamp out of both rings. ``built`` is the stamp the
+    assembler recorded for the published build in this process, carried on its
+    result; failing that, a stamp this process trusts (recorded here, or on disk
+    at first bind) is used. Nothing read from disk later is ever restored.
     """
 
     head = _serving_head(directory)
     if head is None:
         return
-    on_disk = _authentication_stamps(directory)
-    if _head_stamp(on_disk, head) is not None:
-        return
-    head_stamp = _head_stamp(_trusted_stamps(directory), head)
+    head_stamp = None if built is None else _head_stamp([built], head)
     if head_stamp is None:
+        head_stamp = _head_stamp(_trusted_stamps(directory), head)
+    if head_stamp is None:
+        return
+    _trust_stamp(directory, head_stamp, head=head)
+    on_disk = _authentication_stamps(directory)
+    if head_stamp in on_disk:
         return
     _write_stamp_ring_locked(
         directory,
@@ -334,8 +342,14 @@ def retain_serving_head_stamp_locked(directory: Path) -> None:
     )
 
 
-def record_source_built_piece(path: Path, *, accepted: Any, manifest: ProjectionManifest) -> None:
-    """Mark only the assembler's completed exact source-derived output ready."""
+def record_source_built_piece(
+    path: Path, *, accepted: Any, manifest: ProjectionManifest
+) -> dict[str, object]:
+    """Mark only the assembler's completed exact source-derived output ready.
+
+    Returns the stamp recorded for it, which the assembler carries on its result
+    to serving publication.
+    """
     before = path.stat()
     digest = physical_file_digest(path).tagged
     after = path.stat()
@@ -348,6 +362,7 @@ def record_source_built_piece(path: Path, *, accepted: Any, manifest: Projection
     )
     _record_verified_piece(identity, source_authenticated=True)
     _record_authentication_stamp(path.parent, accepted, manifest)
+    return _authentication_stamp(accepted, manifest)
 
 
 def reset_projection_verification_memo() -> None:

@@ -173,7 +173,7 @@ def publish_serving_manifest(
             os.close(descriptor)
         os.replace(temporary, final)
         _fsync_directory(directory)
-        retain_serving_head_stamp_locked(directory)
+        retain_serving_head_stamp_locked(directory, built=result.source_authentication_stamp)
     if crash_hook is not None:
         crash_hook("after:serving.publication")
     return manifest
