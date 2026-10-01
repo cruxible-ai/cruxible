@@ -17,6 +17,7 @@ from cruxible_client.contracts.line_dispatch import (
 from cruxible_client.contracts.triggers import (
     CadenceScheduleV1,
     CaptureLandingScheduleV1,
+    CronScheduleV1,
     WindowCloseScheduleV1,
 )
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore
@@ -323,7 +324,8 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
         now=READ_TIME + timedelta(seconds=30),
     )
     assert checked.occurrences[0].pending
-    assert checked.occurrences[0].eligible_at == READ_TIME
+    # The Trigger was accepted long before: the arm ticks first at its own start.
+    assert checked.occurrences[0].eligible_at == READ_TIME - timedelta(seconds=1)
     result = service_dispatch_line(
         instance,
         line.identity.name,
@@ -978,3 +980,39 @@ def test_arming_a_line_that_can_propose_refuses_up_front_without_a_mandate(tmp_p
     assert refused.value.repair.arguments == {"example": "procedure-mandate"}
     with LineDispatchStore(instance).locked() as conn:
         assert conn.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
+
+
+def test_a_timer_trigger_never_ticks_before_its_acceptance_and_a_successor_restarts_it(tmp_path):
+    from datetime import UTC, datetime
+
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, line, _procedure, owner = line_world(
+        tmp_path, CadenceScheduleV1(interval_seconds=3600), with_owner=True
+    )
+    accepted = datetime(2026, 8, 24, 15, tzinfo=UTC)  # line_world's acceptance
+
+    def due(at):  # type: ignore[no-untyped-def]
+        checked = service_check_line_trigger(
+            instance, line.identity.name, LineTriggerCheckRequestV1(), now=at
+        )
+        return [item.eligible_at for item in checked.occurrences]
+
+    # A new cadence first ticks one interval after its acceptance, never on sight.
+    assert due(accepted + timedelta(minutes=30)) == []
+    assert due(accepted + timedelta(hours=1, seconds=1)) == [accepted + timedelta(hours=1)]
+
+    hourly = line_trigger(
+        TRIGGER, line=line.identity.name, schedule=CadenceScheduleV1(interval_seconds=3600)
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree.update(trigger_members(successor(hourly, schedule=CronScheduleV1(expression="0 * * * 1"))))
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-08-28T15:30:00.000000Z", proposal_name="weekly"
+    )
+    # The replacement starts from its own acceptance: Friday 15:30 runs nothing
+    # until Monday's first hour, never an instant before it was accepted.
+    friday = datetime(2026, 8, 28, 15, 30, tzinfo=UTC)
+    assert due(friday + timedelta(hours=2)) == []
+    monday = datetime(2026, 8, 31, tzinfo=UTC)
+    assert due(monday + timedelta(seconds=1)) == [monday]

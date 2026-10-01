@@ -87,7 +87,7 @@ def line_world(tmp_path, schedule, *, with_owner=False, triggers=None):
         }
     )
     _accept_tree(
-        instance, owner, tree, timestamp="2026-08-28T15:01:00.000000Z", proposal_name="trigger"
+        instance, owner, tree, timestamp="2026-08-24T15:00:00.000000Z", proposal_name="trigger"
     )
     return (instance, line, accepted, owner) if with_owner else (instance, line, accepted)
 

@@ -445,48 +445,50 @@ def test_new_instances_start_with_the_default_internal_triggers(tmp_path):
     ]
 
 
-def test_accepted_trigger_changes_move_the_internal_cadences_that_fire(tmp_path):
+def test_accepted_trigger_changes_move_the_internal_timers_that_fire(tmp_path):
     from datetime import UTC, datetime, timedelta
 
     from cruxible_core.triggers.journal import evaluate_triggers
 
     instance, owner = initialize_local(tmp_path)
-    start = datetime(2026, 10, 1, tzinfo=UTC)
+    watched = {"Trigger:evidence-hourly", "Trigger:evidence-sweep"}
 
     def fired(at):  # type: ignore[no-untyped-def]
-        # No supplied cadence set: the accepted head decides what fires.
-        return sorted(event.trigger for event in evaluate_triggers(instance, now=at))
+        # No supplied Trigger set: the accepted head, and each version's own
+        # acceptance, decide what fires. Each check listens from its own instant.
+        events = evaluate_triggers(instance, now=at, listening_since=at)
+        return sorted(event.trigger for event in events if event.trigger in watched)
 
-    def accept(name, minute, *triggers):  # type: ignore[no-untyped-def]
+    def accept(name, at, *triggers):  # type: ignore[no-untyped-def]
         tree = instance.tree_at(instance.accepted_coordinate().git_oid)
         tree.update(trigger_members(*triggers))
         _accept_tree(
             instance,
             owner,
             tree,
-            timestamp=f"2026-09-30T10:{minute:02d}:00.000000Z",
+            timestamp=at.strftime("%Y-%m-%dT%H:%M:%S.000000Z"),
             proposal_name=name,
         )
 
-    assert fired(start) == ["Trigger:evidence-sweep", "Trigger:prediction-anchor-retry"]
-
-    # Accepting a Trigger adds its cadence at once.
+    # Accepting a Trigger starts its timer at its acceptance: first fire one
+    # interval later, never on sight.
+    added_at = datetime(2026, 9, 30, 10, 1, tzinfo=UTC)
     hourly = action_trigger("evidence-hourly", action="evidence.sweep", interval_seconds=3600)
-    accept("add", 1, hourly)
-    assert fired(start + timedelta(seconds=1)) == ["Trigger:evidence-hourly"]
+    accept("add", added_at, hourly)
+    assert fired(added_at + timedelta(minutes=30)) == []
+    assert fired(added_at + timedelta(hours=1)) == ["Trigger:evidence-hourly"]
 
-    # Changing one moves its interval: the daily sweep now fires each minute.
+    # Changing one restarts it from the successor's acceptance.
+    changed_at = datetime(2026, 9, 30, 11, 2, tzinfo=UTC)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     daily = parse_trigger(tree["triggers/evidence-sweep.json"], path="triggers/evidence-sweep.json")
-    accept("change", 2, successor(daily, schedule=CadenceScheduleV1(interval_seconds=60)))
-    assert fired(start + timedelta(seconds=61)) == ["Trigger:evidence-sweep"]
+    accept("change", changed_at, successor(daily, schedule=CadenceScheduleV1(interval_seconds=60)))
+    assert fired(changed_at + timedelta(seconds=30)) == []
+    assert fired(changed_at + timedelta(minutes=1)) == ["Trigger:evidence-sweep"]
 
-    # Retiring one removes it: past its interval, it never fires again.
-    accept("retire", 3, successor(hourly, state="retired"))
-    assert fired(start + timedelta(hours=2)) == [
-        "Trigger:evidence-sweep",
-        "Trigger:prediction-anchor-retry",
-    ]
+    # Retiring one removes it: at its next instant it no longer fires.
+    accept("retire", datetime(2026, 9, 30, 11, 5, tzinfo=UTC), successor(hourly, state="retired"))
+    assert fired(added_at + timedelta(hours=2)) == ["Trigger:evidence-sweep"]
 
 
 def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path):
@@ -570,7 +572,7 @@ def test_an_unknown_schedule_kind_fails_loudly_everywhere_it_is_classified() -> 
         with pytest.raises(TriggerFormatError, match="unsupported Trigger schedule kind 'query'"):
             classify(future)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="not a timer"):
-        timer_due(future, last=None, now=datetime(2026, 9, 30, tzinfo=UTC))  # type: ignore[arg-type]
+        timer_due(future, last=datetime(2026, 9, 30, tzinfo=UTC))  # type: ignore[arg-type]
     # The wire union is discriminated: a kind it does not name is refused at parse.
     wire = json.loads(
         render_trigger(action_trigger("probe", action="evidence.sweep", interval_seconds=60))

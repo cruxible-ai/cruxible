@@ -65,11 +65,9 @@ class CronSpec:
             return by_day or by_weekday
         return by_day and by_weekday
 
-    def _instants(self, day: date, *, reverse: bool) -> Iterator[datetime]:
-        hours = reversed(self.hours) if reverse else iter(self.hours)
-        for hour in hours:
-            minutes = reversed(self.minutes) if reverse else iter(self.minutes)
-            for minute in minutes:
+    def _instants(self, day: date) -> Iterator[datetime]:
+        for hour in self.hours:
+            for minute in self.minutes:
                 yield datetime.combine(day, time(hour, minute), tzinfo=UTC)
 
     def next_after(self, moment: datetime) -> datetime | None:
@@ -79,20 +77,8 @@ class CronSpec:
         for offset in range(_HORIZON_DAYS):
             day = start + timedelta(days=offset)
             if self._day_matches(day):
-                for instant in self._instants(day, reverse=False):
+                for instant in self._instants(day):
                     if instant > moment:
-                        return instant
-        return None
-
-    def latest_at_or_before(self, moment: datetime) -> datetime | None:
-        """The last instant at or before ``moment``."""
-
-        start = moment.astimezone(UTC).date()
-        for offset in range(_HORIZON_DAYS):
-            day = start - timedelta(days=offset)
-            if self._day_matches(day):
-                for instant in self._instants(day, reverse=True):
-                    if instant <= moment:
                         return instant
         return None
 

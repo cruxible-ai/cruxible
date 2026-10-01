@@ -1183,8 +1183,8 @@ def test_an_armed_cron_line_ticks_on_calendar_instants_forward_only(tmp_path):
             ).fetchall()
         return [parse_datetime(row[0]) for row in rows]
 
-    def match_and_dispatch(at):  # type: ignore[no-untyped-def]
-        _match(instance, at)
+    def match_and_dispatch(at, daemon_id="daemon"):  # type: ignore[no-untyped-def]
+        _match(instance, at, daemon_id=daemon_id)
         for arm in armed_work(instance, now=at):
             dispatch_armed_line(_manager(instance), instance.descriptor.instance_id, arm, now=at)
 
@@ -1202,7 +1202,10 @@ def test_an_armed_cron_line_ticks_on_calendar_instants_forward_only(tmp_path):
     assert ticks() == []
     match_and_dispatch(READ_TIME + timedelta(minutes=5, seconds=1))
     assert ticks() == [READ_TIME + timedelta(minutes=5)]
-    # An hour without matching runs one tick, the latest, not the eleven it missed.
-    match_and_dispatch(READ_TIME + timedelta(hours=1, seconds=1))
-    assert ticks() == [READ_TIME + timedelta(minutes=5), READ_TIME + timedelta(hours=1)]
+    # An hour of daemon downtime: the instants it missed, 17:00 included, are
+    # skipped; the restarted daemon ticks from its own start, not catching up.
+    match_and_dispatch(READ_TIME + timedelta(hours=1, seconds=30), daemon_id="restarted")
+    assert ticks() == [READ_TIME + timedelta(minutes=5)]
+    match_and_dispatch(READ_TIME + timedelta(hours=1, minutes=5, seconds=1), daemon_id="restarted")
+    assert ticks() == [READ_TIME + timedelta(minutes=5), READ_TIME + timedelta(hours=1, minutes=5)]
     assert _admissions(instance) == 2

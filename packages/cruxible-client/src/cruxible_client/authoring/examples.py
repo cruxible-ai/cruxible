@@ -279,7 +279,9 @@ def trigger_example() -> TriggerInput:
     `cron` (a five-field UTC `expression`),
     `capture_landing` (an exact CaptureContract `event`), or `window_close` (a
     `window`). Any kind serves a target that needs no event; a Line that binds
-    its triggering Capture needs one that fires on that exact event.
+    its triggering Capture needs one that fires on that exact event. Nothing
+    fires before the Trigger is accepted: this one first runs at the top of the
+    hour after its acceptance.
     """
 
     return TriggerInput(

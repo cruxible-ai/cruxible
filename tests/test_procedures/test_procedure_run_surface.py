@@ -541,37 +541,43 @@ def test_a_cadence_line_admits_two_occurrences_one_period_apart_over_a_real_tree
         instance, accepted_line, coordinate=instance.accepted_coordinate()
     )
     binding = procedure_run_service.trigger_binding_for(trigger)
+    accepted_at = procedure_run_service.trigger_accepted_at(instance, trigger)
 
+    # The first tick is one period after the Trigger's acceptance, never on sight.
     first, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
-        evaluation_time=READ_TIME,
+        evaluation_time=accepted_at + timedelta(minutes=5),
         prior=(),
         trigger=trigger,
         binding=binding,
+        accepted_at=accepted_at,
     )
-    assert next_due is None
+    assert next_due == accepted_at + timedelta(hours=1)
 
+    ticked = accepted_at + timedelta(hours=1)
     prior = SimpleNamespace(
-        occurrence_evaluation_time=READ_TIME,
+        occurrence_evaluation_time=ticked,
         bound_coordinate=SimpleNamespace(git_oid="9" * 40),
     )
     _early, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
-        evaluation_time=READ_TIME + timedelta(minutes=30),
+        evaluation_time=ticked + timedelta(minutes=30),
         prior=(prior,),  # type: ignore[arg-type]
         trigger=trigger,
         binding=binding,
+        accepted_at=accepted_at,
     )
-    assert next_due == READ_TIME + timedelta(hours=1)
+    assert next_due == ticked + timedelta(hours=1)
 
     second, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
-        evaluation_time=READ_TIME + timedelta(hours=1),
+        evaluation_time=ticked + timedelta(hours=1),
         prior=(prior,),  # type: ignore[arg-type]
         trigger=trigger,
         binding=binding,
+        accepted_at=accepted_at,
     )
-    assert next_due == READ_TIME + timedelta(hours=1)
+    assert next_due == ticked + timedelta(hours=1)
     assert second != first
 
 
@@ -658,6 +664,7 @@ def test_a_caller_cannot_walk_the_cadence_by_advancing_the_claimed_instant(
         prior=(),
         trigger=trigger,
         binding=procedure_run_service.trigger_binding_for(trigger),
+        accepted_at=READ_TIME - timedelta(hours=1),
     )
     assert inside[0].startswith("sha256:")
 

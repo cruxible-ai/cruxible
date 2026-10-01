@@ -930,6 +930,37 @@ def line_triggers(
     return tuple(triggers)
 
 
+# Per instance root and Trigger version: the instant that version was accepted.
+_TRIGGER_ACCEPTED_AT: dict[tuple[str, str], datetime] = {}
+_TRIGGER_ACCEPTED_AT_LOCK = threading.Lock()
+
+
+def trigger_accepted_at(instance: PlaybillInstance, trigger: AcceptedTriggerV1) -> datetime:
+    """When this exact Trigger version was accepted: the floor of every instant it fires.
+
+    No Trigger fires retroactively, so its timer starts here and a successor's
+    starts again from its own acceptance. Accepted history is immutable, so the
+    instant is read once per version.
+    """
+
+    key = (str(instance.root), trigger.artifact_digest)
+    with _TRIGGER_ACCEPTED_AT_LOCK:
+        cached = _TRIGGER_ACCEPTED_AT.get(key)
+    if cached is not None:
+        return cached
+    with instance.accepted_history_reader() as history:
+        occurrence = history.artifact(
+            trigger.artifact_digest, identity=trigger.trigger.identity.qualified
+        )
+        if occurrence is None:
+            raise PlaybillExecutionError("Trigger version has no accepted occurrence")
+        generation = history.generation(occurrence.occurrence_sequence)
+    accepted_at = instance.accepted_evaluation_time(generation.git_oid)
+    with _TRIGGER_ACCEPTED_AT_LOCK:
+        _TRIGGER_ACCEPTED_AT[key] = accepted_at
+    return accepted_at
+
+
 def line_trigger_pins(triggers: tuple[AcceptedTriggerV1, ...]) -> dict[str, str]:
     """The exact Trigger versions one arm or pending occurrence is bound to."""
 
@@ -1263,16 +1294,18 @@ def _line_occurrence(
     binding: LineTriggerBindingV1 | None = None,
     not_before: datetime | None = None,
     exact_basis: datetime | None = None,
+    accepted_at: datetime | None = None,
 ) -> tuple[str, datetime | None]:
     """Derive one occurrence's identity and its next due instant.
 
     With no Trigger the occurrence is an explicit run at its evaluation instant.
     A cadence or cron occurrence is the tick after the last one its Trigger
-    fired (`prior`); a long-overdue cron tick collapses to its latest instant.
-    `not_before` floors it for forward-only matching: an arm that starts or
-    resumes later than that tick starts ticking from its own start, never
-    catching up. `exact_basis` names a retained tick outright, for an
-    explicit dispatch or retry of that exact occurrence.
+    fired (`prior`), and never before the tick after its Trigger version's
+    acceptance (`accepted_at`): no Trigger fires retroactively. `not_before`
+    floors it for forward-only matching: an arm that starts or resumes later
+    than that tick starts ticking from its own start, never catching up.
+    `exact_basis` names a retained tick outright, for an explicit dispatch or
+    retry of that exact occurrence.
     """
 
     last = max(prior, key=lambda item: item.occurrence_evaluation_time, default=None)
@@ -1292,17 +1325,21 @@ def _line_occurrence(
                 "a Trigger occurrence requires its exact tick, retained event, or window"
             )
         if schedule_is_timed(schedule):
-            next_due = (
-                exact_basis
-                if exact_basis is not None
-                else timer_due(
+            if exact_basis is not None:
+                next_due = exact_basis
+            else:
+                if accepted_at is None:
+                    raise PlaybillExecutionError(
+                        "a timed occurrence needs its Trigger's acceptance"
+                    )
+                next_due = timer_due(
                     schedule,
-                    last=None if last is None else last.occurrence_evaluation_time,
-                    now=evaluation_time,
+                    last=accepted_at
+                    if last is None
+                    else max(last.occurrence_evaluation_time, accepted_at),
                     not_before=not_before,
                 )
-            )
-            occurrence_basis = format_datetime(next_due or evaluation_time)
+            occurrence_basis = format_datetime(next_due)
         else:
             occurrence_basis = binding.model_dump(mode="json")
             if binding.window is not None:
@@ -4131,6 +4168,9 @@ def _run_playbill_line(
         # instant; explicitly, as exactly the tick it names.
         not_before=None if explicit_occurrence else cadence_basis,
         exact_basis=cadence_basis if explicit_occurrence else None,
+        accepted_at=trigger_accepted_at(instance, trigger)
+        if trigger is not None and is_timed
+        else None,
     )
     if request.occurrence_id is not None and request.occurrence_id != occurrence_id:
         return _line_refusal_state(

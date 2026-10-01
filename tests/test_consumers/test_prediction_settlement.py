@@ -35,8 +35,8 @@ from cruxible_core.consumers.next.predictions import (
     settleable_windows,
     unbindable_anchors,
 )
-from cruxible_core.triggers.journal import evaluate_triggers
 from tests.core_support._knowledge_loop_support import subject_address
+from tests.support.internal_triggers import fire_internal_triggers
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.p2b5 import test_served_predictions as served
 
@@ -366,7 +366,7 @@ def test_an_anchor_whose_material_is_gone_is_a_finding_until_restored(tmp_path: 
     restore()
     drain(instance, now=now + timedelta(days=100))
     assert unbindable_anchors(instance) == (anchor,)
-    evaluate_triggers(instance, now=now + timedelta(hours=1))
+    fire_internal_triggers(instance, now=now + timedelta(hours=1))
     drain(instance, now=now + timedelta(hours=1))
     assert unbindable_anchors(instance) == ()
     assert len(_windows(instance)) == 1
@@ -669,13 +669,13 @@ def test_retry_health_reports_unprocessed_events_and_backlog(
     drain(instance, now=served.PREDICTED_AT)
     (health,) = WORKER.health(instance, now=FIXED_CLOSES + timedelta(days=100))
     assert health.state == "running"
-    evaluate_triggers(instance, now=FIXED_CLOSES)
+    fire_internal_triggers(instance, now=FIXED_CLOSES)
     (health,) = WORKER.health(instance, now=FIXED_CLOSES)
     assert health.state == "running"
     WORKER.match(instance, now=FIXED_CLOSES, daemon_id="restart")
     (health,) = WORKER.health(instance, now=FIXED_CLOSES)
     assert health.state == "running" and health.detail["pending_anchor_retries"] == 1
-    evaluate_triggers(instance, now=FIXED_CLOSES + timedelta(hours=1))
+    fire_internal_triggers(instance, now=FIXED_CLOSES + timedelta(hours=1))
     (health,) = WORKER.health(instance, now=FIXED_CLOSES)
     assert health.state == "lagging"
     WORKER.match(instance, now=FIXED_CLOSES, daemon_id="restart")
@@ -702,7 +702,7 @@ def test_a_retryable_anchor_is_attempted_once_per_trigger_event(
     monkeypatch.setattr(predictions, "_bind", unavailable)
     for hour in (1, 2):
         fired_at = served.PREDICTED_AT + timedelta(hours=hour)
-        evaluate_triggers(instance, now=fired_at)
+        fire_internal_triggers(instance, now=fired_at)
         drain(instance, now=fired_at)
         assert len(attempts) == hour
         assert unbindable_anchors(instance) == (anchor,)
@@ -718,7 +718,7 @@ def test_a_new_retry_event_during_an_attempt_remains_queued(
     instance, _event, _restore = unbindable_world(tmp_path)
     drain(instance, now=served.PREDICTED_AT)
     fired_at = served.PREDICTED_AT + timedelta(hours=1)
-    evaluate_triggers(instance, now=fired_at)
+    fire_internal_triggers(instance, now=fired_at)
     WORKER.match(instance, now=fired_at, daemon_id="daemon")
     attempts = []
 
@@ -726,7 +726,7 @@ def test_a_new_retry_event_during_an_attempt_remains_queued(
         attempts.append(args[2])
         if len(attempts) == 1:
             next_fire = fired_at + timedelta(hours=1)
-            evaluate_triggers(instance, now=next_fire)
+            fire_internal_triggers(instance, now=next_fire)
             WORKER.match(instance, now=next_fire, daemon_id="daemon")
         return None
 
@@ -745,7 +745,7 @@ def test_retry_events_with_no_anchors_complete_without_worker_backlog(tmp_path: 
     drain(instance, now=served.PREDICTED_AT)
     for hour in (1, 2):
         at = served.PREDICTED_AT + timedelta(hours=hour)
-        evaluate_triggers(instance, now=at)
+        fire_internal_triggers(instance, now=at)
         WORKER.match(instance, now=at, daemon_id="daemon")
         (health,) = WORKER.health(instance, now=at)
         assert health.state == "running"

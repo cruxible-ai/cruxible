@@ -1,4 +1,4 @@
-"""Cron schedules: one five-field grammar, wall-clock instants, no back-fill."""
+"""Cron schedules: one five-field UTC grammar, acceptance-forward, never retroactive."""
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -8,7 +8,7 @@ import pytest
 
 from cruxible_client.contracts.cron import CronExpressionError, parse_cron
 from cruxible_client.contracts.triggers import CronScheduleV1
-from cruxible_core.triggers.cadence import cron_due
+from cruxible_core.triggers.cadence import timer_due
 from cruxible_core.triggers.journal import InternalTrigger, evaluate_triggers
 
 MONDAY = datetime(2026, 9, 28, tzinfo=UTC)
@@ -47,8 +47,6 @@ def test_instants_respect_boundaries_both_ways() -> None:
     # Friday 09:00 is followed by Monday 09:00.
     friday = MONDAY.replace(day=2, month=10, hour=9)
     assert spec.next_after(friday) == friday + timedelta(days=3)
-    assert spec.latest_at_or_before(nine) == nine
-    assert spec.latest_at_or_before(nine - timedelta(seconds=1)) == nine - timedelta(days=3)
     # Both day fields restricted: a day matches if either does.
     either = parse_cron("0 0 1 * 1")
     assert either.next_after(datetime(2026, 9, 29, tzinfo=UTC)) == datetime(2026, 10, 1, tzinfo=UTC)
@@ -87,44 +85,66 @@ def test_cron_is_utc_and_never_reads_a_host_timezone_database(tmp_path: Path) ->
         CronScheduleV1.model_validate({"expression": "0 9 * * *", "timezone": "UTC"})
 
 
-def test_a_cron_schedule_is_due_once_after_downtime_and_never_before_its_floor() -> None:
+def test_a_cron_line_tick_follows_its_last_fire_and_never_precedes_its_floor() -> None:
     hourly = CronScheduleV1(expression="0 * * * *")
     noon = MONDAY.replace(hour=12)
-    # Next instant after the last fire, while it is still ahead.
-    assert cron_due(hourly, last=noon, now=noon + timedelta(minutes=30)) == noon + timedelta(
-        hours=1
+    # The first instant after an acceptance or a fire, however long ago that was.
+    assert timer_due(hourly, last=noon + timedelta(minutes=30)) == noon + timedelta(hours=1)
+    assert timer_due(hourly, last=noon) == noon + timedelta(hours=1)
+    # A floor (an arm's start) keeps a forward-only reader from any instant before it.
+    assert timer_due(hourly, last=noon, not_before=noon + timedelta(hours=5, minutes=1)) == (
+        noon + timedelta(hours=6)
     )
-    # Long overdue: the latest instant passed is due once; nothing in between.
-    assert cron_due(hourly, last=noon, now=noon + timedelta(hours=5, minutes=1)) == (
+    assert timer_due(hourly, last=noon, not_before=noon + timedelta(hours=5)) == (
         noon + timedelta(hours=5)
     )
-    # Never fired: its most recent instant.
-    assert cron_due(hourly, last=None, now=noon + timedelta(minutes=10)) == noon
-    # A floor keeps a forward-only reader from any instant before it.
-    assert cron_due(
-        hourly, last=None, now=noon + timedelta(minutes=10), not_before=noon + timedelta(minutes=5)
-    ) == noon + timedelta(hours=1)
 
 
-def test_an_internal_cron_trigger_fires_at_its_instants_and_once_after_downtime(
-    tmp_path: Path,
-) -> None:
-    world = SimpleNamespace(
+def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
+    return SimpleNamespace(
         root=tmp_path, descriptor=SimpleNamespace(storage=SimpleNamespace(exhaust="exhaust"))
     )
+
+
+def test_a_new_weekly_cron_fires_nothing_before_its_next_instant(tmp_path: Path) -> None:
+    world = _world(tmp_path)
+    # Accepted on a Wednesday noon; the Monday 09:00 of that week precedes it.
+    wednesday = MONDAY + timedelta(days=2, hours=12)
+    weekly = (
+        InternalTrigger(
+            "Trigger:weekly",
+            "evidence.sweep",
+            CronScheduleV1(expression="0 9 * * 1"),
+            accepted_at=wednesday,
+        ),
+    )
+    since = wednesday
+    for at in (wednesday, wednesday + timedelta(days=4)):
+        assert evaluate_triggers(world, now=at, listening_since=since, triggers=weekly) == ()
+    next_monday = MONDAY + timedelta(days=7, hours=9)
+    (fired,) = evaluate_triggers(world, now=next_monday, listening_since=since, triggers=weekly)
+    assert fired.due_at == next_monday and fired.event is None
+
+
+def test_an_internal_cron_trigger_skips_the_instants_a_downtime_missed(tmp_path: Path) -> None:
+    world = _world(tmp_path)
     nightly = (
         InternalTrigger(
             "Trigger:nightly-sweep",
             "evidence.sweep",
             CronScheduleV1(expression="0 0 * * *"),
+            accepted_at=MONDAY - timedelta(hours=1),
         ),
     )
-    (first,) = evaluate_triggers(world, now=MONDAY.replace(hour=1), triggers=nightly)
-    assert first.due_at == MONDAY and first.event is None
-    assert evaluate_triggers(world, now=MONDAY.replace(hour=23), triggers=nightly) == ()
-    (second,) = evaluate_triggers(world, now=MONDAY + timedelta(days=1), triggers=nightly)
-    assert second.due_at == MONDAY + timedelta(days=1)
-    # A week down fires once, for the latest night only.
-    (resumed,) = evaluate_triggers(world, now=MONDAY + timedelta(days=8, hours=3), triggers=nightly)
-    assert resumed.due_at == MONDAY + timedelta(days=8)
-    assert evaluate_triggers(world, now=MONDAY + timedelta(days=8, hours=4), triggers=nightly) == ()
+
+    def fire(at, since):  # type: ignore[no-untyped-def]
+        return evaluate_triggers(world, now=at, listening_since=since, triggers=nightly)
+
+    (first,) = fire(MONDAY + timedelta(minutes=1), MONDAY - timedelta(hours=1))
+    assert first.due_at == MONDAY
+    # A week down: the restarted daemon fires none of the nights it missed...
+    restarted = MONDAY + timedelta(days=8, hours=3)
+    assert fire(restarted, restarted) == ()
+    # ...and the next night at its own instant.
+    (resumed,) = fire(MONDAY + timedelta(days=9), restarted)
+    assert resumed.due_at == MONDAY + timedelta(days=9)

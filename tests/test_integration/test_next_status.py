@@ -471,7 +471,7 @@ def test_worker_findings_report_how_current_they_are(
 ) -> None:
     from datetime import UTC, datetime, timedelta
 
-    from cruxible_core.triggers.journal import evaluate_triggers
+    from tests.support.internal_triggers import fire_internal_triggers
     from tests.test_consumers.test_evidence_availability import _drain, _world
 
     instance, _capture = _world(tmp_path)
@@ -488,10 +488,10 @@ def test_worker_findings_report_how_current_they_are(
 
     assert consumers(swept, consumers_running=True).state == "current"
     first_fire = swept + timedelta(days=1)
-    evaluate_triggers(instance, now=first_fire)
+    fire_internal_triggers(instance, now=first_fire)
     assert consumers(first_fire, consumers_running=True).state == "current"
     late = swept + timedelta(days=2)
-    evaluate_triggers(instance, now=late)
+    fire_internal_triggers(instance, now=late)
     lagging = _status(instance, _request(instance, evaluation_time=late), consumers_running=True)
     assert lagging.consumers.state == "lagging"
     assert _attention(lagging) == (("consumers", lagging.consumers),)

@@ -242,10 +242,13 @@ instance is initialized with `evidence-sweep` (daily) and
 one through an ordinary proposal. `playbill next` reports any internal action
 no live Trigger schedules.
 
-Each live cadence fires once on the first tick after it is accepted, then one
-interval after its last fire; a changed interval counts from the last fire, and
-a retired Trigger stops. A cron schedule fires at each calendar instant it
-names, and after downtime once, for the latest instant it missed. A
+No Trigger fires retroactively. A timer fires each of its instants once, all of
+them after the acceptance of its Trigger version: a new cadence first fires one
+interval after its acceptance (never on sight), a cron schedule at its first
+calendar instant after acceptance, and a changed schedule starts again from the
+successor's acceptance. Instants that pass while no daemon is running are
+skipped when it restarts, never fired late as a catch-up; a retired Trigger
+stops. A
 `capture_landing` or event-anchored `window_close` Trigger reads Captures
 forward from when it is first seen, never back-filling earlier ones, and fires
 once per event (a window when it closes); a fixed `window_close` fires once when
@@ -1241,8 +1244,10 @@ with `dispatch --occurrence-id DIGEST --retry`, even after newer ticks ran --
 and the arm ticks on from its own start rather than catching up on ticks it
 missed. Each cadence or cron Trigger keeps its own chain: it is due one interval,
 or at the next calendar instant, after the last occurrence it fired, whatever
-other Triggers aimed at the Line fired; a cron tick long overdue runs once, for
-its latest instant. `disarm` stops further
+other Triggers aimed at the Line fired, and never before the first instant
+after its Trigger version's acceptance: a new cadence ticks first one interval
+after it was accepted, a successor schedule from its own acceptance. `disarm`
+stops further
 admissions; a run already admitted keeps going. Both are idempotent: arming a
 Line already armed by the same credential at the same version returns it
 unchanged with `outcome: already_armed`, and disarming a stopped arm returns

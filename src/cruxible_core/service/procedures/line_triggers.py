@@ -45,6 +45,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     _trigger_admissions,
     line_trigger_pins,
     line_triggers,
+    trigger_accepted_at,
     trigger_binding_for,
 )
 from cruxible_core.service.procedures.resolution_contracts import bind_window, capture_event_time
@@ -216,6 +217,7 @@ def service_check_line_trigger(
                     trigger=trigger,
                     binding=binding,
                     not_before=request.since,
+                    accepted_at=trigger_accepted_at(instance, trigger),
                 )
                 # An already-pending cadence tick keeps its original due instant;
                 # checks must not invent a new occurrence on every call. An armed

@@ -12,8 +12,9 @@ from cruxible_core.consumers.next import NEXT_QUEUE, queue
 from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
 from cruxible_core.service.discovery import next as next_module
 from cruxible_core.service.discovery.next import PlaybillNextRequestV2, service_playbill_next
-from cruxible_core.triggers.journal import evaluate_triggers, journal_path, schedule_deadline
+from cruxible_core.triggers.journal import journal_path, schedule_deadline
 from tests.core_support._knowledge_loop_support import seed_claims
+from tests.support.internal_triggers import fire_internal_triggers
 from tests.test_consumers.test_next_queue import _stored
 from tests.test_consumers.test_prediction_settlement import drain
 from tests.test_integration.test_next_closed_loop import _access, _freshness_world
@@ -45,7 +46,7 @@ def test_expiry_fire_rebuilds_at_its_recorded_time_and_serving_resumes(tmp_path:
         service_playbill_next(instance, request=request)
         assert live.called
     assert not _queue_work(instance)  # The worker owns no clock.
-    fires = evaluate_triggers(instance, now=edge)
+    fires = fire_internal_triggers(instance, now=edge)
     (fire,) = [event for event in fires if event.action == "next.expire"]
     assert fire.due_at == edge and _inputs(instance) == before
     NEXT_QUEUE.match(instance, now=edge + timedelta(days=100), daemon_id="restart")
@@ -83,7 +84,9 @@ def test_refresh_rearms_each_bound_and_an_unbounded_replacement_cancels_the_old_
         if snapshot.valid_until is None:
             break
         at = snapshot.valid_until
-        assert any(event.action == "next.expire" for event in evaluate_triggers(instance, now=at))
+        assert any(
+            event.action == "next.expire" for event in fire_internal_triggers(instance, now=at)
+        )
         drain(instance, now=at)
     else:
         raise AssertionError("freshness fixture did not reach its last bound")
@@ -98,7 +101,7 @@ def test_refresh_rearms_each_bound_and_an_unbounded_replacement_cancels_the_old_
     drain(instance, now=at)
     assert not any(
         event.action == "next.expire"
-        for event in evaluate_triggers(instance, now=at + timedelta(minutes=2))
+        for event in fire_internal_triggers(instance, now=at + timedelta(minutes=2))
     )
 
 
@@ -115,7 +118,7 @@ def test_a_failed_queue_target_can_retry_on_an_expiry_fire(tmp_path: Path) -> No
             NEXT_QUEUE.run(SimpleNamespace(get=lambda _id: instance), "inst", work, now=AT)
     assert not _queue_work(instance)
     assert NEXT_QUEUE.health(instance, now=AT)[0].state == "stalled"
-    evaluate_triggers(instance, now=snapshot.valid_until)
+    fire_internal_triggers(instance, now=snapshot.valid_until)
     drain(instance, now=snapshot.valid_until)
     assert NEXT_QUEUE.health(instance, now=AT)[0].state == "running"
     assert _stored(instance, snapshot.valid_until) is not None
@@ -135,7 +138,7 @@ def test_a_new_fire_during_an_old_fold_remains_due(tmp_path: Path) -> None:
     snapshot = _stored(instance, AT)
     assert snapshot is not None and snapshot.valid_until is not None
     edge = snapshot.valid_until
-    evaluate_triggers(instance, now=edge)
+    fire_internal_triggers(instance, now=edge)
     NEXT_QUEUE.match(instance, now=edge, daemon_id="daemon")
     (old_work,) = _queue_work(instance)
     build = next_module.build_stored_claim_queue
@@ -147,7 +150,7 @@ def test_a_new_fire_during_an_old_fold_remains_due(tmp_path: Path) -> None:
         if not moved:
             moved.append(True)
             schedule_deadline(instance, "next.expire", later)
-            evaluate_triggers(instance, now=later)
+            fire_internal_triggers(instance, now=later)
             NEXT_QUEUE.match(instance, now=later, daemon_id="daemon")
         return result
 

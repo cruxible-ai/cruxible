@@ -1,6 +1,7 @@
 """Internal timer fires survive restarts and can be followed without replay or backfill."""
 
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,17 +19,24 @@ from cruxible_core.triggers.journal import (
     trigger_events,
 )
 
+NOW = datetime(2026, 9, 29, tzinfo=UTC)
 
-def _cadence(trigger: str, action: str, interval: timedelta) -> InternalTrigger:
+
+def _cadence(
+    trigger: str, action: str, interval: timedelta, *, accepted_at: datetime = NOW
+) -> InternalTrigger:
     return InternalTrigger(
-        trigger, action, CadenceScheduleV1(interval_seconds=int(interval.total_seconds()))
+        trigger,
+        action,
+        CadenceScheduleV1(interval_seconds=int(interval.total_seconds())),
+        accepted_at=accepted_at,
     )
 
 
-NOW = datetime(2026, 9, 29, tzinfo=UTC)
 SWEEP = _cadence("Trigger:evidence-sweep", "evidence.sweep", timedelta(days=1))
 RETRY = _cadence("Trigger:prediction-anchor-retry", "prediction.anchor_retry", timedelta(hours=1))
-# The default Triggers a new instance is seeded with, as the journal reads them.
+# The default Triggers a new instance is seeded with, as the journal reads them,
+# both accepted at NOW.
 CONFIG = (SWEEP, RETRY)
 
 
@@ -38,47 +46,71 @@ def instance(root: Path):  # type: ignore[no-untyped-def]
     )
 
 
-def test_cadences_fire_once_when_due_and_once_after_downtime(tmp_path: Path) -> None:
+def fire(world, at, *, triggers=CONFIG, since=NOW):  # type: ignore[no-untyped-def]
+    """Evaluate at ``at`` as a daemon that began listening at ``since``."""
+
+    return evaluate_triggers(world, now=at, listening_since=since, triggers=triggers)
+
+
+def test_a_new_timer_first_fires_one_interval_after_its_acceptance(tmp_path: Path) -> None:
     world = instance(tmp_path)
     assert trigger_events(world) == () and not journal_path(world).exists()
-    first = evaluate_triggers(world, now=NOW, triggers=CONFIG)
-    assert {event.action for event in first} == {"evidence.sweep", "prediction.anchor_retry"}
-    assert all(event.due_at == event.fired_at == NOW for event in first)
-    assert evaluate_triggers(world, now=NOW, triggers=CONFIG) == ()
-    hourly = evaluate_triggers(world, now=NOW + timedelta(hours=1), triggers=CONFIG)
-    assert [event.action for event in hourly] == ["prediction.anchor_retry"]
-    resumed = evaluate_triggers(instance(tmp_path), now=NOW + timedelta(days=10), triggers=CONFIG)
-    assert len(resumed) == 2
-    assert {event.due_at for event in resumed} == {
+    # Never on sight: the first instant is acceptance plus one interval.
+    assert fire(world, NOW) == ()
+    assert fire(world, NOW + timedelta(minutes=59)) == ()
+    (hourly,) = fire(world, NOW + timedelta(hours=1))
+    assert (hourly.action, hourly.due_at) == ("prediction.anchor_retry", NOW + timedelta(hours=1))
+    assert fire(world, NOW + timedelta(hours=1)) == ()
+    # A late evaluation within one listening session delivers each instant once.
+    late = fire(world, NOW + timedelta(hours=3, minutes=1))
+    assert [event.due_at for event in late] == [
         NOW + timedelta(hours=2),
-        NOW + timedelta(days=1),
+        NOW + timedelta(hours=3),
+    ]
+
+
+def test_instants_passed_while_no_daemon_listened_are_skipped_not_caught_up(
+    tmp_path: Path,
+) -> None:
+    world = instance(tmp_path)
+    fire(world, NOW + timedelta(hours=1))
+    # Down for ten days; the restarted daemon listens from its own start.
+    restarted = NOW + timedelta(days=10, minutes=30)
+    assert fire(instance(tmp_path), restarted, since=restarted) == ()
+    (retry,) = fire(world, NOW + timedelta(days=10, hours=1), since=restarted)
+    assert retry.due_at == NOW + timedelta(days=10, hours=1)
+    # Down again; the cadence keeps its own grid: the daily sweep falls due at
+    # acceptance plus eleven days, exactly when the next daemon starts.
+    eleven = fire(world, NOW + timedelta(days=11), since=NOW + timedelta(days=11))
+    assert {(event.action, event.due_at) for event in eleven} == {
+        ("evidence.sweep", NOW + timedelta(days=11)),
+        ("prediction.anchor_retry", NOW + timedelta(days=11)),
     }
-    assert evaluate_triggers(world, now=NOW + timedelta(days=10, seconds=1), triggers=CONFIG) == ()
 
 
 def test_deadline_replacement_and_rearming_are_one_shot(tmp_path: Path) -> None:
     world = instance(tmp_path)
-    evaluate_triggers(world, now=NOW, triggers=CONFIG)
     schedule_deadline(world, "next.expire", NOW + timedelta(minutes=1))
     schedule_deadline(world, "next.expire", NOW + timedelta(minutes=2))
-    assert evaluate_triggers(world, now=NOW + timedelta(minutes=1), triggers=CONFIG) == ()
-    (event,) = evaluate_triggers(world, now=NOW + timedelta(minutes=3), triggers=CONFIG)
+    assert fire(world, NOW + timedelta(minutes=1)) == ()
+    (event,) = fire(world, NOW + timedelta(minutes=3))
     assert (event.action, event.due_at, event.fired_at) == (
         "next.expire",
         NOW + timedelta(minutes=2),
         NOW + timedelta(minutes=3),
     )
-    assert evaluate_triggers(world, now=NOW + timedelta(minutes=4), triggers=CONFIG) == ()
+    assert fire(world, NOW + timedelta(minutes=4)) == ()
     schedule_deadline(world, "next.expire", NOW + timedelta(minutes=4))
-    assert len(evaluate_triggers(world, now=NOW + timedelta(minutes=4), triggers=CONFIG)) == 1
+    assert len(fire(world, NOW + timedelta(minutes=4))) == 1
 
 
 def test_durable_ordered_journal_resumes_after_a_consumer_cursor(tmp_path: Path) -> None:
     world = instance(tmp_path)
-    evaluate_triggers(world, now=NOW, triggers=CONFIG)
+    day = NOW + timedelta(days=1)
+    fire(world, day, since=day)
     (page,) = trigger_events(world, limit=1)
     cursor = page.sequence
-    evaluate_triggers(instance(tmp_path), now=NOW + timedelta(days=1), triggers=CONFIG)
+    fire(instance(tmp_path), day + timedelta(days=1), since=day + timedelta(days=1))
     remaining = trigger_events(instance(tmp_path), after=cursor)
     all_events = trigger_events(world)
     assert (page, *remaining) == all_events
@@ -97,47 +129,48 @@ def test_durable_ordered_journal_resumes_after_a_consumer_cursor(tmp_path: Path)
 
 def test_an_unknown_journal_is_retained_instead_of_rebuilt(tmp_path: Path) -> None:
     world = instance(tmp_path)
-    evaluate_triggers(world, now=NOW, triggers=CONFIG)
+    day = NOW + timedelta(days=1)
+    fire(world, day, since=day)
     with sqlite3.connect(journal_path(world)) as connection:
         connection.execute("PRAGMA user_version=42")
     with pytest.raises(ValueError, match="retain"):
-        evaluate_triggers(world, now=NOW, triggers=CONFIG)
+        fire(world, day + timedelta(days=1), since=day)
     with sqlite3.connect(journal_path(world)) as connection:
         assert connection.execute("SELECT count(*) FROM events").fetchone() == (2,)
 
 
-def test_cadence_state_follows_the_accepted_trigger_set(tmp_path: Path) -> None:
+def test_timer_state_follows_the_accepted_trigger_set(tmp_path: Path) -> None:
     world = instance(tmp_path)
-    first = evaluate_triggers(world, now=NOW, triggers=(SWEEP,))
-    assert [(event.action, event.trigger) for event in first] == [
-        ("evidence.sweep", "Trigger:evidence-sweep")
-    ]
-    # A new Trigger fires once, on the next tick after it is accepted.
-    added = _cadence("Trigger:sweep-often", "evidence.sweep", timedelta(minutes=10))
-    (fired,) = evaluate_triggers(world, now=NOW + timedelta(minutes=1), triggers=(SWEEP, added))
-    assert (fired.action, fired.trigger) == ("evidence.sweep", "Trigger:sweep-often")
-    # Two Triggers on one action both fire into it; a worker follows the action.
-    assert evaluate_triggers(world, now=NOW + timedelta(minutes=5), triggers=(SWEEP, added)) == ()
-    (again,) = evaluate_triggers(world, now=NOW + timedelta(minutes=11), triggers=(SWEEP, added))
-    assert again.trigger == "Trigger:sweep-often" and again.due_at == NOW + timedelta(minutes=11)
-    # A changed interval takes effect from the Trigger's last fire.
-    shorter = _cadence("Trigger:evidence-sweep", "evidence.sweep", timedelta(hours=1))
-    (rescheduled,) = evaluate_triggers(
-        world, now=NOW + timedelta(hours=1, minutes=5), triggers=(shorter,)
+    (first,) = fire(world, NOW + timedelta(days=1), triggers=(SWEEP,))
+    assert (first.action, first.trigger) == ("evidence.sweep", "Trigger:evidence-sweep")
+    # A Trigger accepted later fires first one interval after its own acceptance.
+    added = _cadence(
+        "Trigger:sweep-often",
+        "evidence.sweep",
+        timedelta(minutes=10),
+        accepted_at=NOW + timedelta(days=1, minutes=1),
     )
+    both = (SWEEP, added)
+    assert fire(world, NOW + timedelta(days=1, minutes=5), triggers=both) == ()
+    (fired,) = fire(world, NOW + timedelta(days=1, minutes=11), triggers=both)
+    assert (fired.trigger, fired.due_at) == (
+        "Trigger:sweep-often",
+        NOW + timedelta(days=1, minutes=11),
+    )
+    # A successor schedule starts from its own acceptance, never from the old grid.
+    replaced_at = NOW + timedelta(days=1, hours=2, minutes=30)
+    hourly = _cadence(
+        "Trigger:evidence-sweep", "evidence.sweep", timedelta(hours=1), accepted_at=replaced_at
+    )
+    assert fire(world, replaced_at + timedelta(minutes=59), triggers=(hourly,)) == ()
+    (rescheduled,) = fire(world, replaced_at + timedelta(hours=1), triggers=(hourly,))
     assert (rescheduled.trigger, rescheduled.due_at) == (
         "Trigger:evidence-sweep",
-        NOW + timedelta(hours=1),
+        replaced_at + timedelta(hours=1),
     )
-    # A removed Trigger stops; the one that stays keeps its own chain.
-    assert (
-        evaluate_triggers(world, now=NOW + timedelta(hours=2, minutes=5), triggers=(added,))[
-            0
-        ].trigger
-        == "Trigger:sweep-often"
-    )
-    sweeps = trigger_events(world, action="evidence.sweep")
-    assert {event.trigger for event in sweeps} == {"Trigger:evidence-sweep", "Trigger:sweep-often"}
+    # A removed Trigger stops; the one that stays keeps its own grid.
+    later = fire(world, NOW + timedelta(days=1, hours=5, minutes=1), triggers=(added,))
+    assert {event.trigger for event in later} == {"Trigger:sweep-often"}
 
 
 def test_a_deadline_cannot_take_the_name_of_a_trigger_action(tmp_path: Path) -> None:
@@ -146,7 +179,7 @@ def test_a_deadline_cannot_take_the_name_of_a_trigger_action(tmp_path: Path) -> 
         with pytest.raises(ValueError, match="distinct from Trigger actions"):
             schedule_deadline(world, name, NOW)
     schedule_deadline(world, "next.expire", NOW)
-    (event,) = evaluate_triggers(world, now=NOW, triggers=())
+    (event,) = fire(world, NOW, triggers=())
     assert (event.action, event.trigger) == ("next.expire", None)
 
 
@@ -165,7 +198,10 @@ def test_runner_fires_before_matching_consumers(
     )
     runner = ConsumerRunner(SimpleNamespace(), kinds=(kind,))
     # The runner fires the live internal Triggers at the instance's accepted head.
-    monkeypatch.setattr(trigger_journal, "internal_triggers", lambda _instance: CONFIG)
+    # Both accepted a day before the runner starts: it fires what falls due at its
+    # own start, never the instants before it.
+    accepted_earlier = tuple(replace(item, accepted_at=NOW - timedelta(days=1)) for item in CONFIG)
+    monkeypatch.setattr(trigger_journal, "internal_triggers", lambda _instance: accepted_earlier)
     runner.match_once("instance", world, now=NOW)
     assert len(seen) == 2
 
@@ -174,7 +210,6 @@ def test_an_idle_tick_uses_only_a_read_connection_without_a_writer_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world = instance(tmp_path)
-    evaluate_triggers(world, now=NOW, triggers=CONFIG)
     schedule_deadline(world, "next.expire", NOW + timedelta(minutes=1))
     statements = []
     connections = []
@@ -191,10 +226,7 @@ def test_an_idle_tick_uses_only_a_read_connection_without_a_writer_lock(
     with connect(journal_path(world), timeout=0.1) as writer:
         writer.execute("BEGIN IMMEDIATE")
         for seconds in (0, 1, 59):
-            assert (
-                evaluate_triggers(world, now=NOW + timedelta(seconds=seconds), triggers=CONFIG)
-                == ()
-            )
+            assert fire(world, NOW + timedelta(seconds=seconds)) == ()
     assert len(connections) == 3
     assert all(args[0].endswith("?mode=ro") and kwargs["uri"] for args, kwargs in connections)
     assert "BEGIN IMMEDIATE" not in statements
@@ -208,7 +240,6 @@ def test_due_triggers_are_rechecked_after_the_read_before_firing(
     from cruxible_core.triggers import journal
 
     world = instance(tmp_path)
-    evaluate_triggers(world, now=NOW, triggers=CONFIG)
     schedule_deadline(world, "next.expire", NOW + timedelta(minutes=1))
     due = journal._due_timers
     replaced = []
@@ -223,8 +254,8 @@ def test_due_triggers_are_rechecked_after_the_read_before_firing(
         return pending
 
     monkeypatch.setattr(journal, "_due_timers", replace_after_read)
-    assert evaluate_triggers(world, now=NOW + timedelta(minutes=1), triggers=CONFIG) == ()
-    (event,) = evaluate_triggers(world, now=NOW + timedelta(minutes=2), triggers=CONFIG)
+    assert fire(world, NOW + timedelta(minutes=1)) == ()
+    (event,) = fire(world, NOW + timedelta(minutes=2))
     assert event.action == "next.expire" and event.due_at == NOW + timedelta(minutes=2)
 
 
@@ -268,11 +299,11 @@ def test_capture_schedules_fire_an_internal_action_once_per_event_carrying_it(
 
     capture(world, procedure, at=READ_TIME, partition="run:early")
     # First sight reads forward from here: what already landed never fires.
-    assert evaluate_triggers(world, now=READ_TIME + timedelta(hours=1), triggers=watched) == ()
+    assert fire(world, READ_TIME + timedelta(hours=1), triggers=watched, since=READ_TIME) == ()
 
     landed_at = READ_TIME + timedelta(hours=2)
     capture(world, procedure, at=landed_at, partition="run:landed")
-    (fired,) = evaluate_triggers(world, now=landed_at + timedelta(seconds=1), triggers=watched)
+    (fired,) = fire(world, landed_at + timedelta(seconds=1), triggers=watched, since=READ_TIME)
     assert (fired.action, fired.trigger, fired.due_at) == (
         "evidence.sweep",
         "Trigger:sweep-on-landing",
@@ -280,14 +311,14 @@ def test_capture_schedules_fire_an_internal_action_once_per_event_carrying_it(
     )
     assert fired.event is not None and fired.event.partition_id == "run:landed"
     # The window anchored on the same landing closes a minute later, once.
-    assert evaluate_triggers(world, now=landed_at + timedelta(seconds=30), triggers=watched) == ()
-    (closed,) = evaluate_triggers(world, now=landed_at + timedelta(minutes=2), triggers=watched)
+    assert fire(world, landed_at + timedelta(seconds=30), triggers=watched, since=READ_TIME) == ()
+    (closed,) = fire(world, landed_at + timedelta(minutes=2), triggers=watched, since=READ_TIME)
     assert (closed.action, closed.due_at, closed.event) == (
         "prediction.anchor_retry",
         landed_at + timedelta(minutes=1),
         fired.event,
     )
-    assert evaluate_triggers(world, now=landed_at + timedelta(hours=1), triggers=watched) == ()
+    assert fire(world, landed_at + timedelta(hours=1), triggers=watched, since=READ_TIME) == ()
     # The worker following the action receives the event with the fire.
     (followed,) = trigger_events(world, action="evidence.sweep")
     assert followed.event == fired.event

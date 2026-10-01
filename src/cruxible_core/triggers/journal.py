@@ -4,9 +4,13 @@ Which internal Triggers exist is governed: every one is a live Trigger artifact
 aimed at an internal action, read from the instance's accepted state. The log
 records which Trigger fired, which action it fired and, for a schedule that
 fires on a Capture, the exact event, so a worker follows an action however many
-Triggers schedule it and may use or ignore the event. Timer state is kept per
-Trigger and follows the accepted Trigger set: a new Trigger fires on the next
-tick, a changed interval counts from its last fire, and a retired Trigger stops.
+Triggers schedule it and may use or ignore the event.
+
+No Trigger fires retroactively. A timer fires each of its instants once, all of
+them after the acceptance of its Trigger version (a cadence first at acceptance
+plus one interval, a successor schedule from its own acceptance), and none
+before the daemon began listening: instants that pass while no daemon runs are
+skipped, never fired late. A retired Trigger stops.
 
 A Trigger that fires on Captures reads the procedure journal's Capture index
 forward from where it first saw it, never back-filling what landed before; a
@@ -29,7 +33,7 @@ import threading
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -42,14 +46,17 @@ from cruxible_client.contracts.procedures.windows import (
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     INTERNAL_ACTIONS,
+    AcceptedTriggerV1,
     CaptureLandingScheduleV1,
     TriggerScheduleV1,
     TriggerV1,
     WindowCloseScheduleV1,
     schedule_capture_selector,
     schedule_is_timed,
+    trigger_digest,
+    trigger_path,
 )
-from cruxible_core.triggers.cadence import timer_due
+from cruxible_core.triggers.cadence import timer_instants
 
 _SCHEMA = """
 CREATE TABLE events (
@@ -59,7 +66,7 @@ CREATE TABLE events (
 ) STRICT;
 CREATE INDEX events_by_action ON events(action,sequence);
 CREATE UNIQUE INDEX events_once ON events(trigger_id,occurrence) WHERE occurrence IS NOT NULL;
-CREATE TABLE cadences (trigger_id TEXT PRIMARY KEY, last_fired_at TEXT NOT NULL) STRICT;
+CREATE TABLE timers (trigger_id TEXT PRIMARY KEY, covered_until TEXT NOT NULL) STRICT;
 CREATE TABLE scans (trigger_id TEXT PRIMARY KEY, schedule TEXT NOT NULL, position TEXT NOT NULL)
  STRICT;
 CREATE TABLE windows (
@@ -78,18 +85,20 @@ _VERSION = 2
 
 @dataclass(frozen=True)
 class InternalTrigger:
-    """One live Trigger's schedule toward one internal action."""
+    """One live Trigger's schedule toward one internal action, from its acceptance."""
 
     trigger: str
     action: str
     schedule: TriggerScheduleV1
+    #: When this Trigger version was accepted: it fires nothing before then.
+    accepted_at: datetime
 
     @classmethod
-    def of(cls, trigger: TriggerV1) -> InternalTrigger:
+    def of(cls, trigger: TriggerV1, *, accepted_at: datetime) -> InternalTrigger:
         action = trigger.action
         if action is None:
             raise ValueError("an internal Trigger fires an internal action")
-        return cls(trigger.identity.qualified, action, trigger.schedule)
+        return cls(trigger.identity.qualified, action, trigger.schedule, accepted_at)
 
 
 @dataclass(frozen=True)
@@ -135,14 +144,28 @@ def internal_triggers(instance: Any) -> tuple[InternalTrigger, ...]:
         cached = _TRIGGERS.get(key)
     if cached is not None and cached[0] == coordinate.generation_root:
         return cached[1]
+    from cruxible_core.service.procedures.procedure_runs import trigger_accepted_at
+
     with instance.bind_accepted_projection(coordinate) as projection:
         identities = projection.typed.connection.execute(
             "SELECT identity FROM triggers WHERE target_kind='action' AND lifecycle='live' "
             "ORDER BY identity"
         ).fetchall()
-        triggers = tuple(
-            InternalTrigger.of(projection.typed.source(identity)) for (identity,) in identities
+        accepted = [projection.typed.source(identity) for (identity,) in identities]
+    triggers = tuple(
+        InternalTrigger.of(
+            trigger,
+            accepted_at=trigger_accepted_at(
+                instance,
+                AcceptedTriggerV1(
+                    path=trigger_path(trigger.identity.name),
+                    trigger=trigger,
+                    artifact_digest=trigger_digest(trigger).tagged,
+                ),
+            ),
         )
+        for trigger in accepted
+    )
     with _TRIGGERS_LOCK:
         _TRIGGERS[key] = (coordinate.generation_root, triggers)
     return triggers
@@ -263,25 +286,34 @@ def _due_timers(
     connection: sqlite3.Connection | None,
     *,
     now: datetime,
+    listening_since: datetime,
     triggers: Sequence[InternalTrigger],
 ) -> list[_Fire]:
-    """Every timer and deadline due at `now`."""
+    """Every timer instant and deadline due at `now`.
+
+    A timer fires each of its instants once, none before its acceptance and none
+    before this evaluator started listening: instants that passed while no
+    daemon was running are skipped, never fired late as a catch-up.
+    """
 
     fires: list[_Fire] = []
-    last = (
+    covered = (
         {}
         if connection is None
-        else dict(connection.execute("SELECT trigger_id,last_fired_at FROM cadences").fetchall())
+        else dict(connection.execute("SELECT trigger_id,covered_until FROM timers").fetchall())
     )
     for item in triggers:
         if not schedule_is_timed(item.schedule):
             continue
-        previous = last.get(item.trigger)
-        due = timer_due(
-            item.schedule, last=None if previous is None else _instant(previous), now=now
+        after = max(item.accepted_at, listening_since - timedelta(microseconds=1))
+        if item.trigger in covered:
+            after = max(after, _instant(covered[item.trigger]))
+        fires.extend(
+            _Fire(item.action, item.trigger, instant, occurrence=f"tick:{format_datetime(instant)}")
+            for instant in timer_instants(
+                item.schedule, accepted_at=item.accepted_at, after=after, through=now
+            )
         )
-        if due is None or due <= now:
-            fires.append(_Fire(item.action, item.trigger, now if due is None else due))
     if connection is not None:
         fires.extend(
             _Fire(name, None, _instant(due))
@@ -303,11 +335,28 @@ def _capture_positions(instance: Any) -> dict[str, Any]:
     return journal.index.positions(_stream(instance), event_kind="produced_capture")
 
 
+def _fixed_window_fire(
+    item: InternalTrigger, *, now: datetime, listening_since: datetime
+) -> _Fire | None:
+    """A fixed window's close, if it is an instant this evaluator fires.
+
+    Like a timer instant: never one before the Trigger's acceptance, and never
+    one that passed while nothing was listening.
+    """
+
+    assert isinstance(item.schedule, WindowCloseScheduleV1)
+    ends_at = bind_observation_window(item.schedule.window).ends_at
+    if item.accepted_at < ends_at <= now and ends_at >= listening_since:
+        return _Fire(item.action, item.trigger, ends_at, occurrence=_window_key(ends_at))
+    return None
+
+
 def _watched_due(
     connection: sqlite3.Connection | None,
     instance: Any,
     *,
     now: datetime,
+    listening_since: datetime,
     triggers: Sequence[InternalTrigger],
 ) -> bool:
     """Whether any Capture-driven or window Trigger has something to read or fire."""
@@ -320,9 +369,8 @@ def _watched_due(
     positions: dict[str, Any] | None = None
     for item in watched:
         if schedule_capture_selector(item.schedule) is None:
-            assert isinstance(item.schedule, WindowCloseScheduleV1)
-            window = bind_observation_window(item.schedule.window)
-            if window.ends_at <= now and not _fired(connection, item, _window_key(window.ends_at)):
+            fire = _fixed_window_fire(item, now=now, listening_since=listening_since)
+            if fire is not None and not _fired(connection, item.trigger, fire.occurrence or ""):
                 return True
             continue
         row = connection.execute(
@@ -346,17 +394,22 @@ def _window_key(ends_at: datetime) -> str:
     return f"window:{format_datetime(ends_at)}"
 
 
-def _fired(connection: sqlite3.Connection, item: InternalTrigger, occurrence: str) -> bool:
+def _fired(connection: sqlite3.Connection, trigger: str, occurrence: str) -> bool:
     return (
         connection.execute(
-            "SELECT 1 FROM events WHERE trigger_id=? AND occurrence=?", (item.trigger, occurrence)
+            "SELECT 1 FROM events WHERE trigger_id=? AND occurrence=?", (trigger, occurrence)
         ).fetchone()
         is not None
     )
 
 
 def _watched_fires(
-    connection: sqlite3.Connection, instance: Any, *, now: datetime, item: InternalTrigger
+    connection: sqlite3.Connection,
+    instance: Any,
+    *,
+    now: datetime,
+    listening_since: datetime,
+    item: InternalTrigger,
 ) -> list[_Fire]:
     """Read one Capture-driven or window Trigger forward and return what it fires now."""
 
@@ -365,12 +418,8 @@ def _watched_fires(
     schedule = item.schedule
     selector = schedule_capture_selector(schedule)
     if selector is None:
-        assert isinstance(schedule, WindowCloseScheduleV1)
-        window = bind_observation_window(schedule.window)
-        key = _window_key(window.ends_at)
-        if window.ends_at <= now and not _fired(connection, item, key):
-            return [_Fire(item.action, item.trigger, window.ends_at, occurrence=key)]
-        return []
+        fire = _fixed_window_fire(item, now=now, listening_since=listening_since)
+        return [] if fire is None else [fire]
     positions = _capture_positions(instance)
     row = connection.execute(
         "SELECT schedule,position FROM scans WHERE trigger_id=?", (item.trigger,)
@@ -464,23 +513,31 @@ def _watched_fires(
         "DELETE FROM windows WHERE trigger_id=? AND ends_at<=?",
         (item.trigger, format_datetime(now)),
     )
-    return [fire for fire in fires if not _fired(connection, item, fire.occurrence or "")]
+    return [fire for fire in fires if not _fired(connection, item.trigger, fire.occurrence or "")]
 
 
 def evaluate_triggers(
-    instance: Any, *, now: datetime, triggers: Sequence[InternalTrigger] | None = None
+    instance: Any,
+    *,
+    now: datetime,
+    listening_since: datetime,
+    triggers: Sequence[InternalTrigger] | None = None,
 ) -> tuple[TriggerEvent, ...]:
-    """Fire each due timer once, and each Capture-driven Trigger once per event.
+    """Fire each timer instant once, and each Capture-driven Trigger once per event.
 
-    A timer restarts from this tick after downtime. ``triggers`` defaults to
-    the live internal Triggers at the instance's accepted head.
+    ``listening_since`` is when this evaluator (the daemon's consumer runner)
+    began firing: timer instants before it passed while nothing was listening
+    and are skipped. ``triggers`` defaults to the live internal Triggers at the
+    instance's accepted head.
     """
 
     if triggers is None:
         triggers = internal_triggers(instance)
     with _open(instance) as connection:
-        if not _due_timers(connection, now=now, triggers=triggers) and not _watched_due(
-            connection, instance, now=now, triggers=triggers
+        if not _due_timers(
+            connection, now=now, listening_since=listening_since, triggers=triggers
+        ) and not _watched_due(
+            connection, instance, now=now, listening_since=listening_since, triggers=triggers
         ):
             return ()
     fired: list[TriggerEvent] = []
@@ -488,22 +545,28 @@ def evaluate_triggers(
         assert connection is not None
         # Recheck under the writer lock: another evaluator may have fired, or
         # a deadline may have been replaced since the read-only due check.
-        fires = _due_timers(connection, now=now, triggers=triggers)
+        fires = _due_timers(connection, now=now, listening_since=listening_since, triggers=triggers)
         for item in triggers:
-            if not schedule_is_timed(item.schedule):
-                fires.extend(_watched_fires(connection, instance, now=now, item=item))
+            if schedule_is_timed(item.schedule):
+                connection.execute(
+                    "INSERT INTO timers VALUES (?,?) "
+                    "ON CONFLICT(trigger_id) DO UPDATE SET covered_until=excluded.covered_until",
+                    (item.trigger, format_datetime(now)),
+                )
+            else:
+                fires.extend(
+                    _watched_fires(
+                        connection, instance, now=now, listening_since=listening_since, item=item
+                    )
+                )
         for fire in sorted(
             fires,
             key=lambda item: (item.due, item.action, item.trigger or "", item.occurrence or ""),
         ):
             if fire.trigger is None:
                 connection.execute("DELETE FROM deadlines WHERE name=?", (fire.action,))
-            elif fire.occurrence is None:
-                connection.execute(
-                    "INSERT INTO cadences VALUES (?,?) "
-                    "ON CONFLICT(trigger_id) DO UPDATE SET last_fired_at=excluded.last_fired_at",
-                    (fire.trigger, format_datetime(now)),
-                )
+            elif _fired(connection, fire.trigger, fire.occurrence or ""):
+                continue
             cursor = connection.execute(
                 "INSERT INTO events(action,trigger_id,due_at,fired_at,event,occurrence) "
                 "VALUES (?,?,?,?,?,?)",

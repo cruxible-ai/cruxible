@@ -96,6 +96,8 @@ class ConsumerRunner:
         self._executors: dict[str, ThreadPoolExecutor] = {}
         self._in_flight: set[tuple[str, str, str]] = set()
         self._in_flight_lock = threading.Lock()
+        #: Per instance, when this runner began firing its internal Triggers.
+        self._listening_since: dict[str, datetime] = {}
 
     def start(self) -> None:
         if self.thread is None or not self.thread.is_alive():
@@ -133,8 +135,10 @@ class ConsumerRunner:
     def match_once(self, instance_id: str, instance: Any, *, now: datetime) -> None:
         """Match every active kind on one instance and schedule its due work."""
 
-        # The live internal Triggers at the instance's accepted head fire here.
-        evaluate_triggers(instance, now=now)
+        # The live internal Triggers at the instance's accepted head fire here,
+        # from when this runner began listening: what passed before is skipped.
+        listening_since = self._listening_since.setdefault(instance_id, now)
+        evaluate_triggers(instance, now=now, listening_since=listening_since)
         for kind in self.kinds:
             if not kind.active(instance):
                 continue
