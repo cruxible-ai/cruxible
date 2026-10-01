@@ -49,12 +49,15 @@ def test_launchd_and_systemd_render_exact_start_flags_without_secrets(tmp_path: 
     assert arguments[arguments.index("--socket") + 1] == darwin.socket_path
     assert plist["RunAtLoad"] is False
     assert plist["KeepAlive"] is False
+    # Normal priority on both platforms, never launchd's default throttling.
+    assert plist["ProcessType"] == "Interactive"
 
     linux = darwin.model_copy(update={"platform": "linux"})
     unit = render_systemd_service(linux).decode("utf-8")
     assert f'ExecStart="{linux.executable}" "server" "start"' in unit
     assert '"--capability-ceiling" "governed_write"' in unit
     assert "Restart=on-failure" in unit
+    assert "Nice=0" in unit.splitlines()
     for forbidden in ("bearer", "bootstrap", "password", "secret", "token"):
         assert forbidden.encode() not in (render_launchd_service(darwin) + unit.encode()).lower()
 

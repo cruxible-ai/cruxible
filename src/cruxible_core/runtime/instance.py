@@ -91,6 +91,7 @@ from cruxible_core.derived.derived_state import (
     SnapshotTree,
     advance_accepted_tree,
 )
+from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.governance.keys import (
     ALLOWED_SIGNERS_FILE,
@@ -655,7 +656,7 @@ class PlaybillInstance:
         """
         entries = tuple(layout.model_dump().items())
         key = (str(root), entries)
-        remembered = _VALIDATED_PATHS.get(key)
+        remembered = memo_get(_VALIDATED_PATHS, key)
         if remembered is not None:
             binding, cached = remembered
             try:
@@ -669,10 +670,7 @@ class PlaybillInstance:
             binding = _path_binding(root, entries)
         except OSError:
             return paths
-        _VALIDATED_PATHS[key] = (binding, dict(paths))
-        _VALIDATED_PATHS.move_to_end(key)
-        while len(_VALIDATED_PATHS) > _VALIDATED_PATH_CAPACITY:
-            _VALIDATED_PATHS.popitem(last=False)
+        memo_put(_VALIDATED_PATHS, key, (binding, dict(paths)), capacity=_VALIDATED_PATH_CAPACITY)
         return paths
 
     @staticmethod

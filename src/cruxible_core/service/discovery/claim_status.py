@@ -25,7 +25,7 @@ from cruxible_client.contracts.claims import (
     claim_path,
 )
 from cruxible_core.claims.claim_slots import ClaimSlotClassification, classify_claim_slot
-from cruxible_core.derived.memo import memo_get, memo_put
+from cruxible_core.derived.memo import memo_clear, memo_get, memo_put
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.claims import (
@@ -86,9 +86,9 @@ class _RememberedSlot:
 def reset_claim_resolution_memo(*, slots: bool = True) -> None:
     """Forget remembered derivations; activation keeps the validated slot answers."""
 
-    _RESOLUTION_MEMO.clear()
+    memo_clear(_RESOLUTION_MEMO)
     if slots:
-        _SLOT_MEMO.clear()
+        memo_clear(_SLOT_MEMO)
 
 
 def _resolution_key(claim: ClaimArtifactAny) -> bytes:
@@ -227,7 +227,7 @@ def claim_resolution_statuses(
     if remember:
         candidates: dict[bytes, _RememberedSlot] = {}
         for slot_key, group in live_groups.items():
-            entry = _SLOT_MEMO.get((root, compiler, slot_key))
+            entry = memo_get(_SLOT_MEMO, (root, compiler, slot_key))
             if (
                 entry is not None
                 and entry.members == _slot_members(group)
@@ -245,7 +245,6 @@ def claim_resolution_statuses(
             bodies_read.update(validated)
             for slot_key, entry in candidates.items():
                 if all(current.get(read) == value for read, value in entry.observed.items()):
-                    _SLOT_MEMO.move_to_end((root, compiler, slot_key))
                     statuses.update(entry.statuses)
                     verdicts.update(
                         {
@@ -327,7 +326,7 @@ def claim_resolution_statuses(
         observed = read_context.snapshot(union)
         for slot_key, (reads, group_boundaries, group_statuses) in derived.items():
             group = live_groups[slot_key]
-            _SLOT_MEMO[(root, compiler, slot_key)] = _RememberedSlot(
+            remembered_slot = _RememberedSlot(
                 members=_slot_members(group),
                 reads=reads,
                 observed={
@@ -346,9 +345,12 @@ def claim_resolution_statuses(
                     if claim.identity.qualified in verdicts
                 },
             )
-            _SLOT_MEMO.move_to_end((root, compiler, slot_key))
-        while len(_SLOT_MEMO) > _SLOT_MEMO_CAPACITY:
-            _SLOT_MEMO.popitem(last=False)
+            memo_put(
+                _SLOT_MEMO,
+                (root, compiler, slot_key),
+                remembered_slot,
+                capacity=_SLOT_MEMO_CAPACITY,
+            )
     fingerprints = tuple(sorted(bodies_read.body_identities.items()))
     # Only a derivation whose every body read has the identity it used, and
     # whose bodies still have those identities now, is remembered: anything

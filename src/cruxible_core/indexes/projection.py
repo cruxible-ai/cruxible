@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Final, Literal, cast
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, PrivateAttr, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import (
     GenerationRoot,
@@ -195,6 +195,29 @@ class AssemblerResult(_StrictProjectionModel):
     logical_digest: str
     row_counts: dict[str, int]
     instrumentation: BuildInstrumentation
+    # The source-authentication stamp the assembler recorded for this exact
+    # build, in this process. Never serialized and never set from input, so a
+    # result read back from anywhere else carries none. Serving publication uses
+    # it to keep the new head's stamp on disk however many other stamps were
+    # written between the build and the publication.
+    _source_authentication_stamp: dict[str, object] | None = PrivateAttr(default=None)
+
+    @property
+    def source_authentication_stamp(self) -> dict[str, object] | None:
+        return self._source_authentication_stamp
+
+    def with_source_authentication_stamp(self, stamp: dict[str, object]) -> "AssemblerResult":
+        self._source_authentication_stamp = stamp
+        return self
+
+    def __eq__(self, other: object) -> bool:
+        # The carried stamp is process-local provenance, not part of the result:
+        # a result equals its own serialized round trip.
+        if not isinstance(other, AssemblerResult):
+            return NotImplemented
+        return self.__dict__ == other.__dict__
+
+    __hash__ = None  # type: ignore[assignment]  # row_counts is a dict; never hashable
 
     @field_validator("manifest_path")
     @classmethod

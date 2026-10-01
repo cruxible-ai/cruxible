@@ -1,16 +1,16 @@
 """Bounded in-process memos that tolerate a concurrent invalidation.
 
-Every read route is an ``async def`` handler and therefore serialized on the
-event loop, but activation is not: ``activate_proposal`` is a sync handler, so
-Starlette runs it in the anyio worker threadpool, and it calls
-``PlaybillInstance.refresh()`` which clears the instance memos outright. A read
-that finds an entry and then promotes it in a second statement can be preempted
-between the two and raise ``KeyError`` on an otherwise valid read; an insert
-that trims to capacity can find the memo emptied under it and ``popitem`` an
-empty dict. Neither corrupts anything, but both surface as a server error where
-a cold read was the correct answer.
+Routes are sync handlers, so Starlette runs reads and activation alike in
+the anyio worker threadpool, concurrently with one another; the event loop only
+dispatches. ``activate_proposal`` calls ``PlaybillInstance.refresh()``, which
+clears the instance memos outright, and two reads can promote and trim the same
+memo at once. A read that finds an entry and then promotes it in a second
+statement can be preempted between the two and raise ``KeyError`` on an
+otherwise valid read; an insert that trims to capacity can find the memo emptied
+under it and ``popitem`` an empty dict. Neither corrupts anything, but both
+surface as a server error where a cold read was the correct answer.
 
-The two helpers here make each memo access one critical section, so a lost race
+The helpers here make each memo access one critical section, so a lost race
 reads as a miss and the caller simply does the work again. One process-wide lock
 serves every memo: the operations under it are O(1) dictionary moves, and the
 memos they guard are read a few dozen times per request.
@@ -60,4 +60,18 @@ def memo_put(
                 return
 
 
-__all__ = ["memo_get", "memo_put"]
+def memo_discard(memo: "OrderedDict[KeyT, ValueT]", key: KeyT) -> None:
+    """Forget one entry if it is still there."""
+
+    with _MEMO_LOCK:
+        memo.pop(key, None)
+
+
+def memo_clear(memo: "OrderedDict[KeyT, ValueT]") -> None:
+    """Forget every entry."""
+
+    with _MEMO_LOCK:
+        memo.clear()
+
+
+__all__ = ["memo_clear", "memo_discard", "memo_get", "memo_put"]

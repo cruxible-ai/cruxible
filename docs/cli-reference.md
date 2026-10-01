@@ -220,7 +220,31 @@ with `launchctl start ai.cruxible.daemon` on macOS,
 an explicit `--auth`/`--no-auth` disagreement is refused, and a TCP service
 without auth is refused (`service_install.tcp_requires_auth`). Service files contain
 no bearer or bootstrap secret, and auth-on installation requires an active
-durable runtime credential first.
+durable runtime credential first. The rendered units run the daemon at normal
+priority: the launchd agent sets `ProcessType` to `Interactive` (left unset,
+launchd throttles the job's CPU and I/O), and the systemd unit sets `Nice=0`.
+
+Run the daemon at normal priority however it is started. Agents wait on its
+answers, and a niced daemon on a busy host turns a seconds-long floor export
+into a minute-long one. zsh starts `&` background jobs at nice 5 (its
+`BG_NICE` option, on by default), so `cruxible server start ... &` from an
+interactive zsh runs niced; prefer the installed service, or run
+`setopt NO_BG_NICE` first. `ps -o pid,ni,rss,command -p <pid>` shows the
+daemon's nice value (`NI`) and resident set (`RSS`, in KiB).
+
+Give the daemon enough memory to keep its working set resident. A floor
+export holds several hundred MB per instance at its peak (about 640 MB on a
+state of about 3,000 Claims). When the daemon's resident set is far below
+that and the host is swapping, the first request after idle pages the heap
+back in, and full garbage collections over that heap (from a quarter of a
+second to several seconds each on such a state) run at swap speed. Free
+memory on the host, or move the daemon to a host with headroom; the daemon
+has no memory or garbage-collection settings to tune.
+
+Every request line in `<state-root>/daemon/logs/server.log` carries
+`duration_ms`, the wall time from the request's arrival to its log line, so a
+slow request can be attributed to its route. Route handlers run in the
+daemon's threadpool, so one slow request does not hold up the others.
 
 `server status` answers an instance-scoped credential with its own host and
 identity (`"scope": "instance"`) instead of refusing; the daemon-wide view below

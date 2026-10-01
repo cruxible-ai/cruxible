@@ -87,6 +87,7 @@ from cruxible_client.contracts.query.results import (
     QueryExecutionReceiptV1,
 )
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
+from cruxible_core.derived.memo import memo_discard, memo_get, memo_put
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -1056,7 +1057,7 @@ def reading_partition_index(
     records = journal.all_records(stream, partition_id)[: head.sequence]
     digests = tuple(stored.record_digest for stored in records)
     key = (str(instance.root), partition_id)
-    cached = _reading_index_memo.get(key)
+    cached = memo_get(_reading_index_memo, key)
     start = 0
     entries: list[_IndexedReading] = []
     if cached is not None and digests[: len(cached.digests)] == cached.digests:
@@ -1074,10 +1075,7 @@ def reading_partition_index(
     index = _ReadingPartitionIndex(
         digests=digests, entries=tuple(entries), by_key=by_key, head=head
     )
-    _reading_index_memo[key] = index
-    _reading_index_memo.move_to_end(key)
-    while len(_reading_index_memo) > _READING_INDEX_MEMO_CAPACITY:
-        _reading_index_memo.popitem(last=False)
+    memo_put(_reading_index_memo, key, index, capacity=_READING_INDEX_MEMO_CAPACITY)
     return index
 
 
@@ -1093,7 +1091,7 @@ def _verify_retained(instance: PlaybillInstance, entry: _IndexedReading) -> _Ind
     try:
         instance.body_store().read(entry.stored.record.payload_digest, access=_ACCESS)
     except PlaybillCasError:
-        _reading_index_memo.pop((str(instance.root), entry.stored.record.partition_id), None)
+        memo_discard(_reading_index_memo, (str(instance.root), entry.stored.record.partition_id))
         raise
     return entry
 

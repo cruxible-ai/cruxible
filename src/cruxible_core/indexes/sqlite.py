@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -12,7 +13,8 @@ import stat
 import sys
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +26,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow, ParsedProjectionTree
-from cruxible_core.derived.memo import memo_get, memo_put
+from cruxible_core.derived.memo import memo_clear, memo_get, memo_put
 from cruxible_core.documents.projection_documents import (
     DocumentProjectionView,
     document_projection_view,
@@ -182,22 +184,101 @@ def _trusted_stamps(directory: Path) -> list[dict[str, object]]:
         return list(trusted)
 
 
-def _trust_stamp(directory: Path, stamp: dict[str, object]) -> None:
+@contextmanager
+def stamp_ring_guard(directory: Path) -> Iterator[None]:
+    """Serialize stamp-ring rewrites with serving publication in ``directory``.
+
+    A stamp write reads the serving pointer and the on-disk ring, merges, and
+    replaces the ring. Unserialized, a historical read that read both before an
+    activation could replace the ring after it, dropping the stamp the
+    activation just recorded for the new head. An exclusive ``flock`` on the
+    directory itself covers every thread and process that writes here; it is
+    per open file description, so it is not reentrant -- callers holding it use
+    the ``_locked`` helpers.
+    """
+
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def _serving_head(directory: Path) -> tuple[list[object], str] | None:
+    """The coordinate and logical digest the serving pointer here names, if any."""
+
+    from cruxible_core.indexes.serving import load_serving_manifest
+
+    try:
+        serving = load_serving_manifest(directory)
+    except (OSError, ProjectionIntegrityError):
+        return None
+    return (
+        [
+            serving.instance_id,
+            serving.git_object_format,
+            serving.git_oid,
+            serving.semantic_root,
+            serving.generation_root,
+            serving.compiler_digest,
+            serving.schema_version,
+        ],
+        serving.logical_digest,
+    )
+
+
+def _head_stamp(
+    stamps: list[dict[str, object]], head: tuple[list[object], str]
+) -> dict[str, object] | None:
+    coordinate, logical_digest = head
+    return next(
+        (
+            item
+            for item in stamps
+            if item.get("coordinate") == coordinate and item.get("logical_digest") == logical_digest
+        ),
+        None,
+    )
+
+
+def _retain_stamps(
+    stamps: list[dict[str, object]],
+    limit: int,
+    head: tuple[list[object], str] | None,
+) -> list[dict[str, object]]:
+    """Keep the newest ``limit`` stamps, never dropping the serving head's.
+
+    Pinned reads of older coordinates each land a stamp; without this, enough
+    of them push the head's out and the next process to bind the head re-derives
+    every typed row from source. Retention decides only what is kept, never what
+    is trusted: trust still comes from the records on disk at first bind.
+    """
+
+    retained = stamps[:limit]
+    if head is None:
+        return retained
+    head_stamp = _head_stamp(stamps, head)
+    if head_stamp is None or head_stamp in retained:
+        return retained
+    return retained[: limit - 1] + [head_stamp]
+
+
+def _trust_stamp(
+    directory: Path,
+    stamp: dict[str, object],
+    *,
+    head: tuple[list[object], str] | None = None,
+) -> None:
     _trusted_stamps(directory)
     with _TRUSTED_STAMPS_LOCK:
         trusted = _TRUSTED_STAMPS[_stamp_key(directory)]
         if stamp not in trusted:
-            trusted.insert(0, stamp)
-            del trusted[_TRUSTED_STAMPS_RETAINED:]
+            trusted[:] = _retain_stamps([stamp, *trusted], _TRUSTED_STAMPS_RETAINED, head)
 
 
-def _record_authentication_stamp(
-    directory: Path, accepted: Any, manifest: ProjectionManifest
-) -> None:
-    stamp = _authentication_stamp(accepted, manifest)
-    _trust_stamp(directory, stamp)
-    retained = [stamp] + [item for item in _authentication_stamps(directory) if item != stamp]
-    body = canonical_bytes(retained[:_SOURCE_AUTHENTICATION_STAMPS_RETAINED]) + b"\n"
+def _write_stamp_ring_locked(directory: Path, stamps: list[dict[str, object]]) -> None:
+    body = canonical_bytes(stamps) + b"\n"
     temporary = directory / f".{SOURCE_AUTHENTICATION_STAMPS}.{secrets.token_hex(8)}.tmp"
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
@@ -212,8 +293,63 @@ def _record_authentication_stamp(
     _fsync_directory(directory)
 
 
-def record_source_built_piece(path: Path, *, accepted: Any, manifest: ProjectionManifest) -> None:
-    """Mark only the assembler's completed exact source-derived output ready."""
+def _record_authentication_stamp(
+    directory: Path, accepted: Any, manifest: ProjectionManifest
+) -> None:
+    stamp = _authentication_stamp(accepted, manifest)
+    with stamp_ring_guard(directory):
+        # Read the pointer and the ring under the guard, so the ring written
+        # here is merged from the latest of both.
+        head = _serving_head(directory)
+        _trust_stamp(directory, stamp, head=head)
+        retained = _retain_stamps(
+            [stamp] + [item for item in _authentication_stamps(directory) if item != stamp],
+            _SOURCE_AUTHENTICATION_STAMPS_RETAINED,
+            head,
+        )
+        _write_stamp_ring_locked(directory, retained)
+
+
+def retain_serving_head_stamp_locked(
+    directory: Path, *, built: dict[str, object] | None = None
+) -> None:
+    """Keep the newly served head's stamp on disk after older writes pushed it out.
+
+    Called by serving publication while it holds ``stamp_ring_guard``. The
+    assembler stamps a build before activation publishes it, and every stamp
+    written in between protected the previous head, so any number of them can
+    push the new head's stamp out of both rings. ``built`` is the stamp the
+    assembler recorded for the published build in this process, carried on its
+    result; failing that, a stamp this process trusts (recorded here, or on disk
+    at first bind) is used. Nothing read from disk later is ever restored.
+    """
+
+    head = _serving_head(directory)
+    if head is None:
+        return
+    head_stamp = None if built is None else _head_stamp([built], head)
+    if head_stamp is None:
+        head_stamp = _head_stamp(_trusted_stamps(directory), head)
+    if head_stamp is None:
+        return
+    _trust_stamp(directory, head_stamp, head=head)
+    on_disk = _authentication_stamps(directory)
+    if head_stamp in on_disk:
+        return
+    _write_stamp_ring_locked(
+        directory,
+        _retain_stamps([*on_disk, head_stamp], _SOURCE_AUTHENTICATION_STAMPS_RETAINED, head),
+    )
+
+
+def record_source_built_piece(
+    path: Path, *, accepted: Any, manifest: ProjectionManifest
+) -> dict[str, object]:
+    """Mark only the assembler's completed exact source-derived output ready.
+
+    Returns the stamp recorded for it, which the assembler carries on its result
+    to serving publication.
+    """
     before = path.stat()
     digest = physical_file_digest(path).tagged
     after = path.stat()
@@ -226,6 +362,7 @@ def record_source_built_piece(path: Path, *, accepted: Any, manifest: Projection
     )
     _record_verified_piece(identity, source_authenticated=True)
     _record_authentication_stamp(path.parent, accepted, manifest)
+    return _authentication_stamp(accepted, manifest)
 
 
 def reset_projection_verification_memo() -> None:
@@ -236,7 +373,7 @@ def reset_projection_verification_memo() -> None:
     needs an explicit reset to make the next bind pay the full check again.
     """
 
-    _VERIFIED_PIECES.clear()
+    memo_clear(_VERIFIED_PIECES)
     with _TRUSTED_STAMPS_LOCK:
         _TRUSTED_STAMPS.clear()
 

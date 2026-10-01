@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request, Response
+from starlette.concurrency import run_in_threadpool
 
 from cruxible_client import contracts
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
@@ -57,6 +58,7 @@ from cruxible_client.contracts.write import (
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime import playbill_api
+from cruxible_core.server.admission import KeyedAdmission
 from cruxible_core.server.config import resolve_server_settings
 from cruxible_core.server.playbill_request_models import (
     PlaybillApprovalChallengeRequest,
@@ -109,6 +111,10 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["playbill"])
+
+# One floor export at a time per instance, admitted on the event loop; see
+# `export_floor`.
+_floor_export_admission = KeyedAdmission()
 
 
 def _coordinate(
@@ -204,7 +210,7 @@ def publish_ledger(
     "/{instance_id}/playbill/ledger/mirror",
     response_model=contracts.PlaybillLedgerMirrorV1,
 )
-async def ledger_clone_url(instance_id: str) -> contracts.PlaybillLedgerMirrorV1:
+def ledger_clone_url(instance_id: str) -> contracts.PlaybillLedgerMirrorV1:
     return playbill_api.playbill_ledger_clone_url(resolve_server_instance_id(instance_id))
 
 
@@ -266,7 +272,7 @@ def kit_remove(instance_id: str, request: PlaybillKitRemoveRequestV1) -> Playbil
     "/{instance_id}/playbill/bodies",
     response_model=contracts.PlaybillCasObjectResult,
 )
-async def store_body(
+def store_body(
     instance_id: str,
     req: PlaybillStoreBodyRequest,
 ) -> contracts.PlaybillCasObjectResult:
@@ -328,12 +334,12 @@ def propose_principal(
     "/{instance_id}/playbill/whoami",
     response_model=contracts.PlaybillWhoAmI,
 )
-async def whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
+def whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
     return playbill_api.playbill_whoami(resolve_server_instance_id(instance_id))
 
 
 @router.get("/{instance_id}/playbill/head", response_model=contracts.PlaybillHeadV1)
-async def head(
+def head(
     instance_id: str,
     at: str | None = Query(
         default=None,
@@ -357,7 +363,7 @@ async def head(
     "/{instance_id}/playbill/orient",
     response_model=contracts.PlaybillOrientResultV1,
 )
-async def orient(
+def orient(
     instance_id: str,
     kind: str | None = Query(default=None, max_length=256),
     section: contracts.PlaybillOrientSection | None = None,
@@ -408,7 +414,7 @@ async def orient(
     "/{instance_id}/playbill/proposals",
     response_model=contracts.PlaybillProposalList,
 )
-async def list_proposals(
+def list_proposals(
     instance_id: str,
     status: Literal["open", "settled", "incomplete"] | None = None,
     limit: int = Query(
@@ -430,7 +436,7 @@ async def list_proposals(
     "/{instance_id}/playbill/proposal-selector",
     response_model=contracts.PlaybillProposalSelectorResultV1,
 )
-async def resolve_proposal_selector(
+def resolve_proposal_selector(
     instance_id: str,
     selector: str,
 ) -> contracts.PlaybillProposalSelectorResultV1:
@@ -444,7 +450,7 @@ async def resolve_proposal_selector(
     "/{instance_id}/playbill/proposals/{proposal_id}",
     response_model=contracts.PlaybillProposalInspection,
 )
-async def inspect_proposal(
+def inspect_proposal(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.PlaybillProposalInspection:
@@ -488,7 +494,7 @@ def withdraw_proposal(
     "/{instance_id}/playbill/proposals/{proposal_id}/status",
     response_model=contracts.PlaybillProposalListEntry,
 )
-async def proposal_status(
+def proposal_status(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.PlaybillProposalListEntry:
@@ -501,7 +507,7 @@ async def proposal_status(
     "/{instance_id}/playbill/proposals/{proposal_id}/refusal",
     response_model=contracts.PlaybillRefusalInspection,
 )
-async def inspect_refusal(
+def inspect_refusal(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.PlaybillRefusalInspection:
@@ -514,7 +520,7 @@ async def inspect_refusal(
     "/{instance_id}/playbill/proposals/{proposal_id}/review",
     response_model=contracts.PlaybillProposalReview,
 )
-async def review_proposal(
+def review_proposal(
     instance_id: str,
     proposal_id: str,
     req: PlaybillReviewRequest,
@@ -535,7 +541,7 @@ async def review_proposal(
     "/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
     response_model=contracts.PlaybillApprovalChallenge,
 )
-async def prepare_approval(
+def prepare_approval(
     instance_id: str,
     proposal_id: str,
     req: PlaybillApprovalChallengeRequest,
@@ -582,7 +588,7 @@ def activate_proposal(
 
 
 @router.post("/{instance_id}/playbill/captures/read", response_model=CaptureReadV1)
-async def read_capture(instance_id: str, request: CaptureReadRequestV1) -> CaptureReadV1:
+def read_capture(instance_id: str, request: CaptureReadRequestV1) -> CaptureReadV1:
     return playbill_api.playbill_read_capture(resolve_server_instance_id(instance_id), request)
 
 
@@ -590,7 +596,7 @@ async def read_capture(instance_id: str, request: CaptureReadRequestV1) -> Captu
     "/{instance_id}/playbill/sources/context",
     response_model=contracts.PlaybillSourceContext,
 )
-async def source_context(instance_id: str) -> contracts.PlaybillSourceContext:
+def source_context(instance_id: str) -> contracts.PlaybillSourceContext:
     return playbill_api.playbill_source_context(resolve_server_instance_id(instance_id))
 
 
@@ -598,7 +604,7 @@ async def source_context(instance_id: str) -> contracts.PlaybillSourceContext:
     "/{instance_id}/playbill/sources/check",
     response_model=contracts.PlaybillSourceCheckResult,
 )
-async def check_sources(
+def check_sources(
     instance_id: str,
     req: PlaybillSourceBundleRequest,
 ) -> contracts.PlaybillSourceCheckResult:
@@ -680,7 +686,7 @@ def append_claim_attestation(
     response_model=None,
     status_code=204,
 )
-async def recover_claim_attestations(instance_id: str) -> Response:
+def recover_claim_attestations(instance_id: str) -> Response:
     playbill_api.playbill_recover_claim_attestations(
         resolve_server_instance_id(instance_id),
     )
@@ -691,7 +697,7 @@ async def recover_claim_attestations(instance_id: str) -> Response:
     "/{instance_id}/playbill/resolution-contracts/query",
     response_model=contracts.ResolutionContractsResultV1,
 )
-async def resolution_contracts(
+def resolution_contracts(
     instance_id: str, req: contracts.ResolutionContractsRequestV1
 ) -> contracts.ResolutionContractsResultV1:
     return playbill_api.playbill_resolution_contracts(
@@ -703,7 +709,7 @@ async def resolution_contracts(
     "/{instance_id}/playbill/predictions",
     response_model=contracts.PlaybillPredictResultV2,
 )
-async def predict(
+def predict(
     instance_id: str,
     req: contracts.PlaybillPredictRequestV2,
 ) -> contracts.PlaybillPredictResultV2:
@@ -717,7 +723,7 @@ async def predict(
     "/{instance_id}/playbill/predictions/{prediction_id}/settlements",
     response_model=contracts.PlaybillSettleResultV2,
 )
-async def settle_prediction(
+def settle_prediction(
     instance_id: str,
     prediction_id: str,
     req: contracts.PlaybillSettleRequestV2,
@@ -733,7 +739,7 @@ async def settle_prediction(
     "/{instance_id}/playbill/authoring/intents",
     response_model=contracts.PlaybillAuthoringIntentView,
 )
-async def create_authoring_intent(
+def create_authoring_intent(
     instance_id: str,
     req: (
         PlaybillAuthoringCreateRequest
@@ -769,7 +775,7 @@ async def create_authoring_intent(
     "/{instance_id}/playbill/authoring/intents",
     response_model=contracts.PlaybillAuthoringIntentList,
 )
-async def list_pending_authoring_intents(
+def list_pending_authoring_intents(
     instance_id: str,
 ) -> contracts.PlaybillAuthoringIntentList:
     return playbill_api.playbill_authoring_list_pending(resolve_server_instance_id(instance_id))
@@ -779,7 +785,7 @@ async def list_pending_authoring_intents(
     "/{instance_id}/playbill/authoring/compile",
     response_model=contracts.PlaybillAuthoringPreflightResult,
 )
-async def compile_authoring(
+def compile_authoring(
     instance_id: str,
     req: (
         PlaybillAuthoringCompileRequest
@@ -820,7 +826,7 @@ async def compile_authoring(
     "/{instance_id}/playbill/authoring/intents/{intent_id}",
     response_model=contracts.PlaybillAuthoringIntentView,
 )
-async def get_authoring_intent(
+def get_authoring_intent(
     instance_id: str,
     intent_id: str,
 ) -> contracts.PlaybillAuthoringIntentView:
@@ -831,7 +837,7 @@ async def get_authoring_intent(
     "/{instance_id}/playbill/authoring/intents/{intent_id}/resume",
     response_model=contracts.PlaybillAuthoringIntentView,
 )
-async def resume_authoring_intent(
+def resume_authoring_intent(
     instance_id: str,
     intent_id: str,
 ) -> contracts.PlaybillAuthoringIntentView:
@@ -844,7 +850,7 @@ async def resume_authoring_intent(
     "/{instance_id}/playbill/authoring/intents/{intent_id}/rebase",
     response_model=contracts.PlaybillAuthoringIntentView,
 )
-async def rebase_authoring_intent(
+def rebase_authoring_intent(
     instance_id: str,
     intent_id: str,
     _req: PlaybillAuthoringRebaseRequest,
@@ -858,7 +864,7 @@ async def rebase_authoring_intent(
     "/{instance_id}/playbill/authoring/intents/{intent_id}/preflight",
     response_model=contracts.PlaybillAuthoringPreflightResult,
 )
-async def preflight_authoring_intent(
+def preflight_authoring_intent(
     instance_id: str,
     intent_id: str,
     _req: PlaybillAuthoringPreflightRequest,
@@ -903,7 +909,7 @@ def submit_authoring_intent(
     "/{instance_id}/playbill/authoring/intents/{intent_id}/status",
     response_model=contracts.PlaybillCandidateStatus,
 )
-async def authoring_intent_status(
+def authoring_intent_status(
     instance_id: str,
     intent_id: str,
 ) -> contracts.PlaybillCandidateStatus:
@@ -916,7 +922,7 @@ async def authoring_intent_status(
     "/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon",
     response_model=contracts.PlaybillInsertionAbandonResult,
 )
-async def abandon_authoring_insertion(
+def abandon_authoring_insertion(
     instance_id: str,
     intent_id: str,
     req: PlaybillInsertionAbandonRequest,
@@ -932,7 +938,7 @@ async def abandon_authoring_insertion(
     "/{instance_id}/playbill/blocks/declare",
     response_model=contracts.PlaybillBlockDeclareResultV1,
 )
-async def declare_playbill_block(
+def declare_playbill_block(
     instance_id: str,
     req: PlaybillBlockDeclareRequest,
 ) -> contracts.PlaybillBlockDeclareResultV1:
@@ -946,7 +952,7 @@ async def declare_playbill_block(
     "/{instance_id}/playbill/blocks/depublish",
     response_model=contracts.PlaybillBlockDepublishResultV1,
 )
-async def depublish_playbill_block(
+def depublish_playbill_block(
     instance_id: str,
     req: PlaybillBlockDepublishRequest,
 ) -> contracts.PlaybillBlockDepublishResultV1:
@@ -1005,7 +1011,7 @@ def read_claim_backings(instance_id: str, req: ClaimBackingsRequestV1) -> ClaimB
     "/{instance_id}/playbill/projections/check",
     response_model=contracts.PlaybillProjectionCheckResultV1,
 )
-async def check_projection_blocks(
+def check_projection_blocks(
     instance_id: str, req: contracts.PlaybillProjectionCheckRequestV1
 ) -> contracts.PlaybillProjectionCheckResultV1:
     return playbill_api.playbill_check_projection_blocks(
@@ -1017,7 +1023,7 @@ async def check_projection_blocks(
     "/{instance_id}/playbill/projections/sync-backing",
     response_model=contracts.PlaybillBlockSyncReadResultV1,
 )
-async def read_block_sync_backing(
+def read_block_sync_backing(
     instance_id: str,
     req: contracts.PlaybillBlockSyncReadRequestV1,
 ) -> contracts.PlaybillBlockSyncReadResultV1:
@@ -1028,7 +1034,7 @@ async def read_block_sync_backing(
 
 
 @router.post("/{instance_id}/playbill/query", response_model=contracts.PlaybillQueryResult)
-async def query_playbill(
+def query_playbill(
     instance_id: str,
     req: contracts.PlaybillQueryRequestV1,
 ) -> contracts.PlaybillQueryResult:
@@ -1038,7 +1044,7 @@ async def query_playbill(
 @router.post(
     "/{instance_id}/playbill/procedures/source/preview", response_model=ProcedureSourcePreviewV1
 )
-async def procedure_source_preview(
+def procedure_source_preview(
     instance_id: str, req: ProcedureSourcePreviewRequestV1
 ) -> ProcedureSourcePreviewV1:
     return playbill_api.playbill_procedure_source_preview(
@@ -1050,7 +1056,7 @@ async def procedure_source_preview(
     "/{instance_id}/playbill/procedures/{name}/readiness",
     response_model=contracts.PlaybillProcedureReadiness,
 )
-async def procedure_readiness(
+def procedure_readiness(
     instance_id: str,
     name: str,
     evaluation_time: datetime,
@@ -1170,7 +1176,7 @@ def run_line(
     "/{instance_id}/playbill/procedure-runs/{run_id}",
     response_model=contracts.PlaybillProcedureRunState,
 )
-async def procedure_run_status(
+def procedure_run_status(
     instance_id: str,
     run_id: str,
 ) -> contracts.PlaybillProcedureRunState:
@@ -1200,7 +1206,7 @@ def procedure_measure(
     "/{instance_id}/playbill/procedures/{name}/readings",
     response_model=contracts.PlaybillProcedureReadingsResultV1,
 )
-async def procedure_readings(
+def procedure_readings(
     instance_id: str,
     name: str,
     req: contracts.PlaybillProcedureReadingsRequestV1,
@@ -1216,7 +1222,7 @@ async def procedure_readings(
     "/{instance_id}/playbill/next",
     response_model=contracts.PlaybillNextResult,
 )
-async def next_work(
+def next_work(
     instance_id: str,
     req: PlaybillNextRequest | PlaybillNextRequestV2,
 ) -> contracts.PlaybillNextResult:
@@ -1230,7 +1236,7 @@ async def next_work(
     "/{instance_id}/playbill/curation/list",
     response_model=contracts.PlaybillCurationListResult,
 )
-async def curation_list(
+def curation_list(
     instance_id: str,
     req: PlaybillCurationListRequest,
 ) -> contracts.PlaybillCurationListResult:
@@ -1244,7 +1250,7 @@ async def curation_list(
     "/{instance_id}/playbill/audit",
     response_model=contracts.PlaybillAuditResult,
 )
-async def audit(
+def audit(
     instance_id: str,
     req: PlaybillAuditRequest,
 ) -> contracts.PlaybillAuditResult:
@@ -1258,7 +1264,7 @@ async def audit(
     "/{instance_id}/playbill/curation/overrule",
     response_model=contracts.PlaybillCurationActionResult,
 )
-async def curation_overrule(
+def curation_overrule(
     instance_id: str,
     req: PlaybillCurationOverruleRequest,
 ) -> contracts.PlaybillCurationActionResult:
@@ -1272,7 +1278,7 @@ async def curation_overrule(
     "/{instance_id}/playbill/curation/accept-fixed",
     response_model=contracts.PlaybillCurationActionResult,
 )
-async def curation_accept_fixed(
+def curation_accept_fixed(
     instance_id: str,
     req: PlaybillCurationAcceptFixedRequest,
 ) -> contracts.PlaybillCurationActionResult:
@@ -1286,7 +1292,7 @@ async def curation_accept_fixed(
     "/{instance_id}/playbill/curation/suppress",
     response_model=contracts.PlaybillCurationActionResult,
 )
-async def curation_suppress(
+def curation_suppress(
     instance_id: str,
     req: PlaybillCurationSuppressRequest,
 ) -> contracts.PlaybillCurationActionResult:
@@ -1300,7 +1306,7 @@ async def curation_suppress(
     "/{instance_id}/playbill/since",
     response_model=contracts.PlaybillSinceResult,
 )
-async def since(
+def since(
     instance_id: str,
     req: contracts.PlaybillSinceRequest,
 ) -> contracts.PlaybillSinceResult:
@@ -1314,7 +1320,7 @@ async def since(
     "/{instance_id}/playbill/coverage/resolve",
     response_model=contracts.PlaybillCoverageResult,
 )
-async def resolve_coverage(
+def resolve_coverage(
     instance_id: str,
     req: PlaybillResolveCoverageRequest,
 ) -> contracts.PlaybillCoverageResult:
@@ -1335,13 +1341,27 @@ async def export_floor(
     instance_id: str,
     req: PlaybillFloorExportRequest,
 ) -> contracts.PlaybillFloorExport:
-    return playbill_api.playbill_export_floor(
-        resolve_server_instance_id(instance_id),
-        at=req.at,
-        format_version=req.format_version,
-        include=req.include,
-        review_notes_oid=req.review_notes_oid,
-    )
+    # An export is the daemon's heaviest read (hundreds of MB of working set on
+    # real state). Exports of one instance are admitted one at a time, so a
+    # second export of the same head is answered from the first one's memo
+    # instead of doubling the working set. Admission waits on the event loop,
+    # not in a worker thread, so queued exports never hold threadpool capacity
+    # that cheap reads, lifecycle routes and other instances need; the export
+    # itself runs in the threadpool. This is the one shape of async route the
+    # event-loop guardrail allows: await admission, then offload.
+    resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
+
+    def export() -> contracts.PlaybillFloorExport:
+        return playbill_api.playbill_export_floor(
+            resolved,
+            at=req.at,
+            format_version=req.format_version,
+            include=req.include,
+            review_notes_oid=req.review_notes_oid,
+        )
+
+    async with _floor_export_admission.admit(resolved):
+        return await run_in_threadpool(export)
 
 
 __all__ = ["router"]
