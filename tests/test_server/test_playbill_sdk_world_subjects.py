@@ -129,3 +129,21 @@ def test_a_world_reads_every_subject_past_the_server_ceiling(
     items = pb.world().project.work_item
     assert items.subject_ids == ("wi-1", "wi-2")
     assert items["wi-2"].address == f"{KIND}/wi-2"
+
+
+def test_a_retired_subject_takes_no_place_under_the_ceiling(
+    pb: Playbill,
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live-only answer under a ceiling of one is the first live Subject, not empty."""
+
+    client, instance_id, _key = playbill_http
+    actor = client.get(f"/api/v1/{instance_id}/playbill/whoami").json()["actor_id"]
+    _retire_subject(get_playbill_manager().get(instance_id), "wi-1", actor_id=actor)
+    monkeypatch.setattr(compact_module, "COMPACT_QUERY_MAX_RESULTS", 1)
+
+    first = _query(pb, kind=KIND, select=["subject_id"])
+
+    assert [row["subject_id"] for row in first.rows] == ["wi-2"]  # type: ignore[attr-defined]
+    assert first.capped == ()  # type: ignore[attr-defined]

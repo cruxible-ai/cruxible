@@ -95,11 +95,15 @@ from cruxible_client.contracts.query.grammar import (
 from cruxible_client.contracts.query.results import ClaimQueryResultV1
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
+from cruxible_core.query.backends import ClaimQueryFactsV1
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.exact_content import ExactContentReader
-from cruxible_core.service.discovery.query import evaluate_accepted_query
+from cruxible_core.service.discovery.query import (
+    build_accepted_query_facts,
+    evaluate_accepted_query,
+)
 from cruxible_core.service.discovery.query_values import (
     LiveValue,
     ValueIndex,
@@ -1226,17 +1230,42 @@ def _compact_subject_query(
         **{**draft, "pins": _pins(vocabulary, unpinned.referenced_predicates)}
     )
     definition = _accepted(spec)
+    with_retired = "retired" in request.status
+    live_facts = None
+    if not with_retired and not follows:
+        # With no follow, the kind's Subjects are the only bindings, so a
+        # retired one leaves the evaluated facts and never takes a place under
+        # the result ceiling. (A follow may reach a retired Subject as its
+        # target; those answers drop retired roots after evaluation instead.)
+
+        def live_facts() -> ClaimQueryFactsV1:
+            facts = build_accepted_query_facts(
+                instance,
+                coordinate=coordinate,
+                predicates=definition.query.referenced_predicates,
+                subject_kinds=definition.query.entry.subject_kinds,
+            )
+            return facts.model_copy(
+                update={
+                    "subjects": tuple(
+                        subject
+                        for subject in facts.subjects
+                        if subject.shell.lifecycle.state != "retired"
+                    )
+                }
+            )
+
     result = evaluate_accepted_query(
         instance,
         definition,
         coordinate=coordinate,
         evaluation_time=evaluation_time,
+        facts=live_facts,
     )
     _refuse_engine(result)
     capped, cap_notes = _capped(result)
     bindings = (ROOT, *(follow.alias for follow in follows))
     candidates, _keys = _bound_rows(result.rows, bindings)
-    with_retired = "retired" in request.status
     if not with_retired:
         # A retired Subject is not part of the kind's live state (orient counts
         # and samples live Subjects only); status "retired" lists it, marked.
