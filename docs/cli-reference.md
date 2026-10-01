@@ -240,7 +240,7 @@ registered is refused at acceptance (`playbill.trigger.action_unknown`). A new
 instance is initialized with `evidence-sweep` (daily) and
 `prediction-anchor-retry` (hourly); change a schedule, add a Trigger, or retire
 one through an ordinary proposal. `playbill next` reports any internal action
-no live Trigger schedules.
+no live Trigger schedules, and a Trigger whose Capture read failed (`stalled`).
 
 No Trigger fires retroactively. A timer fires each of its instants once, all of
 them after the acceptance of its Trigger version: a new cadence first fires one
@@ -248,11 +248,14 @@ interval after its acceptance (never on sight), a cron schedule at its first
 calendar instant after acceptance, and a changed schedule starts again from the
 successor's acceptance. Instants that pass while no daemon is running are
 skipped when it restarts, never fired late as a catch-up; a retired Trigger
-stops. A
-`capture_landing` or event-anchored `window_close` Trigger reads Captures
-forward from when it is first seen, never back-filling earlier ones, and fires
-once per event (a window when it closes); a fixed `window_close` fires once when
-it closes. Fires, which record the Trigger, the action and any Capture event
+stops. A fixed `window_close` is such an instant: it fires once when it
+closes, if that is after its acceptance and while a daemon listens. A
+`capture_landing` or event-anchored `window_close` Trigger reads Captures that
+land after its acceptance and fires once per event (a window when it closes).
+It checkpoints on the last Capture record it consumed, so an event read late,
+even after the Capture index is rebuilt, is still delivered exactly once; a
+read that fails or is incomplete consumes nothing and leaves the Trigger
+`stalled` in `playbill next` until a later read succeeds. Fires, which record the Trigger, the action and any Capture event
 fired on, and pending one-shot deadlines are retained under each instance's
 `exhaust/triggers.sqlite3`; this append-only event log is not disposable worker
 state. Workers follow fires by action, may ignore an event they do not need,

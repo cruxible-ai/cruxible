@@ -146,6 +146,7 @@ from cruxible_core.service.proposals.publications import (
     registered_projection_blocks,
 )
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.triggers.journal import trigger_read_errors
 
 NEXT_ITEM_ID_DOMAIN = "playbill-next-item-v1"
 NEXT_RESULT_DIGEST_DOMAIN = "playbill-next-result-v1"
@@ -631,7 +632,7 @@ _HEALTH_STATES: dict[str, frozenset[str]] = {
     "compiler": frozenset({"current", "upgrade_available", "no_upgrade_path"}),
     "line_dispatch": frozenset({"not_observed", "idle", "waiting", "due"}),
     "consumers": frozenset({"not_observed", "not_running", "current", "lagging", "stalled"}),
-    "triggers": frozenset({"not_observed", "scheduled", "unscheduled"}),
+    "triggers": frozenset({"not_observed", "scheduled", "unscheduled", "stalled"}),
 }
 
 
@@ -3676,7 +3677,9 @@ def _triggers_health(
 
     Informational, never blocking: an unscheduled action simply never fires,
     so the worker that follows it (evidence sweeps, anchor retries) stops
-    advancing. The repair is authoring a Trigger aimed at it.
+    advancing. The repair is authoring a Trigger aimed at it. A Capture-driven
+    Trigger whose last read consumed nothing (a failed or incomplete index
+    read) is `stalled`: its checkpoint holds and every tick reads it again.
     """
 
     if not access_profile.permits("instance"):
@@ -3691,6 +3694,10 @@ def _triggers_health(
         scheduled.setdefault(action, []).append(identity)
     unscheduled = [action for action in INTERNAL_ACTIONS if action not in scheduled]
     detail: dict[str, object] = {"scheduled": scheduled}
+    read_errors = trigger_read_errors(instance)
+    if read_errors:
+        detail.update(unscheduled=unscheduled, read_errors=read_errors)
+        return PlaybillNextHealthV1(state="stalled", detail=detail)
     if not unscheduled:
         return PlaybillNextHealthV1(state="scheduled", detail=detail)
     admits = any(

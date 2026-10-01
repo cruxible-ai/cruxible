@@ -593,3 +593,18 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     )
     restored = _status(instance, _request(instance))
     assert restored.triggers.state == "scheduled" and _attention(restored) == ()
+
+
+def test_a_trigger_whose_capture_read_consumed_nothing_is_stalled_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import cruxible_core.service.discovery.next as next_module
+
+    instance, _owner = initialize_local(tmp_path)
+    error = {"Trigger:sweep-on-landing": "capture read failed: index unreadable"}
+    monkeypatch.setattr(next_module, "trigger_read_errors", lambda _instance: error)
+    status = _status(instance, _request(instance))
+    facet = status.triggers
+    assert facet.state == "stalled" and not status.blocking
+    assert facet.detail["read_errors"] == error
+    assert _attention(status) == (("triggers", facet),)

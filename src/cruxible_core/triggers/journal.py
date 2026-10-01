@@ -13,8 +13,14 @@ before the daemon began listening: instants that pass while no daemon runs are
 skipped, never fired late. A retired Trigger stops.
 
 A Trigger that fires on Captures reads the procedure journal's Capture index
-forward from where it first saw it, never back-filling what landed before; a
-changed schedule starts reading afresh. Each event fires a Trigger once.
+forward from its version's acceptance, never back-filling what landed before
+it. Its checkpoint is the last record it consumed, named by the record's own
+``(recorded_at, partition_id, sequence)``, never by the index's ordinals: an
+index rebuilt under it is read again from that record, and each event still
+fires once, however late it is read. A read that fails or is incomplete never
+advances the checkpoint; it is kept for health instead. A backlog is read in
+bounded batches, one transaction each, so it never holds the writer lock for
+long. A changed schedule starts reading afresh from its own acceptance.
 
 Deadlines are not Triggers. A worker schedules its own (``next.expire``) as an
 operational refresh signal; they fire into the same log, under their action and
@@ -67,8 +73,10 @@ CREATE TABLE events (
 CREATE INDEX events_by_action ON events(action,sequence);
 CREATE UNIQUE INDEX events_once ON events(trigger_id,occurrence) WHERE occurrence IS NOT NULL;
 CREATE TABLE timers (trigger_id TEXT PRIMARY KEY, covered_until TEXT NOT NULL) STRICT;
-CREATE TABLE scans (trigger_id TEXT PRIMARY KEY, schedule TEXT NOT NULL, position TEXT NOT NULL)
- STRICT;
+CREATE TABLE scans (
+ trigger_id TEXT PRIMARY KEY, schedule TEXT NOT NULL, since TEXT NOT NULL, checkpoint TEXT,
+ seen TEXT, error TEXT
+) STRICT;
 CREATE TABLE windows (
  trigger_id TEXT NOT NULL, occurrence TEXT NOT NULL, ends_at TEXT NOT NULL, event TEXT NOT NULL,
  PRIMARY KEY(trigger_id,occurrence)
@@ -328,11 +336,23 @@ def _schedule_key(schedule: TriggerScheduleV1) -> str:
     return canonical_bytes(schedule.model_dump(mode="json")).decode()
 
 
-def _capture_positions(instance: Any) -> dict[str, Any]:
+#: Capture records one scan transaction consumes, and transactions one pass runs.
+_SCAN_BATCH = 256
+_SCAN_BATCHES_PER_PASS = 16
+
+
+def _capture_hint(instance: Any) -> str:
+    """The Capture index's live position: only a hint that something may have landed.
+
+    Never a checkpoint: a rebuilt index changes it, which merely prompts a read
+    from the stable checkpoint.
+    """
+
     from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 
     journal, _ = _journal(instance)
-    return journal.index.positions(_stream(instance), event_kind="produced_capture")
+    position = journal.index.positions(_stream(instance), event_kind="produced_capture")
+    return json.dumps(position, sort_keys=True)
 
 
 def _fixed_window_fire(
@@ -366,7 +386,7 @@ def _watched_due(
         return False
     if connection is None:
         return True
-    positions: dict[str, Any] | None = None
+    hint: str | None = None
     for item in watched:
         if schedule_capture_selector(item.schedule) is None:
             fire = _fixed_window_fire(item, now=now, listening_since=listening_since)
@@ -374,13 +394,13 @@ def _watched_due(
                 return True
             continue
         row = connection.execute(
-            "SELECT schedule,position FROM scans WHERE trigger_id=?", (item.trigger,)
+            "SELECT schedule,seen,error FROM scans WHERE trigger_id=?", (item.trigger,)
         ).fetchone()
-        if row is None or row[0] != _schedule_key(item.schedule):
+        if row is None or row[0] != _schedule_key(item.schedule) or row[2] is not None:
             return True
-        if positions is None:
-            positions = _capture_positions(instance)
-        if json.loads(row[1]) != positions:
+        if hint is None:
+            hint = _capture_hint(instance)
+        if row[1] != hint:
             return True
         if connection.execute(
             "SELECT 1 FROM windows WHERE trigger_id=? AND ends_at<=?",
@@ -403,117 +423,170 @@ def _fired(connection: sqlite3.Connection, trigger: str, occurrence: str) -> boo
     )
 
 
-def _watched_fires(
-    connection: sqlite3.Connection,
-    instance: Any,
-    *,
-    now: datetime,
-    listening_since: datetime,
-    item: InternalTrigger,
-) -> list[_Fire]:
-    """Read one Capture-driven or window Trigger forward and return what it fires now."""
+def _scan_batch(
+    connection: sqlite3.Connection, instance: Any, *, now: datetime, item: InternalTrigger
+) -> tuple[list[_Fire], bool]:
+    """Consume one bounded batch of Captures for one Trigger; whether more remain.
+
+    The batch's fires and window anchors and the advanced checkpoint commit
+    together. A failed or incomplete read records why and consumes nothing.
+    """
 
     from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 
     schedule = item.schedule
     selector = schedule_capture_selector(schedule)
-    if selector is None:
-        fire = _fixed_window_fire(item, now=now, listening_since=listening_since)
-        return [] if fire is None else [fire]
-    positions = _capture_positions(instance)
-    row = connection.execute(
-        "SELECT schedule,position FROM scans WHERE trigger_id=?", (item.trigger,)
-    ).fetchone()
+    assert selector is not None
     key = _schedule_key(schedule)
+    row = connection.execute(
+        "SELECT schedule,since,checkpoint FROM scans WHERE trigger_id=?", (item.trigger,)
+    ).fetchone()
     if row is None or row[0] != key:
-        # First sight of this schedule: read forward from here, never back-fill.
+        # A new schedule reads forward from its own acceptance, never before.
         connection.execute("DELETE FROM windows WHERE trigger_id=?", (item.trigger,))
         connection.execute(
-            "INSERT OR REPLACE INTO scans VALUES (?,?,?)",
-            (item.trigger, key, json.dumps(positions, sort_keys=True)),
+            "INSERT OR REPLACE INTO scans VALUES (?,?,?,NULL,NULL,NULL)",
+            (item.trigger, key, format_datetime(item.accepted_at)),
         )
-        return []
-    after = json.loads(row[1])
+        since, checkpoint = item.accepted_at, None
+    else:
+        since = _instant(row[1])
+        checkpoint = None if row[2] is None else tuple(json.loads(row[2]))
+    hint = _capture_hint(instance)
+    journal, _ = _journal(instance)
+    try:
+        records, more, complete = journal.index.captures(
+            _stream(instance),
+            bodies=instance.body_store(),
+            contract_digest=selector.capture_contract_digest,
+            since=since,
+            until=now + timedelta(microseconds=1),
+            limit=_SCAN_BATCH,
+            cursor=checkpoint,
+            ascending=True,
+        )
+    except (PlaybillError, OSError, ValueError) as exc:
+        connection.execute(
+            "UPDATE scans SET error=? WHERE trigger_id=?",
+            (f"capture read failed: {exc}", item.trigger),
+        )
+        return [], False
+    if not complete:
+        connection.execute(
+            "UPDATE scans SET error=? WHERE trigger_id=?",
+            ("capture index is catching up; this range is read again", item.trigger),
+        )
+        return [], False
     fires: list[_Fire] = []
-    if after != positions:
-        journal, _ = _journal(instance)
-        cursor = None
-        complete = True
-        try:
-            while True:
-                records, cursor, page_complete = journal.index.captures(
-                    _stream(instance),
-                    bodies=instance.body_store(),
-                    contract_digest=selector.capture_contract_digest,
-                    since=None,
-                    until=now,
-                    limit=256,
-                    cursor=cursor,
-                    after=after,
-                    through=positions,
-                )
-                complete = complete and page_complete
-                for stored in records:
-                    record, digest = stored.record, stored.record_digest
-                    assert digest is not None
-                    event = TriggerEventReferenceV1(
-                        run_id=record.run_id or "",
-                        partition_id=record.partition_id,
-                        sequence=record.sequence,
-                        record_digest=digest,
-                    )
-                    occurrence = "capture:" + digest
-                    if isinstance(schedule, CaptureLandingScheduleV1):
-                        fires.append(
-                            _Fire(item.action, item.trigger, record.recorded_at, event, occurrence)
-                        )
-                    else:
-                        assert isinstance(schedule, WindowCloseScheduleV1)
-                        window = bind_observation_window(
-                            schedule.window, event=event, event_time=record.recorded_at
-                        )
-                        connection.execute(
-                            "INSERT OR IGNORE INTO windows VALUES (?,?,?,?)",
-                            (
-                                item.trigger,
-                                occurrence,
-                                format_datetime(window.ends_at),
-                                event.model_dump_json(),
-                            ),
-                        )
-                if cursor is None:
-                    break
-        except PlaybillError:
-            # The Capture index was rebuilt under this reader: start afresh.
-            complete = True
-            fires = []
-        if complete:
-            connection.execute(
-                "UPDATE scans SET position=? WHERE trigger_id=?",
-                (json.dumps(positions, sort_keys=True), item.trigger),
-            )
-        else:
-            # The index is still catching up; read this range again next time.
-            fires = []
-    for occurrence, ends_at, event_json in connection.execute(
-        "SELECT occurrence,ends_at,event FROM windows WHERE trigger_id=? AND ends_at<=? "
-        "ORDER BY ends_at,occurrence",
-        (item.trigger, format_datetime(now)),
-    ).fetchall():
-        fires.append(
-            _Fire(
-                item.action,
-                item.trigger,
-                _instant(ends_at),
-                TriggerEventReferenceV1.model_validate_json(event_json),
-                occurrence,
-            )
+    for stored in records:
+        record, digest = stored.record, stored.record_digest
+        assert digest is not None
+        event = TriggerEventReferenceV1(
+            run_id=record.run_id or "",
+            partition_id=record.partition_id,
+            sequence=record.sequence,
+            record_digest=digest,
         )
+        occurrence = "capture:" + digest
+        if isinstance(schedule, CaptureLandingScheduleV1):
+            fires.append(_Fire(item.action, item.trigger, record.recorded_at, event, occurrence))
+        else:
+            assert isinstance(schedule, WindowCloseScheduleV1)
+            window = bind_observation_window(
+                schedule.window, event=event, event_time=record.recorded_at
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO windows VALUES (?,?,?,?)",
+                (
+                    item.trigger,
+                    occurrence,
+                    format_datetime(window.ends_at),
+                    event.model_dump_json(),
+                ),
+            )
+    last = records[-1].record if records else None
+    connection.execute(
+        "UPDATE scans SET checkpoint=coalesce(?,checkpoint),seen=?,error=NULL WHERE trigger_id=?",
+        (
+            None
+            if last is None
+            else json.dumps([format_datetime(last.recorded_at), last.partition_id, last.sequence]),
+            None if more else hint,
+            item.trigger,
+        ),
+    )
+    return [
+        fire for fire in fires if not _fired(connection, item.trigger, fire.occurrence or "")
+    ], (more is not None)
+
+
+def _closed_windows(
+    connection: sqlite3.Connection, *, now: datetime, item: InternalTrigger
+) -> list[_Fire]:
+    """Capture-anchored windows of one Trigger that have closed, each delivered once."""
+
+    fires = [
+        _Fire(
+            item.action,
+            item.trigger,
+            _instant(ends_at),
+            TriggerEventReferenceV1.model_validate_json(event_json),
+            occurrence,
+        )
+        for occurrence, ends_at, event_json in connection.execute(
+            "SELECT occurrence,ends_at,event FROM windows WHERE trigger_id=? AND ends_at<=? "
+            "ORDER BY ends_at,occurrence",
+            (item.trigger, format_datetime(now)),
+        ).fetchall()
+    ]
     connection.execute(
         "DELETE FROM windows WHERE trigger_id=? AND ends_at<=?",
         (item.trigger, format_datetime(now)),
     )
     return [fire for fire in fires if not _fired(connection, item.trigger, fire.occurrence or "")]
+
+
+def _record(
+    connection: sqlite3.Connection, fires: list[_Fire], *, now: datetime
+) -> list[TriggerEvent]:
+    fired: list[TriggerEvent] = []
+    for fire in sorted(
+        fires, key=lambda item: (item.due, item.action, item.trigger or "", item.occurrence or "")
+    ):
+        if fire.trigger is None:
+            connection.execute("DELETE FROM deadlines WHERE name=?", (fire.action,))
+        elif _fired(connection, fire.trigger, fire.occurrence or ""):
+            continue
+        cursor = connection.execute(
+            "INSERT INTO events(action,trigger_id,due_at,fired_at,event,occurrence) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                fire.action,
+                fire.trigger,
+                format_datetime(fire.due),
+                format_datetime(now),
+                None if fire.event is None else fire.event.model_dump_json(),
+                fire.occurrence,
+            ),
+        )
+        assert cursor.lastrowid is not None
+        fired.append(
+            TriggerEvent(cursor.lastrowid, fire.action, fire.trigger, fire.due, now, fire.event)
+        )
+    return fired
+
+
+def trigger_read_errors(instance: Any) -> dict[str, str]:
+    """Per Trigger, why its last Capture read consumed nothing, while it has not since."""
+
+    with _open(instance) as connection:
+        if connection is None:
+            return {}
+        return dict(
+            connection.execute(
+                "SELECT trigger_id,error FROM scans WHERE error IS NOT NULL ORDER BY trigger_id"
+            ).fetchall()
+        )
 
 
 def evaluate_triggers(
@@ -541,6 +614,18 @@ def evaluate_triggers(
         ):
             return ()
     fired: list[TriggerEvent] = []
+    # Captures first, each batch its own short transaction, so a large backlog
+    # never holds the writer lock and windows it anchors can close this pass.
+    for item in triggers:
+        if schedule_is_timed(item.schedule) or schedule_capture_selector(item.schedule) is None:
+            continue
+        for _batch in range(_SCAN_BATCHES_PER_PASS):
+            with _open(instance, create=True) as connection:
+                assert connection is not None
+                fires, more = _scan_batch(connection, instance, now=now, item=item)
+                fired.extend(_record(connection, fires, now=now))
+            if not more:
+                break
     with _open(instance, create=True) as connection:
         assert connection is not None
         # Recheck under the writer lock: another evaluator may have fired, or
@@ -553,34 +638,10 @@ def evaluate_triggers(
                     "ON CONFLICT(trigger_id) DO UPDATE SET covered_until=excluded.covered_until",
                     (item.trigger, format_datetime(now)),
                 )
+            elif schedule_capture_selector(item.schedule) is None:
+                fire = _fixed_window_fire(item, now=now, listening_since=listening_since)
+                fires.extend(() if fire is None else (fire,))
             else:
-                fires.extend(
-                    _watched_fires(
-                        connection, instance, now=now, listening_since=listening_since, item=item
-                    )
-                )
-        for fire in sorted(
-            fires,
-            key=lambda item: (item.due, item.action, item.trigger or "", item.occurrence or ""),
-        ):
-            if fire.trigger is None:
-                connection.execute("DELETE FROM deadlines WHERE name=?", (fire.action,))
-            elif _fired(connection, fire.trigger, fire.occurrence or ""):
-                continue
-            cursor = connection.execute(
-                "INSERT INTO events(action,trigger_id,due_at,fired_at,event,occurrence) "
-                "VALUES (?,?,?,?,?,?)",
-                (
-                    fire.action,
-                    fire.trigger,
-                    format_datetime(fire.due),
-                    format_datetime(now),
-                    None if fire.event is None else fire.event.model_dump_json(),
-                    fire.occurrence,
-                ),
-            )
-            assert cursor.lastrowid is not None
-            fired.append(
-                TriggerEvent(cursor.lastrowid, fire.action, fire.trigger, fire.due, now, fire.event)
-            )
+                fires.extend(_closed_windows(connection, now=now, item=item))
+        fired.extend(_record(connection, fires, now=now))
     return tuple(fired)
