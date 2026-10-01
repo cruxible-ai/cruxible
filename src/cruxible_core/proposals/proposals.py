@@ -260,10 +260,11 @@ from cruxible_client.contracts.subjects import (
 from cruxible_client.contracts.triggers import (
     AcceptedTriggerV1,
     CaptureEventInputV1,
+    NoTriggerInputV1,
     TriggerInputV1,
     evaluate_trigger_law,
     parse_trigger,
-    schedule_capture_selector,
+    schedule_satisfies_input,
     trigger_digest,
 )
 from cruxible_client.contracts.types import CompilerCoordinate, PrincipalRecord
@@ -2144,6 +2145,14 @@ def _admits_triggers(compiler: CompilerCoordinate) -> bool:
     return any(entry.kind == "trigger" for entry in artifact_kinds_for_compiler(compiler).entries())
 
 
+def _line_trigger_input(line: LineSpecV6) -> TriggerInputV1:
+    """The event a Line accepts: exactly its declared one when it binds its Capture."""
+
+    if line.trigger_input is None:
+        return NoTriggerInputV1()
+    return CaptureEventInputV1(event=line.trigger_event)
+
+
 def _line_trigger_dependents(context: _MemberContext, line: LineSpecV6) -> tuple[str, ...]:
     """Live Triggers a Line change would strand, read in the final candidate.
 
@@ -2163,9 +2172,8 @@ def _line_trigger_dependents(context: _MemberContext, line: LineSpecV6) -> tuple
             or trigger.line.qualified != identity
         ):
             continue
-        if line.lifecycle.state == "retired" or (
-            line.trigger_input is not None
-            and schedule_capture_selector(trigger.schedule) != line.trigger_event
+        if line.lifecycle.state == "retired" or not schedule_satisfies_input(
+            trigger.schedule, _line_trigger_input(line)
         ):
             stranded.add(trigger.identity.qualified)
     return tuple(sorted(stranded, key=lambda item: item.encode("utf-8")))
@@ -2304,13 +2312,8 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
             and isinstance(target.line, LineSpecV6)
             and target.line.lifecycle.state == "live"
         )
-        if (
-            target is not None
-            and isinstance(target.line, LineSpecV6)
-            and target.line.trigger_input is not None
-        ):
-            # A Line that binds its triggering Capture accepts exactly its event.
-            line_input = CaptureEventInputV1(event=target.line.trigger_event)
+        if target is not None and isinstance(target.line, LineSpecV6):
+            line_input = _line_trigger_input(target.line)
     law = evaluate_trigger_law(
         trigger,
         path=context.path,
