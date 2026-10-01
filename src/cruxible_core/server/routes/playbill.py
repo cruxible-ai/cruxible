@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-import threading
+import asyncio
+import weakref
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request, Response
+from starlette.concurrency import run_in_threadpool
 
 from cruxible_client import contracts
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
@@ -111,8 +115,23 @@ from cruxible_core.service.procedures.procedure_runs import (
 
 router = APIRouter(prefix="/api/v1", tags=["playbill"])
 
-# Floor exports run one at a time, off the event loop; see `export_floor`.
-_FLOOR_EXPORTS = threading.Lock()
+# One floor export at a time per instance, admitted on the event loop; see
+# `export_floor`. Keyed by loop because an asyncio.Lock belongs to one loop.
+_ExportLocks = dict[str, asyncio.Lock]
+_FLOOR_EXPORT_ADMISSION: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _ExportLocks] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+@asynccontextmanager
+async def _floor_export_admission(instance_id: str) -> AsyncIterator[None]:
+    """Wait for this instance's previous floor export without holding a worker thread."""
+
+    loop = asyncio.get_running_loop()
+    locks = _FLOOR_EXPORT_ADMISSION.setdefault(loop, {})
+    lock = locks.setdefault(instance_id, asyncio.Lock())
+    async with lock:
+        yield
 
 
 def _coordinate(
@@ -1335,16 +1354,21 @@ def resolve_coverage(
     "/{instance_id}/playbill/floor/export",
     response_model=contracts.PlaybillFloorExport,
 )
-def export_floor(
+async def export_floor(
     instance_id: str,
     req: PlaybillFloorExportRequest,
 ) -> contracts.PlaybillFloorExport:
-    resolved = resolve_server_instance_id(instance_id)
     # An export is the daemon's heaviest read (hundreds of MB of working set on
-    # real state). It runs in the threadpool so it never stalls the event loop,
-    # and one at a time so a second export of the same head waits for the first
-    # and is answered from its memo instead of doubling the working set.
-    with _FLOOR_EXPORTS:
+    # real state). Exports of one instance are admitted one at a time, so a
+    # second export of the same head is answered from the first one's memo
+    # instead of doubling the working set. Admission waits on the event loop,
+    # not in a worker thread, so queued exports never hold threadpool capacity
+    # that cheap reads, lifecycle routes and other instances need; the export
+    # itself runs in the threadpool. This is the one shape of async route the
+    # event-loop guardrail allows: await admission, then offload.
+    resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
+
+    def export() -> contracts.PlaybillFloorExport:
         return playbill_api.playbill_export_floor(
             resolved,
             at=req.at,
@@ -1352,6 +1376,9 @@ def export_floor(
             include=req.include,
             review_notes_oid=req.review_notes_oid,
         )
+
+    async with _floor_export_admission(resolved):
+        return await run_in_threadpool(export)
 
 
 __all__ = ["router"]
