@@ -116,6 +116,7 @@ from cruxible_client.contracts.write import (
     WriteStatus,
     WriteWarning,
     capture_handle,
+    subject_reference,
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import ComputedPreflight
@@ -573,9 +574,12 @@ class _Planner:
                     info, item, index=index, field_name=field_name, path=path
                 ).value
             elif isinstance(item, str) and item:
-                # A Subject as kind/id, or exact content as its text: compared as
-                # written, so a value no Claim holds is simply not what it holds.
-                shown = item
+                # A Subject as kind/id (``@kind/id`` names the same one), or exact
+                # content as its text: compared as written, so a value no Claim
+                # holds is simply not what it holds.
+                shown = (
+                    subject_reference(item) if info.claim_type.object_kind == "subject" else item
+                )
             else:
                 taken = (
                     "a Subject as kind/id" if info.claim_type.object_kind == "subject" else "text"
@@ -786,6 +790,7 @@ class _Planner:
     ) -> tuple[SubjectClaimObject, str]:
         path = f"changes[{index}].value"
         allowed = tuple(info.claim_type.allowed_object_subject_kinds)
+        value = subject_reference(value)
         kind, _, subject_id = str(value).partition("/") if isinstance(value, str) else ("", "", "")
         if not kind or not subject_id:
             raise _refuse(

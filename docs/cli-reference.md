@@ -1873,8 +1873,9 @@ replaces the live value: the Claim it revises is found for you. A Subject of a
 known kind that does not exist yet is added in the same change set; a
 Subject-valued VALUE must already exist. FIELD is a field of the kind as
 `orient` names it, or the full predicate. VALUE is text: an enum member, a
-number or `true`/`false` for such fields, a Subject as `kind/id`, or the text
-itself for exact content (which is also its own evidence). The default evidence
+number or `true`/`false` for such fields, a Subject as `kind/id` (`@kind/id`
+names the same Subject, in SUBJECT too), or the text itself for exact content
+(which is also its own evidence). The default evidence
 is `--because` as self evidence; `--evidence-file` cites text found once in a
 catalogued workspace file, read on this side, and `--capture` an existing
 Capture by its sha256 digest or its handle `CAP-<12+ hex>` (a digest prefix

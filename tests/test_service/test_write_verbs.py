@@ -273,6 +273,32 @@ def test_a_relation_value_never_creates_the_subject_it_names(instance: PlaybillI
     assert linked.subjects_added == (f"{KIND}/wi-9",)
 
 
+def test_an_at_sign_subject_reference_names_the_same_subject(
+    instance: PlaybillInstance,
+) -> None:
+    """``@kind/id`` is the SDK scripts' Subject spelling; the verbs read it as ``kind/id``.
+
+    It used to refuse ``value_kind_not_admitted`` with a repair naming the very
+    kind it was given. No Subject kind starts with ``@``, so the sigil is
+    unambiguous wherever a Subject is expected, and nowhere else is it touched.
+    """
+
+    linked = _write(instance, _add(f"@{WI1}", "governs", f"@{WI2}"))
+    assert linked.status == "accepted", linked
+    assert _values(instance, WI1, "governs") == [WI2]
+    (change,) = linked.changes
+    assert (change.subject, change.after) == (WI1, WI2)
+    # Expectations compare a Subject the same way, and a slot names it too.
+    slot = {"subject": f"@{WI1}", "field": "governs"}
+    retired = _write(instance, {"op": "retire", "target": slot, "expect": [f"@{WI2}"]})
+    assert retired.status == "accepted", retired
+    assert _values(instance, WI1, "governs") == []
+    # A literal field keeps the text exactly as written.
+    titled = _write(instance, _set(WI1, "title", f"@{WI3}"))
+    assert titled.status == "accepted", titled
+    assert _values(instance, WI1, "title") == [f"@{WI3}"]
+
+
 # -- subjects -------------------------------------------------------------------
 
 

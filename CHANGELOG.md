@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **The write verbs read `@kind/id` as a Subject.** `set`, `retire` and
+  `write` accept `@dev.roadmap_item/x` wherever they take a Subject: the
+  change's subject, a slot, a Subject-valued value and an `expect`. It used to
+  refuse `value_kind_not_admitted` with a repair naming the very kind it was
+  given. No Subject kind starts with `@`, so the sigil is unambiguous there; a
+  literal or exact-content value keeps its text as written.
+
 - **`get` on a Procedure shows its track record, and the SDK reads it.** The
   Procedure card carries `track_record`: one entry per accepted promotion of
   the Procedure's run exhaust (promotion name, record range, reducer output
