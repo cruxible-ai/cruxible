@@ -105,6 +105,7 @@
         "claim_new_evidence_supporting",
         "claim_new_evidence_unreviewed",
         "document_modified",
+        "workspace_binding_missing",
         "unregistered_projection_block",
         "projection_marker_invalid",
         "proposal_stale",
@@ -19233,7 +19234,7 @@
             "enum": [
               "playbill-floor-export-v1",
               "playbill-floor-export-v2",
-              "playbill-floor-export-v4"
+              "playbill-floor-export-v5"
             ],
             "title": "Tag",
             "type": "string"
@@ -19324,7 +19325,7 @@
             "enum": [
               "playbill-floor-export-v1",
               "playbill-floor-export-v2",
-              "playbill-floor-export-v4"
+              "playbill-floor-export-v5"
             ],
             "title": "Tag",
             "type": "string"
@@ -21239,6 +21240,7 @@
               "claim_new_evidence_supporting",
               "claim_new_evidence_unreviewed",
               "document_modified",
+              "workspace_binding_missing",
               "unregistered_projection_block",
               "projection_marker_invalid",
               "proposal_stale",
@@ -21612,6 +21614,7 @@
               "claim_new_evidence_supporting",
               "claim_new_evidence_unreviewed",
               "document_modified",
+              "workspace_binding_missing",
               "unregistered_projection_block",
               "projection_marker_invalid",
               "proposal_stale",
@@ -22134,6 +22137,7 @@
               "claim_new_evidence_supporting",
               "claim_new_evidence_unreviewed",
               "document_modified",
+              "workspace_binding_missing",
               "unregistered_projection_block",
               "projection_marker_invalid",
               "proposal_stale",
@@ -22336,6 +22340,7 @@
                   "claim_new_evidence_supporting",
                   "claim_new_evidence_unreviewed",
                   "document_modified",
+                  "workspace_binding_missing",
                   "unregistered_projection_block",
                   "projection_marker_invalid",
                   "proposal_stale",
@@ -22611,6 +22616,7 @@
               "claim_new_evidence_supporting",
               "claim_new_evidence_unreviewed",
               "document_modified",
+              "workspace_binding_missing",
               "unregistered_projection_block",
               "projection_marker_invalid",
               "proposal_stale",
@@ -23493,6 +23499,7 @@
                   "claim_new_evidence_supporting",
                   "claim_new_evidence_unreviewed",
                   "document_modified",
+                  "workspace_binding_missing",
                   "unregistered_projection_block",
                   "projection_marker_invalid",
                   "proposal_stale",
@@ -23648,6 +23655,7 @@
                   "claim_new_evidence_supporting",
                   "claim_new_evidence_unreviewed",
                   "document_modified",
+                  "workspace_binding_missing",
                   "unregistered_projection_block",
                   "projection_marker_invalid",
                   "proposal_stale",

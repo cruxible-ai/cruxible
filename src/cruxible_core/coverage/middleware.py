@@ -265,7 +265,7 @@ class FloorOutputV1(_StrictMiddlewareModel):
     """A client-owned floor destination; the daemon never sees this path."""
 
     tag: Literal["playbill-floor-output-v1"] = "playbill-floor-output-v1"
-    format: Literal["playbill-floor-export-v2", "playbill-floor-export-v4"] = (
+    format: Literal["playbill-floor-export-v2", "playbill-floor-export-v5"] = (
         "playbill-floor-export-v2"
     )
     # Opt-in parts a refresh exports; "discovery" adds the discovery cards.
@@ -340,6 +340,8 @@ class FloorManifestFileV1(_StrictMiddlewareModel):
     path: str
     content_digest: str
     byte_length: int = Field(ge=0)
+    # v5 stamps each file with the generation it last changed.
+    changed_at: int | None = Field(default=None, ge=0)
 
     @field_validator("path")
     @classmethod
@@ -360,13 +362,16 @@ class FloorManifestFileV1(_StrictMiddlewareModel):
 class FloorFreshnessManifestV2(_StrictMiddlewareModel):
     """The exact v2 manifest shape needed by the presentation-only freshness check."""
 
-    tag: Literal["playbill-floor-manifest-v2", "playbill-floor-manifest-v4"] = (
+    tag: Literal["playbill-floor-manifest-v2", "playbill-floor-manifest-v5"] = (
         "playbill-floor-manifest-v2"
     )
-    format: Literal["playbill-floor-export-v2", "playbill-floor-export-v4"] = (
+    format: Literal["playbill-floor-export-v2", "playbill-floor-export-v5"] = (
         "playbill-floor-export-v2"
     )
+    # v5 names its rendering rule and the coordinate's generation.
+    renderer: str | None = None
     coordinate: AcceptedCoordinate
+    generation: int | None = Field(default=None, ge=0)
     files: tuple[FloorManifestFileV1, ...]
     floor_digest: str
 
@@ -389,8 +394,13 @@ class FloorFreshnessManifestV2(_StrictMiddlewareModel):
         expected_digest = typed_digest(
             Sha256Value,
             self.format,
-            {"files": [item.model_dump(mode="json") for item in self.files]},
+            {"files": [item.model_dump(mode="json", exclude_none=True) for item in self.files]},
         ).tagged
+        v5 = self.format == "playbill-floor-export-v5"
+        if v5 != (self.renderer is not None and self.generation is not None) or any(
+            (item.changed_at is not None) != v5 for item in self.files
+        ):
+            raise ValueError("floor manifest fields differ from its format")
         if self.floor_digest != expected_digest:
             raise ValueError("floor manifest root digest differs from its inventory")
         return self

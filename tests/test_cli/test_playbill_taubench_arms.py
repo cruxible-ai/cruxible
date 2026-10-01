@@ -155,13 +155,13 @@ def test_the_arm_file_surface_is_floor_artifacts_and_the_boundary(
 
     assert {"manifest.json", "coverage-manifest.json"} <= written
     assert any(item.endswith(".profile.json") for item in written)
-    # The v4 floor's only prose is its own orientation README; no native
+    # The v5 floor's only prose is its own orientation README; no native
     # projection rendering reaches the arm's file surface.
     assert {item for item in written if item.endswith(".md")} <= {"README.md"}
     assert "render-manifest.json" not in written
     floor = json.loads((surface / "manifest.json").read_text(encoding="utf-8"))
-    assert floor["tag"] == "playbill-floor-manifest-v4"
-    assert floor["format"] == "playbill-floor-export-v4"
+    assert floor["tag"] == "playbill-floor-manifest-v5"
+    assert floor["format"] == "playbill-floor-export-v5"
     floor_paths = {item["path"] for item in floor["files"]}
     assert {path for path in floor_paths if path.endswith(".md")} <= {"README.md"}
     assert "render-manifest.json" not in floor_paths
@@ -322,7 +322,7 @@ def test_the_run_manifest_pins_every_field_the_evaluation_requires(
 
     for field in ("generation_root", "semantic_root", "compiler_digest", "floor_digest"):
         assert str(manifest["accepted"][field]).startswith("sha256:"), field
-    assert manifest["accepted"]["format"] == "playbill-floor-export-v4"
+    assert manifest["accepted"]["format"] == "playbill-floor-export-v5"
     assert "native_render" not in manifest
     assert manifest["seed"]["plan_digest"].startswith("sha256:")
     assert manifest["arms"] == {

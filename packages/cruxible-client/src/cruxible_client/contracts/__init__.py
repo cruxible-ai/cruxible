@@ -298,6 +298,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "claim_new_evidence_supporting",
     "claim_new_evidence_unreviewed",
     "document_modified",
+    "workspace_binding_missing",
     "unregistered_projection_block",
     "projection_marker_invalid",
     "proposal_stale",
@@ -1861,7 +1862,7 @@ class PlaybillFloorFile(BaseModel):
 
 
 PlaybillFloorExportPart = Literal["discovery"]
-"""An opt-in part of a v4 floor export.
+"""An opt-in part of a v5 floor export.
 
 ``discovery`` adds the discovery cards (``subjects/``, ``claim-types/``,
 ``procedures/`` and ``coverage-manifest.json``) to the grep-first floor.
@@ -1879,7 +1880,7 @@ class PlaybillFloorExport(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal[
-        "playbill-floor-export-v1", "playbill-floor-export-v2", "playbill-floor-export-v4"
+        "playbill-floor-export-v1", "playbill-floor-export-v2", "playbill-floor-export-v5"
     ] = "playbill-floor-export-v2"
     coordinate: PlaybillAcceptedCoordinate
     manifest: dict[str, Any]

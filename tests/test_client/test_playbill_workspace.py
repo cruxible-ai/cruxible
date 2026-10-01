@@ -21,7 +21,9 @@ from cruxible_client.authoring.workspace import (
     write_playbill_workspace_config,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
 from cruxible_client.contracts.repairs import RepairOperationV1
+from tests.support.floor_exports import delta_from_export, floor_v5_export
 
 
 def _coordinate(seed: str = "1") -> contracts.PlaybillAcceptedCoordinate:
@@ -30,6 +32,14 @@ def _coordinate(seed: str = "1") -> contracts.PlaybillAcceptedCoordinate:
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
         compiler_digest="sha256:" + "4" * 64,
+    )
+
+
+def _delta(*, content: bytes = b'{"fresh":true}\n') -> PlaybillFloorDeltaV1:
+    """The full floor delta the daemon serves the default floor refresh."""
+
+    return delta_from_export(
+        floor_v5_export({"cards/fresh.json": content}, coordinate=_coordinate())
     )
 
 
@@ -126,7 +136,7 @@ def test_workspace_config_writer_refuses_differences_and_never_carries_secrets(
     payload = json.loads(written.read_text(encoding="utf-8"))
     assert payload == {
         "floor_output": {
-            "format": "playbill-floor-export-v4",
+            "format": "playbill-floor-export-v5",
             "tag": "playbill-floor-output-v1",
         },
         "instance_id": "inst_two",
@@ -204,7 +214,7 @@ def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(
     assert payload["rules"] == []
     assert payload["floor_output"] == {
         "tag": "playbill-floor-output-v1",
-        "format": "playbill-floor-export-v4",
+        "format": "playbill-floor-export-v5",
     }
 
 
@@ -349,22 +359,17 @@ def test_activate_reports_accepted_and_refresh_failure(tmp_path: Path) -> None:
                 workspace_advertisement={"status": "not_attached", "workspace_path": None},
             )
 
-        def export_playbill_floor(
+        def playbill_floor_delta(
             self,
             instance_id: str,
             *,
             at=None,  # type: ignore[no-untyped-def]
-        ) -> contracts.PlaybillFloorExport:
-            export = _export()
-            return export.model_copy(
-                update={
-                    "files": [
-                        export.files[0],
-                        export.files[1].model_copy(
-                            update={"content_base64": base64.b64encode(b"tampered").decode()}
-                        ),
-                    ]
-                }
+            base_generation: int | None = None,
+            base_renderer: str | None = None,
+        ) -> PlaybillFloorDeltaV1:
+            return delta_from_export(
+                floor_v5_export({"cards/fresh.json": b"fresh"}, coordinate=_coordinate()),
+                corrupt="cards/fresh.json",
             )
 
     result = activate_with_workspace_refresh(
@@ -399,14 +404,16 @@ def test_accepted_activation_runs_workspace_sync_last(
                 workspace_advertisement={"status": "not_attached", "workspace_path": None},
             )
 
-        def export_playbill_floor(
+        def playbill_floor_delta(
             self,
             instance_id: str,
             *,
             at=None,  # type: ignore[no-untyped-def]
-        ) -> contracts.PlaybillFloorExport:
+            base_generation: int | None = None,
+            base_renderer: str | None = None,
+        ) -> PlaybillFloorDeltaV1:
             events.append("floor")
-            return _export()
+            return _delta()
 
     def sync(*_args, **_kwargs):  # type: ignore[no-untyped-def]
         events.append("sync")

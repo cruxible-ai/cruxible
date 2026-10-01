@@ -1,0 +1,323 @@
+"""The floor v5 manifest and the floor delta: one shape on both sides of the wire.
+
+The floor is a pure function of an accepted coordinate. Its root
+``manifest.json`` binds every file to its content digest and to ``changed_at``,
+the latest accepted generation that touched any of the file's inputs. Because
+the stamp is ledger-derived, the files a client at ``base`` lacks are exactly
+those with ``changed_at > base`` plus the paths the floor dropped since then,
+and a delta between two generations is a deterministic function of the pair.
+
+Both sides derive ``manifest.json`` from the same model and the same renderer,
+so the manifest is never shipped inside a delta: the receiver rebuilds it from
+its own base manifest plus the delta, and the head manifest digest proves the
+result before anything is written.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+from pathlib import PurePosixPath
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.primitives import pretty_json
+from cruxible_client.contracts.projection import AcceptedCoordinate
+
+PLAYBILL_FLOOR_FORMAT = "playbill-floor-export-v5"
+PLAYBILL_FLOOR_MANIFEST_TAG = "playbill-floor-manifest-v5"
+PLAYBILL_FLOOR_MANIFEST_PATH = "manifest.json"
+# Files the client writes into the floor directory from its own workspace
+# bindings. They are outside the daemon-verified manifest by construction.
+PLAYBILL_FLOOR_LOCAL_PATHS = frozenset({"projections/INDEX"})
+
+_SHA256 = r"^sha256:[0-9a-f]{64}$"
+_OID = r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+
+
+class _StrictFloorModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def safe_floor_path(value: str) -> str:
+    """A floor-relative POSIX path that cannot leave the floor directory."""
+
+    path = PurePosixPath(value)
+    if (
+        not value
+        or "\\" in value
+        or "\x00" in value
+        or path.is_absolute()
+        or path.as_posix() != value
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise ValueError(f"floor path escapes its root: {value!r}")
+    return value
+
+
+class PlaybillFloorEntryV5(_StrictFloorModel):
+    """One manifest row: a file's digest, size and the generation it last changed."""
+
+    path: str
+    content_digest: str = Field(pattern=_SHA256)
+    byte_length: int = Field(ge=0)
+    changed_at: int = Field(ge=0)
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if value == PLAYBILL_FLOOR_MANIFEST_PATH or value in PLAYBILL_FLOOR_LOCAL_PATHS:
+            raise ValueError(f"floor manifest may not list {value}")
+        return safe_floor_path(value)
+
+
+def floor_inventory_digest(
+    files: tuple[PlaybillFloorEntryV5, ...] | list[dict[str, object]],
+) -> str:
+    """The root digest over the byte-sorted file inventory."""
+
+    rows = [item.model_dump(mode="json") if isinstance(item, BaseModel) else item for item in files]
+    return typed_digest(Sha256Value, PLAYBILL_FLOOR_FORMAT, {"files": rows}).tagged
+
+
+class PlaybillFloorManifestV5(_StrictFloorModel):
+    """The root manifest: the coordinate, its generation, the renderer and every file.
+
+    ``renderer`` names the rendering rule (format revision and compiler digest).
+    Two floors with the same renderer and generation are the same bytes.
+    """
+
+    tag: Literal["playbill-floor-manifest-v5"] = "playbill-floor-manifest-v5"
+    format: Literal["playbill-floor-export-v5"] = "playbill-floor-export-v5"
+    renderer: str = Field(pattern=_SHA256)
+    coordinate: AcceptedCoordinate
+    generation: int = Field(ge=0)
+    files: tuple[PlaybillFloorEntryV5, ...]
+    floor_digest: str = Field(pattern=_SHA256)
+
+    @model_validator(mode="after")
+    def _inventory(self) -> PlaybillFloorManifestV5:
+        paths = [item.path for item in self.files]
+        if paths != sorted(set(paths), key=lambda item: item.encode("utf-8")):
+            raise ValueError("floor manifest inventory must be byte-sorted and unique")
+        if any(item.changed_at > self.generation for item in self.files):
+            raise ValueError("a floor file cannot change after the floor's generation")
+        if self.floor_digest != floor_inventory_digest(self.files):
+            raise ValueError("floor manifest root digest differs from its inventory")
+        return self
+
+
+def build_floor_manifest(
+    *,
+    renderer: str,
+    coordinate: BaseModel,
+    generation: int,
+    files: dict[str, tuple[str, int, int]],
+) -> PlaybillFloorManifestV5:
+    """Build the manifest from ``path -> (content_digest, byte_length, changed_at)``.
+
+    ``coordinate`` is any accepted-coordinate model of the one wire shape.
+    """
+
+    entries = tuple(
+        PlaybillFloorEntryV5(path=path, content_digest=digest, byte_length=size, changed_at=changed)
+        for path in sorted(files, key=lambda item: item.encode("utf-8"))
+        for digest, size, changed in (files[path],)
+    )
+    return PlaybillFloorManifestV5(
+        renderer=renderer,
+        coordinate=AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json")),
+        generation=generation,
+        files=entries,
+        floor_digest=floor_inventory_digest(entries),
+    )
+
+
+def render_floor_manifest(manifest: PlaybillFloorManifestV5) -> bytes:
+    """The exact ``manifest.json`` bytes both sides derive from the model."""
+
+    value = json.loads(canonical_bytes(manifest.model_dump(mode="json")))
+    return pretty_json(value).encode("utf-8") + b"\n"
+
+
+def content_digest(content: bytes) -> str:
+    return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def floor_manifest_digest(manifest: PlaybillFloorManifestV5) -> str:
+    """The digest a delta names a floor by: the digest of its manifest bytes."""
+
+    return content_digest(render_floor_manifest(manifest))
+
+
+# -- the delta ------------------------------------------------------------------
+
+
+class PlaybillFloorHeadV1(_StrictFloorModel):
+    """The accepted coordinate a delta brings a floor to, and its generation."""
+
+    git_oid: str = Field(pattern=_OID)
+    generation: int = Field(ge=0)
+    semantic_root: str = Field(pattern=_SHA256)
+    generation_root: str = Field(pattern=_SHA256)
+    compiler_digest: str = Field(pattern=_SHA256)
+
+    def coordinate(self) -> AcceptedCoordinate:
+        return AcceptedCoordinate(
+            git_oid=self.git_oid,
+            semantic_root=self.semantic_root,
+            generation_root=self.generation_root,
+            compiler_digest=self.compiler_digest,
+        )
+
+
+class PlaybillFloorDeltaFileV1(_StrictFloorModel):
+    """One file the base lacks or holds at different bytes."""
+
+    path: str
+    content_b64: str
+    sha256: str = Field(pattern=_SHA256)
+    changed_at: int = Field(ge=0)
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if value == PLAYBILL_FLOOR_MANIFEST_PATH or value in PLAYBILL_FLOOR_LOCAL_PATHS:
+            raise ValueError(f"a floor delta may not carry {value}")
+        return safe_floor_path(value)
+
+    def content(self) -> bytes:
+        try:
+            content = base64.b64decode(self.content_b64, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"floor delta file is not base64: {self.path}") from exc
+        if content_digest(content) != self.sha256:
+            raise ValueError(f"floor delta file differs from its digest: {self.path}")
+        return content
+
+
+class PlaybillFloorDeltaV1(_StrictFloorModel):
+    """What brings a floor at ``base_generation`` to ``head``.
+
+    ``kind="full"`` carries every file and no base; a receiver replaces its
+    floor. ``kind="delta"`` carries the files whose ``changed_at`` is after the
+    base, and ``tombstones``, the base's paths the head no longer has. Both are
+    a deterministic function of (head, base) for one renderer.
+    """
+
+    tag: Literal["playbill-floor-delta-v1"] = "playbill-floor-delta-v1"
+    kind: Literal["delta", "full"]
+    renderer: str = Field(pattern=_SHA256)
+    base_generation: int | None = Field(default=None, ge=0)
+    head: PlaybillFloorHeadV1
+    head_manifest_digest: str = Field(pattern=_SHA256)
+    base_manifest_digest: str | None = Field(default=None, pattern=_SHA256)
+    files: tuple[PlaybillFloorDeltaFileV1, ...]
+    tombstones: tuple[str, ...] = ()
+    delta_digest: str = Field(pattern=_SHA256)
+
+    @field_validator("tombstones")
+    @classmethod
+    def _tombstones(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for path in value:
+            safe_floor_path(path)
+        if list(value) != sorted(set(value), key=lambda item: item.encode("utf-8")):
+            raise ValueError("floor delta tombstones must be byte-sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _shape(self) -> PlaybillFloorDeltaV1:
+        paths = [item.path for item in self.files]
+        if paths != sorted(set(paths), key=lambda item: item.encode("utf-8")):
+            raise ValueError("floor delta files must be byte-sorted and unique")
+        if set(paths) & set(self.tombstones):
+            raise ValueError("a floor delta may not both write and remove one path")
+        if self.kind == "full":
+            if self.base_generation is not None or self.base_manifest_digest is not None:
+                raise ValueError("a full floor names no base")
+            if self.tombstones:
+                raise ValueError("a full floor carries no tombstones")
+        else:
+            if self.base_generation is None or self.base_manifest_digest is None:
+                raise ValueError("a floor delta names its base generation and manifest digest")
+            if self.base_generation >= self.head.generation and (self.files or self.tombstones):
+                raise ValueError("a floor delta from its own head changes nothing")
+        if any(item.changed_at > self.head.generation for item in self.files):
+            raise ValueError("a floor file cannot change after the delta's head")
+        if self.delta_digest != floor_delta_digest(self):
+            raise ValueError("floor delta digest differs from its content")
+        return self
+
+
+def floor_delta_digest(delta: PlaybillFloorDeltaV1 | dict[str, object]) -> str:
+    """The digest over everything in a delta except the digest itself."""
+
+    payload = (
+        delta.model_dump(mode="json", exclude={"delta_digest"})
+        if isinstance(delta, BaseModel)
+        else {key: value for key, value in delta.items() if key != "delta_digest"}
+    )
+    payload.pop("tag", None)
+    return typed_digest(Sha256Value, "playbill-floor-delta-v1", payload).tagged
+
+
+def seal_floor_delta(payload: dict[str, object]) -> PlaybillFloorDeltaV1:
+    """Validate a delta payload after stamping its digest."""
+
+    complete: dict[str, object] = {
+        "base_generation": None,
+        "base_manifest_digest": None,
+        "tombstones": [],
+        **payload,
+    }
+    return PlaybillFloorDeltaV1.model_validate(
+        {**complete, "delta_digest": floor_delta_digest(complete)}
+    )
+
+
+class PlaybillFloorApplyResultV1(_StrictFloorModel):
+    """What one apply did to a floor directory.
+
+    ``base_mismatch``: the directory does not hold the delta's base; nothing was
+    written, and the caller asks for a full floor instead.
+    """
+
+    tag: Literal["playbill-floor-apply-result-v1"] = "playbill-floor-apply-result-v1"
+    status: Literal["applied", "unchanged", "base_mismatch"]
+    kind: Literal["delta", "full"]
+    generation: int = Field(ge=0)
+    manifest_digest: str | None = Field(default=None, pattern=_SHA256)
+    floor_digest: str | None = Field(default=None, pattern=_SHA256)
+    written: int = Field(default=0, ge=0)
+    removed: int = Field(default=0, ge=0)
+    file_count: int = Field(default=0, ge=0)
+    message: str | None = None
+
+
+FloorApplyResult = PlaybillFloorApplyResultV1
+
+
+__all__ = [
+    "PLAYBILL_FLOOR_FORMAT",
+    "PLAYBILL_FLOOR_LOCAL_PATHS",
+    "PLAYBILL_FLOOR_MANIFEST_PATH",
+    "PLAYBILL_FLOOR_MANIFEST_TAG",
+    "FloorApplyResult",
+    "PlaybillFloorApplyResultV1",
+    "PlaybillFloorDeltaFileV1",
+    "PlaybillFloorDeltaV1",
+    "PlaybillFloorEntryV5",
+    "PlaybillFloorHeadV1",
+    "PlaybillFloorManifestV5",
+    "build_floor_manifest",
+    "content_digest",
+    "floor_delta_digest",
+    "floor_inventory_digest",
+    "floor_manifest_digest",
+    "render_floor_manifest",
+    "safe_floor_path",
+    "seal_floor_delta",
+]

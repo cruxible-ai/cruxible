@@ -102,6 +102,9 @@
   "/api/v1/{instance_id}/playbill/documents/proposals": {
     "POST": "PlaybillProposalInspection"
   },
+  "/api/v1/{instance_id}/playbill/floor/delta": {
+    "POST": "PlaybillFloorDeltaV1"
+  },
   "/api/v1/{instance_id}/playbill/floor/export": {
     "POST": "PlaybillFloorExport"
   },

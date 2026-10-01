@@ -37,6 +37,7 @@ from cruxible_client.contracts.errors import (
     PlaybillSinceRequestInvalid,
 )
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
+from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
 from cruxible_client.contracts.get_reads import (
     PlaybillGetBatchRequestV1,
     PlaybillGetBatchResultV1,
@@ -1746,12 +1747,36 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillCoverageResult)
 
+    def playbill_floor_delta(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        base_generation: int | None = None,
+        base_renderer: str | None = None,
+    ) -> PlaybillFloorDeltaV1:
+        """What brings a floor at ``base_generation`` to ``at`` (default: head).
+
+        Pass the generation and renderer of the floor you hold (from its
+        ``manifest.json``); apply the answer with ``apply_floor_delta``.
+        """
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/floor/delta",
+            json={
+                "at": self._playbill_coordinate_body(at),
+                "base_generation": base_generation,
+                "base_renderer": base_renderer,
+            },
+        )
+        return self._parse_model(response, PlaybillFloorDeltaV1)
+
     def export_playbill_floor(
         self,
         instance_id: str,
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-        format_version: Literal[2, 4] = 4,
+        format_version: Literal[2, 5] = 5,
         include: Sequence[contracts.PlaybillFloorExportPart] = (),
         review_notes_oid: str | None = None,
     ) -> contracts.PlaybillFloorExport:

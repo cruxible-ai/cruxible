@@ -406,6 +406,15 @@ PlaybillNextSourceObservationAny: TypeAlias = (
 )
 
 
+class PlaybillNextMissingBindingV1(_StrictNextModel):
+    """A catalog entry binding a workspace file that does not exist."""
+
+    tag: Literal["playbill-next-missing-binding-v1"] = "playbill-next-missing-binding-v1"
+    source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
+    locator: str = Field(min_length=1, max_length=4096)
+
+
 class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     tag: Literal["playbill-next-workspace-observation-v1"] = (
         "playbill-next-workspace-observation-v1"
@@ -417,6 +426,18 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     presentation_policy: PlaybillPresentationPolicyAny | None = None
     presentation_policy_notes: tuple[PlaybillPresentationPolicyNoteV1, ...] = ()
     projection_coverage: PlaybillProjectionCoverageObservationV1 | None = None
+    # Catalog entries whose bound workspace file is missing; each is a repair row.
+    missing_bindings: tuple[PlaybillNextMissingBindingV1, ...] = ()
+
+    @field_validator("missing_bindings")
+    @classmethod
+    def _missing(
+        cls, value: tuple[PlaybillNextMissingBindingV1, ...]
+    ) -> tuple[PlaybillNextMissingBindingV1, ...]:
+        ids = tuple(item.source_id for item in value)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("next missing bindings must be sorted and unique by source_id")
+        return value
 
     @field_validator("drift_observations")
     @classmethod
@@ -4059,14 +4080,34 @@ def _document_items(
     access_profile: CoverageAccessProfileV1,
     observation: PlaybillNextWorkspaceObservationV1 | None,
 ) -> tuple[PlaybillNextItemV1, ...]:
-    if (
-        observation is None
-        or observation.source_observations is None
-        or not access_profile.permits("instance")
-    ):
+    if observation is None or not access_profile.permits("instance"):
         return ()
+    items: list[PlaybillNextItemV1] = [
+        _item(
+            severity="repair",
+            reason="workspace_binding_missing",
+            subject_identity=binding.source_id,
+            related_identities=(
+                () if binding.document_id is None else (f"document:{binding.document_id}",)
+            ),
+            detail={
+                "source_id": binding.source_id,
+                "document_id": binding.document_id,
+                "locator": binding.locator,
+                "message": "the source catalog binds a workspace file that does not exist",
+            },
+            repair=PlaybillNextRepairV1(
+                operation="hand_edit",
+                target=binding.locator,
+                required_change="restore_the_bound_file_or_fix_its_catalog_locator",
+                arguments={"source_id": binding.source_id, "locator": binding.locator},
+            ),
+        )
+        for binding in observation.missing_bindings
+    ]
+    if observation.source_observations is None:
+        return tuple(items)
     tree = ClaimVerdictReadContext(instance, coordinate).tree
-    items: list[PlaybillNextItemV1] = []
     for source in observation.source_observations:
         document_id = getattr(source, "document_id", None)
         if document_id is None:

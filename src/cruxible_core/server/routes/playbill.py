@@ -25,6 +25,7 @@ from cruxible_client.contracts.claim_type_upgrade import (
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
+from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
 from cruxible_client.contracts.get_reads import (
     PlaybillGetBatchRequestV1,
     PlaybillGetBatchResultV1,
@@ -80,6 +81,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillCurationListRequest,
     PlaybillCurationOverruleRequest,
     PlaybillCurationSuppressRequest,
+    PlaybillFloorDeltaRequest,
     PlaybillFloorExportRequest,
     PlaybillInitRequest,
     PlaybillInsertionAbandonRequest,
@@ -1341,6 +1343,27 @@ async def export_floor(
         format_version=req.format_version,
         include=req.include,
         review_notes_oid=req.review_notes_oid,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/floor/delta",
+    response_model=PlaybillFloorDeltaV1,
+)
+def floor_delta(
+    instance_id: str,
+    req: PlaybillFloorDeltaRequest,
+) -> PlaybillFloorDeltaV1:
+    """What brings the caller's floor at its base generation to the head.
+
+    Sync: the render runs in the threadpool, off the event loop.
+    """
+
+    return playbill_api.playbill_floor_delta(
+        resolve_server_instance_id(instance_id),
+        at=req.at,
+        base_generation=req.base_generation,
+        base_renderer=req.base_renderer,
     )
 
 

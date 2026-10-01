@@ -131,12 +131,9 @@ def test_mcp_orient_reports_the_mcp_workspace_floor(monkeypatch, tmp_path) -> No
     import json
 
     floor = tmp_path / ".playbill/floor"
-    (floor / "provenance").mkdir(parents=True)
+    floor.mkdir(parents=True)
     (floor / "manifest.json").write_text(
-        json.dumps({"coordinate": {"git_oid": "9" * 64}}), encoding="utf-8"
-    )
-    (floor / "provenance/snapshot.json").write_text(
-        json.dumps({"accepted_git_oid": "9" * 64, "accepted_generation": 1}), encoding="utf-8"
+        json.dumps({"coordinate": {"git_oid": "9" * 64}, "generation": 1}), encoding="utf-8"
     )
     monkeypatch.setattr(handlers, "_get_client", lambda: None)
     monkeypatch.setattr(

@@ -1821,21 +1821,24 @@ class GitLedger:
         return self._read_note(kind, oid)
 
     def read_proposal_notes(
-        self, pairs: Sequence[tuple[str, str]]
+        self, pairs: Sequence[tuple[str, str]], *, notes_commit: str | None = None
     ) -> dict[tuple[str, str], bytes | None]:
         """Read several proposal notes in one Git process, resolving refs now.
 
         Git notes stores a target under zero or more two-hex-digit fanout
         directories (git/git notes.c construct_path_with_fanout), so each target
         is asked for at every path it could occupy; at most one exists.
+        ``notes_commit`` reads one immutable notes commit instead of the ref.
         """
 
+        if notes_commit is not None:
+            self._validate_oid(notes_commit)
         wanted: dict[str, tuple[str, str]] = {}
         for kind, oid in pairs:
             if kind not in {"evaluation", "approval"}:
                 raise PlaybillGitError(f"unknown Playbill proposal note kind: {kind!r}")
             self._validate_oid(oid)
-            ref = self._note_ref(kind)
+            ref = notes_commit or self._note_ref(kind)
             for split in range(0, len(oid), 2):
                 path = "/".join([oid[i : i + 2] for i in range(0, split, 2)] + [oid[split:]])
                 wanted[f"{ref}:{path}"] = (kind, oid)

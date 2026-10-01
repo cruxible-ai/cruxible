@@ -54,6 +54,7 @@ from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
 )
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
+from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
 from cruxible_client.contracts.get_reads import (
     PlaybillGetBatchRequestV1,
     PlaybillGetBatchResultV1,
@@ -227,6 +228,7 @@ from cruxible_core.service.evidence.source_catalog import (
     service_propose_playbill_source_bundle,
 )
 from cruxible_core.service.floor.floor import MANIFEST_PATH, service_export_playbill_floor
+from cruxible_core.service.floor.floor_delta import service_playbill_floor_delta
 from cruxible_core.service.identity import credential_unbound_refusal, principal_refusal
 from cruxible_core.service.kits import (
     service_add_kit,
@@ -2262,7 +2264,7 @@ def playbill_export_floor(
     instance_id: str,
     *,
     at: AcceptedCoordinate | None = None,
-    format_version: Literal[2, 4] = 4,
+    format_version: Literal[2, 5] = 5,
     include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
     review_notes_oid: str | None = None,
 ) -> contracts.PlaybillFloorExport:
@@ -2296,6 +2298,28 @@ def playbill_export_floor(
             )
             for path, content in files.items()
         ],
+    )
+
+
+def playbill_floor_delta(
+    instance_id: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+    base_generation: int | None = None,
+    base_renderer: str | None = None,
+) -> PlaybillFloorDeltaV1:
+    """Return what brings a client's floor at ``base_generation`` to ``at`` (default: head).
+
+    Deterministic for (head, base): the files whose ``changed_at`` is after the
+    base, the paths dropped since, and both manifest digests; or, for a
+    missing, unknown, newer or foreign-renderer base, the whole floor.
+    """
+
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    instance = get_playbill_manager().get(instance_id)
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate()) if at is None else at
+    return service_playbill_floor_delta(
+        instance, head=head, base_generation=base_generation, base_renderer=base_renderer
     )
 
 

@@ -117,21 +117,30 @@ def _current(world: dict[str, Any], subject_id: str) -> str:
     return world["files"][f"current/{KIND}/{subject_id}.yaml"].decode()
 
 
-def test_the_header_is_one_line_naming_ref_kind_and_coordinate(world: dict[str, Any]) -> None:
+def test_the_header_is_one_line_naming_ref_kind_and_when_it_changed(
+    world: dict[str, Any],
+) -> None:
     instance: PlaybillInstance = world["instance"]
     head = instance.accepted_coordinate().git_oid
-    generation = len(instance.accepted_history()) - 1
-    first_line = _current(world, "wi-1").splitlines()[0]
-    assert first_line == f"# {WI1}  kind={KIND}  at {head} gen {generation}"
     manifest = json.loads(world["files"]["manifest.json"])
     assert manifest["coordinate"]["git_oid"] == head
+    rows = {row["path"]: row for row in manifest["files"]}
+    # wi-1 was written by the first write and wi-2 by the last: each file names
+    # its own last change, not the export's head.
+    wi1 = rows[f"current/{KIND}/wi-1.yaml"]["changed_at"]
+    wi2 = rows[f"current/{KIND}/wi-2.yaml"]["changed_at"]
+    assert wi1 < wi2 == manifest["generation"]
+    first_line = _current(world, "wi-1").splitlines()[0]
+    assert first_line == f"# {WI1}  kind={KIND}  changed gen {wi1}"
 
 
 def test_values_come_first_under_short_names_with_their_claim(world: dict[str, Any]) -> None:
     text = _current(world, "wi-1")
     claims = world["claims"]
-    assert f'title: "Tidy the CLI: part #1"  # {claims["title"]} CAP-' in text
-    assert f"status: ready  # {claims['status']} CAP-" in text
+    assert f'title: "Tidy the CLI: part #1"  # {claims["title"]}\n' in text
+    assert f"status: ready  # {claims['status']}\n" in text
+    # A value line names its Claim, never the Captures behind it.
+    assert "CAP-" not in text
     assert "measured: 3  # " in text
     governs = text[text.index("governs:\n") :].splitlines()[1:3]
     assert [line.split("  # ")[0] for line in governs] == [f"  - {WI2}", f"  - {WI3}"]
@@ -145,7 +154,7 @@ def test_current_files_hold_no_digests_or_addresses(world: dict[str, Any]) -> No
         text = content.decode()
         assert "sha256:" not in text, path
         assert "subjects/" not in text, path
-        assert text.count(" at ") == 1, path
+        assert text.count(" changed gen ") == 1, path
         if path.endswith(".yaml"):
             assert len(content) < 2048, path
 
@@ -157,7 +166,8 @@ def test_every_current_file_parses_as_yaml_with_its_values(world: dict[str, Any]
     assert parsed["governs"] == [WI2, WI3]
     assert parsed["measured"] == 3
     assert parsed["ruling"] == RULING
-    assert parsed["flags"] == {"measured": ["uncovered"]}
+    # No verdict flags: "measured" has no captured evidence, and only get says so.
+    assert "flags" not in parsed
     for path, content in world["files"].items():
         if path.startswith("current/") and path.endswith(".yaml"):
             assert isinstance(yaml.safe_load(content), dict | None), path
@@ -169,12 +179,12 @@ def test_a_contested_slot_lists_every_live_value_and_is_flagged(world: dict[str,
     assert "contested" in parsed["flags"]["status"]
 
 
-def test_the_digests_move_to_provenance_subjects(world: dict[str, Any]) -> None:
-    provenance = json.loads(world["files"][f"provenance/subjects/{KIND}/wi-1.json"])
-    assert provenance["current"] == f"current/{KIND}/wi-1.yaml"
-    rows = {row["claim"].removeprefix("Claim:"): row for row in provenance["claims"]}
-    assert rows[world["claims"]["status"]]["artifact_digest"].startswith("sha256:")
-    assert rows[world["claims"]["status"]]["statement"]["object"]["value"] == "ready"
+def test_the_floor_holds_no_provenance_mirror_or_source_bodies(world: dict[str, Any]) -> None:
+    for files in (world["files"], world["readable"]):
+        assert not any(path.startswith(("provenance/", "documents/")) for path in files)
+        assert not any(NOTE.encode() in content for content in files.values())
+    manifest = json.loads(world["files"]["manifest.json"])
+    assert manifest["generation"] == len(world["instance"].accepted_history()) - 1
 
 
 def test_identical_accepted_state_gives_identical_bytes(world: dict[str, Any]) -> None:
@@ -219,7 +229,7 @@ def test_literal_values_round_trip_through_yaml(value: object) -> None:
 def test_exact_content_reads_as_its_text_and_each_line_greps(world: dict[str, Any]) -> None:
     text = _current(world, "wi-1")
     ruling = world["claims"]["ruling"]
-    assert f"ruling: |  # {ruling} CAP-" in text
+    assert f"ruling: |  # {ruling}\n" in text
     assert "\n  Every line of this one greps on its own.\n" in text
 
 
@@ -253,26 +263,6 @@ def test_bytes_that_are_not_text_show_a_typed_marker_with_their_size(
     shown = renderer.shown(claim, text_name="wi-1.ruling.txt")
     assert shown.scalar == "{exact_content: binary, bytes: 12}"
     assert yaml.safe_load(f"k: {shown.scalar}") == {"k": {"exact_content": "binary", "bytes": 12}}
-
-
-def test_documents_read_as_their_body_under_a_one_line_header(world: dict[str, Any]) -> None:
-    readable = world["readable"]["documents/design-note.md"].decode()
-    header, body = readable.split("\n", 1)
-    assert header.startswith("# Document:design-note  title=Design note  kind=design  ")
-    assert "media=text/markdown  at " in header
-    assert body == NOTE
-    envelope = json.loads(world["readable"]["provenance/documents/design-note.json"])
-    assert envelope["body_digest"].startswith("sha256:")
-    assert not any(path.endswith(".json.json") for path in world["readable"])
-
-
-def test_a_caller_without_body_access_gets_the_way_to_read_the_body(
-    world: dict[str, Any],
-) -> None:
-    withheld = world["files"]["documents/design-note.md"].decode()
-    assert "(body withheld: reading Document bodies needs the governed_write tier" in withheld
-    assert "get Document:design-note --detail body" in withheld
-    assert "The floor is the grep-first front door." not in withheld
 
 
 @pytest.mark.parametrize(("mode", "bodies"), [("READ_ONLY", False), ("GOVERNED_WRITE", True)])
@@ -318,34 +308,15 @@ def _export_envelope(files: dict[str, bytes]) -> Any:
     )
 
 
-def test_the_agent_path_carries_no_digests_and_provenance_keeps_them(
-    world: dict[str, Any],
-) -> None:
-    import re
-
+def test_the_agent_path_carries_no_digests(world: dict[str, Any]) -> None:
     files = world["readable"]
     agent_path = {
-        path: content.decode()
-        for path, content in files.items()
-        if path.startswith(("current/", "documents/"))
+        path: content.decode() for path, content in files.items() if path.startswith("current/")
     }
     assert agent_path
     for path, text in agent_path.items():
         assert "sha256:" not in text, path
         assert '"artifact_path"' not in text and "subjects/" not in text.split("\n", 1)[-1], path
-    shown = {
-        handle
-        for path, text in agent_path.items()
-        if path.startswith("current/")
-        for handle in re.findall(r"CLM-[0-9a-f]{32}", text)
-    }
-    kept = {
-        row["claim"].removeprefix("Claim:")
-        for path, content in files.items()
-        if path.startswith("provenance/subjects/")
-        for row in json.loads(content)["claims"]
-    }
-    assert shown <= kept
 
 
 def test_every_floor_reader_still_verifies_the_export(
@@ -386,7 +357,7 @@ def test_each_kind_has_an_index_line_per_subject(world: dict[str, Any]) -> None:
     header, *rows = world["files"][f"current/{KIND}/INDEX"].decode().splitlines()
     assert header == (
         f"# {KIND} INDEX  3 subjects  columns: ref, title, states  "
-        f"at {instance.accepted_coordinate().git_oid} gen {len(instance.accepted_history()) - 1}"
+        f"changed gen {len(instance.accepted_history()) - 1}"
     )
     assert rows == [
         f"{WI1}\tTidy the CLI: part #1\tstatus=ready",
@@ -404,58 +375,32 @@ def test_the_index_title_prefers_title_and_keeps_one_line() -> None:
     assert len(_index_title({"title": ("x" * 500,)})) == 120
 
 
-def test_a_later_export_renders_only_what_the_change_records_touched(tmp_path: Any) -> None:
-    from cruxible_core.service.floor.floor_content import _CurrentState
+def test_a_later_export_renders_only_what_the_change_records_touched(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_core.service.floor import floor_index
 
     instance, _owner = seed_write_surface(tmp_path)
     _write(instance, _set(WI1, "status", "ready"), _set(WI2, "status", "done"))
     before = service_export_playbill_floor(instance)
-    (full,) = instance.floor_current_memo.values()
-    assert isinstance(full, _CurrentState) and not full.incremental
+    rendered: list[str] = []
+    render = floor_index.render_subject
 
+    def counting(**kwargs: Any) -> Any:
+        rendered.append(kwargs["path"])
+        return render(**kwargs)
+
+    monkeypatch.setattr(floor_index, "render_subject", counting)
     _write(instance, _set(WI3, "title", "Only this one moved"))
     after = service_export_playbill_floor(instance)
-    (state,) = instance.floor_current_memo.values()
-    assert isinstance(state, _CurrentState) and state.incremental
-    assert state.rendered == (f"subjects/{WI3}.json",)
-    head = instance.accepted_coordinate().git_oid
-    assert (
-        after[f"current/{WI1}.yaml"]
-        .decode()
-        .splitlines()[0]
-        .endswith(f"at {head} gen {state.sequence}")
-    )
-    assert (
-        after[f"current/{WI1}.yaml"].split(b"\n", 1)[1]
-        == before[f"current/{WI1}.yaml"].split(b"\n", 1)[1]
-    )
+    assert rendered == [f"subjects/{WI3}.json"]
+    # An untouched Subject keeps its bytes, stamp included.
+    assert after[f"current/{WI1}.yaml"] == before[f"current/{WI1}.yaml"]
     assert "title: Only this one moved  # CLM-" in after[f"current/{WI3}.yaml"].decode()
 
     # However the floor got here, identical accepted state gives identical bytes.
-    instance.floor_export_memo.clear()
-    instance.floor_structure_memo.clear()
     instance.floor_current_memo.clear()
     assert service_export_playbill_floor(instance) == after
-
-
-def test_only_an_ancestor_export_without_claim_type_changes_is_reused() -> None:
-    from types import SimpleNamespace
-
-    from cruxible_core.service.floor.floor_content import _changed_since
-
-    def history(paths: frozenset[str], oid: str = "a") -> Any:
-        return SimpleNamespace(
-            generation=lambda _sequence: SimpleNamespace(git_oid=oid),
-            member_paths_after=lambda _sequence: paths,
-        )
-
-    previous: Any = SimpleNamespace(sequence=3, git_oid="a")
-    claims = frozenset({"claims/ab/CLM-x.json"})
-    assert _changed_since(history(claims), previous, 5) == claims
-    assert _changed_since(history(claims), None, 5) is None
-    assert _changed_since(history(claims), previous, 2) is None
-    assert _changed_since(history(claims, oid="b"), previous, 5) is None
-    assert _changed_since(history(frozenset({"claim-types/p/q.json"})), previous, 5) is None
 
 
 def test_orient_reports_the_workspace_floor_and_how_far_behind_it_is(tmp_path: Any) -> None:
@@ -487,8 +432,10 @@ def test_orient_reports_the_workspace_floor_and_how_far_behind_it_is(tmp_path: A
     assert (stale.floor.at, stale.floor.generations_behind) == (exported_at, 2)
     assert stale.model_dump(mode="json")["floor"] == {"at": exported_at, "generations_behind": 2}
 
-    snapshot = workspace / ".playbill/floor/provenance/snapshot.json"
-    snapshot.write_text(json.dumps({"accepted_git_oid": exported_at}), encoding="utf-8")
+    manifest_path = workspace / ".playbill/floor/manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.pop("generation")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     unknown = workspace_floor_freshness(workspace, service_playbill_orient(instance))
     assert unknown.floor is not None and unknown.floor.generations_behind is None
 
@@ -513,7 +460,7 @@ def test_the_default_floor_leaves_the_discovery_cards_out(world: dict[str, Any])
         path.startswith(("subjects/", "claim-types/", "procedures/")) for path in default
     )
     assert "coverage-manifest.json" not in default
-    assert json.loads(world["files"]["manifest.json"])["format"] == "playbill-floor-export-v4"
+    assert json.loads(world["files"]["manifest.json"])["format"] == "playbill-floor-export-v5"
 
     full = service_export_playbill_floor(instance, include=("discovery",))
     assert f"subjects/{KIND}/wi-1.profile.json" in full
@@ -560,7 +507,7 @@ def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
     written = json.loads(config.read_text(encoding="utf-8"))
     assert written["floor_output"] == {
         "tag": "playbill-floor-output-v1",
-        "format": "playbill-floor-export-v4",
+        "format": "playbill-floor-export-v5",
         "include": ["discovery"],
     }
     assert written["server_socket"] == "daemon.sock"
@@ -573,6 +520,10 @@ def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
             seen.append(kwargs)
             raise LookupError("stop after the request")
 
+        def playbill_floor_delta(self, _instance_id: str, **kwargs: Any) -> Any:
+            seen.append(kwargs)
+            raise LookupError("stop after the request")
+
     result = refresh_workspace_floor(_Client(), "inst_floor", workspace=tmp_path)  # type: ignore[arg-type]
     assert result.status == "failed"
     assert seen == [{"at": None, "include": ("discovery",)}]
@@ -580,7 +531,8 @@ def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
     record_playbill_floor_output(tmp_path, instance_id="inst_floor")
     assert "include" not in json.loads(config.read_text(encoding="utf-8"))["floor_output"]
     refresh_workspace_floor(_Client(), "inst_floor", workspace=tmp_path)  # type: ignore[arg-type]
-    assert seen[-1] == {"at": None}
+    # The default floor is asked for as a delta from the floor this workspace holds.
+    assert seen[-1] == {"at": None, "base_generation": None, "base_renderer": None}
 
 
 def test_every_handle_the_floor_prints_resolves_through_get(world: dict[str, Any]) -> None:
@@ -595,11 +547,10 @@ def test_every_handle_the_floor_prints_resolves_through_get(world: dict[str, Any
         for path, content in world["files"].items()
         if path.startswith("current/") and path.endswith(".yaml")
     )
-    captures = sorted(set(re.findall(r"CAP-[0-9a-f]{12}\b", text)))
     claims = sorted(set(re.findall(r"CLM-[0-9a-f]{32}\b", text)))
     refs = sorted(set(re.findall(rf"^# ({KIND}/[\w-]+) ", text, re.MULTILINE)))
-    assert captures and claims and refs
-    for ref in (*captures, *claims, *refs, "Document:design-note"):
+    assert claims and refs
+    for ref in (*claims, *refs):
         result = service_playbill_get(
             instance,
             request=PlaybillGetRequestV1(ref=ref),
@@ -620,7 +571,7 @@ def test_the_shared_write_records_a_profile_only_where_it_can_name_a_daemon(
     export, written = write_workspace_floor(
         lambda: _export_envelope(files), instance_id="inst_floor", workspace=bare
     )
-    assert written.file_count == len(files) and export.manifest["format"].endswith("-v4")
+    assert written.file_count == len(files) and export.manifest["format"].endswith("-v5")
     assert not (bare / ".playbill/coverage.json").exists()
 
     named = tmp_path / "named"
@@ -662,12 +613,9 @@ def _spoil(instance: PlaybillInstance, digest: str, how: str) -> None:
 def _cold(instance: PlaybillInstance, **options: Any) -> dict[str, bytes]:
     """An export with no kept floor output and no remembered verdict derivation."""
 
-    from cruxible_core.service.discovery.claim_status import reset_claim_resolution_memo
-
     instance.floor_export_memo.clear()
     instance.floor_structure_memo.clear()
     instance.floor_current_memo.clear()
-    reset_claim_resolution_memo()
     return service_export_playbill_floor(instance, **options)
 
 
@@ -678,52 +626,27 @@ def _outcome(export: Any) -> Any:
         return (type(exc).__name__, str(exc))
 
 
-@pytest.mark.parametrize("how", ["erase", "corrupt", "corrupt-keep-mtime"])
-@pytest.mark.parametrize("target", ["document", "ruling", "long-ruling"])
-def test_warm_exports_agree_with_cold_ones_after_a_body_goes_bad(
-    tmp_path: Any, how: str, target: str
-) -> None:
+@pytest.mark.parametrize("target", ["ruling", "long-ruling"])
+def test_a_lost_body_is_an_incident_a_fresh_render_names(tmp_path: Any, target: str) -> None:
+    """Accepted-body retention: the floor renders exact content by digest.
+
+    A body lost anyway renders as a typed unavailable marker in a fresh render;
+    it is never a verdict, and it never refuses the floor.
+    """
+
     instance, _owner = seed_write_surface(tmp_path)
     written = _write(instance, _set(WI1, "ruling", RULING), _set(WI3, "ruling", LONG_RULING))
-    _add_document(instance, "design-note", NOTE.encode())
     warm = service_export_playbill_floor(instance, access=BODY_READER)
-    assert NOTE in warm["documents/design-note.md"].decode()
     assert warm[f"current/{KIND}/wi-3.ruling.txt"].decode().endswith(LONG_RULING)
-
-    if target == "document":
-        digest = instance.body_store().digest_bytes(NOTE.encode()).tagged
-    else:
-        field = {"ruling": WI1, "long-ruling": WI3}[target]
-        claim_id = next(change.claim for change in written.changes if change.subject == field)
-        with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-            digest = projection.typed.source(f"Claim:{claim_id}").statement.object.content_digest
-    _spoil(instance, digest, how)
-
-    # The same coordinate, where every kept output and remembered verdict is
-    # warm, and the next one, rendered incrementally, both match a truly cold
-    # export: identical files, or the identical refusal.
-    same = _outcome(lambda: service_export_playbill_floor(instance, access=BODY_READER))
-    assert same == _outcome(lambda: _cold(instance, access=BODY_READER))
-    _outcome(lambda: service_export_playbill_floor(instance, access=BODY_READER))
-    _write(instance, _set(WI2, "status", "done"))
-    incremental = _outcome(lambda: service_export_playbill_floor(instance, access=BODY_READER))
-    assert incremental == _outcome(lambda: _cold(instance, access=BODY_READER))
-
-    if target != "document" and how != "erase":
-        # A ruling's bytes are also its own evidence, and a verified verdict
-        # refuses a corrupt evidence body outright.
-        assert same[0] == "PlaybillCasError" and incremental[0] == "PlaybillCasError"
-        return
-    assert isinstance(same, dict) and isinstance(incremental, dict)
-    if target == "document":
-        assert "(body unavailable:" in incremental["documents/design-note.md"].decode()
-    elif target == "ruling":
-        assert (
-            "ruling: {exact_content: unavailable"
-            in incremental[f"current/{KIND}/wi-1.yaml"].decode()
-        )
-    else:
-        assert f"current/{KIND}/wi-3.ruling.txt" not in incremental
+    field = {"ruling": WI1, "long-ruling": WI3}[target]
+    claim_id = next(change.claim for change in written.changes if change.subject == field)
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        digest = projection.typed.source(f"Claim:{claim_id}").statement.object.content_digest
+    _spoil(instance, digest, "erase")
+    fresh = _cold(instance, access=BODY_READER)
+    current = fresh[f"current/{KIND}/{field.rsplit('/', 1)[-1]}.yaml"].decode()
+    assert "ruling: {exact_content: unavailable" in current
+    assert "flags" not in current
 
 
 def test_kept_discovery_cards_agree_with_cold_ones_after_a_capture_is_erased(
@@ -740,40 +663,3 @@ def test_kept_discovery_cards_agree_with_cold_ones_after_a_capture_is_erased(
 
     warm = _outcome(lambda: service_export_playbill_floor(instance, **options))
     assert warm == _outcome(lambda: _cold(instance, **options))
-
-
-def test_a_body_that_moves_while_the_floor_reads_it_is_never_reused(
-    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The floor records what a read used, never an answer taken afterwards.
-
-    A ruling's bytes are rewritten (size and mtime kept) right after the floor
-    reads them and before anything else looks: the render made from the old
-    bytes must not be kept against the new file.
-    """
-
-    from cruxible_core.service.discovery.exact_content import ExactContentReader
-
-    instance, _owner = seed_write_surface(tmp_path)
-    written = _write(instance, _set(WI1, "ruling", RULING))
-    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
-        digest = projection.typed.source(
-            f"Claim:{written.changes[0].claim}"
-        ).statement.object.content_digest
-    read = ExactContentReader.of
-    moved: list[bool] = []
-
-    def read_then_move(self, obj):  # type: ignore[no-untyped-def]
-        value = read(self, obj)
-        if not moved:
-            _spoil(instance, digest, "corrupt-keep-mtime")
-            moved.append(True)
-        return value
-
-    monkeypatch.setattr(ExactContentReader, "of", read_then_move)
-    first = _outcome(lambda: service_export_playbill_floor(instance, access=BODY_READER))
-    monkeypatch.setattr(ExactContentReader, "of", read)
-    assert moved and isinstance(first, dict)
-
-    warm = _outcome(lambda: service_export_playbill_floor(instance, access=BODY_READER))
-    assert warm == _outcome(lambda: _cold(instance, access=BODY_READER))

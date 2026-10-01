@@ -50,6 +50,7 @@ _REFERENCE_FORMS: dict[str, Literal["get", "workspace"]] = {
     "claim_new_evidence_supporting": "get",
     "claim_new_evidence_unreviewed": "get",
     "document_modified": "workspace",
+    "workspace_binding_missing": "workspace",
     "unregistered_projection_block": "workspace",
     "projection_marker_invalid": "workspace",
     "proposal_stale": "get",

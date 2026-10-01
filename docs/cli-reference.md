@@ -2028,8 +2028,8 @@ When the current Git worktree holds this instance's floor (see
 at, and how many accepted generations it is behind this answer (`null` for a
 floor exported before generations were stamped). The text output prints
 `Floor: .playbill/floor at <oid>, N generation(s) behind; refresh: cruxible
-playbill floor export --force`. It reads only the floor's `manifest.json` and
-`provenance/snapshot.json`; it never re-exports.
+playbill floor export --force`. It reads only the floor's `manifest.json` (its
+coordinate and generation); it never re-exports.
 
 ## playbill world
 
@@ -2074,12 +2074,12 @@ verdicts and act.
 
 ### The loop
 
-1. **Grep.** `grep -rn "some text" .playbill/floor/current .playbill/floor/documents`.
-2. **Read the header.** Every `current/` and `documents/` file starts with one
-   line naming its ref and the coordinate it is as of, for example
-   `# dev.roadmap_item/surface-pass  kind=dev.roadmap_item  at 1a2b… gen 412`.
+1. **Grep.** `grep -rn "some text" .playbill/floor/current`.
+2. **Read the header.** Every `current/` file starts with one line naming its
+   ref and the generation it last changed, for example
+   `# dev.roadmap_item/surface-pass  kind=dev.roadmap_item  changed gen 412`.
 3. **Get the ref for live verdicts.** `cruxible playbill get dev.roadmap_item/surface-pass`.
-   The floor's flags are as of its coordinate; `orient` says how many
+   The floor shows accepted values and no verdicts; `orient` says how many
    generations behind the head the floor is.
 4. **Write with the verbs.** `cruxible playbill set dev.roadmap_item/surface-pass
    adoption_state adopted --because "…"`.
@@ -2090,14 +2090,20 @@ with `contains` on MCP) instead.
 
 ### What is in the floor
 
+The floor is a pure function of the accepted coordinate (and the pinned review
+notes snapshot its change rationale is read from). It holds no source content:
+Document and evidence bodies stay behind `get`, and the ledger clone is the
+audit path.
+
 | Path | What it holds |
 |---|---|
 | `current/<kind>/<id>.yaml` | One file per Subject, values first (below). |
 | `current/<kind>/<id>.<field>.txt` | A text value too long to inline (over 2 KiB or 40 lines), whole; never truncated. |
 | `current/<kind>/INDEX` | One tab-separated line per Subject of the kind: ref, a title-like value, `field=value` for each state-like field. |
-| `documents/<name>.<ext>` | Each Document: a one-line header (`Document:<name>`, title, kind, media type, coordinate) and its body. |
-| `provenance/` | Not for grep: the digests and full statements behind every value (`subjects/`), Document envelopes (`documents/`), the latest changes behind current Claims with separately attributed review rationale (`changes/`), and `snapshot.json` (the coordinate, its generation and the review-notes snapshot). |
-| `manifest.json` | Every file's digest and the floor digest. |
+| `changes/<seq>.json` | The accepted change that introduced a current Claim revision: time, actor, the rationale its proposal recorded, and the refs it changed. |
+| `sources/INDEX` | One tab-separated line per evidence source current Claims cite (self-source Captures excluded) and per accepted Document: source, CaptureContract, locator, citing-Claim count, the generation it last changed. |
+| `projections/INDEX` | Written by the client from its own workspace bindings, outside the daemon manifest: one line per workspace file bound to accepted state (Document body, evidence source, rendered block), its role, bound ref and the generation that ref last changed. A bound file that does not exist is a `workspace_binding_missing` row in `next`, not a line here. |
+| `manifest.json` | The coordinate, its generation, the renderer, and every file's digest and `changed_at`, bound into the floor digest. |
 | `subjects/`, `claim-types/`, `procedures/`, `coverage-manifest.json` | Only with `--with-discovery`: the discovery cards other tools read (they carry digests and addresses) and the export's coverage boundary. They need the whole accepted facts read, so they cost most of an export. |
 | `README.md` | This loop, for an agent that lands in the floor cold. |
 
@@ -2105,77 +2111,84 @@ A `current/` file is a strict subset of YAML, so it both greps line by line and
 parses with any YAML reader:
 
 ~~~yaml
-# project.work_item/wi-1  kind=project.work_item  at 909e09df… gen 5
+# project.work_item/wi-1  kind=project.work_item  changed gen 5
 governs:
-  - project.work_item/wi-2  # CLM-985cd53c0dc20d4eb15481d8980bf35c CAP-2b296f337c83
-  - project.work_item/wi-3  # CLM-b5d5f511045eb94131d21f2a59595484 CAP-3b622806a369
-measured: 3  # CLM-714a14a1891fef7eb464b69de3a4e2c6 CAP-664e46d2ec36
-ruling: |  # CLM-ca6f1cf4aa8db970935fe9792c07b509 CAP-6a31acedd4d1
+  - project.work_item/wi-2  # CLM-985cd53c0dc20d4eb15481d8980bf35c
+  - project.work_item/wi-3  # CLM-b5d5f511045eb94131d21f2a59595484
+measured: 3  # CLM-714a14a1891fef7eb464b69de3a4e2c6
+ruling: |  # CLM-ca6f1cf4aa8db970935fe9792c07b509
   Rulings are text.
   Every line of this one greps on its own.
-status: ready  # CLM-ee98966ed497f1b629f44bf4eb686cb5 CAP-51b21d08735a
-title: "Tidy the CLI: part #1"  # CLM-77795e37bc864490c35f2c603f2a12d6 CAP-6137dcd79472
-flags:  # verdicts as of this file's coordinate; get the ref for live verdicts
-  measured: [uncovered]
+status: ready  # CLM-ee98966ed497f1b629f44bf4eb686cb5
+title: "Tidy the CLI: part #1"  # CLM-77795e37bc864490c35f2c603f2a12d6
+incoming:
+  - governs <- project.work_item/wi-4  # CLM-0f3a…
 ~~~
 
 - Fields use the same short names `orient` advertises and `query` resolves.
-  The values are the slot's answer as `get` shows it; a many-valued field, or a
-  contested single-valued one, lists every value.
-- Each value ends with the Claim that states it (`CLM-…`) and the Captures it
-  cites (`CAP-<12 hex>`). A Subject-valued field shows the other Subject's ref.
-- An exact-content value (a ruling) is its text; bytes that are not UTF-8 text
-  show as `{exact_content: binary, bytes: N}`.
-- `flags:` lists each flagged field's verdict problems (`stale`, `contested`,
-  `contradicted`, `uncovered`, `unsure_hold`), evaluated at the coordinate's
-  acceptance instant.
-- No digests, addresses or repeated coordinates: those are in `provenance/`.
+  Every live Claim of a slot is shown: a many-valued field, or a single-valued
+  one with several live Claims, lists every value.
+- Each value ends with the Claim that states it (`CLM-…`); `get` on it lists the
+  Captures behind it. A Subject-valued field shows the other Subject's ref.
+- `incoming:` lists the live Subject-valued Claims of other Subjects that point
+  here, as `<field> <- <ref>`, so either end of an edge greps.
+- `flags:` carries only the structural `contested`: a single-valued field with
+  more than one distinct live value. No verdict (stale, uncovered,
+  contradicted) is in the floor: verdicts move with time and evidence, which no
+  coordinate fixes.
+- An exact-content value (a ruling) is its text, read by digest. Accepted
+  bodies are retained for as long as their Claim is in history, so that text
+  is fixed by the coordinate; a body lost anyway renders as
+  `{exact_content: unavailable, ...}`, an integrity incident, not a change of
+  accepted state. Bytes that are not UTF-8 text show as
+  `{exact_content: binary, bytes: N}`.
 
-Document bodies keep their read boundary. An export by a caller below the
-body-read tier (`governed_write`) writes each Document's header and the
-`get Document:<name> --detail body` command instead of its body. A body over
-256 KiB is cut at a line boundary with the `--range` that reads on.
+### Freshness and deltas
 
-### Freshness and incremental export
+Every file is stamped with `changed_at`, the latest accepted generation that
+touched any of its inputs (for a `current/` file: the Subject, its Claims of
+any lifecycle, the Claims pointing at it, and the ClaimTypes naming its
+fields). A file's bytes differ between two generations exactly when its stamp
+moved, so a floor at generation B lacks exactly the files stamped after B plus
+the paths dropped since. `orient` reports `floor: {at, generations_behind}`
+from the manifest alone.
 
-Every `current/` and `documents/` header carries the coordinate the floor was
-exported at, and `provenance/snapshot.json` names its generation. `orient`
-reports `floor: {at, generations_behind}` from those files alone. A daemon that
-exported the floor before re-renders only what the change records since that
-coordinate touched (plus any Subject whose verdict flags moved) and re-stamps
-the rest, so identical accepted state still gives identical bytes. A cold
-daemon, or a ClaimType change, renders everything.
+The daemon keeps a rebuildable floor index on each instance and advances it by
+the ledger diff. `floor export` and every refresh send the generation and
+renderer of the floor the workspace holds to `POST /playbill/floor/delta`,
+which answers with a delta (or the whole floor, for a missing, newer or
+foreign base); one shared apply verifies the base and head manifest digests
+before writing anything, writes each file atomically, and writes
+`manifest.json` last, so an interrupted refresh resumes cleanly.
 
 ### Writing the directory
 
 The daemon returns bytes keyed by floor path and never writes a client path;
-export refuses a non-empty floor unless `--force` is given, except that a floor
-already holding exactly this export (as it does right after an activation) is
-a no-op success reported as `unchanged`. With `--with-discovery` the export
-also carries its coverage boundary in `coverage-manifest.json`, enumerated in
-the root manifest like every other floor file. `floor_output.path` is obsolete
-and refused; a v2 coverage config enables refresh with only the fixed profile.
-`floor export` records that profile, and its opt-in parts, so a refresh after
-an activation exports the same parts and the following `next` observation no
-longer reports the floor as `missing` after a successful export:
+export refuses a non-empty directory that holds no floor unless `--force` is
+given, and a floor already at the head is a no-op success reported as
+`unchanged`. With `--with-discovery` the export is a full export and also
+carries its coverage boundary in `coverage-manifest.json`. `floor_output.path`
+is obsolete and refused; a v2 coverage config enables refresh with only the
+fixed profile. `floor export` records that profile, and its opt-in parts, so a
+refresh after an activation exports the same parts and the following `next`
+observation no longer reports the floor as `missing` after a successful export:
 
 ~~~json
 {
   "tag": "playbill-coverage-workspace-config-v2",
   "floor_output": {
     "tag": "playbill-floor-output-v1",
-    "format": "playbill-floor-export-v4",
+    "format": "playbill-floor-export-v5",
     "include": ["discovery"]
   }
 }
 ~~~
 
 `include` is present only for a floor exported `--with-discovery`. A profile an
-earlier build recorded with the `playbill-floor-export-v3` format is refused
-until `floor export --force` rewrites it. `manifest.json` inventories and
-digests the exact rendered bytes, so repeated exports at one accepted coordinate
-remain byte-identical. Historical v1 and v2 manifests remain readable without
-reinterpretation.
+earlier build recorded at an older format is refused until
+`floor export --force` rewrites it. `manifest.json` inventories and digests the
+exact rendered bytes, so repeated exports at one accepted coordinate remain
+byte-identical.
 
 ## playbill coverage
 

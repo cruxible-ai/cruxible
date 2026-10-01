@@ -1,54 +1,33 @@
-"""Searchable current state and explicitly attributed review context for floor v3.
+"""The floor's README and its changes/ files.
 
-Accepted values come only from the accepted tree. Review prose is a separate
-Git-note snapshot, never a Claim or proof of adoption. No evidence bodies,
-working files, or authoring-intent exhaust are read.
+Accepted values come only from the accepted tree. Review prose is read from the
+proposal note of the exact candidate each accepted change published, by path,
+and is shown as attributed rationale, never as a Claim or proof of adoption.
+No evidence bodies, working files, or authoring-intent exhaust are read.
 """
 
 from __future__ import annotations
 
 import json
-from collections import defaultdict
-from collections.abc import Mapping
-from dataclasses import dataclass
+import re
+from collections.abc import Iterable
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.claims import ClaimArtifactAny, claim_path
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.primitives import pretty_json
 from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRecord,
     ProposalEvaluationRecord,
 )
-from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.indexes.history.history_index import AcceptedGenerationLocation, HistoryReader
-from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposal_notes import admission_bytes, evaluation_bytes
-from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
-from cruxible_core.service.floor.floor_current import (
-    PROVENANCE_SUBJECTS_PREFIX,
-    SubjectPart,
-    ValueRenderer,
-    accepted_claim_types,
-    accepted_subjects,
-    bodies_unchanged,
-    claim_verdicts,
-    claims_by_subject,
-    floor_stamp,
-    index_files,
-    render_subject,
-    stamped,
-)
-from cruxible_core.service.floor.floor_documents import (
-    DocumentPart,
-    document_files,
-    document_parts,
-)
-from cruxible_core.storage.cas import BodyAccessContext
 
-MAX_REVIEW_SNAPSHOT_BYTES = 64 * 1024 * 1024
+CHANGES_PREFIX = "changes/"
+# Read each accepted candidate's note at the notes ref as it stands. Notes on an
+# accepted candidate do not change after acceptance, so this reads what any
+# notes commit since then would.
+LIVE_NOTES = "live"
 
 FLOOR_README = """\
 # Playbill floor
@@ -59,43 +38,67 @@ verbs. The floor does no matching of its own: grep is the search.
 ## What to grep
 
 - `current/<kind>/<id>.yaml`: one file per Subject. Its first line is
-  `# <ref>  kind=<kind>  at <git_oid> gen <n>`, the coordinate the file is as
-  of. Then each field's current value under its short name (a many-valued or
-  contested field lists every value), each followed by `# CLM-... CAP-...`:
-  the Claim that states it and the Captures it cites. A Subject-valued field
-  shows the other Subject's ref. `flags:` lists each flagged field's verdict
-  problems (stale, contested, contradicted, uncovered, unsure_hold) as of
-  that coordinate.
+  `# <ref>  kind=<kind>  changed gen <n>`: the latest accepted generation that
+  changed anything the file shows (the Subject, its Claims, the Claims
+  pointing at it, or the ClaimTypes naming its fields). Then each field's
+  value under its short name, each followed by `# CLM-...`, the Claim that
+  states it. A many-valued field, or a single-valued one with several live
+  Claims, lists every live value. A Subject-valued field shows the other
+  Subject's ref. `flags:` marks a single-valued field holding more than one
+  distinct live value `contested`. `incoming:` lists the live edges other
+  Subjects point here, one `<field> <- <ref>` line each, so either end of an
+  edge greps.
 - `current/<kind>/<id>.<field>.txt`: a text value too long to inline, whole.
 - `current/<kind>/INDEX`: one tab-separated line per Subject of that kind: its
   ref, a title-like value, and its state-like fields.
-- `documents/<name>.<ext>`: each Document, a one-line header and its body.
+- `changes/<seq>.json`: the accepted change that introduced a current Claim
+  revision: its time, actor, the rationale its proposal recorded, and the refs
+  it changed.
+- `sources/INDEX`: one tab-separated line per evidence source current Claims
+  cite: the source, its CaptureContract, a locator (a Document ref, or an
+  external source's selector type), how many current Claims cite it, and the
+  generation it last changed. Every accepted Document is listed, cited or not.
+- `projections/INDEX`: written by the client from its own workspace, never by
+  the daemon: one line per workspace file bound to accepted state (a Document
+  body, an evidence source, a rendered block), its role, the ref it is bound
+  to, and the generation that ref last changed.
+
+The floor shows accepted values, never verdicts: whether a value is still
+supported moves with time and evidence, which no coordinate fixes. `get`
+answers with the live verdict.
 
 ## The loop
 
-1. `grep -rn "some text" .playbill/floor/current .playbill/floor/documents`
-2. Read the hit's first line: its ref, and the generation it is as of.
-3. `cruxible playbill get <ref>` for the live values and verdicts (the flags
-   here are as of the floor's coordinate; `orient` says how far behind it is).
+1. `grep -rn "some text" .playbill/floor/current`
+2. Read the hit's first line: its ref, and the generation it last changed.
+3. `cruxible playbill get <ref>` for the live values and verdicts (`orient`
+   says how far behind the floor is).
 4. Change state with the write verbs (`cruxible playbill set|retire|write`).
 
-An agent without a shell asks `query --contains "some text"` instead.
+An agent without a shell asks `query --contains "some text"` instead. A
+Document's body is read with `get Document:<name> --detail body`.
+
+## Retention
+
+A ruling or other exact-content value shows its text, read by digest from the
+body store. Accepted bodies are retained for as long as their Claim is in
+accepted history, so that text is fixed by the coordinate. A body that is
+nevertheless lost renders as `{exact_content: unavailable, ...}`: an integrity
+incident `orient` and `next` report, not a change of accepted state.
 
 ## Not for grep
 
-- `provenance/`: the digests and full statements behind every current/ value
-  (`subjects/`), Document envelopes (`documents/`), the latest accepted changes
-  behind current Claims with separately attributed review rationale where the
-  pinned Git notes snapshot retains it (`changes/`), and `snapshot.json`.
-- `manifest.json` binds every file by digest into the floor digest.
+- `manifest.json` names the accepted coordinate and its generation, and binds
+  every file by digest, and by the generation it last changed, into the floor
+  digest. A refresh fetches only the files changed since the floor's own
+  generation.
 - Only with `floor export --with-discovery`: `subjects/`, `claim-types/` and
   `procedures/`, the discovery cards other tools read (they carry digests and
   addresses), and `coverage-manifest.json`, the export's coverage boundary.
 
-History, rejected proposals, full evaluation transcripts, source and evidence
+History, rejected proposals, full evaluation transcripts, Document and evidence
 bodies, and authoring-intent exhaust are not exported, so no match here does
-not prove absence. Document bodies are included only when the exporting caller
-may read bodies; otherwise the file says how to read one.
+not prove absence. The ledger clone is the audit path.
 """
 
 
@@ -103,335 +106,157 @@ def _render(value: object) -> bytes:
     return pretty_json(json.loads(canonical_bytes(value))).encode("utf-8") + b"\n"
 
 
-def _change_file(
-    sequence: int,
-    generation: AcceptedGenerationLocation,
-    record: ChangeSetRecordAnyVersion,
-    *,
-    context: Mapping[str, tuple[dict[str, object], ...]],
-    context_status: str,
-) -> bytes:
-    review_entries = tuple(
-        row
-        for row in context.get(record.candidate_digest, ())
-        if row["reported_actor"] == record.actor_binding.actor_id
-    )
-    return _render(
-        {
-            "kind": "accepted-change-with-associated-review-context",
-            "sequence": sequence,
-            "accepted_git_oid": generation.git_oid,
-            "candidate_digest": record.candidate_digest,
-            "actor": record.actor_binding.actor_id,
-            "timestamp": record.candidate.timestamp,
-            "affected_paths": sorted(member.path for member in record.members),
-            "review_context_status": context_status if review_entries else "unavailable",
-            "review_context": list(review_entries),
-            "interpretation": (
-                "Review rationale is attributed context, not accepted Claim content or adoption."
-            ),
-            "claim_authoring_rationale": (
-                "Not inferred from change rationale; "
-                "unavailable unless represented in accepted content."
-            ),
-        }
-    )
+_CLAIM_MEMBER = re.compile(r"claims/[0-9a-f]{2}/(CLM-[0-9a-f]{32})\.json")
+
+
+def member_ref(path: str) -> str:
+    """How a change names one member path: the handle ``get`` resolves."""
+
+    if path.startswith("subjects/") and path.endswith(".json"):
+        return path.removeprefix("subjects/").removesuffix(".json")
+    if (match := _CLAIM_MEMBER.fullmatch(path)) is not None:
+        return match.group(1)
+    if path.startswith("documents/") and path.endswith(".json"):
+        return "Document:" + path.removeprefix("documents/").removesuffix(".json")
+    if path.startswith("claim-types/") and path.endswith(".json"):
+        return "ClaimType:" + path.removeprefix("claim-types/").removesuffix(".json").replace(
+            "/", "."
+        )
+    return path
 
 
 def review_snapshot_oid(instance: PlaybillInstance) -> str | None:
     return instance._ledger.mirror_refs().get("refs/notes/playbill-eval")
 
 
-def review_context(
-    instance: PlaybillInstance, notes_oid: str | None
-) -> tuple[dict[str, tuple[dict[str, object], ...]], str]:
-    """Read canonical note pairs from the exact immutable notes commit.
+def _candidate_commits(
+    instance: PlaybillInstance, candidate_digests: Iterable[str]
+) -> dict[str, tuple[str, ...]]:
+    """Every proposal commit that published each candidate digest."""
 
-    Association to an accepted candidate is not approval of the author's prose.
-    Missing notes are explicit unavailable context, never invented rationale.
-    """
-    if notes_oid is None:
-        return {}, "unavailable"
-    entries = instance._ledger.list_tree_with_sizes(notes_oid)
-    if sum(entry.size or 0 for entry in entries) > MAX_REVIEW_SNAPSHOT_BYTES:
-        return {}, "review_snapshot_budget_exceeded"
-    notes = instance._ledger.read_tree(notes_oid)
-    by_candidate: dict[str, dict[str, dict[str, object]]] = defaultdict(dict)
-    for path, content in notes.items():
-        lines = content.splitlines(keepends=True)
-        if len(lines) % 2:
-            raise ProposalIntegrityError("floor review note has an incomplete record pair")
-        for i in range(0, len(lines), 2):
-            admission = ProposalAdmissionRecord.model_validate_json(lines[i])
-            evaluation = ProposalEvaluationRecord.model_validate_json(lines[i + 1])
-            if (
-                admission_bytes(admission) != lines[i]
-                or evaluation_bytes(evaluation) != lines[i + 1]
-                or admission.proposal_id != evaluation.proposal_id
+    digests = sorted(set(candidate_digests))
+    if not digests:
+        return {}
+    evidence = instance.proposal_evidence()
+    assert evidence.index is not None
+    found: dict[str, set[str]] = {digest: set() for digest in digests}
+    with evidence.index.read(evidence) as connection:
+        for start in range(0, len(digests), 500):
+            chunk = digests[start : start + 500]
+            for digest, candidate, review in connection.execute(
+                "SELECT candidate_digest,candidate_commit_oid,review_commit_oid FROM proposals "
+                "WHERE candidate_digest IN (" + ",".join("?" for _ in chunk) + ")",
+                chunk,
             ):
-                raise ProposalIntegrityError("floor review note is not a canonical proposal pair")
-            if evaluation.verdict != "candidate" or evaluation.candidate_digest is None:
-                continue
-            item: dict[str, object] = {
-                "proposal_id": admission.proposal_id,
-                "reported_actor": admission.actor_id,
-                "rationale": admission.rationale,
-                "candidate_commit_oid": admission.candidate_commit_oid,
-                "notes_commit_oid": notes_oid,
-                "note_path": path,
-            }
-            # Several note aliases may project the same proposal. Retain its
-            # prose once, selecting a stable alias rather than repeating it.
-            previous = by_candidate[evaluation.candidate_digest].get(admission.proposal_id)
-            if previous is None:
-                by_candidate[evaluation.candidate_digest][admission.proposal_id] = item
-            elif {k: v for k, v in previous.items() if k != "note_path"} != {
-                k: v for k, v in item.items() if k != "note_path"
-            }:
-                raise ProposalIntegrityError("floor note aliases disagree about a proposal")
-    return (
-        {
-            candidate: tuple(items[key] for key in sorted(items))
-            for candidate, items in by_candidate.items()
-        },
-        "available",
-    )
+                found[str(digest)].update(oid for oid in (candidate, review) if oid is not None)
+    return {digest: tuple(sorted(oids)) for digest, oids in found.items()}
 
 
-@dataclass(frozen=True)
-class _CurrentState:
-    """One export's current/ layer, kept so the next export renders only what changed."""
+def change_rationales(
+    instance: PlaybillInstance,
+    generations: Iterable[AcceptedGenerationLocation],
+    notes_oid: str | None,
+) -> dict[int, tuple[str, ...]]:
+    """Each accepted change's review rationale, read by path from one notes commit.
 
-    sequence: int
-    git_oid: str
-    parts: dict[str, SubjectPart]
-    claim_ids: dict[str, tuple[str, ...]]
-    verdicts: dict[str, tuple[tuple[str, str | None, str, bool], ...]]
-    documents: tuple[DocumentPart, ...]
-    notes_oid: str | None
-    context_status: str
-    changes: dict[int, bytes]
-    # Whether this export started from the previous one, and what it rendered afresh.
-    incremental: bool
-    rendered: tuple[str, ...]
-
-
-def _changed_since(
-    history: HistoryReader, previous: _CurrentState | None, sequence: int
-) -> frozenset[str] | None:
-    """Member paths changed since the previous export, or None to render everything.
-
-    The previous export must be an ancestor in this accepted history. A changed
-    ClaimType can rename a short field or its cardinality everywhere, so it
-    renders everything.
+    A change's rationale is what the proposals that published its exact
+    candidate, by its own actor, recorded. A missing note is missing rationale,
+    never invented. Notes on an accepted candidate do not change after
+    acceptance, so any notes commit at or after it reads the same prose.
     """
 
-    if previous is None or previous.sequence > sequence:
-        return None
-    if history.generation(previous.sequence).git_oid != previous.git_oid:
-        return None
-    changed = history.member_paths_after(previous.sequence)
-    if any(path.startswith("claim-types/") for path in changed):
-        return None
-    return changed
-
-
-def current_content(
-    instance: PlaybillInstance,
-    *,
-    coordinate: AcceptedProjectionCoordinate,
-    claims: tuple[ClaimArtifactAny, ...],
-    notes_oid: str | None,
-    access: BodyAccessContext | None = None,
-    verdict_context: ClaimVerdictReadContext | None = None,
-) -> dict[str, bytes]:
-    """The grep-first layer's files; see ``current_layer``."""
-
-    return current_layer(
-        instance,
-        coordinate=coordinate,
-        claims=claims,
-        notes_oid=notes_oid,
-        access=access,
-        verdict_context=verdict_context,
-    )[0]
-
-
-def current_layer(
-    instance: PlaybillInstance,
-    *,
-    coordinate: AcceptedProjectionCoordinate,
-    claims: tuple[ClaimArtifactAny, ...],
-    notes_oid: str | None,
-    access: BodyAccessContext | None = None,
-    verdict_context: ClaimVerdictReadContext | None = None,
-) -> tuple[dict[str, bytes], tuple[tuple[str, bool | None], ...]]:
-    """The grep-first layer: current/, INDEX, documents/ and their provenance.
-
-        Also returns every body-store object the layer's bytes depend on, with
-        whether it was held intact, so a caller keeping the bytes can revalidate.
-    : current/, INDEX, documents/ and their provenance.
-
-        Incremental: the last export's per-Subject renders are kept on the
-        instance. A later export in the same accepted history reads the member
-        paths the change records touched since then and re-renders only the
-        Subjects those changes, or a moved verdict, reach. Every file is then
-        re-stamped with the new coordinate, so identical accepted state still gives
-        identical bytes however the floor got there.
-    """
-
-    body_access = access or BodyAccessContext(principal_id="playbill-floor")
-    key = (body_access.principal_id, body_access.can_read_body)
-    remembered = memo_get(instance.floor_current_memo, key)
-    previous = remembered if isinstance(remembered, _CurrentState) else None
-    live = tuple(claim for claim in claims if claim.lifecycle.state == "live")
-    grouped = claims_by_subject(live)
-    claim_types, live_predicates = accepted_claim_types(instance, coordinate)
-    values = ValueRenderer(instance)
-    with instance.bind_accepted_projection(coordinate) as projection:
-        subject_paths = tuple(
-            sorted(
-                (row.path for row in projection.typed.envelopes(kind="subject")),
-                key=lambda item: item.encode(),
-            )
-        )
-    parts: dict[str, SubjectPart] = {}
-    claim_ids: dict[str, tuple[str, ...]] = {}
-    verdict_keys: dict[str, tuple[tuple[str, str | None, str, bool], ...]] = {}
-    records = instance.retained_record_reader()
-    with instance.accepted_history_reader(
-        at=AcceptedCoordinate.from_internal(coordinate)
-    ) as history:
-        stamp = floor_stamp(instance, coordinate, history)
-        changed = _changed_since(history, previous, stamp.generation)
-        verdicts = claim_verdicts(
-            instance,
-            coordinate,
-            live,
-            evaluation_time=stamp.accepted_at,
-            read_context=verdict_context,
-        )
-        for path in subject_paths:
-            ids = tuple(sorted(claim.identity.name for claim in grouped.get(path, ())))
-            claim_ids[path] = ids
-            verdict_keys[path] = tuple(
-                (item, known.verdict, known.status, known.held)
-                for item in ids
-                if (known := verdicts.get(item)) is not None
-            )
-        reusable = (
-            set()
-            if changed is None or previous is None
-            else {
-                path
-                for path in subject_paths
-                if path in previous.parts
-                and path not in changed
-                and previous.claim_ids.get(path) == claim_ids[path]
-                and previous.verdicts.get(path) == verdict_keys[path]
-                and not any(claim_path(item) in changed for item in claim_ids[path])
-                # A render that read the body store is reused only while every
-                # body it read answers as it did, so warm and cold agree.
-                and bodies_unchanged(instance, previous.parts[path].bodies)
-            }
-        )
-        fresh = tuple(path for path in subject_paths if path not in reusable)
-        shells = accepted_subjects(instance, coordinate, fresh)
-        for path in subject_paths:
-            if path in reusable:
-                assert previous is not None
-                parts[path] = previous.parts[path]
+    wanted = [item for item in generations if item.candidate_digest is not None]
+    if notes_oid is None or not wanted:
+        return {item.sequence: () for item in wanted}
+    commits = _candidate_commits(instance, (str(item.candidate_digest) for item in wanted))
+    pairs = sorted({("evaluation", oid) for oids in commits.values() for oid in oids})
+    pinned = None if notes_oid == LIVE_NOTES else notes_oid
+    notes = instance.read_proposal_notes(pairs, notes_commit=pinned) if pairs else {}
+    result: dict[int, tuple[str, ...]] = {}
+    for generation in wanted:
+        by_proposal: dict[str, str] = {}
+        for oid in commits.get(str(generation.candidate_digest), ()):
+            content = notes.get(("evaluation", oid))
+            if content is None:
                 continue
-            parts[path] = render_subject(
-                path=path,
-                shell=shells[path],
-                claims=grouped.get(path, ()),
-                claim_types=claim_types,
-                accepted_predicates=live_predicates,
-                verdicts=verdicts,
-                values=values,
-                history=history,
-            )
-        wanted = sorted({sequence for part in parts.values() for sequence in part.sequences})
-        same_notes = previous is not None and previous.notes_oid == notes_oid
-        changes: dict[int, bytes] = {}
-        missing = [
-            sequence
-            for sequence in wanted
-            if not (same_notes and previous is not None and sequence in previous.changes)
-        ]
-        if missing or not same_notes:
-            context, context_status = review_context(instance, notes_oid)
-        else:
-            assert previous is not None
-            context, context_status = {}, previous.context_status
-        for sequence in wanted:
-            if sequence not in missing:
-                assert previous is not None
-                changes[sequence] = previous.changes[sequence]
-                continue
-            record = history.read_generation_record(sequence, records)
-            changes[sequence] = _change_file(
-                sequence,
-                history.generation(sequence),
-                record,
-                context=context,
-                context_status=context_status,
-            )
-    documents = (
-        previous.documents
-        if changed is not None
-        and previous is not None
-        and not any(path.startswith("documents/") for path in changed)
-        and bodies_unchanged(
-            instance, (item.read_body for item in previous.documents if item.read_body)
+            lines = content.splitlines(keepends=True)
+            if len(lines) % 2:
+                raise ProposalIntegrityError("floor review note has an incomplete record pair")
+            for i in range(0, len(lines), 2):
+                admission = ProposalAdmissionRecord.model_validate_json(lines[i])
+                evaluation = ProposalEvaluationRecord.model_validate_json(lines[i + 1])
+                if (
+                    admission_bytes(admission) != lines[i]
+                    or evaluation_bytes(evaluation) != lines[i + 1]
+                    or admission.proposal_id != evaluation.proposal_id
+                ):
+                    raise ProposalIntegrityError(
+                        "floor review note is not a canonical proposal pair"
+                    )
+                if (
+                    evaluation.verdict == "candidate"
+                    and evaluation.candidate_digest == generation.candidate_digest
+                    and admission.actor_id == generation.actor_id
+                ):
+                    if admission.rationale:
+                        by_proposal[admission.proposal_id] = admission.rationale
+        result[generation.sequence] = tuple(
+            dict.fromkeys(by_proposal[key] for key in sorted(by_proposal))
         )
-        else document_parts(instance, coordinate=coordinate, access=body_access)
-    )
-    memo_put(
-        instance.floor_current_memo,
-        key,
-        _CurrentState(
-            sequence=stamp.generation,
-            git_oid=coordinate.git_oid,
-            parts=parts,
-            claim_ids=claim_ids,
-            verdicts=verdict_keys,
-            documents=documents,
-            notes_oid=notes_oid,
-            context_status=context_status,
-            changes=changes,
-            incremental=changed is not None,
-            rendered=fresh,
-        ),
-        capacity=2,
-    )
-    files: dict[str, bytes] = {}
-    for part in parts.values():
-        files.update(stamped(part, stamp))
-        files[f"{PROVENANCE_SUBJECTS_PREFIX}{part.ref}.json"] = part.provenance
-    files.update(index_files(parts.values(), stamp))
-    for document in documents:
-        files.update(document_files(document, stamp))
-    for sequence, content in changes.items():
-        files[f"provenance/changes/{sequence:020d}.json"] = content
-    files["provenance/snapshot.json"] = _render(
+    return result
+
+
+def change_file(
+    generation: AcceptedGenerationLocation,
+    *,
+    timestamp: str,
+    member_paths: Iterable[str],
+    rationale: tuple[str, ...],
+) -> bytes:
+    """``changes/<seq>.json``: one accepted change, its actor, rationale and refs."""
+
+    return _render(
         {
-            "accepted_git_oid": coordinate.git_oid,
-            "accepted_generation": stamp.generation,
-            "evaluation_notes_oid": notes_oid,
-            "status": context_status,
-            "rebuild_inputs": "accepted ledger plus this immutable Git notes snapshot",
-            "history": "Only changes introducing the current Claim revisions are exported.",
+            "sequence": generation.sequence,
+            "timestamp": timestamp,
+            "actor": generation.actor_id,
+            "rationale": list(rationale),
+            "changed": sorted({member_ref(path) for path in member_paths}),
         }
     )
-    files["README.md"] = FLOOR_README.encode()
-    bodies = tuple(
-        sorted(
-            {
-                *(body for part in parts.values() for body in part.bodies),
-                *(item.read_body for item in documents if item.read_body is not None),
-            }
+
+
+def change_path(sequence: int) -> str:
+    return f"{CHANGES_PREFIX}{sequence:020d}.json"
+
+
+def render_changes(
+    instance: PlaybillInstance,
+    history: HistoryReader,
+    sequences: Iterable[int],
+    notes_oid: str | None,
+) -> dict[int, bytes]:
+    """Render the change files for ``sequences`` from the history index and notes.
+
+    The members come from the history index and the time from the accepted
+    commit (the ledger stamps it from the candidate's own timestamp), so no
+    change-set record is re-read.
+    """
+
+    wanted = sorted(set(sequences))
+    if not wanted:
+        return {}
+    generations = [history.generation(sequence) for sequence in wanted]
+    rationales = change_rationales(instance, generations, notes_oid)
+    members = history.member_paths_by_sequence(wanted)
+    files: dict[int, bytes] = {}
+    for generation in generations:
+        files[generation.sequence] = change_file(
+            generation,
+            timestamp=instance._ledger.commit_timestamps(generation.git_oid)[0].strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+            member_paths=members.get(generation.sequence, ()),
+            rationale=rationales.get(generation.sequence, ()),
         )
-    )
-    return files, bodies
+    return files
