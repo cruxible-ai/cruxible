@@ -8,7 +8,7 @@ Line that admitted a run and then stopped -- so the cards, their rendered
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -164,6 +164,11 @@ def _orient_client(instance: Any) -> Any:
     from cruxible_core.service.discovery.orient import service_playbill_orient
 
     class _Orient(_ServiceClient):
+        def playbill_head(self, instance_id: str, **_values: Any) -> Any:
+            from cruxible_core.service.discovery.orient import service_playbill_head
+
+            return service_playbill_head(self.instance)
+
         def orient_playbill(self, instance_id: str, **values: Any) -> Any:
             self.surfaces = [*getattr(self, "surfaces", []), values["surface"]]
             values.pop("caller_tools", None)
@@ -225,14 +230,15 @@ def test_the_mcp_orient_tool_pages_lines(world, monkeypatch) -> None:  # type: i
 
 def test_the_sdk_orients_by_operational_section(world) -> None:  # type: ignore[no-untyped-def]
     instance, line = world
-    playbill = Playbill.__new__(Playbill)
-    playbill._client = _orient_client(instance)  # type: ignore[assignment]
-    playbill._instance_id = "inst"
-    playbill._read_at = lambda coordinate=None: None  # type: ignore[method-assign,assignment]
-    playbill._evaluation_time = lambda: "2026-08-24T16:05:00+00:00"  # type: ignore[method-assign]
-    playbill._observe_read = lambda *_a, **_k: None  # type: ignore[method-assign]
+    playbill = Playbill._from_client(  # type: ignore[arg-type]
+        _orient_client(instance),
+        instance_id="inst",
+        workspace=None,
+        clock=lambda: datetime(2026, 8, 24, 16, 5, tzinfo=UTC),
+    )
 
     answer = playbill.orient(section="lines")
+    assert answer.floor is None
 
     assert answer.lines is not None and answer.lines[0].line == line.identity.qualified
     assert answer.next[0] == f'pb.get("{line.identity.qualified}")'

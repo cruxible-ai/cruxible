@@ -67,6 +67,7 @@ from cruxible_client.authoring.sdk_types import (
     RefKind,
     SourceMapEntry,
     SourceRef,
+    SourceSelectionError,
     SubjectRef,
     TypedRef,
 )
@@ -1813,13 +1814,15 @@ class Playbill:
         *,
         client: CruxibleClient,
         instance_id: str,
-        workspace: Path,
+        workspace: Path | None,
         access_profile: AccessProfile,
         clock: Any,
     ) -> None:
         self._client = client
         self._instance_id = instance_id
-        self._workspace = workspace.expanduser().resolve()
+        # None: a connection with no workspace. Reads serve; orient reports no
+        # floor; the members that read or write workspace files refuse.
+        self._workspace = None if workspace is None else workspace.expanduser().resolve()
         self._workspace_sources: WorkspaceSources | None = None
         self._access_profile = access_profile
         self._clock = clock
@@ -1925,7 +1928,7 @@ class Playbill:
         client: CruxibleClient,
         *,
         instance_id: str,
-        workspace: Path,
+        workspace: Path | None,
         access_profile: AccessProfile | None = None,
         clock: Any = None,
     ) -> Playbill:
@@ -1955,6 +1958,17 @@ class Playbill:
         self.close()
 
     @property
+    def _workspace_root(self) -> Path:
+        """This connection's workspace, or a typed refusal when it was opened without one."""
+
+        if self._workspace is None:
+            raise SourceSelectionError(
+                f"{SourceSelectionError.code}: this connection has no workspace; "
+                "connect with workspace= to read or write workspace files"
+            )
+        return self._workspace
+
+    @property
     def _sources(self) -> WorkspaceSources:
         """Resolve the workspace source catalog the first time one is needed.
 
@@ -1965,7 +1979,7 @@ class Playbill:
         """
 
         if self._workspace_sources is None:
-            self._workspace_sources = WorkspaceSources(self._workspace)
+            self._workspace_sources = WorkspaceSources(self._workspace_root)
         return self._workspace_sources
 
     @property
@@ -2306,7 +2320,7 @@ class Playbill:
 
         coordinate = api.PlaybillAcceptedCoordinate.model_validate(at.model_dump(mode="json"))
         return refresh_workspace_floor(
-            self._client, self._instance_id, workspace=self._workspace, at=coordinate
+            self._client, self._instance_id, workspace=self._workspace_root, at=coordinate
         )
 
     def activate(
@@ -2328,7 +2342,7 @@ class Playbill:
             self._client,
             self._instance_id,
             proposal_id,
-            workspace=self._workspace,
+            workspace=self._workspace_root,
             sync=not no_sync,
         )
         if result.status == "accepted" and result.accepted_coordinate is not None:
@@ -2602,7 +2616,7 @@ class Playbill:
         """Send one write and answer its outcome, or raise its refusal."""
 
         request = request.model_copy(
-            update={"changes": observe_changes(request.changes, workspace=self._workspace)}
+            update={"changes": observe_changes(request.changes, workspace=self._workspace_root)}
         )
         outcome = self._client.playbill_write(self._instance_id, request=request)
         return self._written(outcome)
@@ -2671,7 +2685,7 @@ class Playbill:
             full_coordinate=True,
         )
         if request.evidence is not None:
-            (change,) = observe_changes((request.change(),), workspace=self._workspace)
+            (change,) = observe_changes((request.change(),), workspace=self._workspace_root)
             request = request.model_copy(update={"evidence": cast(SetChange, change).evidence})
         return self._written(self._client.playbill_set(self._instance_id, request=request))
 
@@ -3775,6 +3789,9 @@ class Playbill:
             result.coordinate,
             expected=requested if cursor is None else None,
         )
+        if self._workspace is None:
+            # No workspace, no floor to compare: the floor is unknown, not stale.
+            return result
         return workspace_floor_freshness(self._workspace, result)
 
     def _append_attestation(
@@ -3839,8 +3856,8 @@ class Playbill:
         observation, scanned_coordinate = observe_playbill_next_workspace_with_coverage(
             self._client,
             self._instance_id,
-            self._workspace,
-            observation=observe_playbill_next_workspace(self._workspace),
+            self._workspace_root,
+            observation=observe_playbill_next_workspace(self._workspace_root),
             coordinate=requested_coordinate,
             access_profile=access_profile,
             # Only procedure-projection-only workspaces need a separate head
@@ -3918,8 +3935,8 @@ class Playbill:
         observation, _coordinate = observe_playbill_next_workspace_with_coverage(
             self._client,
             self._instance_id,
-            self._workspace,
-            observation=observe_playbill_next_workspace(self._workspace),
+            self._workspace_root,
+            observation=observe_playbill_next_workspace(self._workspace_root),
             access_profile=access_profile,
         )
         return self._client.list_playbill_curation(
