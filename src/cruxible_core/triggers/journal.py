@@ -367,18 +367,31 @@ def trigger_generation(instance: Any, trigger: TriggerV1) -> int:
 
 
 def generation_at(instance: Any, instant: datetime) -> int:
-    """Bisect non-decreasing accepted evaluation times for a matching range.
+    """Bisect a matching range, scanning backwards when a bracket is out of order.
 
-    The fallback requires sequence-ordered instants; assert the search bracket
-    stays ordered rather than silently using a reversed clock. Daemon listeners
-    normally supply their exact starting sequence without this time lookup.
+    Candidate timestamp validation checks canonical spelling, not parent order
+    (cruxible_client.contracts.candidates.validate_candidate_timestamp). A
+    reversed bracket therefore needs the latest-sequence linear lookup, never
+    an assertion on the tick path. Daemon listeners normally supply their exact
+    starting sequence without this time lookup.
     """
 
     with instance.accepted_history_reader() as history:
         lower, upper = 0, int(history.sequence)
+
+        def scan_backwards() -> int:
+            for sequence in range(int(history.sequence), -1, -1):
+                if (
+                    instance.accepted_evaluation_time(history.generation(sequence).git_oid)
+                    <= instant
+                ):
+                    return sequence
+            return 0
+
         lower_time = instance.accepted_evaluation_time(history.generation(lower).git_oid)
         upper_time = instance.accepted_evaluation_time(history.generation(upper).git_oid)
-        assert lower_time <= upper_time, "accepted evaluation times must be non-decreasing"
+        if lower_time > upper_time:
+            return scan_backwards()
         if instant < lower_time:
             return 0
         if instant >= upper_time:
@@ -386,9 +399,8 @@ def generation_at(instance: Any, instant: datetime) -> int:
         while lower + 1 < upper:
             middle = (lower + upper) // 2
             middle_time = instance.accepted_evaluation_time(history.generation(middle).git_oid)
-            assert lower_time <= middle_time <= upper_time, (
-                "accepted evaluation times must be non-decreasing"
-            )
+            if not lower_time <= middle_time <= upper_time:
+                return scan_backwards()
             if middle_time <= instant:
                 lower, lower_time = middle, middle_time
             else:

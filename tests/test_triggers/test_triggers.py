@@ -372,3 +372,42 @@ def test_generation_time_lookup_bisects_and_keeps_the_last_equal_instant(
     world.accepted_evaluation_time = evaluation_time
     assert generation_at(world, NOW + timedelta(seconds=second)) == expected
     assert len(calls) <= 20
+
+
+@pytest.mark.parametrize("offsets,second,expected", [((5, 1, 4, 3), 2, 1), ((0, 1, 7, 2, 4), 3, 3)])
+def test_out_of_order_generation_times_fall_back_without_stopping_trigger_ticks(
+    tmp_path, offsets, second, expected
+):
+    from contextlib import contextmanager
+
+    from cruxible_client.contracts.triggers import GenerationAcceptedScheduleV1
+    from cruxible_core.triggers.journal import generation_at
+
+    world = instance(tmp_path)
+
+    @contextmanager
+    def history():
+        yield SimpleNamespace(
+            sequence=len(offsets) - 1,
+            generation=lambda sequence: SimpleNamespace(git_oid=str(sequence)),
+        )
+
+    world.accepted_history_reader = history
+    world.accepted_evaluation_time = lambda oid: NOW + timedelta(seconds=offsets[int(oid)])
+    listening_since = NOW + timedelta(seconds=second)
+    assert generation_at(world, listening_since) == expected
+    trigger = InternalTrigger(
+        "Trigger:floor",
+        "floor.refresh",
+        GenerationAcceptedScheduleV1(),
+        accepted_at=NOW,
+        accepted_generation=0,
+        version="v1",
+    )
+    assert (
+        len(fire(world, NOW + timedelta(seconds=10), triggers=(trigger,), since=listening_since))
+        == 1
+    )
+    assert (
+        fire(world, NOW + timedelta(seconds=11), triggers=(trigger,), since=listening_since) == ()
+    )
