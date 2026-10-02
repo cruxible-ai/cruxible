@@ -358,11 +358,14 @@ class InstanceRegistry:
         workspace_root: str | Path,
         *,
         observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
+        observe_host: Callable[[PlaybillStateCoordinateV1], None] | None = None,
     ) -> InstanceRecord:
         """Attach one exact local workspace without replacing an existing attachment.
 
-        ``observe`` sees the host's binding inside the attaching transaction,
-        before it changes (R12's pin check).
+        ``observe`` sees the host's binding, and ``observe_host`` its whole
+        registry row (`host_state`), inside the attaching transaction before
+        it changes (R12's pin check); the transaction is held through the
+        write, so the row cannot move between the check and the attach.
         """
 
         refuse_write_while_previewing("instance registry")
@@ -382,6 +385,8 @@ class InstanceRegistry:
                     raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
                 if observe is not None:
                     observe(_workspace_state(instance_id, row["workspace_root"]))
+                if observe_host is not None:
+                    observe_host(self._host_state_conn(conn, instance_id))
                 if row["workspace_root"] is not None:
                     if row["workspace_root"] != resolved:
                         raise ConfigError("Playbill host is already attached to another workspace")

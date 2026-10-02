@@ -245,9 +245,12 @@ def create_playbill_host(
         if existing is not None:
             if existing.backend != GOVERNED_DAEMON_BACKEND:
                 raise ConfigError(f"Instance '{selected}' is not a governed daemon host")
-            change.observe(registry.host_state(selected))
-            if workspace_root is not None:
-                attach_workspace(selected, workspace_root)
+            if workspace_root is None:
+                change.observe(registry.host_state(selected))
+            else:
+                # The host's row is checked where the attach writes it, inside
+                # the attaching transaction, not read beforehand.
+                attach_workspace(selected, workspace_root, observe_host=change.observe)
             return contracts.PlaybillHostResult(
                 instance_id=selected, status="already_exists", coordinate=change.coordinate
             )
@@ -304,6 +307,7 @@ def attach_workspace(
     workspace_root: str,
     *,
     observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
+    observe_host: Callable[[PlaybillStateCoordinateV1], None] | None = None,
 ) -> bool:
     """Attach one host to a Git worktree, before or after its init; True when newly.
 
@@ -333,8 +337,11 @@ def attach_workspace(
         )
     if record.workspace_root is not None:
         if Path(record.workspace_root) == resolved:
+            # Nothing is written, so a read outside a transaction pins it.
             if observe is not None:
                 observe(registry.workspace_state(instance_id))
+            if observe_host is not None:
+                observe_host(registry.host_state(instance_id))
             return False
         raise ConfigError(
             f"Playbill host {instance_id!r} is attached to {record.workspace_root}; release "
@@ -359,8 +366,12 @@ def attach_workspace(
     if is_previewing():
         if observe is not None:
             observe(registry.workspace_state(instance_id))
+        if observe_host is not None:
+            observe_host(registry.host_state(instance_id))
         return True
-    registry.attach_governed_workspace(instance_id, resolved, observe=observe)
+    registry.attach_governed_workspace(
+        instance_id, resolved, observe=observe, observe_host=observe_host
+    )
     get_playbill_manager().rebind_workspace(instance_id)
     return True
 

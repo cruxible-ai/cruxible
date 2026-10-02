@@ -601,6 +601,61 @@ def test_attach_and_detach_are_pinned_to_the_hosts_binding(
     assert stale_attach.value.error_code == "playbill.preview.state_moved"
 
 
+def test_a_detach_under_a_host_create_preview_refuses_the_reattach(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-006: an existing host's row is checked inside the attaching transaction.
+
+    Preview a host create on a host already attached, detach it, then commit
+    with the preview's coordinate: the commit must refuse, not re-attach the
+    worktree the detach released.
+    """
+
+    client, instance_id, _reviewer_key = playbill_http
+    worktree = _git_worktree(tmp_path / "worktree")
+
+    def create(**control: Any) -> Any:
+        return host_api.create_playbill_host(
+            instance_id=instance_id,
+            workspace_root=str(worktree),
+            workspace_attachment_authorized=True,
+            **control,
+        )
+
+    create()  # attaches the existing host to the worktree
+    get_playbill_manager().get(instance_id).settled_workspace_advertisement()
+    preview = create(dry_run=True)
+    assert (preview.status, preview.coordinate.subject) == (
+        "already_exists",
+        f"host:{instance_id}",
+    )
+    original = host_api.attach_workspace
+    detached: list[bool] = []
+
+    def detach_then_attach(*args: Any, **kwargs: Any) -> bool:
+        # The detach lands after the commit's checks began, before its write.
+        if not detached:
+            detached.append(True)
+            host_api.playbill_host_workspace_detach(
+                instance_id, workspace_attachment_authorized=True, dry_run=False
+            )
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(host_api, "attach_workspace", detach_then_attach)
+    with pytest.raises(ChangeRefusedError) as moved:
+        create(dry_run=False, at=preview.coordinate.digest)
+    monkeypatch.setattr(host_api, "attach_workspace", original)
+    assert detached and moved.value.error_code == "playbill.preview.state_moved"
+    assert get_registry().get(instance_id).workspace_root is None  # type: ignore[union-attr]
+
+    fresh = create(dry_run=True)
+    attached = create(dry_run=False, at=fresh.coordinate.digest)
+    assert attached.status == "already_exists"
+    assert get_registry().get(instance_id).workspace_root == str(worktree)  # type: ignore[union-attr]
+
+
 def test_a_worktree_in_another_object_format_is_refused_by_name(
     playbill_http: tuple[TestClient, str, Path], tmp_path: Path
 ) -> None:
