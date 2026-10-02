@@ -280,6 +280,7 @@ def _loop_work(node: ast.AsyncFunctionDef, module: _RouteModule) -> list[str]:
 _ON_LOOP_CALLS: dict[str, frozenset[str]] = {
     "KeyedAdmission.admit": frozenset(
         {
+            "self._check_reentrant",
             "asyncio.get_running_loop",
             "loop.create_future",
             "self._enter",
@@ -288,6 +289,7 @@ _ON_LOOP_CALLS: dict[str, frozenset[str]] = {
             "self._close",
         }
     ),
+    "KeyedAdmission._check_reentrant": frozenset({"getattr", "RuntimeError"}),
     "KeyedAdmission._enter": frozenset(
         {"self._entries.get", "_Entry", "_Waiter", "entry.waiters.append"}
     ),
@@ -320,6 +322,7 @@ _RECEIVER_VALUES: dict[str, frozenset[str]] = {
 _FIELDS: dict[str, tuple[str, str]] = {
     "self._lock": ("KeyedAdmission.__init__", "threading.Lock()"),
     "self._entries": ("KeyedAdmission.__init__", "{}"),
+    "self._owned": ("KeyedAdmission.__init__", "threading.local()"),
     "self.waiters": ("_Entry.__init__", "deque()"),
 }
 

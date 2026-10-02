@@ -25,7 +25,9 @@ with ``HTTP_REQUEST_CONTEXT``, which propagates into offloaded workers. ``hold``
 refuses that context before acquiring or waiting for any key; this runtime check
 is the guarantee across all call indirections. Ticket workers keep the request
 context and run normally because they have already been admitted. Consumer
-threads have no request context.
+threads have no request context. Blocking holders and ticket workers track
+ownership on their thread; entering either admission path again for the same
+key refuses immediately instead of waiting for oneself.
 
 Both kinds queue on the same key in arrival order and exclude each other: an
 export, a delta and a consumer refresh of one instance never overlap, while
@@ -136,7 +138,8 @@ class _Ticket:
         if not self.admission._claim(self):
             raise RuntimeError("the admitted caller left before its call started")
         try:
-            return call()
+            with self.admission._mark_held(self.key):
+                return call()
         finally:
             self.admission._leave(self.key)
 
@@ -147,6 +150,7 @@ class KeyedAdmission:
     def __init__(self) -> None:
         self._lock: threading.Lock = threading.Lock()
         self._entries: dict[str, _Entry] = {}
+        self._owned: threading.local = threading.local()
 
     # -- bookkeeping; every method runs with self._lock held only briefly ----------
 
@@ -213,6 +217,25 @@ class KeyedAdmission:
             entry = self._entries[key]
             entry.waiters.remove(waiter)
 
+    def _check_reentrant(self, key: str) -> None:
+        if key in getattr(self._owned, "keys", ()):
+            raise RuntimeError(
+                "floor admission for the same key is not re-entrant on its owning thread"
+            )
+
+    @contextmanager
+    def _mark_held(self, key: str) -> Iterator[None]:
+        """Track physical thread ownership, without propagating it into other workers."""
+
+        keys = getattr(self._owned, "keys", None)
+        if keys is None:
+            keys = self._owned.keys = set()
+        keys.add(key)
+        try:
+            yield
+        finally:
+            keys.remove(key)
+
     # -- the two ways in -----------------------------------------------------------
 
     @asynccontextmanager
@@ -223,6 +246,7 @@ class KeyedAdmission:
         then stays held until the call ends, even if the route is cancelled.
         """
 
+        self._check_reentrant(key)
         loop = asyncio.get_running_loop()
         future: asyncio.Future[None] = loop.create_future()
         waiter = self._enter(key, loop, future, None)
@@ -252,6 +276,7 @@ class KeyedAdmission:
             pass
         else:
             raise RuntimeError("KeyedAdmission.hold would block a running event loop; use admit")
+        self._check_reentrant(key)
         event = threading.Event()
         waiter = self._enter(key, None, None, event)
         if waiter is not None:
@@ -261,7 +286,8 @@ class KeyedAdmission:
                 self._withdraw(key, waiter)
                 raise
         try:
-            yield
+            with self._mark_held(key):
+                yield
         finally:
             self._leave(key)
 

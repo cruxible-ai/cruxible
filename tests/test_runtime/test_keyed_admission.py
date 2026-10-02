@@ -307,3 +307,77 @@ def test_the_floor_admission_is_one_shared_object() -> None:
     # Daemon floor delivery and attachment changes take the same object.
     assert floor.FLOOR_ADMISSION is module.FLOOR_ADMISSION
     assert host_api.FLOOR_ADMISSION is module.FLOOR_ADMISSION
+
+
+@pytest.mark.parametrize("owner", ["hold", "ticket"])
+@pytest.mark.parametrize("nested", ["hold", "admit"])
+def test_same_thread_reentry_refuses_before_queueing(monkeypatch, owner, nested):
+    admission = KeyedAdmission()
+
+    def callee():
+        def must_not_enter(*args, **kwargs):
+            pytest.fail("re-entry queued behind the thread's own key")
+
+        async def readmit():
+            async with admission.admit("inst_reentrant"):
+                pytest.fail("re-entry was admitted")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(admission, "_enter", must_not_enter)
+            with pytest.raises(RuntimeError, match="same key is not re-entrant"):
+                if nested == "hold":
+                    with admission.hold("inst_reentrant"):
+                        pytest.fail("re-entry was admitted")
+                else:
+                    # A ticket's worker can run a loop of its own; it must not
+                    # wait for the key the enclosing synchronous call owns.
+                    asyncio.run(readmit())
+        assert admission.active_keys() == 1
+
+    async def route():
+        async with admission.admit("inst_reentrant") as ticket:
+            await asyncio.to_thread(ticket.run, callee)
+
+    if owner == "hold":
+        with admission.hold("inst_reentrant"):
+            callee()
+    else:
+        asyncio.run(route())
+    assert admission.active_keys() == 0
+    # A refusal does not poison ownership or the admission for later callers.
+    with admission.hold("inst_reentrant"):
+        pass
+    assert admission.active_keys() == 0
+
+
+def test_thread_ownership_allows_other_keys_and_cleans_up_after_failure():
+    from concurrent.futures import ThreadPoolExecutor
+
+    admission = KeyedAdmission()
+    threads = []
+
+    def callee():
+        threads.append(threading.get_ident())
+        with admission.hold("inst_other"):
+            assert admission.active_keys() == 2
+        raise ValueError("worker failed")
+
+    def reuse():
+        threads.append(threading.get_ident())
+        with admission.hold("inst_owner"):
+            with admission.hold("inst_other"):
+                assert admission.active_keys() == 2
+
+    async def route(pool):
+        loop = asyncio.get_running_loop()
+        async with admission.admit("inst_owner") as ticket:
+            with pytest.raises(ValueError, match="worker failed"):
+                await loop.run_in_executor(pool, ticket.run, callee)
+        assert admission.active_keys() == 0
+        # Reuse the same physical worker after ticket failure, with no ticket.
+        await loop.run_in_executor(pool, reuse)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        asyncio.run(route(pool))
+    assert len(threads) == 2 and threads[0] == threads[1]
+    assert admission.active_keys() == 0
