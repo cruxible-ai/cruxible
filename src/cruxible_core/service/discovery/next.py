@@ -85,6 +85,7 @@ from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1, Pro
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
+from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.compiler.compiler import COMPILER_REVISION_LABELS, current_compiler_coordinate
 from cruxible_core.compiler.upgrades import upgrade_law
@@ -548,7 +549,7 @@ def validate_playbill_next_request(
             error = PlaybillNextCursorMismatch
         else:
             error = PlaybillNextAcceptedStateInvalid
-        raise error(f"{error.code}: {exc}") from exc
+        raise error(f"{error.code}: {validation_summary(exc)}") from exc
 
 
 class PlaybillNextRepairV1(_StrictNextModel):

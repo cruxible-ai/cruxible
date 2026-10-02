@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import importlib
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,7 @@ from cruxible_client.authoring.context import (
     PlaybillContextResolutionError,
     resolve_playbill_context,
 )
+from cruxible_client.contracts.repairs import RepairOperationV1, render_served_repair
 from cruxible_core.cli.context import load_cli_context
 from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
@@ -189,13 +191,16 @@ def handle_errors(f: Any) -> Any:
                     click.secho(f"Error: {exc}", fg="red", err=True)
                     sys.exit(1)
             if isinstance(exc, ClientCoreError):
-                click.secho(
-                    f"Error: {exc.__class__.__name__}: {exc}",
-                    fg="red",
-                    err=True,
-                )
-                for repair in getattr(exc, "repair_commands", ()):
+                # A refusal rebuilt from the wire is the bare base class; its code
+                # leads its message already, so the class name would be noise.
+                prefix = "" if type(exc) is ClientCoreError else f"{exc.__class__.__name__}: "
+                click.secho(f"Error: {prefix}{exc}", fg="red", err=True)
+                repairs = tuple(getattr(exc, "repair_commands", ()))
+                for repair in repairs:
                     click.secho(f"Repair: {repair}", fg="red", err=True)
+                served = getattr(exc, "repair", None)
+                if not repairs and isinstance(served, RepairOperationV1):
+                    click.secho(f"Repair: {render_served_repair(served)}", fg="red", err=True)
                 sys.exit(1)
 
             import httpx
@@ -210,7 +215,31 @@ def handle_errors(f: Any) -> Any:
                     err=True,
                 )
                 sys.exit(1)
-            raise
+            if isinstance(exc, click.exceptions.ClickException | click.exceptions.Exit):
+                raise
+            if os.environ.get("CRUXIBLE_DEBUG"):
+                raise
+            # Rule R10: no traceback and no pydantic dump reaches a user. What is
+            # left is said in one line; CRUXIBLE_DEBUG=1 shows where it failed.
+            from pydantic import ValidationError
+
+            from cruxible_client.contracts.validation_messages import validation_summary
+
+            if isinstance(exc, ValidationError):
+                click.secho(f"Error: invalid input: {validation_summary(exc)}", fg="red", err=True)
+            elif isinstance(exc, OSError):
+                target = "" if exc.filename is None else f": {exc.filename}"
+                reason = exc.strerror or str(exc) or exc.__class__.__name__
+                click.secho(f"Error: {reason}{target}", fg="red", err=True)
+            else:
+                click.secho(f"Error: {exc.__class__.__name__}: {exc}", fg="red", err=True)
+                click.secho(
+                    "This is not a refusal Cruxible names; rerun with CRUXIBLE_DEBUG=1 "
+                    "to see where it failed.",
+                    fg="red",
+                    err=True,
+                )
+            sys.exit(1)
 
     @functools.wraps(f)
     def wrapper(*args: Any, **kwargs: Any) -> Any:

@@ -20,6 +20,7 @@ from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_core.claims.closure import dependency_artifacts, parse_dependency_artifact
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.curation.curation import (
@@ -135,13 +136,15 @@ def validate_playbill_curation_list_request(
         roots = {str(item["loc"][0]) for item in exc.errors() if item["loc"]}
         if "access_profile" in roots:
             raise PlaybillNextAccessProfileInvalid(
-                f"{PlaybillNextAccessProfileInvalid.code}: {exc}"
+                f"{PlaybillNextAccessProfileInvalid.code}: {validation_summary(exc)}"
             ) from exc
         if "workspace_observation" in roots:
             raise PlaybillNextWorkspaceObservationInvalid(
-                f"{PlaybillNextWorkspaceObservationInvalid.code}: {exc}"
+                f"{PlaybillNextWorkspaceObservationInvalid.code}: {validation_summary(exc)}"
             ) from exc
-        raise PlaybillCurationError(f"{PlaybillCurationError.code}: {exc}") from exc
+        raise PlaybillCurationError(
+            f"{PlaybillCurationError.code}: {validation_summary(exc)}"
+        ) from exc
 
 
 class PlaybillCurationOverruleRequestV1(_StrictCurationModel):

@@ -26,7 +26,9 @@ from cruxible_client.contracts.errors import (
     ClaimAttestationRequestInvalid,
     PlaybillSinceRequestInvalid,
 )
+from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.temporal import ISO_8601_FORMAT_HINT
+from cruxible_client.contracts.validation_messages import internal_validation_segment
 from cruxible_core import __version__
 from cruxible_core.errors import ConfigError, CoreError
 from cruxible_core.ledger.checkpoints import QUIET_CHECKPOINT_SECONDS
@@ -68,6 +70,7 @@ _log = structlog.get_logger("cruxible.server.app")
 # instead. See wi-daemon-network-security-hardening (#5).
 _DB_CONSTRAINT_MESSAGE = "database constraint violation"
 _DB_ERROR_MESSAGE = "database error"
+REQUEST_INVALID_CODE = "request.invalid"
 
 # Pydantic tags every datetime/date failure with a type starting "datetime" or
 # "date" (datetime_parsing, datetime_type, date_from_datetime_parsing, ...).
@@ -78,7 +81,11 @@ _TEMPORAL_ERROR_TYPE_PREFIXES = ("datetime", "date")
 
 def _format_request_validation_error(error: Mapping[str, Any]) -> str:
     """Render one pydantic request-validation error, self-correcting when temporal."""
-    location = ".".join(str(part) for part in (error.get("loc") or ()))
+    # Pydantic's validator names (function-after[...], constrained-str, union
+    # tags) say how a model validates, not where the caller's fault is.
+    location = ".".join(
+        str(part) for part in (error.get("loc") or ()) if not internal_validation_segment(part)
+    )
     message = str(error.get("msg", "invalid"))
     error_type = str(error.get("type", ""))
     if error_type.startswith(_TEMPORAL_ERROR_TYPE_PREFIXES):
@@ -156,7 +163,13 @@ def create_app() -> FastAPI:
         body = ErrorResponse(
             error_type="RequestValidationError",
             message="Request validation failed",
+            error_code=REQUEST_INVALID_CODE,
             errors=errors,
+            repair=hand_edit_repair(
+                REQUEST_INVALID_CODE,
+                required_change="Correct each field the errors name; the route's request "
+                "schema is in /openapi.json.",
+            ),
         )
         return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
 
@@ -533,8 +546,15 @@ def bind_private_unix_socket(socket_file: Path) -> socket.socket:
         previous_umask = os.umask(0o177)
         try:
             _bind_socket_path(sock, str(socket_file))
-        except OSError:
+        except OSError as exc:
             sock.close()
+            if "too long" in str(exc).lower() or len(os.fsencode(str(socket_file))) >= 104:
+                raise ConfigError(
+                    f"Daemon socket path is too long for a Unix socket "
+                    f"({len(os.fsencode(str(socket_file)))} bytes; the limit is about 100): "
+                    f"{socket_file}. Repair: pass a shorter --socket, for example under "
+                    "~/.cruxible/run/"
+                ) from exc
             raise
         finally:
             os.umask(previous_umask)

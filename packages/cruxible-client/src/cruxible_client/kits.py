@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from cruxible_client.artifacts import (
     ArtifactImage,
     ArtifactKind,
@@ -39,6 +41,31 @@ from cruxible_client.contracts.kits import (
     KitBundleV1,
     KitManifestV1,
 )
+from cruxible_client.contracts.validation_messages import validation_summary
+from cruxible_client.errors import ConfigError
+
+_KIT_FORMS = (
+    "a kit directory (holding cruxible-kit.json), an OCI image layout, or a registry "
+    "reference such as project-state:1.0.0 or ghcr.io/acme/kits/foo@sha256:..."
+)
+
+
+class KitSourceError(ConfigError):
+    """A kit source names no kit this client can read (a typed refusal, not a crash)."""
+
+    error_code = "playbill.kit.source_invalid"
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"{self.error_code}: {detail}; a kit is {_KIT_FORMS}")
+
+
+def kit_reference(source: str) -> Reference:
+    """``source`` as a registry reference, or a typed refusal naming the kit forms."""
+
+    try:
+        return parse_reference(source)
+    except ValueError as exc:
+        raise KitSourceError(f"{source!r} is not a registry reference ({exc})") from exc
 
 
 def read_kit_directory(root: Path) -> KitBundleV1:
@@ -117,7 +144,7 @@ def fetch_kit_image(
 ) -> tuple[ArtifactImage, str]:
     """The verified kit artifact at a registry reference, exactly as published."""
 
-    ref = parse_reference(source)
+    ref = kit_reference(source)
     client = registry if registry is not None else RegistryClient()
     try:
         image = client.pull(ref)
@@ -140,7 +167,18 @@ def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple
         if is_layout(path):
             image = read_layout(path)
             return unpack_artifact(KIT_ARTIFACT, image), f"{path.name}@{image.digest}"
-        return read_kit_directory(path), path.name
+        if not (path / KIT_MANIFEST_FILE).is_file():
+            raise KitSourceError(f"directory {path} holds no {KIT_MANIFEST_FILE}")
+        try:
+            return read_kit_directory(path), path.name
+        except ValidationError as exc:
+            raise KitSourceError(
+                f"{path / KIT_MANIFEST_FILE} is not a kit manifest: {validation_summary(exc)}"
+            ) from exc
+        except ValueError as exc:
+            raise KitSourceError(str(exc)) from exc
+    if path.exists():
+        raise KitSourceError(f"{path} is a file, not a kit directory or layout")
     image, origin = fetch_kit_image(source, registry=registry)
     return unpack_artifact(KIT_ARTIFACT, image), origin
 

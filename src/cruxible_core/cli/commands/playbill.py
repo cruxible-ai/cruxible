@@ -104,6 +104,7 @@ from cruxible_client.contracts.resolution_contracts import ResolutionContractRef
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
+from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.contracts.write import (
     Change,
     FileEvidence,
@@ -2500,7 +2501,9 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
     try:
         request = _CLAIM_TYPE_MIGRATION_ADAPTER.validate_python(_read_mapping(request_file))
     except ValidationError as exc:
-        raise click.ClickException(f"Invalid ClaimType migration: {exc}") from exc
+        raise click.ClickException(
+            f"Invalid ClaimType migration: {validation_summary(exc)}"
+        ) from exc
     result = _server_call(
         lambda client, instance_id: client.migrate_playbill_claim_type(
             instance_id,
@@ -2706,7 +2709,9 @@ def predict(request_file: str, output_json: bool) -> None:
     try:
         request = contracts.PlaybillPredictRequestV2.model_validate(_read_mapping(request_file))
     except ValidationError as exc:
-        raise click.ClickException(f"Invalid prediction request: {exc}") from exc
+        raise click.ClickException(
+            f"Invalid prediction request: {validation_summary(exc)}"
+        ) from exc
     result = _server_call(
         lambda client, instance_id: client.predict_playbill(instance_id, request=request),
         command_name="playbill predict",
@@ -2761,7 +2766,9 @@ def settle(
             else contracts.PlaybillSettleRequestV2(observation=observation)
         )
     except ValidationError as exc:
-        raise click.ClickException(f"Invalid settlement request: {exc}") from exc
+        raise click.ClickException(
+            f"Invalid settlement request: {validation_summary(exc)}"
+        ) from exc
     result = _server_call(
         lambda client, instance_id: client.settle_playbill_prediction(
             instance_id,

@@ -107,6 +107,7 @@ from cruxible_client.contracts.types import (
     OperatingProfile,
     PrincipalRecord,
 )
+from cruxible_client.contracts.validation_messages import validation_lines, validation_summary
 from cruxible_client.contracts.write import (
     PlaybillRetireRequestV1,
     PlaybillSetRequestV1,
@@ -302,7 +303,7 @@ def _proposal_validation_boundary(
     except ValidationError as exc:
         raise DataValidationError(
             f"Playbill {family} proposal reference is invalid",
-            errors=[str(exc)],
+            errors=validation_lines(exc),
         ) from exc
 
 
@@ -315,7 +316,8 @@ def _curation_validation_boundary(
         return operation()
     except ValidationError as exc:
         raise PlaybillCurationError(
-            f"{PlaybillCurationError.code}: curation request is malformed: {exc}"
+            f"{PlaybillCurationError.code}: curation request is malformed: "
+            f"{validation_summary(exc)}"
         ) from exc
 
 

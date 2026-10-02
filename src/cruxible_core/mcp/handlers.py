@@ -79,6 +79,7 @@ from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.validation_messages import validation_lines
 from cruxible_client.contracts.write import (
     FileEvidence,
     PlaybillRetireRequestV1,
@@ -395,7 +396,9 @@ def _validate_local_request(operation_name: str, payload: Mapping[str, Any]) -> 
     try:
         model.validate_python(dict(payload))
     except ValidationError as exc:
-        raise DataValidationError(f"{operation_name}: {exc}") from exc
+        raise DataValidationError(
+            f"{operation_name}: invalid request", errors=validation_lines(exc)
+        ) from exc
 
 
 def _dispatch_remote_or_local(
@@ -1156,7 +1159,9 @@ def handle_playbill_claim_attest(
             note=note,
         )
     except ValidationError as exc:
-        raise DataValidationError(f"cruxible_playbill_claim_attest: {exc}") from exc
+        raise DataValidationError(
+            "cruxible_playbill_claim_attest: invalid request", errors=validation_lines(exc)
+        ) from exc
     return _dispatch_remote_or_local(
         lambda client: _handle_claim_attestation(client, instance_id, prepared),
         lambda: _handle_claim_attestation(_LocalAttestationClient(), instance_id, prepared),
