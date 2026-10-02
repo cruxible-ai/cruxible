@@ -436,15 +436,6 @@ def playbill_host_workspace_detach(
             "Workspace detachment requires a caller connected directly through the local "
             "Unix socket"
         )
-    registry = get_registry()
-    record = registry.get(instance_id)
-    if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
-        raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
-    if record.workspace_root is None:
-        return contracts.PlaybillWorkspaceDetachResultV1(
-            instance_id=instance_id,
-            status="not_registered",
-        )
     with state_change_scope(
         dry_run=dry_run,
         at=at,
@@ -452,6 +443,15 @@ def playbill_host_workspace_detach(
         operation="playbill.workspace.detach",
         describe=f"detaching host {instance_id}",
     ) as change:
+        registry = get_registry()
+        record = registry.get(instance_id)
+        if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
+            raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
+        if record.workspace_root is None:
+            return contracts.PlaybillWorkspaceDetachResultV1(
+                instance_id=instance_id,
+                status="not_registered",
+            )
         _refuse_detach_with_registered_blocks(instance_id)
         if change.previewing:
             change.observe(registry.workspace_state(instance_id))

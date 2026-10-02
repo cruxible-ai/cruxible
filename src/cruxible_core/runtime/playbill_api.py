@@ -1367,13 +1367,16 @@ def _permits(tool_name: str, *, instance_id: str) -> bool:
 
 
 def _write_outcome(instance_id: str, request: PlaybillWriteRequestV1) -> WriteOutcome:
-    caller = WriteCaller(
-        actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
-        may_activate=_permits("cruxible_playbill_activate", instance_id=instance_id),
-    )
-    return service_playbill_write(
-        get_playbill_manager().get(instance_id), request=request, caller=caller
-    )
+    # The preview's guards go up before the actor is resolved: resolving a
+    # principal claim opens the instance, and a cold open may repair on disk.
+    with change_entry(request.dry_run, "direct"):
+        caller = WriteCaller(
+            actor=AuthenticatedActor(actor_id=_actor_id(instance_id)),
+            may_activate=_permits("cruxible_playbill_activate", instance_id=instance_id),
+        )
+        return service_playbill_write(
+            get_playbill_manager().get(instance_id), request=request, caller=caller
+        )
 
 
 def playbill_set(instance_id: str, *, request: PlaybillSetRequestV1) -> WriteOutcome:
@@ -2032,13 +2035,14 @@ def playbill_line_arm(
     """Arm a Line forward-only under the calling credential."""
 
     check_permission("cruxible_playbill_line_arm", instance_id=instance_id)
-    actor = _write_actor_context(instance_id)
-    if actor is None:
-        raise AuthenticationError("Arming requires an authenticated actor identity")
     from cruxible_core.runtime.line_arms import current_arm_principal
     from cruxible_core.service.procedures.line_dispatch import service_arm_line
 
     with change_entry(dry_run, "direct"):
+        # Resolved behind the guards: a principal claim's check opens the instance.
+        actor = _write_actor_context(instance_id)
+        if actor is None:
+            raise AuthenticationError("Arming requires an authenticated actor identity")
         manager = get_playbill_manager()
         return service_arm_line(
             manager.get(instance_id),
@@ -2058,12 +2062,12 @@ def playbill_line_disarm(
     """Stop a Line admitting work on its own; admitted runs are not cancelled."""
 
     check_permission("cruxible_playbill_line_disarm", instance_id=instance_id)
-    actor = _write_actor_context(instance_id)
-    if actor is None:
-        raise AuthenticationError("Disarming requires an authenticated actor identity")
     from cruxible_core.service.procedures.line_dispatch import service_disarm_line
 
     with change_entry(dry_run, "direct"):
+        actor = _write_actor_context(instance_id)
+        if actor is None:
+            raise AuthenticationError("Disarming requires an authenticated actor identity")
         return service_disarm_line(
             get_playbill_manager().get(instance_id),
             line,
