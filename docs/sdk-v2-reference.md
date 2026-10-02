@@ -1758,10 +1758,10 @@ version was accepted and the daemon began listening. Use it with
 action="floor.refresh")`; Capture-input Lines refuse it through their usual law.
 
 Floor refresh warms the index regardless of workspace delivery. A bound local
-workspace defaults to client delivery. Over a Unix-socket `CruxibleClient`, call
-`set_playbill_floor_delivery(instance_id, enabled=True)` to make its daemon the
-sole floor writer; `enabled=False` restores client delivery. Detaching clears
-the flag. `playbill_host_workspace_registration` reports `floor_delivery` and
+workspace defaults to daemon delivery as its sole floor writer. Over a Unix-socket
+`CruxibleClient`, call `set_playbill_floor_delivery(instance_id, enabled=False)`
+to opt out and use client delivery; `enabled=True` enables daemon delivery again.
+Detaching clears the flag; a later attachment defaults on again. `playbill_host_workspace_registration` reports `floor_delivery` and
 the local path, which the workspace adapter checks before delegating to
 `deliver_playbill_floor_now`. The latter returns a `PlaybillFloorDeliveryResultV1`
 with the delta and the ordinary `PlaybillWorkspaceFloorWriteResult` receipt.

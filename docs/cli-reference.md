@@ -367,9 +367,11 @@ including accepts made while the daemon was stopped. Lines use the same target
 input law, so a Line needing a Capture event refuses this schedule.
 
 `floor.refresh` warms the floor index on every daemon. Workspace delivery is
-optional and defaults off. Use `workspace attach --floor-delivery` or
-`cruxible playbill workspace floor-delivery` with `on` through the local Unix
-socket to opt a bound workspace in; `off` disables delivery and detaching clears it. With delivery
+on by default for an attached workspace. Use `workspace attach --no-floor-delivery`
+or `cruxible playbill workspace floor-delivery off` through the local Unix socket
+to opt out; `on` enables delivery again. Detaching clears it, and a later attachment
+defaults on again. Host inspection and daemon status label it "on (default)" or
+"off (opted out)". With delivery
 on, the daemon writes only `.playbill/floor`, and local client floor writes ask
 it to deliver immediately. Remote clients and workspaces with delivery off keep
 applying deltas locally. Host inspection and daemon status show the flag.
@@ -436,7 +438,7 @@ it.
 ~~~text
 cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace]
 cruxible playbill host show INSTANCE [--json]
-cruxible playbill workspace attach [--instance-id ID] [--replace] [--floor-delivery]
+cruxible playbill workspace attach [--instance-id ID] [--replace] [--no-floor-delivery]
 cruxible playbill workspace floor-delivery on|off [--instance-id ID] [--json]
 cruxible playbill workspace detach [--instance-id ID] [--json]
 ~~~

@@ -55,6 +55,7 @@ def floor_journal(instance):
 
 def test_off_renders_without_writing_and_on_delivers_the_head(world):
     instance, workspace, registry = world
+    registry.set_floor_delivery(instance.descriptor.instance_id, False)
     assert refresh_floor(instance, instance.descriptor.instance_id) is None
     assert instance.floor_current_memo
     assert not (workspace / ".playbill").exists()
@@ -68,7 +69,8 @@ def test_off_renders_without_writing_and_on_delivers_the_head(world):
 
 
 def test_outcomes_keep_only_the_latest_even_after_an_existing_history(world):
-    instance, _, _ = world
+    instance, _, registry = world
+    registry.set_floor_delivery(instance.descriptor.instance_id, False)
     refresh_floor(instance, instance.descriptor.instance_id)
     (outcome,) = floor_outcomes(instance)
     with floor._STATE.open(instance) as connection:
@@ -198,13 +200,22 @@ def test_registry_migration_is_idempotent_and_detach_clears_delivery(tmp_path):
             "INSERT INTO instances VALUES ('inst_old','governed_daemon','old',NULL,'old','kept')"
         )
         connection.execute(
+            "INSERT INTO instances VALUES "
+            "('inst_attached','governed_daemon','attached','/attached','old','kept')"
+        )
+        connection.execute(
             "CREATE TABLE registry_migrations (step TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
         )
         connection.execute("INSERT INTO registry_migrations VALUES ('operator-step','kept')")
     registry = InstanceRegistry(database)
+    assert registry.get("inst_attached").floor_delivery
+    registry.set_floor_delivery("inst_attached", False)
+    assert not InstanceRegistry(database).get("inst_attached").floor_delivery
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     registry.create_governed_instance_with_id("inst_floor", workspace_root=workspace)
+    assert registry.get("inst_floor").floor_delivery
+    registry.set_floor_delivery("inst_floor", False)
     assert not registry.get("inst_floor").floor_delivery
     registry.set_floor_delivery("inst_floor", True)
     registry = InstanceRegistry(registry.db_path)
@@ -225,6 +236,7 @@ def test_registry_migration_is_idempotent_and_detach_clears_delivery(tmp_path):
     ).floor_delivery
     with pytest.raises(ConfigError, match="bound local workspace"):
         registry.set_floor_delivery("inst_floor", True)
+    assert registry.attach_governed_workspace("inst_floor", workspace).floor_delivery
 
 
 def test_delivery_and_deliver_now_share_admission_but_instances_proceed(
@@ -332,7 +344,7 @@ def test_delivery_authority_requires_the_local_attachment_gate(world, monkeypatc
         host_api.set_playbill_floor_delivery(instance.descriptor.instance_id, enabled=True)
     with pytest.raises(ConfigError, match="Unix socket"):
         host_api.deliver_playbill_floor_now(instance.descriptor.instance_id)
-    assert not registry.get(instance.descriptor.instance_id).floor_delivery
+    assert registry.get(instance.descriptor.instance_id).floor_delivery
     result = host_api.set_playbill_floor_delivery(
         instance.descriptor.instance_id, enabled=True, workspace_attachment_authorized=True
     )
@@ -410,6 +422,7 @@ def test_floor_schedule_advisory_is_opt_in(world, monkeypatch):
             access_profile=CoverageAccessProfileV1(profile_id="floor-test"),
         )
 
+    registry.set_floor_delivery(instance.descriptor.instance_id, False)
     assert health().state == "scheduled"
     registry.set_floor_delivery(instance.descriptor.instance_id, True)
     assert health().state == "unscheduled"

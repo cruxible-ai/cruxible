@@ -4,7 +4,8 @@
 
 - Add generation-accepted Triggers and `floor.refresh`. Refreshes coalesce at
   latest head and skip accepts made before listening. Bound local workspaces
-  can opt into daemon floor delivery; local client writes then delegate to the
+  default to daemon floor delivery; `workspace attach --no-floor-delivery` and
+  `workspace floor-delivery off` opt out. Local client writes delegate to the
   same writer. Apply failures surface a stalled consumer and a floor-write repair.
 
 - **Reads are orient, query and get; the older read surfaces are removed.**

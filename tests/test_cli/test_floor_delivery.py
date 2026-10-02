@@ -10,7 +10,7 @@ from cruxible_client import contracts
 from cruxible_core.cli.main import cli
 
 
-@pytest.mark.parametrize("command", ["attach", "on", "off"])
+@pytest.mark.parametrize("command", ["attach", "attach-off", "on", "off"])
 def test_local_workspace_delivery_controls(tmp_path, monkeypatch, command):
     workspace = tmp_path / "workspace"
     subprocess.run(["git", "init", "-q", "-b", "main", str(workspace)], check=True)
@@ -33,7 +33,9 @@ def test_local_workspace_delivery_controls(tmp_path, monkeypatch, command):
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: Client())
     arguments = (
-        ["attach", "--floor-delivery"] if command == "attach" else ["floor-delivery", command]
+        ["attach", *(["--no-floor-delivery"] if command == "attach-off" else [])]
+        if command.startswith("attach")
+        else ["floor-delivery", command]
     )
     result = CliRunner().invoke(
         cli,
@@ -49,10 +51,10 @@ def test_local_workspace_delivery_controls(tmp_path, monkeypatch, command):
         ],
     )
     assert result.exit_code == 0, result.output
-    assert calls == [("inst_floor", command != "off")]
+    assert calls == [("inst_floor", command not in {"off", "attach-off"})]
     payload = json.loads(result.stdout)
     assert payload["instance_id"] == "inst_floor"
-    if command == "attach":
+    if command.startswith("attach"):
         assert (workspace / ".playbill" / "coverage.json").exists()
     else:
         assert payload["floor_delivery"] == (command == "on")

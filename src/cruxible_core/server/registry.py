@@ -28,6 +28,7 @@ def _migrate_floor_delivery_column(conn: sqlite3.Connection) -> None:
             "CHECK (floor_delivery IN (0,1) AND "
             "(floor_delivery=0 OR workspace_root IS NOT NULL))"
         )
+        conn.execute("UPDATE instances SET floor_delivery=1 WHERE workspace_root IS NOT NULL")
 
 
 @dataclass(frozen=True)
@@ -209,7 +210,8 @@ class InstanceRegistry:
         try:
             with self._connect() as conn:
                 conn.execute(
-                    "UPDATE instances SET workspace_root = ? WHERE instance_id = ?",
+                    "UPDATE instances SET workspace_root = ?, floor_delivery = 1 "
+                    "WHERE instance_id = ?",
                     (resolved, instance_id),
                 )
         except sqlite3.IntegrityError as exc:
@@ -261,9 +263,10 @@ class InstanceRegistry:
                     backend,
                     location,
                     workspace_root,
-                    created_at
+                    created_at,
+                    floor_delivery
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     instance_id,
@@ -271,6 +274,7 @@ class InstanceRegistry:
                     location,
                     workspace_root,
                     created_at,
+                    int(backend == GOVERNED_DAEMON_BACKEND and workspace_root is not None),
                 ),
             )
 

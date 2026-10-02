@@ -489,7 +489,7 @@ def _echo_instance_scoped_status(
     click.echo(
         f"Host {host.instance_id}: {host.compatibility} "
         f"({host.compiler_revision or '-'}, {host.compiler_coordinate or '-'}), "
-        f"floor delivery {'on' if host.floor_delivery else 'off'}"
+        f"floor delivery {'on (default)' if host.floor_delivery else 'off (opted out)'}"
     )
     if host.reason is not None:
         click.echo(f"  Reason: {host.reason.code}: {host.reason.detail}")
@@ -537,7 +537,7 @@ def server_status_cmd(output_json: bool) -> None:
         click.echo(
             f"Host {host.instance_id}: {host.compatibility} "
             f"({host.compiler_revision or '-'}, {host.compiler_coordinate or '-'}), "
-            f"floor delivery {'on' if host.floor_delivery else 'off'}"
+            f"floor delivery {'on (default)' if host.floor_delivery else 'off (opted out)'}"
         )
         if host.reason is not None:
             click.echo(f"  Reason: {host.reason.code}: {host.reason.detail}")

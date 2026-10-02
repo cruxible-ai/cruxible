@@ -725,12 +725,12 @@ def workspace_group() -> None:
 @workspace_group.command("attach")
 @click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
 @click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
-@click.option("--floor-delivery", is_flag=True, help="Let the local daemon deliver the floor.")
+@click.option("--no-floor-delivery", is_flag=True, help="Opt out of daemon floor delivery.")
 @json_option
 @handle_errors
 def attach_workspace(
     instance_id: str | None,
-    floor_delivery: bool,
+    no_floor_delivery: bool,
     replace: bool,
     output_json: bool,
 ) -> None:
@@ -777,13 +777,12 @@ def attach_workspace(
         replace=replace,
         **transport_values,
     )
-    if floor_delivery:
-        _dispatch_cli(
-            lambda client: client.set_playbill_floor_delivery(selected, enabled=True),
-            lambda: None,
-            allow_local=False,
-            command_name="playbill workspace attach",
-        )
+    _dispatch_cli(
+        lambda client: client.set_playbill_floor_delivery(selected, enabled=not no_floor_delivery),
+        lambda: None,
+        allow_local=False,
+        command_name="playbill workspace attach",
+    )
     result = contracts.PlaybillWorkspaceAttachResultV1(
         instance_id=selected,
         workspace_root=str(workspace),
@@ -889,7 +888,7 @@ def show_host(instance_id: str, output_json: bool) -> None:
     click.echo(f"Transport: {transport}")
     click.echo(f"Managed root: {result.managed_root or '-'}")
     click.echo(f"Workspace root: {result.workspace_root or '-'}")
-    click.echo(f"Floor delivery: {'on' if result.floor_delivery else 'off'}")
+    click.echo(f"Floor delivery: {'on (default)' if result.floor_delivery else 'off (opted out)'}")
     click.echo(f"Compiler coordinate: {result.compiler_coordinate or '-'}")
     click.echo(f"Compiler revision: {result.compiler_revision or '-'}")
     click.echo(f"Compatibility: {result.compatibility}")
